@@ -57,6 +57,9 @@ class Message {
 
   private buildMessage = (icon: MessageIcon) => {
     return (content: string, duration = 3_000, onClose?: () => void) => {
+      if (icon === 'error') {
+        console.error('[Message]', content)
+      }
       const id = sampleID()
       const dom = document.createElement('div')
 
