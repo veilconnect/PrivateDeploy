@@ -331,7 +331,19 @@ export const useCloudStore = defineStore('cloud', () => {
     }
 
     const appendProxy = (outbound: IOutbound) => {
-      outbound.outbounds = outbound.outbounds || []
+      const current = outbound.outbounds
+      if (!Array.isArray(current)) {
+        if (current && typeof (current as any).map === 'function') {
+          outbound.outbounds = (current as any).map((item: any) => ({ ...item }))
+        } else if (Array.isArray((current as any)?.items)) {
+          outbound.outbounds = ((current as any).items as any[]).map((item: any) => ({ ...item }))
+        } else {
+          outbound.outbounds = []
+        }
+      }
+      if (!Array.isArray(outbound.outbounds)) {
+        outbound.outbounds = []
+      }
       if (!outbound.outbounds.find((item) => item.id === proxyEntry.id)) {
         outbound.outbounds.push({ ...proxyEntry })
       }
