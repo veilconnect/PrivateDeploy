@@ -1,7 +1,7 @@
 import { render, h, type VNode, nextTick } from 'vue'
 
 import i18n from '@/lang'
-import { APP_TITLE, sampleID } from '@/utils'
+import { APP_TITLE, sampleID, logError } from '@/utils'
 
 import ConfirmComp from '@/components/Confirm/index.vue'
 import MessageComp from '@/components/Message/index.vue'
@@ -58,7 +58,8 @@ class Message {
   private buildMessage = (icon: MessageIcon) => {
     return (content: string, duration = 3_000, onClose?: () => void) => {
       if (icon === 'error') {
-        console.error('[Message]', content)
+        const text = i18n.global.t(content)
+        logError('[Toast]', text)
       }
       const id = sampleID()
       const dom = document.createElement('div')
