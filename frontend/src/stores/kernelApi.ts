@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { getProxies, getConfigs, setConfigs, Api } from '@/api/kernel'
-import { ProcessInfo, KillProcess, ExecBackground, ReadFile, WriteFile, RemoveFile } from '@/bridge'
+import { ProcessInfo, KillProcess, ExecBackground, ReadFile, WriteFile, RemoveFile, FileExists } from '@/bridge'
 import {
   CoreConfigFilePath,
   CorePidFilePath,
@@ -417,12 +417,19 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       runtimeProfile = undefined
     }
 
+    const isAlpha = branch === Branch.Alpha
+    const corePath = `${CoreWorkingDirectory}/${getKernelFileName(isAlpha)}`
+    const coreExists = await FileExists(corePath).catch(() => false)
+    if (!coreExists) {
+      message.error('kernel.errors.coreMissing')
+      return
+    }
+
     starting.value = true
     try {
       await generateConfigFile(profile, (config) =>
         pluginsStore.onBeforeCoreStartTrigger(config, profile),
       )
-      const isAlpha = branch === Branch.Alpha
       const pid = await runCoreProcess(isAlpha)
       pid && (await onCoreStarted(pid))
     } finally {

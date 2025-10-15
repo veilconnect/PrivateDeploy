@@ -56,6 +56,9 @@ export default {
     ruleDesc: '按照规则文件分流',
     globalDesc: '仅走Global策略组',
     directDesc: '直接连接所有流量',
+    errors: {
+      coreMissing: '未找到内核可执行文件，请在设置-内核中下载后再试。',
+    },
     log: {
       disabled: '禁用日志',
       level: '日志级别',

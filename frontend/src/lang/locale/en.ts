@@ -56,6 +56,9 @@ export default {
     ruleDesc: 'Route traffic based on rules',
     globalDesc: 'Only follow the Global group',
     directDesc: 'Directly connect all traffic',
+    errors: {
+      coreMissing: 'Sing-box core binary is missing. Please download it from Settings → Kernel and retry.',
+    },
     log: {
       disabled: 'Disabled',
       level: 'Level',
