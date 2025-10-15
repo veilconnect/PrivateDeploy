@@ -9,7 +9,7 @@ import {
   useKernelApiStore,
   usePluginsStore,
   useRulesetsStore,
-  useSubscribesStore,
+  useCloudStore,
 } from '@/stores'
 import { handleChangeMode, message } from '@/utils'
 
@@ -45,7 +45,7 @@ export const getCommands = () => {
   const appSettings = useAppSettingsStore()
   const envStore = useEnvStore()
   const appStore = useAppStore()
-  const subscriptionsStore = useSubscribesStore()
+  const cloudStore = useCloudStore()
   const rulesetsStore = useRulesetsStore()
   const pluginsStore = usePluginsStore()
 
@@ -237,12 +237,12 @@ export const getCommands = () => {
     },
     {
       label: 'router.subscriptions',
-      cmd: 'Subscriptions',
+      cmd: 'Deploy',
       children: [
         {
-          label: 'common.updateAll',
-          cmd: 'Update Subscriptions',
-          handler: subscriptionsStore.updateSubscribes,
+          label: 'cloud.create.refresh',
+          cmd: 'Refresh Nodes',
+          handler: cloudStore.refreshInstances,
         },
       ],
     },
@@ -257,18 +257,6 @@ export const getCommands = () => {
         },
       ],
     },
-    {
-      label: 'router.plugins',
-      cmd: 'Plugins',
-      children: [
-        {
-          label: 'common.updateAll',
-          cmd: 'Update Plugins',
-          handler: pluginsStore.updatePlugins,
-        },
-      ],
-    },
-
     {
       label: 'tray.plugins',
       cmd: 'Plugins',

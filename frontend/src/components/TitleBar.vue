@@ -28,9 +28,11 @@ const isWindows = envStore.env.os === 'windows'
 const isDarwin = envStore.env.os === 'darwin'
 
 const TitleBar = defineComponent((_, { slots }) => {
-  if (!isWindows && !isDarwin) return () => ''
-  return () =>
-    h(
+  return () => {
+    if (!isWindows && !isDarwin) {
+      return h('div', { style: 'display: none' })
+    }
+    return h(
       'div',
       {
         class: 'flex items-center py-8 gap-8 px-12',
@@ -38,6 +40,7 @@ const TitleBar = defineComponent((_, { slots }) => {
       },
       [isWindows && slots.logo?.(), slots.title?.(), isWindows && slots.actions?.()],
     )
+  }
 })
 
 const pinWindow = () => {

@@ -8,6 +8,10 @@ export function CloseMMDB(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
+export function CreateVultrInstance(arg1:string):Promise<bridge.FlagResult>;
+
+export function DestroyVultrInstance(arg1:string):Promise<bridge.FlagResult>;
+
 export function Download(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>,arg5:string,arg6:bridge.RequestOptions):Promise<bridge.HTTPResult>;
 
 export function Exec(arg1:string,arg2:Array<string>,arg3:bridge.ExecOptions):Promise<bridge.FlagResult>;
@@ -22,11 +26,21 @@ export function GetEnv():Promise<bridge.EnvResult>;
 
 export function GetInterfaces():Promise<bridge.FlagResult>;
 
+export function GetVultrConfig():Promise<bridge.FlagResult>;
+
 export function IsStartup():Promise<boolean>;
 
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
 
 export function ListServer():Promise<bridge.FlagResult>;
+
+export function ListVultrAvailability(arg1:string):Promise<bridge.FlagResult>;
+
+export function ListVultrInstances():Promise<bridge.FlagResult>;
+
+export function ListVultrPlans():Promise<bridge.FlagResult>;
+
+export function ListVultrRegions():Promise<bridge.FlagResult>;
 
 export function MakeDir(arg1:string):Promise<bridge.FlagResult>;
 
@@ -49,6 +63,8 @@ export function RemoveFile(arg1:string):Promise<bridge.FlagResult>;
 export function Requests(arg1:string,arg2:string,arg3:Record<string, string>,arg4:string,arg5:bridge.RequestOptions):Promise<bridge.HTTPResult>;
 
 export function RestartApp():Promise<bridge.FlagResult>;
+
+export function SaveVultrConfig(arg1:string):Promise<bridge.FlagResult>;
 
 export function ShowMainWindow():Promise<void>;
 

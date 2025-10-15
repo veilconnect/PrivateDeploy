@@ -14,6 +14,14 @@ export function CopyFile(arg1, arg2) {
   return window['go']['bridge']['App']['CopyFile'](arg1, arg2);
 }
 
+export function CreateVultrInstance(arg1) {
+  return window['go']['bridge']['App']['CreateVultrInstance'](arg1);
+}
+
+export function DestroyVultrInstance(arg1) {
+  return window['go']['bridge']['App']['DestroyVultrInstance'](arg1);
+}
+
 export function Download(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['bridge']['App']['Download'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -42,6 +50,10 @@ export function GetInterfaces() {
   return window['go']['bridge']['App']['GetInterfaces']();
 }
 
+export function GetVultrConfig() {
+  return window['go']['bridge']['App']['GetVultrConfig']();
+}
+
 export function IsStartup() {
   return window['go']['bridge']['App']['IsStartup']();
 }
@@ -52,6 +64,22 @@ export function KillProcess(arg1, arg2) {
 
 export function ListServer() {
   return window['go']['bridge']['App']['ListServer']();
+}
+
+export function ListVultrAvailability(arg1) {
+  return window['go']['bridge']['App']['ListVultrAvailability'](arg1);
+}
+
+export function ListVultrInstances() {
+  return window['go']['bridge']['App']['ListVultrInstances']();
+}
+
+export function ListVultrPlans() {
+  return window['go']['bridge']['App']['ListVultrPlans']();
+}
+
+export function ListVultrRegions() {
+  return window['go']['bridge']['App']['ListVultrRegions']();
 }
 
 export function MakeDir(arg1) {
@@ -96,6 +124,10 @@ export function Requests(arg1, arg2, arg3, arg4, arg5) {
 
 export function RestartApp() {
   return window['go']['bridge']['App']['RestartApp']();
+}
+
+export function SaveVultrConfig(arg1) {
+  return window['go']['bridge']['App']['SaveVultrConfig'](arg1);
 }
 
 export function ShowMainWindow() {
