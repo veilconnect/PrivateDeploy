@@ -256,7 +256,11 @@ const handleUseNode = async (node: VultrNode | Record<string, any>) => {
   applyingNodeId.value = target.instanceId
   try {
     await cloudStore.applyNodeToProfile(target)
-    await kernelApiStore.restartCore()
+    if (kernelApiStore.running) {
+      await kernelApiStore.restartCore()
+    } else {
+      await kernelApiStore.startCore()
+    }
     cloudStore.markNodeStatus(target.instanceId, 'connected')
     await cloudStore.refreshInstances()
     message.success(t('cloud.nodes.applied'))
