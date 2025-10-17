@@ -23,7 +23,8 @@ const _generateRule = (rule: IRule | IDNSRule, rule_set: IRuleSet[], inbounds: I
   const getInbound = (id: string) => inbounds.find((v) => v.id === id)?.tag
   const getRuleset = (id: string) => rule_set.find((v) => v.id === id)?.tag
 
-  const extra: Recordable = { action: rule.action, invert: rule.invert ? true : undefined }
+  // sing-box 1.10.x: removed 'action' field from rules
+  const extra: Recordable = { invert: rule.invert ? true : undefined }
   if (rule.type === RuleType.Inline) {
     deepAssign(extra, JSON.parse(rule.payload))
   } else if (rule.type === RuleType.RuleSet) {
@@ -182,9 +183,8 @@ const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound
       }
       const extra: Recordable = _generateRule(rule, route.rule_set, inbounds)
 
-      if (rule.action === RuleAction.Route) {
-        extra.outbound = getOutbound(rule.outbound)
-      } else if (rule.action === RuleAction.RouteOptions) {
+      // sing-box 1.10.x: action field removed, but rules still need action-specific fields
+      if (rule.action === RuleAction.RouteOptions) {
         deepAssign(extra, JSON.parse(rule.outbound))
       } else if (rule.action === RuleAction.Sniff) {
         if (rule.sniffer.length) {
@@ -195,6 +195,15 @@ const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound
           extra.strategy = rule.strategy
         }
         extra.server = getDnsServer(rule.server)
+      } else if (rule.action === RuleAction.Reject) {
+        // sing-box 1.10.x: reject action removed from route rules, skip these
+        return []
+      } else if (rule.action === RuleAction.HijackDNS) {
+        // sing-box 1.10.x: hijack-dns removed, skip these rules
+        return []
+      } else {
+        // Default action is Route - add outbound field
+        extra.outbound = getOutbound(rule.outbound)
       }
       if (rule.invert) {
         extra.invert = true
@@ -226,9 +235,7 @@ const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound
     auto_detect_interface: route.auto_detect_interface,
     find_process: route.find_process ? true : undefined,
     final: getOutbound(route.final),
-    default_domain_resolver: {
-      server: getDnsServer(route.default_domain_resolver.server),
-    },
+    // sing-box 1.10.x: removed 'default_domain_resolver' field
     ...extra,
   }
 }
@@ -251,57 +258,19 @@ const generateDns = (
   return {
     servers: dns.servers.flatMap((server) => {
       const extra: Recordable = {}
-      if (
-        [
-          DnsServer.Local,
-          DnsServer.Tcp,
-          DnsServer.Udp,
-          DnsServer.Tls,
-          DnsServer.Quic,
-          DnsServer.Https,
-          DnsServer.H3,
-          DnsServer.Dhcp,
-        ].includes(server.type as any)
-      ) {
-        if (server.detour) {
-          const outbound = getOutbound(server.detour)
-          if (outbound?.type !== Outbound.Direct) {
-            extra.detour = outbound?.tag
-          }
-        }
-        server.domain_resolver && (extra.domain_resolver = getDnsServer(server.domain_resolver))
-        if (
-          [
-            DnsServer.Tcp,
-            DnsServer.Udp,
-            DnsServer.Tls,
-            DnsServer.Quic,
-            DnsServer.Https,
-            DnsServer.H3,
-          ].includes(server.type as any)
-        ) {
-          server.server_port && (extra.server_port = Number(server.server_port))
-          extra.server = server.server
-          if ([DnsServer.Https, DnsServer.H3].includes(server.type as any)) {
-            server.path && (extra.path = server.path)
-          }
+      // sing-box 1.10.x: use 'address' field instead of 'type' + other fields
+      extra.address = generateDnsServerURL(server)
+
+      if (server.detour) {
+        const outbound = getOutbound(server.detour)
+        if (outbound?.type !== Outbound.Direct) {
+          extra.detour = outbound?.tag
         }
       }
-      if (server.type === DnsServer.Hosts) {
-        extra.path = server.hosts_path.reduce((p, c) => p.concat(c.split(',')), [] as string[])
-        extra.predefined = Object.entries(server.predefined).reduce(
-          (p, [k, v]) => ({ ...p, [k]: v.split(',') }),
-          {},
-        )
-      } else if (server.type === DnsServer.Dhcp) {
-        server.interface && (extra.interface = server.interface)
-      } else if (server.type === DnsServer.FakeIP) {
-        server.inet4_range && (extra.inet4_range = server.inet4_range)
-        server.inet6_range && (extra.inet6_range = server.inet6_range)
-      }
+      // sing-box 1.10.x: removed 'domain_resolver' field from DNS servers
+
       return {
         tag: server.tag,
-        type: server.type,
         ...extra,
       }
     }),
