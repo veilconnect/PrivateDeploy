@@ -32,6 +32,10 @@ var (
 	vultrOSCache          []vultrOS
 	vultrOSCacheTime      time.Time
 	vultrOSCacheMu        sync.Mutex
+	// Instances cache
+	vultrInstancesCache     []VultrNode
+	vultrInstancesCacheTime time.Time
+	vultrInstancesCacheMu   sync.RWMutex
 )
 
 type VultrConfig struct {
@@ -48,12 +52,16 @@ type vultrRegion struct {
 }
 
 type vultrPlan struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	MemoryMB    int    `json:"memory"`
-	VCPUs       int    `json:"vcpu_count"`
-	DiskGB      int    `json:"disk"`
-	BandwidthGB int    `json:"bandwidth"`
+	ID           string  `json:"id"`
+	Description  string  `json:"description"`
+	MemoryMB     int     `json:"ram"`
+	VCPUs        int     `json:"vcpu_count"`
+	DiskGB       int     `json:"disk"`
+	BandwidthGB  int     `json:"bandwidth"`
+	MonthlyCost  float64 `json:"monthly_cost"`
+	HourlyCost   float64 `json:"hourly_cost"`
+	Type         string  `json:"type"`
+	Locations    []string `json:"locations"`
 }
 
 type vultrInstance struct {
@@ -62,6 +70,7 @@ type vultrInstance struct {
 	Status    string `json:"status"`
 	Region    string `json:"region"`
 	MainIP    string `json:"main_ip"`
+	V6MainIP  string `json:"v6_main_ip"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -72,28 +81,48 @@ type vultrOS struct {
 }
 
 type vultrNodeRecord struct {
-	InstanceID string `json:"instanceId"`
-	Label      string `json:"label"`
-	Region     string `json:"region"`
-	Plan       string `json:"plan"`
-	OSID       int    `json:"osId,omitempty"`
-	Port       int    `json:"port"`
-	Password   string `json:"password"`
-	CreatedAt  string `json:"createdAt"`
-	IPv4       string `json:"ipv4,omitempty"`
+	InstanceID        string `json:"instanceId"`
+	Label             string `json:"label"`
+	Region            string `json:"region"`
+	Plan              string `json:"plan"`
+	OSID              int    `json:"osId,omitempty"`
+	Port              int    `json:"port"` // Legacy: Shadowsocks port (for backward compatibility)
+	Password          string `json:"password"` // Legacy: Shadowsocks password
+	CreatedAt         string `json:"createdAt"`
+	IPv4              string `json:"ipv4,omitempty"`
+	IPv6              string `json:"ipv6,omitempty"`
+	// Multi-protocol configuration
+	SSPort            int    `json:"ssPort,omitempty"`
+	SSPassword        string `json:"ssPassword,omitempty"`
+	HysteriaPort      int    `json:"hysteriaPort,omitempty"`
+	HysteriaPassword  string `json:"hysteriaPassword,omitempty"`
+	VLESSPort         int    `json:"vlessPort,omitempty"`
+	VLESSUUID         string `json:"vlessUUID,omitempty"`
+	TrojanPort        int    `json:"trojanPort,omitempty"`
+	TrojanPassword    string `json:"trojanPassword,omitempty"`
 }
 
 type VultrNode struct {
-	InstanceID string `json:"instanceId"`
-	Label      string `json:"label"`
-	Status     string `json:"status"`
-	Region     string `json:"region"`
-	Plan       string `json:"plan"`
-	OSID       int    `json:"osId"`
-	IPv4       string `json:"ipv4"`
-	Port       int    `json:"port"`
-	Password   string `json:"password"`
-	CreatedAt  string `json:"createdAt"`
+	InstanceID       string `json:"instanceId"`
+	Label            string `json:"label"`
+	Status           string `json:"status"`
+	Region           string `json:"region"`
+	Plan             string `json:"plan"`
+	OSID             int    `json:"osId"`
+	IPv4             string `json:"ipv4"`
+	IPv6             string `json:"ipv6,omitempty"`
+	Port             int    `json:"port"` // Legacy: Shadowsocks port
+	Password         string `json:"password"` // Legacy: Shadowsocks password
+	CreatedAt        string `json:"createdAt"`
+	// Multi-protocol configuration
+	SSPort           int    `json:"ssPort,omitempty"`
+	SSPassword       string `json:"ssPassword,omitempty"`
+	HysteriaPort     int    `json:"hysteriaPort,omitempty"`
+	HysteriaPassword string `json:"hysteriaPassword,omitempty"`
+	VLESSPort        int    `json:"vlessPort,omitempty"`
+	VLESSUUID        string `json:"vlessUUID,omitempty"`
+	TrojanPort       int    `json:"trojanPort,omitempty"`
+	TrojanPassword   string `json:"trojanPassword,omitempty"`
 }
 
 type createVultrInstanceOptions struct {
@@ -231,34 +260,54 @@ func preferredVultrOSIDs(apiKey string) ([]int, error) {
 		}
 	}
 
+	// Priority 1: Debian 11 (lightweight, works with 512MB)
 	addMatches(func(os vultrOS) bool {
 		name := strings.ToLower(os.Name)
 		family := strings.ToLower(os.Family)
-		return strings.Contains(family, "ubuntu") && strings.Contains(name, "24.04")
+		return strings.Contains(family, "debian") && strings.Contains(name, "11")
 	})
 
+	// Priority 2: Ubuntu 20.04 (may work with 512MB)
 	addMatches(func(os vultrOS) bool {
 		name := strings.ToLower(os.Name)
 		family := strings.ToLower(os.Family)
-		return strings.Contains(family, "ubuntu") && strings.Contains(name, "22.04")
+		return strings.Contains(family, "ubuntu") && strings.Contains(name, "20.04")
 	})
 
+	// Priority 3: Debian 12
 	addMatches(func(os vultrOS) bool {
 		name := strings.ToLower(os.Name)
 		family := strings.ToLower(os.Family)
 		return strings.Contains(family, "debian") && strings.Contains(name, "12")
 	})
 
+	// Priority 4: Ubuntu 22.04
 	addMatches(func(os vultrOS) bool {
+		name := strings.ToLower(os.Name)
 		family := strings.ToLower(os.Family)
-		return strings.Contains(family, "ubuntu")
+		return strings.Contains(family, "ubuntu") && strings.Contains(name, "22.04")
 	})
 
+	// Priority 5: Ubuntu 24.04 (requires 1000MB+)
+	addMatches(func(os vultrOS) bool {
+		name := strings.ToLower(os.Name)
+		family := strings.ToLower(os.Family)
+		return strings.Contains(family, "ubuntu") && strings.Contains(name, "24.04")
+	})
+
+	// Priority 6: Any other Debian
 	addMatches(func(os vultrOS) bool {
 		family := strings.ToLower(os.Family)
 		return strings.Contains(family, "debian")
 	})
 
+	// Priority 7: Any other Ubuntu
+	addMatches(func(os vultrOS) bool {
+		family := strings.ToLower(os.Family)
+		return strings.Contains(family, "ubuntu")
+	})
+
+	// Priority 8: All other available systems
 	for _, os := range osList {
 		appendUniqueInt(&result, os.ID)
 	}
@@ -287,6 +336,20 @@ func randomPassword(length int) string {
 	}
 
 	return string(buffer)
+}
+
+func generateUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		mathrand.Read(b)
+	}
+
+	// Set version (4) and variant bits
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func decodeVultrError(body []byte) string {
@@ -417,6 +480,8 @@ func (a *App) ListVultrRegions() FlagResult {
 }
 
 func (a *App) ListVultrAvailability(region string) FlagResult {
+	fmt.Printf("[ListVultrAvailability] Called for region: %s\n", region)
+
 	cfg, err := loadVultrConfig()
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -451,6 +516,8 @@ func (a *App) ListVultrAvailability(region string) FlagResult {
 		plans = append(plans, plan)
 	}
 	sort.Strings(plans)
+
+	fmt.Printf("[ListVultrAvailability] Found %d available plans for region %s: %v\n", len(plans), region, plans)
 
 	data, err := json.Marshal(plans)
 	if err != nil {
@@ -490,6 +557,7 @@ func (a *App) ListVultrPlans() FlagResult {
 }
 
 func (a *App) ListVultrInstances() FlagResult {
+	fmt.Printf("[ListVultrInstances] Called\n")
 	cfg, err := loadVultrConfig()
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -498,25 +566,48 @@ func (a *App) ListVultrInstances() FlagResult {
 		return FlagResult{Flag: false, Data: errMissingVultrAPIKey.Error()}
 	}
 
+	// Check cache first (if less than 10 seconds old, return cached data)
+	vultrInstancesCacheMu.RLock()
+	if len(vultrInstancesCache) > 0 && time.Since(vultrInstancesCacheTime) < 10*time.Second {
+		fmt.Printf("[ListVultrInstances] Returning cached data (%d instances)\n", len(vultrInstancesCache))
+		cached := make([]VultrNode, len(vultrInstancesCache))
+		copy(cached, vultrInstancesCache)
+		vultrInstancesCacheMu.RUnlock()
+
+		data, err := json.Marshal(cached)
+		if err != nil {
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+		return FlagResult{Flag: true, Data: string(data)}
+	}
+	vultrInstancesCacheMu.RUnlock()
+
+	// Fetch from API
+	fmt.Printf("[ListVultrInstances] Fetching from Vultr API...\n")
 	res, err := vultrRequest(http.MethodGet, "/instances", cfg.APIKey, nil)
 	if err != nil {
+		fmt.Printf("[ListVultrInstances] API request failed: %v\n", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
+	fmt.Printf("[ListVultrInstances] API request successful\n")
 
 	var payload struct {
 		Instances []vultrInstance `json:"instances"`
 	}
 	if err := parseVultrResponse(res, &payload); err != nil {
+		fmt.Printf("[ListVultrInstances] Failed to parse response: %v\n", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
+	fmt.Printf("[ListVultrInstances] Found %d instances from API\n", len(payload.Instances))
 
 	vultrNodesMu.Lock()
-	defer vultrNodesMu.Unlock()
-
 	records, err := loadVultrNodes()
+	vultrNodesMu.Unlock()
 	if err != nil {
+		fmt.Printf("[ListVultrInstances] Failed to load node records: %v\n", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
+	fmt.Printf("[ListVultrInstances] Loaded %d node records\n", len(records))
 
 	result := make([]VultrNode, 0, len(payload.Instances))
 	for _, inst := range payload.Instances {
@@ -525,22 +616,41 @@ func (a *App) ListVultrInstances() FlagResult {
 			continue
 		}
 		node := VultrNode{
-			InstanceID: inst.ID,
-			Label:      inst.Label,
-			Status:     inst.Status,
-			Region:     inst.Region,
-			Plan:       record.Plan,
-			OSID:       record.OSID,
-			IPv4:       firstNonEmpty(inst.MainIP, record.IPv4),
-			Port:       record.Port,
-			Password:   record.Password,
-			CreatedAt:  firstNonEmpty(record.CreatedAt, inst.CreatedAt),
+			InstanceID:       inst.ID,
+			Label:            inst.Label,
+			Status:           inst.Status,
+			Region:           inst.Region,
+			Plan:             record.Plan,
+			OSID:             record.OSID,
+			IPv4:             firstNonEmpty(inst.MainIP, record.IPv4),
+			IPv6:             firstNonEmpty(inst.V6MainIP, record.IPv6),
+			Port:             record.Port,
+			Password:         record.Password,
+			CreatedAt:        firstNonEmpty(record.CreatedAt, inst.CreatedAt),
+			SSPort:           record.SSPort,
+			SSPassword:       record.SSPassword,
+			HysteriaPort:     record.HysteriaPort,
+			HysteriaPassword: record.HysteriaPassword,
+			VLESSPort:        record.VLESSPort,
+			VLESSUUID:        record.VLESSUUID,
+			TrojanPort:       record.TrojanPort,
+			TrojanPassword:   record.TrojanPassword,
 		}
 		if node.IPv4 == "" {
 			node.IPv4 = inst.MainIP
 		}
+		if node.IPv6 == "" {
+			node.IPv6 = inst.V6MainIP
+		}
 		result = append(result, node)
 	}
+
+	// Update cache
+	vultrInstancesCacheMu.Lock()
+	vultrInstancesCache = result
+	vultrInstancesCacheTime = time.Now()
+	vultrInstancesCacheMu.Unlock()
+	fmt.Printf("[ListVultrInstances] Returning %d instances\n", len(result))
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -548,6 +658,105 @@ func (a *App) ListVultrInstances() FlagResult {
 	}
 
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func getPlanRAM(apiKey, planID string) (int, error) {
+	res, err := vultrRequest(http.MethodGet, "/plans", apiKey, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	var payload struct {
+		Plans []vultrPlan `json:"plans"`
+	}
+	if err := parseVultrResponse(res, &payload); err != nil {
+		return 0, err
+	}
+
+	for _, plan := range payload.Plans {
+		if plan.ID == planID {
+			return plan.MemoryMB, nil
+		}
+	}
+
+	return 0, fmt.Errorf("plan %s not found", planID)
+}
+
+func generateLightweightScript(ssPort int, ssPassword string) string {
+	return fmt.Sprintf(`#!/bin/bash
+# VeilDeploy Lightweight Deployment for Low-Memory VPS (512MB RAM)
+# Protocol: Shadowsocks only (no Docker)
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+LOGFILE="/var/log/veildeploy-init.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== VeilDeploy Lightweight Init Started at $(date) ==="
+echo "Deploying Shadowsocks-only configuration for 512MB RAM VPS"
+
+# Update and install minimal packages
+echo "[1/3] Installing shadowsocks-libev and UFW..."
+apt-get update -qq
+apt-get install -y shadowsocks-libev ufw
+
+# Configure UFW firewall
+echo "[2/3] Configuring UFW firewall..."
+ufw --force disable || true
+ufw --force reset
+ufw logging on
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow %d/tcp comment 'Shadowsocks-TCP'
+ufw allow %d/udp comment 'Shadowsocks-UDP'
+echo "y" | ufw enable
+
+echo "Verifying firewall configuration..."
+ufw status verbose
+
+# Configure Shadowsocks
+echo "[3/3] Configuring Shadowsocks server (port %d)..."
+mkdir -p /etc/shadowsocks-libev
+
+cat > /etc/shadowsocks-libev/config.json <<'SSEOF'
+{
+    "server": "0.0.0.0",
+    "server_port": %d,
+    "password": "%s",
+    "method": "aes-256-gcm",
+    "timeout": 300,
+    "fast_open": true,
+    "mode": "tcp_and_udp"
+}
+SSEOF
+
+# Start shadowsocks-libev service
+systemctl enable shadowsocks-libev
+systemctl restart shadowsocks-libev
+
+sleep 3
+echo "Shadowsocks service status:"
+systemctl status shadowsocks-libev --no-pager --lines=10 || journalctl -u shadowsocks-libev -n 20 --no-pager
+
+# Verification
+sleep 2
+echo ""
+echo "=== Deployment Summary ==="
+echo "Firewall status:"
+ufw status numbered
+echo ""
+echo "Shadowsocks service:"
+echo "  Status: $(systemctl is-active shadowsocks-libev)"
+echo ""
+echo "Listening port:"
+netstat -tlnup 2>/dev/null | grep ':%d ' || ss -tlnup | grep ':%d ' || echo "Warning: Port %d not yet listening"
+echo ""
+echo "Protocol Configuration:"
+echo "  Shadowsocks: Port %d (TCP/UDP) - Password: %s"
+echo ""
+echo "=== VeilDeploy Lightweight Init Completed at $(date) ==="
+`, ssPort, ssPort, ssPort, ssPort, ssPassword, ssPort, ssPort, ssPort, ssPort, ssPassword)
 }
 
 func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
@@ -568,6 +777,14 @@ func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: "label, region and plan are required"}
 	}
 
+	// Get plan RAM to determine deployment strategy
+	planRAM, err := getPlanRAM(cfg.APIKey, opts.Plan)
+	if err != nil {
+		fmt.Printf("[CreateVultrInstance] Warning: Could not determine plan RAM: %v. Defaulting to full deployment.\n", err)
+		planRAM = 1024 // Default to assuming enough RAM
+	}
+	fmt.Printf("[CreateVultrInstance] Plan %s has %d MB RAM\n", opts.Plan, planRAM)
+
 	preferredOSIDs, err := preferredVultrOSIDs(cfg.APIKey)
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -576,22 +793,320 @@ func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: "no operating systems available"}
 	}
 
-	port := randomPort()
-	password := randomPassword(22)
+	basePort := randomPort()
+	ssPassword := randomPassword(22)
+	hysteriaPassword := randomPassword(22)
+	trojanPassword := randomPassword(22)
+	vlessUUID := generateUUID()
 
-	userDataScript := fmt.Sprintf(`#!/bin/bash
-set -eux
+	// Port allocation: basePort, basePort+1, basePort+2, basePort+3
+	ssPort := basePort
+	hysteriaPort := basePort + 1
+	vlessPort := basePort + 2
+	trojanPort := basePort + 3
+
+	var userDataScript string
+
+	// Choose deployment script based on RAM
+	if planRAM <= 600 {
+		// Low-memory VPS: Use lightweight script (Shadowsocks only)
+		fmt.Printf("[CreateVultrInstance] Using lightweight deployment for %dMB RAM\n", planRAM)
+		userDataScript = generateLightweightScript(ssPort, ssPassword)
+	} else {
+		// Standard VPS: Use full multi-protocol script
+		fmt.Printf("[CreateVultrInstance] Using full multi-protocol deployment for %dMB RAM\n", planRAM)
+
+		// Generate Reality keys before script
+		// Reality private key must be 32 random bytes encoded as base64
+		realityKeyBytes := make([]byte, 32)
+		if _, err := rand.Read(realityKeyBytes); err != nil {
+			for i := range realityKeyBytes {
+				realityKeyBytes[i] = byte(mathrand.Intn(256))
+			}
+		}
+		realityPrivateKey := base64.StdEncoding.EncodeToString(realityKeyBytes)
+		realityShortID := fmt.Sprintf("%016x", mathrand.Int63())
+
+		userDataScript = fmt.Sprintf(`#!/bin/bash
+# VeilDeploy Multi-Protocol Deployment Script
+# Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
+set -e
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y docker.io
+
+LOGFILE="/var/log/veildeploy-init.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== VeilDeploy Multi-Protocol Init Started at $(date) ==="
+
+# Update and install packages
+echo "[1/8] Installing Docker, UFW and required packages..."
+apt-get update -qq
+apt-get install -y docker.io ufw iptables openssl curl netstat-nat
+
+# Start Docker
+echo "[2/8] Starting Docker service..."
 systemctl enable docker
 systemctl start docker
+sleep 3
+
+# Generate self-signed certificates
+echo "[3/8] Generating TLS certificates..."
+mkdir -p /etc/veildeploy/{hysteria,trojan,vless}
+
+# Certificate for Hysteria2
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/veildeploy/hysteria/key.pem \
+  -out /etc/veildeploy/hysteria/cert.pem \
+  -days 365 -subj "/CN=www.bing.com" 2>/dev/null
+
+# Certificate for Trojan
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/veildeploy/trojan/key.pem \
+  -out /etc/veildeploy/trojan/cert.pem \
+  -days 365 -subj "/CN=www.microsoft.com" 2>/dev/null
+
+# Configure UFW firewall
+echo "[4/8] Configuring UFW firewall..."
+ufw --force disable || true
+ufw --force reset
+ufw logging on
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
+ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
+ufw allow %[2]d/udp comment 'Hysteria2'
+ufw allow %[3]d/tcp comment 'VLESS-Reality'
+ufw allow %[4]d/tcp comment 'Trojan'
+echo "y" | ufw enable
+
+echo "[5/8] Verifying firewall configuration..."
+ufw status verbose
+
+# Deploy Shadowsocks
+echo "[6/8] Deploying Shadowsocks server (port %[1]d)..."
 docker rm -f ss-server >/dev/null 2>&1 || true
-docker run -d --name ss-server --restart=always -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp teddysun/shadowsocks-libev -s 0.0.0.0 -p %[1]d -k %[2]s -m aes-256-gcm
+docker pull teddysun/shadowsocks-libev
+docker run -d --name ss-server --restart=always \
+  -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp \
+  teddysun/shadowsocks-libev ss-server \
+  -s 0.0.0.0 -p %[1]d -k %[5]s -m aes-256-gcm
+
+sleep 2
+echo "Shadowsocks container status:"
+docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
+
+# Deploy Hysteria2
+echo "[7/8] Deploying Hysteria2 server (port %[2]d)..."
+cat > /etc/veildeploy/hysteria/config.yaml <<'HYSTEOF'
+listen: :%[2]d
+tls:
+  cert: /etc/veildeploy/hysteria/cert.pem
+  key: /etc/veildeploy/hysteria/key.pem
+auth:
+  type: password
+  password: %[6]s
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.bing.com
+    rewriteHost: true
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+HYSTEOF
+
+docker rm -f hysteria-server >/dev/null 2>&1 || true
+docker pull tobyxdd/hysteria:latest
+docker run -d --name hysteria-server --restart=always \
+  -p %[2]d:%[2]d/udp \
+  -v /etc/veildeploy/hysteria:/etc/veildeploy/hysteria \
+  tobyxdd/hysteria:latest server -c /etc/veildeploy/hysteria/config.yaml
+
+sleep 2
+echo "Hysteria2 container status:"
+docker ps -a --filter "name=hysteria-server" --format "{{.Names}}: {{.Status}}"
+docker logs hysteria-server 2>&1 | tail -n 10
+
+# Deploy VLESS-Reality with sing-box
+echo "[8/8] Deploying VLESS-Reality server (port %[3]d)..."
+
+# Install sing-box
+SINGBOX_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K[^"]+' || echo "1.10.0")
+echo "Installing sing-box version ${SINGBOX_VERSION}..."
+curl -sL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" -o /tmp/singbox.tar.gz
+tar -xzf /tmp/singbox.tar.gz -C /tmp
+find /tmp -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
+chmod +x /usr/local/bin/sing-box
+rm -rf /tmp/singbox.tar.gz /tmp/sing-box-*
+
+# Generate Reality keypair using sing-box (more reliable than manual generation)
+REALITY_KEYPAIR=$(/usr/local/bin/sing-box generate reality-keypair)
+REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYPAIR" | grep "PrivateKey" | awk '{print $2}')
+REALITY_SHORT_ID=$(openssl rand -hex 8)
+
+echo "Generated Reality keys:"
+echo "  Private Key: $REALITY_PRIVATE_KEY"
+echo "  Short ID: $REALITY_SHORT_ID"
+
+# Create VLESS configuration with proper Reality keys
+cat > /etc/veildeploy/vless/config.json <<VLESSEOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [{
+    "type": "vless",
+    "tag": "vless-in",
+    "listen": "::",
+    "listen_port": %[3]d,
+    "users": [{
+      "uuid": "%[8]s",
+      "flow": "xtls-rprx-vision"
+    }],
+    "tls": {
+      "enabled": true,
+      "server_name": "www.microsoft.com",
+      "reality": {
+        "enabled": true,
+        "handshake": {
+          "server": "www.microsoft.com",
+          "server_port": 443
+        },
+        "private_key": "${REALITY_PRIVATE_KEY}",
+        "short_id": ["${REALITY_SHORT_ID}"]
+      }
+    }
+  }],
+  "outbounds": [{
+    "type": "direct",
+    "tag": "direct"
+  }]
+}
+VLESSEOF
+
+# Run sing-box as systemd service
+cat > /etc/systemd/system/vless-server.service <<'SERVICEEOF'
+[Unit]
+Description=VLESS-Reality Server (sing-box)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/veildeploy/vless/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+systemctl daemon-reload
+systemctl enable vless-server
+systemctl start vless-server
+
+sleep 3
+echo "VLESS-Reality service status:"
+systemctl status vless-server --no-pager --lines=10 || journalctl -u vless-server -n 20 --no-pager
+
+# Deploy Trojan with sing-box
+echo "[9/9] Deploying Trojan server (port %[4]d)..."
+cat > /etc/veildeploy/trojan/config.json <<'TROJANEOF'
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [{
+    "type": "trojan",
+    "tag": "trojan-in",
+    "listen": "::",
+    "listen_port": %[4]d,
+    "users": [{
+      "password": "%[7]s"
+    }],
+    "tls": {
+      "enabled": true,
+      "server_name": "www.microsoft.com",
+      "key_path": "/etc/veildeploy/trojan/key.pem",
+      "certificate_path": "/etc/veildeploy/trojan/cert.pem"
+    }
+  }],
+  "outbounds": [{
+    "type": "direct",
+    "tag": "direct"
+  }]
+}
+TROJANEOF
+
+# Run Trojan as systemd service using sing-box
+cat > /etc/systemd/system/trojan-server.service <<'TROJANSERVICE'
+[Unit]
+Description=Trojan Server (sing-box)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/veildeploy/trojan/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+TROJANSERVICE
+
+systemctl daemon-reload
+systemctl enable trojan-server
+systemctl start trojan-server
+
+sleep 3
+echo "Trojan service status:"
+systemctl status trojan-server --no-pager --lines=10 || journalctl -u trojan-server -n 20 --no-pager
+
+# Verification and summary
+sleep 5
+echo ""
+echo "=== Deployment Summary ==="
+echo "Firewall status:"
+ufw status numbered
+echo ""
+echo "Docker containers:"
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+echo ""
+echo "Systemd services:"
+echo "  VLESS-Reality: $(systemctl is-active vless-server)"
+echo "  Trojan: $(systemctl is-active trojan-server)"
+echo ""
+echo "Listening ports:"
+netstat -tlnup 2>/dev/null | grep -E ':%[1]d |:%[2]d |:%[3]d |:%[4]d ' || ss -tlnup | grep -E ':%[1]d |:%[2]d |:%[3]d |:%[4]d ' || echo "Warning: Some ports not yet listening"
+echo ""
+echo "Protocol Configuration:"
+echo "  [1] Shadowsocks:    Port %[1]d (TCP/UDP) - Password: %[5]s"
+echo "  [2] Hysteria2:      Port %[2]d (UDP) - Password: %[6]s"
+echo "  [3] VLESS-Reality:  Port %[3]d (TCP) - UUID: %[8]s"
+echo "  [4] Trojan:         Port %[4]d (TCP) - Password: %[7]s"
+echo ""
+echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
 `,
-		port,
-		shellEscape(password),
+		ssPort,              // %[1]d
+		hysteriaPort,        // %[2]d
+		vlessPort,           // %[3]d
+		trojanPort,          // %[4]d
+		shellEscape(ssPassword),        // %[5]s
+		shellEscape(hysteriaPassword),  // %[6]s
+		shellEscape(trojanPassword),    // %[7]s
+		vlessUUID,           // %[8]s
+		realityPrivateKey,   // %[9]s
+		realityShortID,      // %[10]s
 	)
+	}
 
 	var payload struct {
 		Instance vultrInstance `json:"instance"`
@@ -646,16 +1161,31 @@ docker run -d --name ss-server --restart=always -p %[1]d:%[1]d/tcp -p %[1]d:%[1]
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	records[instanceID] = vultrNodeRecord{
+	// Save record with appropriate protocol information based on RAM
+	nodeRecord := vultrNodeRecord{
 		InstanceID: instanceID,
 		Label:      opts.Label,
 		Region:     opts.Region,
 		Plan:       opts.Plan,
 		OSID:       selectedOSID,
-		Port:       port,
-		Password:   password,
+		Port:       ssPort,     // Legacy compatibility: use SS port
+		Password:   ssPassword, // Legacy compatibility: use SS password
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		SSPort:     ssPort,
+		SSPassword: ssPassword,
 	}
+
+	// Only add multi-protocol config for high-RAM plans
+	if planRAM > 600 {
+		nodeRecord.HysteriaPort = hysteriaPort
+		nodeRecord.HysteriaPassword = hysteriaPassword
+		nodeRecord.VLESSPort = vlessPort
+		nodeRecord.VLESSUUID = vlessUUID
+		nodeRecord.TrojanPort = trojanPort
+		nodeRecord.TrojanPassword = trojanPassword
+	}
+
+	records[instanceID] = nodeRecord
 
 	if err := saveVultrNodes(records); err != nil {
 		vultrNodesMu.Unlock()
@@ -673,12 +1203,18 @@ docker run -d --name ss-server --restart=always -p %[1]d:%[1]d/tcp -p %[1]d:%[1]
 	if err == nil {
 		if record, ok := records[instanceID]; ok {
 			record.IPv4 = instance.MainIP
+			record.IPv6 = instance.V6MainIP
 			records[instanceID] = record
 			_ = saveVultrNodes(records)
 		}
 	}
 	vultrNodesMu.Unlock()
 
+	// Log detected IP addresses
+	fmt.Printf("[CreateVultrInstance] Instance %s has IPv4: %s, IPv6: %s\n",
+		instanceID, instance.MainIP, instance.V6MainIP)
+
+	// Build result with appropriate protocol information
 	result := VultrNode{
 		InstanceID: instance.ID,
 		Label:      instance.Label,
@@ -687,9 +1223,22 @@ docker run -d --name ss-server --restart=always -p %[1]d:%[1]d/tcp -p %[1]d:%[1]
 		Plan:       opts.Plan,
 		OSID:       selectedOSID,
 		IPv4:       instance.MainIP,
-		Port:       port,
-		Password:   password,
+		IPv6:       instance.V6MainIP,
+		Port:       ssPort,     // Legacy compatibility
+		Password:   ssPassword, // Legacy compatibility
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		SSPort:     ssPort,
+		SSPassword: ssPassword,
+	}
+
+	// Only add multi-protocol config for high-RAM plans
+	if planRAM > 600 {
+		result.HysteriaPort = hysteriaPort
+		result.HysteriaPassword = hysteriaPassword
+		result.VLESSPort = vlessPort
+		result.VLESSUUID = vlessUUID
+		result.TrojanPort = trojanPort
+		result.TrojanPassword = trojanPassword
 	}
 
 	data, err := json.Marshal(result)

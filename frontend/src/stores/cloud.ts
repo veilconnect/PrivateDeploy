@@ -19,6 +19,7 @@ import * as ProfileDefaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
 import { Outbound } from '@/enums/kernel'
 import { sampleID, deepClone } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import { useSubscribesStore } from './subscribes'
 import { useProfilesStore } from './profiles'
@@ -35,7 +36,7 @@ const parseJSON = <T>(data: string | undefined | null, fallback: T): T => {
   try {
     return JSON.parse(data) as T
   } catch (error) {
-    console.error('Failed to parse Vultr response', error)
+    logError('Failed to parse Vultr response', error)
     return fallback
   }
 }
@@ -71,13 +72,13 @@ export const useCloudStore = defineStore('cloud', () => {
     if (!flag) throw new Error(data)
   }
 
-  const ensureRegionAvailability = async (region: string) => {
+  const ensureRegionAvailability = async (region: string, force = false) => {
     if (!region) return [] as string[]
     if (typeof ListVultrAvailability !== 'function') {
       availability[region] = availability[region] || []
       return availability[region]
     }
-    if (!availability[region]) {
+    if (force || !availability[region]) {
       const res = await ListVultrAvailability(region)
       ensureFlag(res.flag, res.data)
       availability[region] = parseJSON<string[]>(res.data, [])
@@ -86,22 +87,152 @@ export const useCloudStore = defineStore('cloud', () => {
   }
 
   const ensureSubscriptionForNode = async (node: VultrNode) => {
-    if (!node.instanceId || !node.ipv4) return
+    // Check if we have at least one IP address
+    if (!node.instanceId || (!node.ipv4 && !node.ipv6)) return
 
     const id = subscriptionId(node.instanceId)
     const path = subscriptionPath(node.instanceId)
 
-    const payload = {
-      outbounds: [
-        {
+    // Build outbounds array with all available protocols
+    // For each protocol, if both IPv4 and IPv6 are available, create separate nodes
+    const outbounds: any[] = []
+
+    // Determine which IP versions are available for proxy configuration
+    // Filter out private/internal IPs (100.68.x.x, 10.x.x.x, 192.168.x.x, 172.16-31.x.x)
+    const isPublicIPv4 = (ip: string): boolean => {
+      if (!ip) return false
+      if (ip.startsWith('100.68.')) return false // Vultr internal
+      if (ip.startsWith('10.')) return false
+      if (ip.startsWith('192.168.')) return false
+      if (ip.startsWith('172.')) {
+        const octets = ip.split('.')
+        if (octets.length >= 2) {
+          const second = parseInt(octets[1], 10)
+          if (second >= 16 && second <= 31) return false
+        }
+      }
+      return true
+    }
+
+    const hasIPv4 = !!node.ipv4 && node.ipv4 !== '' && isPublicIPv4(node.ipv4)
+    const hasIPv6 = !!node.ipv6 && node.ipv6 !== ''
+    const ipVersions: Array<{ ip: string; suffix: string }> = []
+
+    // Generate configurations for all available public IPs
+    // sing-box will automatically try available connections
+    if (hasIPv4) {
+      ipVersions.push({ ip: node.ipv4, suffix: '-v4' })
+    }
+    if (hasIPv6 && node.ipv6) {
+      ipVersions.push({ ip: node.ipv6, suffix: '-v6' })
+    }
+
+    // Skip nodes with only internal/private IPs - they cannot be used for external connections
+    if (ipVersions.length === 0) {
+      console.log(`[CloudStore] Node ${node.label} has no usable public IP addresses, skipping subscription generation`)
+      return
+    }
+
+    // 1. Shadowsocks (always available - legacy compatibility)
+    if (node.ssPort && node.ssPassword) {
+      ipVersions.forEach(({ ip, suffix }) => {
+        outbounds.push({
           type: 'shadowsocks',
-          tag: node.label,
-          server: node.ipv4,
+          tag: `${node.label}-ss${suffix}`,
+          server: ip,
+          server_port: node.ssPort,
+          method: 'aes-256-gcm',
+          password: node.ssPassword,
+        })
+      })
+    }
+
+    // 2. Hysteria2 (UDP-based, better for congested networks)
+    if (node.hysteriaPort && node.hysteriaPassword) {
+      ipVersions.forEach(({ ip, suffix }) => {
+        outbounds.push({
+          type: 'hysteria2',
+          tag: `${node.label}-hysteria2${suffix}`,
+          server: ip,
+          server_port: node.hysteriaPort,
+          up_mbps: 100,
+          down_mbps: 100,
+          password: node.hysteriaPassword,
+          tls: {
+            enabled: true,
+            insecure: true,
+            server_name: 'www.bing.com',
+          },
+        })
+      })
+    }
+
+    // 3. VLESS-Reality (best anti-censorship)
+    // Note: Reality requires public_key from server, temporarily disabled
+    // Will be added when we implement key retrieval from deployment
+    // if (node.vlessPort && node.vlessUUID) {
+    //   ipVersions.forEach(({ ip, suffix }) => {
+    //     outbounds.push({
+    //       type: 'vless',
+    //       tag: `${node.label}-vless${suffix}`,
+    //       server: ip,
+    //       server_port: node.vlessPort,
+    //       uuid: node.vlessUUID,
+    //       flow: 'xtls-rprx-vision',
+    //       tls: {
+    //         enabled: true,
+    //         server_name: 'www.microsoft.com',
+    //         utls: {
+    //           enabled: true,
+    //           fingerprint: 'chrome',
+    //         },
+    //         reality: {
+    //           enabled: true,
+    //           public_key: '',
+    //           short_id: '',
+    //         },
+    //       },
+    //     })
+    //   })
+    // }
+
+    // 4. Trojan (good balance of security and performance)
+    if (node.trojanPort && node.trojanPassword) {
+      ipVersions.forEach(({ ip, suffix }) => {
+        outbounds.push({
+          type: 'trojan',
+          tag: `${node.label}-trojan${suffix}`,
+          server: ip,
+          server_port: node.trojanPort,
+          password: node.trojanPassword,
+          tls: {
+            enabled: true,
+            insecure: true,
+            server_name: 'www.microsoft.com',
+          },
+        })
+      })
+    }
+
+    // Fallback: if no multi-protocol data, use legacy format
+    if (outbounds.length === 0 && node.port && node.password) {
+      ipVersions.forEach(({ ip, suffix }) => {
+        outbounds.push({
+          type: 'shadowsocks',
+          tag: `${node.label}${suffix}`,
+          server: ip,
           server_port: node.port,
           method: 'aes-256-gcm',
           password: node.password,
-        },
-      ],
+        })
+      })
+    }
+
+    // Don't add selector/urltest to subscription file
+    // They will be generated by the profile system
+    // Only export the actual protocol nodes
+    const payload = {
+      outbounds,
     }
 
     await WriteFile(path, JSON.stringify(payload, null, 2))
@@ -214,12 +345,15 @@ export const useCloudStore = defineStore('cloud', () => {
     }
   }
 
-  const refreshInstances = async () => {
-    loadingInstances.value = true
+  const refreshInstances = async (silent = false) => {
+    if (!silent) {
+      loadingInstances.value = true
+    }
     try {
       const res = await ListVultrInstances()
       ensureFlag(res.flag, res.data)
       const rawNodes = parseJSON<VultrNode[]>(res.data, [])
+
       await Promise.all(rawNodes.map((node) => ensureRegionAvailability(node.region).catch(() => [])))
 
       const statusMap = new Map(instances.value.map((node) => [node.instanceId, node.statusText || 'unknown']))
@@ -247,11 +381,19 @@ export const useCloudStore = defineStore('cloud', () => {
 
       await Promise.all(
         enriched
-          .filter((node) => node.instanceId && node.ipv4)
-          .map((node) => ensureSubscriptionForNode(node).catch((error) => console.error(error))),
+          .filter((node) => node.instanceId && (node.ipv4 || node.ipv6))
+          .map((node) => ensureSubscriptionForNode(node).catch((error) => {
+            logError('[CloudStore] Failed to create subscription for node:', node.label, error)
+            return undefined
+          })),
       )
+    } catch (error) {
+      logError('[CloudStore] refreshInstances error:', error)
+      throw error
     } finally {
-      loadingInstances.value = false
+      if (!silent) {
+        loadingInstances.value = false
+      }
     }
   }
 

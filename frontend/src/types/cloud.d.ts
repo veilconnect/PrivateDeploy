@@ -13,11 +13,15 @@ export interface VultrRegion {
 
 export interface VultrPlan {
   id: string
-  description: string
-  memoryMB: number
-  vcpus: number
-  diskGB: number
-  bandwidthGB: number
+  description?: string
+  ram: number              // Memory in MB (API field name)
+  vcpu_count: number      // Number of vCPUs (API field name)
+  disk: number            // Disk size in GB (API field name)
+  bandwidth: number       // Bandwidth in GB (API field name)
+  monthly_cost?: number   // Monthly cost in USD (API field name)
+  hourly_cost?: number    // Hourly cost in USD (API field name)
+  type?: string
+  locations?: string[]
 }
 
 export interface VultrNode {
@@ -28,7 +32,17 @@ export interface VultrNode {
   plan: string
   osId: number
   ipv4: string
+  ipv6?: string
   port: number
   password: string
   createdAt: string
+  // Multi-protocol configuration
+  ssPort?: number
+  ssPassword?: string
+  hysteriaPort?: number
+  hysteriaPassword?: string
+  vlessPort?: number
+  vlessUUID?: string
+  trojanPort?: number
+  trojanPassword?: string
 }

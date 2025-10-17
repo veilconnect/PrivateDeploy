@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ClipboardSetText } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import type { VultrNode, VultrPlan, VultrRegion } from '@/types/cloud'
 
@@ -21,9 +22,19 @@ const form = reactive({
 const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loadingRegions)
 const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 
+function formatRegion(region: VultrRegion) {
+  const cityKey = `cloud.regions.${region.city}`
+  const countryKey = `cloud.regions.${region.country}`
+
+  const city = t(cityKey) !== cityKey ? t(cityKey) : region.city
+  const country = t(countryKey) !== countryKey ? t(countryKey) : region.country
+
+  return `${city}, ${country}`
+}
+
 const regionOptions = computed(() =>
   cloudStore.regions.map((region: VultrRegion) => ({
-    label: `${region.city}, ${region.country}`,
+    label: formatRegion(region),
     value: region.id,
   })),
 )
@@ -53,18 +64,53 @@ const getStatusColor = (status?: string): TagColor => statusColors[(status || 'u
 const availablePlanIds = computed(() => cloudStore.availability[form.region] || [])
 
 const planOptions = computed(() => {
-  const ids = availablePlanIds.value
-  const source = ids.length
-    ? cloudStore.plans.filter((plan: VultrPlan) => ids.includes(plan.id))
-    : cloudStore.plans
-  return source.map((plan: VultrPlan) => ({
+  // 强制响应式依赖
+  const availabilityData = cloudStore.availability
+  const currentRegion = form.region
+
+  console.log('[CloudView] planOptions computed - region:', currentRegion, 'availability:', availabilityData[currentRegion])
+
+  if (!currentRegion) {
+    return cloudStore.plans.map((plan: VultrPlan) => ({
+      label: formatPlan(plan),
+      value: plan.id,
+    }))
+  }
+
+  // 获取当前区域的可用套餐ID列表
+  const ids = availabilityData[currentRegion] || []
+
+  console.log('[CloudView] Available plan IDs for region:', ids)
+
+  // 如果有可用性数据,只显示该区域可用的套餐
+  if (ids.length > 0) {
+    const source = cloudStore.plans.filter((plan: VultrPlan) => ids.includes(plan.id))
+    console.log('[CloudView] Filtered plans:', source.length, 'out of', cloudStore.plans.length)
+    return source.map((plan: VultrPlan) => ({
+      label: formatPlan(plan),
+      value: plan.id,
+    }))
+  }
+
+  // 如果没有可用性数据,暂时显示所有套餐
+  // (在部署时会再次验证,如果不可用会报错)
+  console.log('[CloudView] No availability data, showing all plans:', cloudStore.plans.length)
+  return cloudStore.plans.map((plan: VultrPlan) => ({
     label: formatPlan(plan),
     value: plan.id,
   }))
 })
 
-const regionMap = computed(() => new Map(cloudStore.regions.map((r) => [r.id, `${r.city}, ${r.country}`])))
-const planMap = computed(() => new Map(cloudStore.plans.map((p) => [p.id, formatPlan(p)])))
+const regionMap = computed(() => new Map(cloudStore.regions.map((r) => [r.id, formatRegion(r)])))
+const planMap = computed(() => {
+  const map = new Map(cloudStore.plans.map((p) => [p.id, formatPlan(p)]))
+  console.log('[CloudView] planMap updated, size:', map.size, 'plans:', cloudStore.plans.length)
+  if (cloudStore.plans.length > 0) {
+    const firstPlan = cloudStore.plans[0]
+    console.log('[CloudView] First plan:', firstPlan.id, 'formatted:', formatPlan(firstPlan))
+  }
+  return map
+})
 
 const tableData = computed(() =>
   cloudStore.instances.map((node) => ({
@@ -84,9 +130,22 @@ function defaultLabel() {
 }
 
 function formatPlan(plan: VultrPlan) {
-  const ram = plan.memoryMB >= 1024 ? `${(plan.memoryMB / 1024).toFixed(1)}GB` : `${plan.memoryMB}MB`
-  const disk = plan.diskGB >= 1024 ? `${(plan.diskGB / 1024).toFixed(1)}TB` : `${plan.diskGB}GB`
-  const meta = [`${plan.vcpus} vCPU`, `${ram} RAM`, `${disk} SSD`]
+  const ram = plan.ram >= 1024 ? `${(plan.ram / 1024).toFixed(1)}GB` : `${plan.ram}MB`
+  const disk = plan.disk >= 1024 ? `${(plan.disk / 1024).toFixed(1)}TB` : `${plan.disk}GB`
+  const bandwidth = plan.bandwidth >= 1024 ? `${(plan.bandwidth / 1024).toFixed(1)}TB` : `${plan.bandwidth}GB`
+
+  const meta = [
+    `${plan.vcpu_count} ${t('cloud.format.vcpu')}`,
+    `${ram} ${t('cloud.format.ram')}`,
+    `${disk} ${t('cloud.format.disk')}`,
+    `${bandwidth} ${t('cloud.format.bandwidth')}`
+  ]
+
+  // Add price if available
+  if (plan.monthly_cost && plan.monthly_cost > 0) {
+    meta.push(`$${plan.monthly_cost.toFixed(2)}${t('cloud.format.monthly')}`)
+  }
+
   return plan.description ? `${plan.description} · ${meta.join(' · ')}` : `${plan.id} · ${meta.join(' · ')}`
 }
 
@@ -113,7 +172,7 @@ const columns = [
   { title: 'cloud.table.label', key: 'label', minWidth: '160px' },
   { title: 'cloud.table.region', key: 'region', minWidth: '160px' },
   { title: 'cloud.table.plan', key: 'plan', minWidth: '200px' },
-  { title: 'cloud.table.ipv4', key: 'ipv4', minWidth: '160px' },
+  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', minWidth: '220px' },
   { title: 'cloud.table.port', key: 'port', minWidth: '80px' },
   { title: 'cloud.table.password', key: 'password', minWidth: '140px' },
   { title: 'cloud.table.status', key: 'status', minWidth: '120px' },
@@ -144,10 +203,14 @@ watch(
 
 watch(
   () => form.region,
-  async (value) => {
+  async (value, oldValue) => {
+    console.log('[CloudView] Region changed:', oldValue, '->', value)
     cloudStore.config.defaultRegion = value
-    if (value) {
-      await cloudStore.ensureRegionAvailability(value)
+    if (value && value !== oldValue) {
+      console.log('[CloudView] Forcing availability reload for region:', value)
+      // 强制重新加载可用性数据
+      await cloudStore.ensureRegionAvailability(value, true)
+      console.log('[CloudView] Availability loaded:', cloudStore.availability[value])
       ensurePlanForRegion(value)
     }
   },
@@ -165,21 +228,58 @@ onMounted(async () => {
   try {
     await cloudStore.loadConfig()
     if (cloudStore.config.apiKey) {
+      // Load regions and plans in parallel
       await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
-      await cloudStore.refreshInstances()
+
+      // First refresh: use silent mode to avoid blocking UI on slow networks
+      cloudStore.refreshInstances(true).catch((e) => {
+        logError('[CloudView] Initial refresh failed:', e)
+      })
+
+      // Start background refresh (silent, updates every 30 seconds)
+      const refreshInterval = setInterval(() => {
+        if (cloudStore.config.apiKey) {
+          cloudStore.refreshInstances(true).catch((e) => logError('[CloudView] Background refresh failed:', e))
+        }
+      }, 30000)
+
+      // Clean up interval when component unmounts
+      onUnmounted(() => clearInterval(refreshInterval))
     } else {
       await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
     }
     await applyDefaults()
   } catch (error) {
+    logError('[CloudView] onMounted error:', error)
+    // Ensure loading state is reset on error
+    cloudStore.loadingInstances = false
     handleError(error)
   }
 })
 
 const handleError = (error: unknown) => {
-  const messageText = error instanceof Error ? error.message : String(error)
-  console.error('[Cloud Deploy]', error)
-  console.error('[Cloud Deploy]', messageText)
+  let messageText = error instanceof Error ? error.message : String(error)
+  logError('[Cloud Deploy]', error)
+  logError('[Cloud Deploy]', messageText)
+
+  // 检测并翻译 Vultr API 错误信息
+  const lowerMessage = messageText.toLowerCase()
+
+  // "requires a plan with at least X MB memory"
+  const memoryMatch = messageText.match(/at least (\d+)\s*MB memory/i)
+  if (memoryMatch) {
+    const required = memoryMatch[1]
+    messageText = t('cloud.errors.memoryTooLow', { required })
+  }
+  // "plan is not available in the selected region"
+  else if (lowerMessage.includes('plan') && lowerMessage.includes('not available') && lowerMessage.includes('region')) {
+    messageText = t('cloud.errors.planUnavailable')
+  }
+  // "API key" 相关错误
+  else if (lowerMessage.includes('api key') || lowerMessage.includes('apikey')) {
+    messageText = t('cloud.errors.apiKeyRequired')
+  }
+
   message.error(messageText)
 }
 
@@ -262,7 +362,8 @@ const handleUseNode = async (node: VultrNode | Record<string, any>) => {
       await kernelApiStore.startCore()
     }
     cloudStore.markNodeStatus(target.instanceId, 'connected')
-    await cloudStore.refreshInstances()
+    // Use silent refresh to avoid showing loading state
+    cloudStore.refreshInstances(true).catch((e) => logError('[CloudView] Silent refresh after apply failed:', e))
     message.success(t('cloud.nodes.applied'))
     message.info(t('cloud.nodes.applyTip'))
   } catch (error) {
@@ -271,6 +372,22 @@ const handleUseNode = async (node: VultrNode | Record<string, any>) => {
   } finally {
     applyingNodeId.value = ''
   }
+}
+
+const isPublicIPv4 = (ip: string): boolean => {
+  if (!ip) return false
+  // Filter out internal/private IPv4 addresses
+  if (ip.startsWith('100.68.')) return false // Vultr internal
+  if (ip.startsWith('10.')) return false
+  if (ip.startsWith('192.168.')) return false
+  if (ip.startsWith('172.')) {
+    const octets = ip.split('.')
+    if (octets.length >= 2) {
+      const second = parseInt(octets[1], 10)
+      if (second >= 16 && second <= 31) return false
+    }
+  }
+  return true
 }
 
 const copyValue = async (value: string) => {
@@ -412,12 +529,25 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
               </Tag>
             </div>
           </template>
-          <template #ipv4="{ record }">
-            <div class="flex items-center gap-4">
-              <span>{{ record.ipv4 || '-' }}</span>
-              <Button v-if="record.ipv4" @click="copyValue(record.ipv4)" type="text" size="small">
-                {{ t('cloud.nodes.copy') }}
-              </Button>
+          <template #ipAddresses="{ record }">
+            <div class="flex flex-col gap-4">
+              <div v-if="isPublicIPv4(record.ipv4)" class="flex items-center gap-4">
+                <Tag size="small" color="cyan">IPv4</Tag>
+                <span class="font-mono text-12">{{ record.ipv4 }}</span>
+                <Button @click="copyValue(record.ipv4)" type="text" size="small">
+                  {{ t('cloud.nodes.copy') }}
+                </Button>
+              </div>
+              <div v-if="record.ipv6" class="flex items-center gap-4">
+                <Tag size="small" color="green">IPv6</Tag>
+                <span class="font-mono text-12">{{ record.ipv6 }}</span>
+                <Button @click="copyValue(record.ipv6)" type="text" size="small">
+                  {{ t('cloud.nodes.copy') }}
+                </Button>
+              </div>
+              <div v-if="!isPublicIPv4(record.ipv4) && !record.ipv6">
+                <span class="text-secondary">-</span>
+              </div>
             </div>
           </template>
           <template #password="{ record }">
