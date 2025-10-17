@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { ControllerCloseMode } from '@/enums/app'
 import { useAppSettingsStore, useProfilesStore, useKernelApiStore } from '@/stores'
-import { APP_TITLE, debounce, message } from '@/utils'
+import { APP_TITLE, message } from '@/utils'
 
 import { useModal } from '@/components/Modal'
 
@@ -12,9 +10,6 @@ import GroupsController from './components/GroupsController.vue'
 import KernelLogs from './components/KernelLogs.vue'
 import OverView from './components/OverView.vue'
 import QuickStart from './components/QuickStart.vue'
-
-const showController = ref(false)
-const controllerRef = useTemplateRef('controllerRef')
 
 const { t } = useI18n()
 const [Modal, modalApi] = useModal({})
@@ -48,42 +43,10 @@ const handleShowKernelLogs = () => {
   })
   modalApi.setContent(KernelLogs).open()
 }
-
-let scrollEventCount = 0
-const resetScrollEventCount = debounce(() => (scrollEventCount = 0), 100)
-
-const onMouseWheel = (e: WheelEvent) => {
-  if (!kernelApiStore.running) return
-
-  const isScrollingDown = e.deltaY > 0
-
-  if (
-    isScrollingDown ||
-    appSettingsStore.app.kernel.controllerCloseMode === ControllerCloseMode.All
-  ) {
-    const currentScrollTop = controllerRef.value?.scrollTop ?? 0
-    if (isScrollingDown || currentScrollTop === 0) {
-      scrollEventCount += 1
-    }
-    if (scrollEventCount >= appSettingsStore.app.kernel.controllerSensitivity) {
-      showController.value = isScrollingDown || currentScrollTop !== 0
-    }
-  }
-
-  resetScrollEventCount()
-}
-
-watch(showController, (v) => {
-  if (v) {
-    kernelApiStore.refreshProviderProxies()
-  } else {
-    kernelApiStore.refreshConfig()
-  }
-})
 </script>
 
 <template>
-  <div @wheel="onMouseWheel" class="relative overflow-hidden h-full">
+  <div class="relative overflow-hidden h-full">
     <div
       v-if="(!kernelApiStore.running && !kernelApiStore.stopping) || kernelApiStore.starting"
       class="w-full h-[90%] flex flex-col items-center justify-center"
@@ -150,32 +113,13 @@ watch(showController, (v) => {
     </div>
 
     <template v-else-if="!kernelApiStore.coreStateLoading">
-      <div :class="{ 'blur-3xl': showController }">
+      <div class="h-full overflow-y-auto">
         <OverView />
         <Divider>
-          <Button @click="showController = true" type="link" size="small">
-            {{ t('home.controller.name') }}
-          </Button>
+          <span class="text-14 font-bold">{{ t('home.controller.name') }}</span>
         </Divider>
-      </div>
-
-      <div
-        ref="controllerRef"
-        :class="showController ? 'translate-y-0' : 'translate-y-full'"
-        class="absolute inset-0 pb-32 overflow-y-auto duration-400"
-      >
         <GroupsController />
       </div>
-
-      <Button
-        v-show="showController"
-        class="fixed left-1/2 -translate-x-1/2 bottom-12 z-2"
-        style="background-color: var(--card-bg)"
-        @click="showController = false"
-        type="text"
-        size="small"
-        icon="close"
-      />
     </template>
   </div>
 
