@@ -368,6 +368,13 @@ export default {
       planUnavailable: 'Selected plan is unavailable in this region. Please choose another plan.',
     },
     confirmDestroy: "Destroy the cloud instance '{label}'? This action cannot be undone.",
+    format: {
+      vcpu: 'vCPU',
+      ram: 'RAM',
+      disk: 'SSD',
+      bandwidth: 'BW',
+      monthly: '/mo',
+    },
   },
   home: {
     mode: 'Proxy Mode',
