@@ -558,21 +558,18 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
 
 <template>
   <div class="cloud-view grid gap-16">
-    <Card :title="t('cloud.provider.title')">
-      <div class="flex items-center gap-8 py-8">
-        <span class="text-14">{{ t('cloud.provider.label') }}:</span>
-        <Select
-          v-model="cloudStore.currentProvider"
-          :options="providerOptions"
-          @change="handleProviderChange"
-          size="small"
-          auto-size
-        />
-      </div>
-    </Card>
-
     <Card :title="t('cloud.credentials.title')">
       <div class="flex flex-col gap-12 py-8">
+        <div class="flex flex-wrap items-center gap-8">
+          <span class="text-14 shrink-0">{{ t('cloud.provider.label') }}:</span>
+          <Select
+            v-model="cloudStore.currentProvider"
+            :options="providerOptions"
+            @change="handleProviderChange"
+            size="small"
+            auto-size
+          />
+        </div>
         <div class="flex flex-wrap items-center gap-8">
           <Input
             v-model="cloudStore.config.apiKey"
