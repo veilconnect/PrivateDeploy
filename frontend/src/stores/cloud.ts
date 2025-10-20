@@ -241,9 +241,17 @@ export const useCloudStore = defineStore('cloud', () => {
       outbounds,
     }
 
-    await WriteFile(path, JSON.stringify(payload, null, 2))
-
+    const newContent = JSON.stringify(payload, null, 2)
     const existing = subscribesStore.getSubscribeById(id)
+
+    // Only write file if this is a new subscription or updateTime is more than 5 minutes old
+    // This avoids unnecessary file I/O on every refresh
+    const shouldWrite = !existing || (Date.now() - existing.updateTime > 5 * 60 * 1000)
+
+    if (shouldWrite) {
+      await WriteFile(path, newContent)
+    }
+
     const subscription: Subscription = existing
       ? { ...existing }
       : {

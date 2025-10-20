@@ -9,7 +9,6 @@ import { useModal } from '@/components/Modal'
 import GroupsController from './components/GroupsController.vue'
 import KernelLogs from './components/KernelLogs.vue'
 import OverView from './components/OverView.vue'
-import QuickStart from './components/QuickStart.vue'
 
 const { t } = useI18n()
 const [Modal, modalApi] = useModal({})
@@ -25,11 +24,6 @@ const handleStartKernel = async () => {
     console.error(error)
     message.error(error.message || error)
   }
-}
-
-const handleShowQuickStart = () => {
-  modalApi.setProps({ title: 'subscribes.enterLink' })
-  modalApi.setContent(QuickStart).open()
 }
 
 const handleShowKernelLogs = () => {
@@ -55,13 +49,12 @@ const handleShowKernelLogs = () => {
 
       <template v-if="profilesStore.profiles.length === 0">
         <p>{{ t('home.noProfile', [APP_TITLE]) }}</p>
-        <Button @click="handleShowQuickStart" type="primary">{{ t('home.quickStart') }}</Button>
       </template>
 
       <template v-else>
         <div class="flex gap-8 mb-32">
           <Card
-            v-for="p in profilesStore.profiles.slice(0, profilesStore.profiles.length > 4 ? 3 : 4)"
+            v-for="p in profilesStore.profiles.slice(0, 4)"
             :key="p.id"
             :selected="appSettingsStore.app.kernel.profile === p.id"
             @click="appSettingsStore.app.kernel.profile = p.id"
@@ -83,7 +76,7 @@ const handleShowKernelLogs = () => {
             <template #overlay>
               <div class="flex flex-col py-8">
                 <Button
-                  v-for="p in profilesStore.profiles.slice(3)"
+                  v-for="p in profilesStore.profiles.slice(4)"
                   :key="p.id"
                   @click="appSettingsStore.app.kernel.profile = p.id"
                 >
@@ -95,13 +88,6 @@ const handleShowKernelLogs = () => {
               </div>
             </template>
           </Dropdown>
-          <Card @click="handleShowQuickStart">
-            <div
-              class="w-128 h-full flex items-center justify-center py-24 text-center cursor-pointer font-bold text-12"
-            >
-              {{ t('home.quickStart') }}
-            </div>
-          </Card>
         </div>
         <Button @click="handleStartKernel" :loading="kernelApiStore.starting" type="primary">
           {{ t('home.overview.start') }}

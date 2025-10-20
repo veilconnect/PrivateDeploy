@@ -22,6 +22,7 @@ const appSettings = Stores.useAppSettingsStore()
 const kernelApiStore = Stores.useKernelApiStore()
 const subscribesStore = Stores.useSubscribesStore()
 const scheduledTasksStore = Stores.useScheduledTasksStore()
+const cloudStore = Stores.useCloudStore()
 
 EventsOn('onLaunchApp', async (args: string[]) => {
   const url = new URL(args[0])
@@ -84,13 +85,36 @@ envStore.setupEnv().then(async () => {
   percent.value = 40
   await pluginsStore.onReadyTrigger().catch(showError)
 
+  // Auto-apply cloud nodes on startup
+  percent.value = 60
+  try {
+    await cloudStore.loadConfig()
+    if (cloudStore.config.apiKey) {
+      await cloudStore.refreshInstances(true)
+    }
+  } catch (error) {
+    console.error('[App] Failed to auto-apply cloud nodes:', error)
+  }
+
   const duration = performance.now() - startTime
   percent.value = duration < 500 ? 80 : 100
 
   await sleep(Math.max(0, 1000 - duration))
 
   loading.value = false
-  kernelApiStore.updateCoreState()
+  await kernelApiStore.updateCoreState()
+
+  // Auto-start kernel if profiles exist and kernel is not running
+  percent.value = 100
+  try {
+    if (profilesStore.profiles.length > 0 && !kernelApiStore.running) {
+      console.log('[App] Auto-starting kernel...')
+      await kernelApiStore.startCore()
+      console.log('[App] Kernel auto-started successfully')
+    }
+  } catch (error) {
+    console.error('[App] Failed to auto-start kernel:', error)
+  }
 })
 </script>
 
