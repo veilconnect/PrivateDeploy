@@ -42,6 +42,10 @@ export function FileExists(arg1) {
   return window['go']['bridge']['App']['FileExists'](arg1);
 }
 
+export function GetCloudProvider() {
+  return window['go']['bridge']['App']['GetCloudProvider']();
+}
+
 export function GetEnv() {
   return window['go']['bridge']['App']['GetEnv']();
 }
@@ -60,6 +64,10 @@ export function IsStartup() {
 
 export function KillProcess(arg1, arg2) {
   return window['go']['bridge']['App']['KillProcess'](arg1, arg2);
+}
+
+export function ListCloudProviders() {
+  return window['go']['bridge']['App']['ListCloudProviders']();
 }
 
 export function ListServer() {
@@ -128,6 +136,10 @@ export function RestartApp() {
 
 export function SaveVultrConfig(arg1) {
   return window['go']['bridge']['App']['SaveVultrConfig'](arg1);
+}
+
+export function SetCloudProvider(arg1) {
+  return window['go']['bridge']['App']['SetCloudProvider'](arg1);
 }
 
 export function ShowMainWindow() {

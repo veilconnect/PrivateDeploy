@@ -10,6 +10,9 @@ import {
   CreateVultrInstance,
   DestroyVultrInstance,
   ListVultrAvailability,
+  ListCloudProviders,
+  GetCloudProvider,
+  SetCloudProvider,
   WriteFile,
   RemoveFile,
 } from '@/bridge'
@@ -26,7 +29,7 @@ import { useProfilesStore } from './profiles'
 import { useAppSettingsStore } from './appSettings'
 
 import type { Subscription } from '@/types/app'
-import type { VultrConfig, VultrNode, VultrPlan, VultrRegion } from '@/types/cloud'
+import type { CloudProvider, VultrConfig, VultrNode, VultrPlan, VultrRegion } from '@/types/cloud'
 
 
 type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
@@ -45,6 +48,10 @@ const subscriptionId = (instanceId: string) => `cloud-${instanceId}`
 const subscriptionPath = (instanceId: string) => `data/subscribes/cloud-${instanceId}.json`
 
 export const useCloudStore = defineStore('cloud', () => {
+  // Multi-cloud provider management
+  const availableProviders = ref<Array<{ name: string; displayName: string }>>([])
+  const currentProvider = ref<CloudProvider>('vultr')
+
   const config = reactive<VultrConfig>({
     apiKey: '',
     defaultPlan: '',
@@ -542,22 +549,100 @@ export const useCloudStore = defineStore('cloud', () => {
     return profile.id
   }
 
+  // Multi-cloud provider methods
+  const loadProviders = async () => {
+    try {
+      if (typeof ListCloudProviders !== 'function') {
+        console.warn('[CloudStore] ListCloudProviders not available, using default')
+        availableProviders.value = [{ name: 'vultr', displayName: 'Vultr' }]
+        return
+      }
+
+      const res = await ListCloudProviders()
+      if (res.flag) {
+        availableProviders.value = parseJSON<Array<{ name: string; displayName: string }>>(res.data, [])
+        console.log('[CloudStore] Loaded providers:', availableProviders.value)
+      }
+    } catch (error) {
+      logError('[CloudStore] Failed to load providers:', error)
+      availableProviders.value = [{ name: 'vultr', displayName: 'Vultr' }]
+    }
+  }
+
+  const switchProvider = async (provider: CloudProvider) => {
+    try {
+      if (typeof SetCloudProvider !== 'function') {
+        console.warn('[CloudStore] SetCloudProvider not available')
+        currentProvider.value = provider
+        return
+      }
+
+      const res = await SetCloudProvider(provider)
+      ensureFlag(res.flag, res.data)
+      currentProvider.value = provider
+      console.log('[CloudStore] Switched to provider:', provider)
+
+      // Clear current data when switching providers
+      regions.value = []
+      plans.value = []
+      instances.value = []
+      Object.keys(availability).forEach((key) => delete availability[key])
+
+      // Reload config and data for new provider
+      await loadConfig()
+      if (config.apiKey) {
+        await refreshInstances(true)
+      }
+    } catch (error) {
+      logError('[CloudStore] Failed to switch provider:', error)
+      throw error
+    }
+  }
+
+  const getCurrentProvider = async () => {
+    try {
+      if (typeof GetCloudProvider !== 'function') {
+        console.warn('[CloudStore] GetCloudProvider not available, using default')
+        return
+      }
+
+      const res = await GetCloudProvider()
+      if (res.flag) {
+        const provider = parseJSON<{ name: string; displayName: string }>(res.data, { name: 'vultr', displayName: 'Vultr' })
+        currentProvider.value = provider.name as CloudProvider
+        console.log('[CloudStore] Current provider:', provider)
+      }
+    } catch (error) {
+      logError('[CloudStore] Failed to get current provider:', error)
+    }
+  }
+
   return {
+    // Multi-cloud
+    availableProviders,
+    currentProvider,
+    loadProviders,
+    switchProvider,
+    getCurrentProvider,
+    // Config
     config,
-    markNodeStatus,
     configLoaded,
     savingConfig,
+    loadConfig,
+    saveConfig,
+    // Data
     regions,
     plans,
     instances,
+    availability,
+    // Loading states
     loadingRegions,
     loadingPlans,
     loadingInstances,
     creatingInstance,
     destroyingInstance,
-    availability,
-    loadConfig,
-    saveConfig,
+    // Methods
+    markNodeStatus,
     fetchRegions,
     fetchPlans,
     refreshInstances,

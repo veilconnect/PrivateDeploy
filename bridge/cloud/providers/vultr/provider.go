@@ -2,7 +2,6 @@ package vultr
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 

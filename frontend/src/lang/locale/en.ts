@@ -317,9 +317,14 @@ export default {
     scheduledtasks: 'Tasks',
   },
   cloud: {
+    provider: {
+      title: 'Cloud Provider',
+      label: 'Provider',
+      switched: 'Cloud provider switched successfully',
+    },
     credentials: {
-      title: 'Vultr Credentials',
-      placeholder: 'Enter your Vultr API key',
+      title: 'Cloud Credentials',
+      placeholder: 'Enter your API key',
       save: 'Save Credentials',
       syncMeta: 'Reload regions & plans',
       hint: 'The API key is kept on this device. Provide a key with deployment permissions.',

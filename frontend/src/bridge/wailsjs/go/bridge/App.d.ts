@@ -22,6 +22,8 @@ export function ExitApp():Promise<void>;
 
 export function FileExists(arg1:string):Promise<bridge.FlagResult>;
 
+export function GetCloudProvider():Promise<bridge.FlagResult>;
+
 export function GetEnv():Promise<bridge.EnvResult>;
 
 export function GetInterfaces():Promise<bridge.FlagResult>;
@@ -31,6 +33,8 @@ export function GetVultrConfig():Promise<bridge.FlagResult>;
 export function IsStartup():Promise<boolean>;
 
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
+
+export function ListCloudProviders():Promise<bridge.FlagResult>;
 
 export function ListServer():Promise<bridge.FlagResult>;
 
@@ -65,6 +69,8 @@ export function Requests(arg1:string,arg2:string,arg3:Record<string, string>,arg
 export function RestartApp():Promise<bridge.FlagResult>;
 
 export function SaveVultrConfig(arg1:string):Promise<bridge.FlagResult>;
+
+export function SetCloudProvider(arg1:string):Promise<bridge.FlagResult>;
 
 export function ShowMainWindow():Promise<void>;
 

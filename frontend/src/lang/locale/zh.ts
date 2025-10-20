@@ -318,9 +318,14 @@ export default {
     scheduledtasks: '计划任务',
   },
   cloud: {
+    provider: {
+      title: '云服务商',
+      label: '服务商',
+      switched: '云服务商切换成功',
+    },
     credentials: {
-      title: 'Vultr 凭据',
-      placeholder: '请输入 Vultr API Key',
+      title: '云凭据',
+      placeholder: '请输入 API Key',
       save: '保存密钥',
       syncMeta: '刷新区域和套餐',
       hint: 'API Key 仅保存在本地，用于自动创建云服务器。',

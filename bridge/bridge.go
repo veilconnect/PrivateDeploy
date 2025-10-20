@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"embed"
 	"log"
 	"net"
@@ -12,6 +13,10 @@ import (
 	"strings"
 
 	sysruntime "runtime"
+
+	"veildeploy/bridge/cloud"
+	"veildeploy/bridge/cloud/providers/digitalocean"
+	"veildeploy/bridge/cloud/providers/vultr"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
@@ -53,6 +58,21 @@ func CreateApp(fs embed.FS) *App {
 	}
 
 	app := NewApp()
+
+	// Initialize CloudManager
+	app.CloudManager = cloud.NewManager(context.Background())
+
+	// Register cloud providers
+	vultrProvider := vultr.New(nil)
+	digitaloceanProvider := digitalocean.New(nil)
+
+	cloud.Register("vultr", vultrProvider)
+	cloud.Register("digitalocean", digitaloceanProvider)
+
+	// Set Vultr as the default active provider
+	if err := app.CloudManager.SetActiveProvider("vultr"); err != nil {
+		log.Printf("Warning: Failed to set default provider: %v", err)
+	}
 
 	if Env.OS == "darwin" {
 		createMacOSSymlink()

@@ -32,6 +32,13 @@ function formatRegion(region: VultrRegion) {
   return `${city}, ${country}`
 }
 
+const providerOptions = computed(() =>
+  cloudStore.availableProviders.map((provider) => ({
+    label: provider.displayName,
+    value: provider.name,
+  })),
+)
+
 const regionOptions = computed(() =>
   cloudStore.regions.map((region: VultrRegion) => ({
     label: formatRegion(region),
@@ -225,6 +232,9 @@ watch(
 
 onMounted(async () => {
   try {
+    // Load available providers and get current provider
+    await Promise.allSettled([cloudStore.loadProviders(), cloudStore.getCurrentProvider()])
+
     await cloudStore.loadConfig()
     if (cloudStore.config.apiKey) {
       // Load regions and plans in parallel
@@ -280,6 +290,16 @@ const handleError = (error: unknown) => {
   }
 
   message.error(messageText)
+}
+
+const handleProviderChange = async () => {
+  try {
+    await cloudStore.switchProvider(cloudStore.currentProvider)
+    message.success(t('cloud.provider.switched'))
+  } catch (error) {
+    logError('[CloudView] Failed to switch provider:', error)
+    handleError(error)
+  }
 }
 
 const handleSaveConfig = async () => {
@@ -538,6 +558,19 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
 
 <template>
   <div class="cloud-view grid gap-16">
+    <Card :title="t('cloud.provider.title')">
+      <div class="flex items-center gap-8 py-8">
+        <span class="text-14">{{ t('cloud.provider.label') }}:</span>
+        <Select
+          v-model="cloudStore.currentProvider"
+          :options="providerOptions"
+          @change="handleProviderChange"
+          size="small"
+          auto-size
+        />
+      </div>
+    </Card>
+
     <Card :title="t('cloud.credentials.title')">
       <div class="flex flex-col gap-12 py-8">
         <div class="flex flex-wrap items-center gap-8">

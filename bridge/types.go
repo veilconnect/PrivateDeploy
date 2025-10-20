@@ -4,13 +4,16 @@ import (
 	"context"
 	"net/http"
 
+	"veildeploy/bridge/cloud"
+
 	"github.com/wailsapp/wails/v2/pkg/menu"
 )
 
 // App struct
 type App struct {
-	Ctx     context.Context
-	AppMenu *menu.Menu
+	Ctx          context.Context
+	AppMenu      *menu.Menu
+	CloudManager *cloud.Manager
 }
 
 type EnvResult struct {
