@@ -98,19 +98,23 @@ export const useCloudStore = defineStore('cloud', () => {
     const outbounds: any[] = []
 
     // Determine which IP versions are available for proxy configuration
-    // Filter out private/internal IPs (100.68.x.x, 10.x.x.x, 192.168.x.x, 172.16-31.x.x)
+    // Filter out private/internal IPs (100.64.0.0/10 CGNAT, 10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12)
     const isPublicIPv4 = (ip: string): boolean => {
       if (!ip) return false
-      if (ip.startsWith('100.68.')) return false // Vultr internal
-      if (ip.startsWith('10.')) return false
-      if (ip.startsWith('192.168.')) return false
-      if (ip.startsWith('172.')) {
-        const octets = ip.split('.')
-        if (octets.length >= 2) {
-          const second = parseInt(octets[1], 10)
-          if (second >= 16 && second <= 31) return false
-        }
-      }
+      const octets = ip.split('.')
+      if (octets.length !== 4) return false
+
+      const first = parseInt(octets[0], 10)
+      const second = parseInt(octets[1], 10)
+
+      // CGNAT range: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+      if (first === 100 && second >= 64 && second <= 127) return false
+
+      // Private ranges
+      if (first === 10) return false // 10.0.0.0/8
+      if (first === 192 && second === 168) return false // 192.168.0.0/16
+      if (first === 172 && second >= 16 && second <= 31) return false // 172.16.0.0/12
+
       return true
     }
 
@@ -168,33 +172,35 @@ export const useCloudStore = defineStore('cloud', () => {
     }
 
     // 3. VLESS-Reality (best anti-censorship)
-    // Note: Reality requires public_key from server, temporarily disabled
-    // Will be added when we implement key retrieval from deployment
-    // if (node.vlessPort && node.vlessUUID) {
-    //   ipVersions.forEach(({ ip, suffix }) => {
-    //     outbounds.push({
-    //       type: 'vless',
-    //       tag: `${node.label}-vless${suffix}`,
-    //       server: ip,
-    //       server_port: node.vlessPort,
-    //       uuid: node.vlessUUID,
-    //       flow: 'xtls-rprx-vision',
-    //       tls: {
-    //         enabled: true,
-    //         server_name: 'www.microsoft.com',
-    //         utls: {
-    //           enabled: true,
-    //           fingerprint: 'chrome',
-    //         },
-    //         reality: {
-    //           enabled: true,
-    //           public_key: '',
-    //           short_id: '',
-    //         },
-    //       },
-    //     })
-    //   })
-    // }
+    if (node.vlessPort && node.vlessUUID && node.vlessPublicKey && node.vlessShortId) {
+      // Convert public_key to URL-safe base64 format (sing-box Reality requirement)
+      // Standard base64 uses +/ while URL-safe uses -_
+      const publicKeyUrlSafe = node.vlessPublicKey.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+      ipVersions.forEach(({ ip, suffix }) => {
+        outbounds.push({
+          type: 'vless',
+          tag: `${node.label}-vless${suffix}`,
+          server: ip,
+          server_port: node.vlessPort,
+          uuid: node.vlessUUID,
+          flow: 'xtls-rprx-vision',
+          tls: {
+            enabled: true,
+            server_name: 'www.microsoft.com',
+            utls: {
+              enabled: true,
+              fingerprint: 'chrome',
+            },
+            reality: {
+              enabled: true,
+              public_key: publicKeyUrlSafe,
+              short_id: node.vlessShortId,
+            },
+          },
+        })
+      })
+    }
 
     // 4. Trojan (good balance of security and performance)
     if (node.trojanPort && node.trojanPassword) {

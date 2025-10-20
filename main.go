@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"embed"
-	"guiforcores/bridge"
 	"time"
+
+	"veildeploy/bridge"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -52,7 +53,7 @@ func main() {
 			WindowIsTranslucent:  true,
 			About: &mac.AboutInfo{
 				Title:   bridge.Env.AppName,
-				Message: "© 2025 GUI.for.Cores",
+				Message: "© 2025 VeilDeploy",
 				Icon:    icon,
 			},
 		},

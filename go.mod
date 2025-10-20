@@ -1,6 +1,8 @@
-module guiforcores
+module veildeploy
 
-go 1.24
+go 1.23.0
+
+toolchain go1.24.9
 
 require (
 	github.com/energye/systray v1.0.2
@@ -8,6 +10,7 @@ require (
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/wailsapp/wails/v2 v2.10.2
+	golang.org/x/crypto v0.41.0
 	golang.org/x/sys v0.35.0
 	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -51,7 +54,6 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.21 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )

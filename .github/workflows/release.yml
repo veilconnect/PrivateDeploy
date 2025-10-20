@@ -1,4 +1,4 @@
-name: Build GUI.for.SingBox
+name: Build VeilDeploy
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   Build-Frontend:
     runs-on: ubuntu-latest
-    if: github.repository == 'GUI-for-Cores/GUI.for.SingBox'
+    if: github.repository == 'VeilDeploy/VeilDeploy'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -35,7 +35,7 @@ jobs:
     needs: Build-Frontend
     runs-on: windows-latest
     env:
-      APP_NAME: GUI.for.SingBox
+      APP_NAME: VeilDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -77,7 +77,7 @@ jobs:
     needs: Build-Frontend
     runs-on: macos-latest
     env:
-      APP_NAME: GUI.for.SingBox
+      APP_NAME: VeilDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -118,7 +118,7 @@ jobs:
     needs: Build-Frontend
     runs-on: ubuntu-latest
     env:
-      APP_NAME: GUI.for.SingBox
+      APP_NAME: VeilDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

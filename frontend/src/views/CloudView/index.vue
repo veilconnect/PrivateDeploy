@@ -173,8 +173,7 @@ const columns = [
   { title: 'cloud.table.region', key: 'region', minWidth: '160px' },
   { title: 'cloud.table.plan', key: 'plan', minWidth: '200px' },
   { title: 'cloud.table.ipAddresses', key: 'ipAddresses', minWidth: '220px' },
-  { title: 'cloud.table.port', key: 'port', minWidth: '80px' },
-  { title: 'cloud.table.password', key: 'password', minWidth: '140px' },
+  { title: 'cloud.table.protocols', key: 'protocols', minWidth: '320px' },
   { title: 'cloud.table.status', key: 'status', minWidth: '120px' },
   { title: 'cloud.table.createdAt', key: 'createdAt', minWidth: '180px' },
   { title: 'cloud.table.actions', key: 'actions', minWidth: '160px' },
@@ -376,17 +375,20 @@ const handleUseNode = async (node: VultrNode | Record<string, any>) => {
 
 const isPublicIPv4 = (ip: string): boolean => {
   if (!ip) return false
-  // Filter out internal/private IPv4 addresses
-  if (ip.startsWith('100.68.')) return false // Vultr internal
-  if (ip.startsWith('10.')) return false
-  if (ip.startsWith('192.168.')) return false
-  if (ip.startsWith('172.')) {
-    const octets = ip.split('.')
-    if (octets.length >= 2) {
-      const second = parseInt(octets[1], 10)
-      if (second >= 16 && second <= 31) return false
-    }
-  }
+  const octets = ip.split('.')
+  if (octets.length !== 4) return false
+
+  const first = parseInt(octets[0], 10)
+  const second = parseInt(octets[1], 10)
+
+  // CGNAT range: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+  if (first === 100 && second >= 64 && second <= 127) return false
+
+  // Private ranges
+  if (first === 10) return false // 10.0.0.0/8
+  if (first === 192 && second === 168) return false // 192.168.0.0/16
+  if (first === 172 && second >= 16 && second <= 31) return false // 172.16.0.0/12
+
   return true
 }
 
@@ -400,14 +402,122 @@ const copyValue = async (value: string) => {
   }
 }
 
-const copyNodeConfig = async (record: VultrNode | Record<string, any>) => {
-  const node = record as VultrNode
-  if (!node.ipv4) {
-    message.error(t('cloud.errors.ipv4Missing'))
+const ensureNode = (node: VultrNode | Record<string, any>): VultrNode => node as VultrNode
+
+const getPreferredAddress = (node: VultrNode | Record<string, any>): string | undefined => {
+  const target = ensureNode(node)
+  if (isPublicIPv4(target.ipv4)) return target.ipv4
+  if (target.ipv6) return target.ipv6
+  return undefined
+}
+
+const wrapHostForUri = (host: string): string => {
+  if (!host.includes(':')) return host
+  return host.startsWith('[') ? host : `[${host}]`
+}
+
+const buildShadowsocksLink = (node: VultrNode | Record<string, any>): string | null => {
+  const target = ensureNode(node)
+  const port = target.ssPort || target.port
+  const password = target.ssPassword || target.password
+  const host = getPreferredAddress(target)
+  if (!port || !password || !host) return null
+  const encoded = btoa(`aes-256-gcm:${password}@${wrapHostForUri(host)}:${port}`)
+  return `ss://${encoded}#${encodeURIComponent(target.label)}`
+}
+
+const buildHysteriaLink = (node: VultrNode | Record<string, any>): string | null => {
+  const target = ensureNode(node)
+  if (!target.hysteriaPort || !target.hysteriaPassword) return null
+  const host = getPreferredAddress(target)
+  if (!host) return null
+  const query = new URLSearchParams({ sni: 'www.bing.com', insecure: '1' })
+  return `hysteria2://${encodeURIComponent(target.hysteriaPassword)}@${wrapHostForUri(host)}:${target.hysteriaPort}?${query.toString()}#${encodeURIComponent(target.label)}`
+}
+
+const buildVlessLink = (node: VultrNode | Record<string, any>): string | null => {
+  const target = ensureNode(node)
+  if (!target.vlessPort || !target.vlessUUID || !target.vlessPublicKey || !target.vlessShortId) return null
+  const host = getPreferredAddress(target)
+  if (!host) return null
+  const query = new URLSearchParams({
+    encryption: 'none',
+    flow: 'xtls-rprx-vision',
+    security: 'reality',
+    'reality-public-key': target.vlessPublicKey,
+    'reality-short-id': target.vlessShortId,
+    sni: 'www.microsoft.com',
+    fp: 'chrome',
+  })
+  return `vless://${target.vlessUUID}@${wrapHostForUri(host)}:${target.vlessPort}?${query.toString()}#${encodeURIComponent(target.label)}`
+}
+
+const buildTrojanLink = (node: VultrNode | Record<string, any>): string | null => {
+  const target = ensureNode(node)
+  if (!target.trojanPort || !target.trojanPassword) return null
+  const host = getPreferredAddress(target)
+  if (!host) return null
+  const query = new URLSearchParams({ security: 'tls', sni: 'www.microsoft.com', allowInsecure: '1' })
+  return `trojan://${encodeURIComponent(target.trojanPassword)}@${wrapHostForUri(host)}:${target.trojanPort}?${query.toString()}#${encodeURIComponent(target.label)}`
+}
+
+const hasShadowsocks = (node: VultrNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return Boolean((target.ssPort || target.port) && (target.ssPassword || target.password))
+}
+const hasHysteria = (node: VultrNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return Boolean(target.hysteriaPort && target.hysteriaPassword)
+}
+const hasVless = (node: VultrNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return Boolean(target.vlessPort && target.vlessUUID && target.vlessPublicKey && target.vlessShortId)
+}
+const hasTrojan = (node: VultrNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return Boolean(target.trojanPort && target.trojanPassword)
+}
+
+const copyProtocolLink = async (link: string | null) => {
+  if (!link) {
+    message.error(t('cloud.errors.protocolUnavailable'))
     return
   }
-  const url = `ss://${btoa(`aes-256-gcm:${node.password}@${node.ipv4}:${node.port}`)}#${encodeURIComponent(node.label)}`
-  await copyValue(url)
+  await copyValue(link)
+}
+
+const copyShadowsocksLink = async (node: VultrNode | Record<string, any>) => {
+  await copyProtocolLink(buildShadowsocksLink(node))
+}
+
+const copyHysteriaLink = async (node: VultrNode | Record<string, any>) => {
+  await copyProtocolLink(buildHysteriaLink(node))
+}
+
+const copyVlessLink = async (node: VultrNode | Record<string, any>) => {
+  await copyProtocolLink(buildVlessLink(node))
+}
+
+const copyTrojanLink = async (node: VultrNode | Record<string, any>) => {
+  await copyProtocolLink(buildTrojanLink(node))
+}
+
+const copyNodeConfig = async (record: VultrNode | Record<string, any>) => {
+  const node = ensureNode(record)
+  const links = [
+    { label: 'Shadowsocks', url: buildShadowsocksLink(node) },
+    { label: 'Hysteria2', url: buildHysteriaLink(node) },
+    { label: 'VLESS-Reality', url: buildVlessLink(node) },
+    { label: 'Trojan', url: buildTrojanLink(node) },
+  ].filter((item) => item.url) as Array<{ label: string; url: string }>
+
+  if (!links.length) {
+    message.error(t('cloud.errors.noProtocols'))
+    return
+  }
+
+  const payload = links.map((item) => `${item.label}: ${item.url}`).join('\n')
+  await copyValue(payload)
 }
 
 const handleDestroy = async (record: VultrNode | Record<string, any>) => {
@@ -550,12 +660,65 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
               </div>
             </div>
           </template>
-          <template #password="{ record }">
-            <div class="flex items-center gap-4">
-              <span class="font-mono break-all">{{ record.password }}</span>
-              <Button @click="copyValue(record.password)" type="text" size="small">
-                {{ t('cloud.nodes.copy') }}
-              </Button>
+          <template #protocols="{ record }">
+            <div class="protocol-list">
+              <div v-if="hasShadowsocks(record)" class="protocol-item">
+                <div class="protocol-header">
+                  <Tag size="small" color="primary">Shadowsocks</Tag>
+                  <Button @click="copyShadowsocksLink(record)" type="text" size="small">
+                    {{ t('cloud.nodes.copy') }}
+                  </Button>
+                </div>
+                <div class="protocol-meta">
+                  <span>{{ t('cloud.protocol.port') }} {{ record.ssPort || record.port }}</span>
+                  <span>{{ t('cloud.protocol.password') }} {{ record.ssPassword || record.password }}</span>
+                </div>
+              </div>
+
+              <div v-if="hasHysteria(record)" class="protocol-item">
+                <div class="protocol-header">
+                  <Tag size="small" color="cyan">Hysteria2</Tag>
+                  <Button @click="copyHysteriaLink(record)" type="text" size="small">
+                    {{ t('cloud.nodes.copy') }}
+                  </Button>
+                </div>
+                <div class="protocol-meta">
+                  <span>{{ t('cloud.protocol.port') }} {{ record.hysteriaPort }}</span>
+                  <span>{{ t('cloud.protocol.password') }} {{ record.hysteriaPassword }}</span>
+                </div>
+              </div>
+
+              <div v-if="hasVless(record)" class="protocol-item">
+                <div class="protocol-header">
+                  <Tag size="small" color="green">VLESS-Reality</Tag>
+                  <Button @click="copyVlessLink(record)" type="text" size="small">
+                    {{ t('cloud.nodes.copy') }}
+                  </Button>
+                </div>
+                <div class="protocol-meta">
+                  <span>{{ t('cloud.protocol.port') }} {{ record.vlessPort }}</span>
+                  <span>{{ t('cloud.protocol.uuid') }} {{ record.vlessUUID }}</span>
+                  <span>{{ t('cloud.protocol.publicKey') }} {{ record.vlessPublicKey }}</span>
+                  <span>{{ t('cloud.protocol.shortId') }} {{ record.vlessShortId }}</span>
+                </div>
+              </div>
+
+              <div v-if="hasTrojan(record)" class="protocol-item">
+                <div class="protocol-header">
+                  <Tag size="small" color="red">Trojan</Tag>
+                  <Button @click="copyTrojanLink(record)" type="text" size="small">
+                    {{ t('cloud.nodes.copy') }}
+                  </Button>
+                </div>
+                <div class="protocol-meta">
+                  <span>{{ t('cloud.protocol.port') }} {{ record.trojanPort }}</span>
+                  <span>{{ t('cloud.protocol.password') }} {{ record.trojanPassword }}</span>
+                </div>
+              </div>
+
+              <div v-if="!hasShadowsocks(record) && !hasHysteria(record) && !hasVless(record) && !hasTrojan(record)" class="text-secondary">
+                -
+              </div>
             </div>
           </template>
           <template #createdAt="{ record }">
@@ -608,5 +771,32 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
 
 .min-w-240 {
   min-width: 240px;
+}
+
+.protocol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.protocol-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.protocol-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.protocol-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace);
+  font-size: 12px;
+  word-break: break-all;
 }
 </style>

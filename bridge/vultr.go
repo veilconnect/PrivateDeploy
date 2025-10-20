@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 const (
@@ -52,16 +54,16 @@ type vultrRegion struct {
 }
 
 type vultrPlan struct {
-	ID           string  `json:"id"`
-	Description  string  `json:"description"`
-	MemoryMB     int     `json:"ram"`
-	VCPUs        int     `json:"vcpu_count"`
-	DiskGB       int     `json:"disk"`
-	BandwidthGB  int     `json:"bandwidth"`
-	MonthlyCost  float64 `json:"monthly_cost"`
-	HourlyCost   float64 `json:"hourly_cost"`
-	Type         string  `json:"type"`
-	Locations    []string `json:"locations"`
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	MemoryMB    int      `json:"ram"`
+	VCPUs       int      `json:"vcpu_count"`
+	DiskGB      int      `json:"disk"`
+	BandwidthGB int      `json:"bandwidth"`
+	MonthlyCost float64  `json:"monthly_cost"`
+	HourlyCost  float64  `json:"hourly_cost"`
+	Type        string   `json:"type"`
+	Locations   []string `json:"locations"`
 }
 
 type vultrInstance struct {
@@ -81,39 +83,16 @@ type vultrOS struct {
 }
 
 type vultrNodeRecord struct {
-	InstanceID        string `json:"instanceId"`
-	Label             string `json:"label"`
-	Region            string `json:"region"`
-	Plan              string `json:"plan"`
-	OSID              int    `json:"osId,omitempty"`
-	Port              int    `json:"port"` // Legacy: Shadowsocks port (for backward compatibility)
-	Password          string `json:"password"` // Legacy: Shadowsocks password
-	CreatedAt         string `json:"createdAt"`
-	IPv4              string `json:"ipv4,omitempty"`
-	IPv6              string `json:"ipv6,omitempty"`
-	// Multi-protocol configuration
-	SSPort            int    `json:"ssPort,omitempty"`
-	SSPassword        string `json:"ssPassword,omitempty"`
-	HysteriaPort      int    `json:"hysteriaPort,omitempty"`
-	HysteriaPassword  string `json:"hysteriaPassword,omitempty"`
-	VLESSPort         int    `json:"vlessPort,omitempty"`
-	VLESSUUID         string `json:"vlessUUID,omitempty"`
-	TrojanPort        int    `json:"trojanPort,omitempty"`
-	TrojanPassword    string `json:"trojanPassword,omitempty"`
-}
-
-type VultrNode struct {
-	InstanceID       string `json:"instanceId"`
-	Label            string `json:"label"`
-	Status           string `json:"status"`
-	Region           string `json:"region"`
-	Plan             string `json:"plan"`
-	OSID             int    `json:"osId"`
-	IPv4             string `json:"ipv4"`
-	IPv6             string `json:"ipv6,omitempty"`
-	Port             int    `json:"port"` // Legacy: Shadowsocks port
-	Password         string `json:"password"` // Legacy: Shadowsocks password
-	CreatedAt        string `json:"createdAt"`
+	InstanceID string `json:"instanceId"`
+	Label      string `json:"label"`
+	Region     string `json:"region"`
+	Plan       string `json:"plan"`
+	OSID       int    `json:"osId,omitempty"`
+	Port       int    `json:"port"`     // Legacy: Shadowsocks port (for backward compatibility)
+	Password   string `json:"password"` // Legacy: Shadowsocks password
+	CreatedAt  string `json:"createdAt"`
+	IPv4       string `json:"ipv4,omitempty"`
+	IPv6       string `json:"ipv6,omitempty"`
 	// Multi-protocol configuration
 	SSPort           int    `json:"ssPort,omitempty"`
 	SSPassword       string `json:"ssPassword,omitempty"`
@@ -121,6 +100,33 @@ type VultrNode struct {
 	HysteriaPassword string `json:"hysteriaPassword,omitempty"`
 	VLESSPort        int    `json:"vlessPort,omitempty"`
 	VLESSUUID        string `json:"vlessUUID,omitempty"`
+	VLESSPublicKey   string `json:"vlessPublicKey,omitempty"`
+	VLESSShortID     string `json:"vlessShortId,omitempty"`
+	TrojanPort       int    `json:"trojanPort,omitempty"`
+	TrojanPassword   string `json:"trojanPassword,omitempty"`
+}
+
+type VultrNode struct {
+	InstanceID string `json:"instanceId"`
+	Label      string `json:"label"`
+	Status     string `json:"status"`
+	Region     string `json:"region"`
+	Plan       string `json:"plan"`
+	OSID       int    `json:"osId"`
+	IPv4       string `json:"ipv4"`
+	IPv6       string `json:"ipv6,omitempty"`
+	Port       int    `json:"port"`     // Legacy: Shadowsocks port
+	Password   string `json:"password"` // Legacy: Shadowsocks password
+	CreatedAt  string `json:"createdAt"`
+	// Multi-protocol configuration
+	SSPort           int    `json:"ssPort,omitempty"`
+	SSPassword       string `json:"ssPassword,omitempty"`
+	HysteriaPort     int    `json:"hysteriaPort,omitempty"`
+	HysteriaPassword string `json:"hysteriaPassword,omitempty"`
+	VLESSPort        int    `json:"vlessPort,omitempty"`
+	VLESSUUID        string `json:"vlessUUID,omitempty"`
+	VLESSPublicKey   string `json:"vlessPublicKey,omitempty"`
+	VLESSShortID     string `json:"vlessShortId,omitempty"`
 	TrojanPort       int    `json:"trojanPort,omitempty"`
 	TrojanPassword   string `json:"trojanPassword,omitempty"`
 }
@@ -350,6 +356,32 @@ func generateUUID() string {
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func generateRealityKeyPair() (privateKey string, publicKey string) {
+	priv := make([]byte, 32)
+	if _, err := rand.Read(priv); err != nil {
+		for i := range priv {
+			priv[i] = byte(mathrand.Intn(256))
+		}
+	}
+
+	// Clamp private key as required by RFC 7748
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
+
+	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		// Fallback: return empty keys so caller can handle
+		return "", ""
+	}
+
+	// sing-box Reality requires URL-safe base64 encoding (RFC 4648)
+	// Use RawURLEncoding (no padding) as per sing-box requirements
+	privateKey = base64.RawURLEncoding.EncodeToString(priv)
+	publicKey = base64.RawURLEncoding.EncodeToString(pub)
+	return
 }
 
 func decodeVultrError(body []byte) string {
@@ -633,6 +665,8 @@ func (a *App) ListVultrInstances() FlagResult {
 			HysteriaPassword: record.HysteriaPassword,
 			VLESSPort:        record.VLESSPort,
 			VLESSUUID:        record.VLESSUUID,
+			VLESSPublicKey:   record.VLESSPublicKey,
+			VLESSShortID:     record.VLESSShortID,
 			TrojanPort:       record.TrojanPort,
 			TrojanPassword:   record.TrojanPassword,
 		}
@@ -805,7 +839,12 @@ func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
 	vlessPort := basePort + 2
 	trojanPort := basePort + 3
 
-	var userDataScript string
+	var (
+		userDataScript    string
+		realityPrivateKey string
+		realityPublicKey  string
+		realityShortID    string
+	)
 
 	// Choose deployment script based on RAM
 	if planRAM <= 600 {
@@ -816,16 +855,15 @@ func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
 		// Standard VPS: Use full multi-protocol script
 		fmt.Printf("[CreateVultrInstance] Using full multi-protocol deployment for %dMB RAM\n", planRAM)
 
-		// Generate Reality keys before script
-		// Reality private key must be 32 random bytes encoded as base64
-		realityKeyBytes := make([]byte, 32)
-		if _, err := rand.Read(realityKeyBytes); err != nil {
-			for i := range realityKeyBytes {
-				realityKeyBytes[i] = byte(mathrand.Intn(256))
-			}
+		// Generate Reality key materials before rendering script so we can persist them
+		realityPrivateKey, realityPublicKey = generateRealityKeyPair()
+		for attempts := 0; attempts < 3 && (realityPrivateKey == "" || realityPublicKey == ""); attempts++ {
+			realityPrivateKey, realityPublicKey = generateRealityKeyPair()
 		}
-		realityPrivateKey := base64.StdEncoding.EncodeToString(realityKeyBytes)
-		realityShortID := fmt.Sprintf("%016x", mathrand.Int63())
+		if realityPrivateKey == "" || realityPublicKey == "" {
+			return FlagResult{Flag: false, Data: "failed to generate Reality key pair"}
+		}
+		realityShortID = fmt.Sprintf("%016x", mathrand.Int63())
 
 		userDataScript = fmt.Sprintf(`#!/bin/bash
 # VeilDeploy Multi-Protocol Deployment Script
@@ -942,16 +980,7 @@ find /tmp -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-b
 chmod +x /usr/local/bin/sing-box
 rm -rf /tmp/singbox.tar.gz /tmp/sing-box-*
 
-# Generate Reality keypair using sing-box (more reliable than manual generation)
-REALITY_KEYPAIR=$(/usr/local/bin/sing-box generate reality-keypair)
-REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYPAIR" | grep "PrivateKey" | awk '{print $2}')
-REALITY_SHORT_ID=$(openssl rand -hex 8)
-
-echo "Generated Reality keys:"
-echo "  Private Key: $REALITY_PRIVATE_KEY"
-echo "  Short ID: $REALITY_SHORT_ID"
-
-# Create VLESS configuration with proper Reality keys
+# Create VLESS configuration with pre-generated Reality keys
 cat > /etc/veildeploy/vless/config.json <<VLESSEOF
 {
   "log": {
@@ -976,8 +1005,8 @@ cat > /etc/veildeploy/vless/config.json <<VLESSEOF
           "server": "www.microsoft.com",
           "server_port": 443
         },
-        "private_key": "${REALITY_PRIVATE_KEY}",
-        "short_id": ["${REALITY_SHORT_ID}"]
+        "private_key": "%[9]s",
+        "short_id": ["%[10]s"]
       }
     }
   }],
@@ -987,6 +1016,13 @@ cat > /etc/veildeploy/vless/config.json <<VLESSEOF
   }]
 }
 VLESSEOF
+
+# Store Reality client parameters for reference
+cat > /etc/veildeploy/vless/reality.txt <<REALITYINFO
+PublicKey: %[11]s
+ShortID: %[10]s
+REALITYINFO
+chmod 600 /etc/veildeploy/vless/reality.txt
 
 # Run sing-box as systemd service
 cat > /etc/systemd/system/vless-server.service <<'SERVICEEOF'
@@ -1091,21 +1127,24 @@ echo "Protocol Configuration:"
 echo "  [1] Shadowsocks:    Port %[1]d (TCP/UDP) - Password: %[5]s"
 echo "  [2] Hysteria2:      Port %[2]d (UDP) - Password: %[6]s"
 echo "  [3] VLESS-Reality:  Port %[3]d (TCP) - UUID: %[8]s"
+echo "                     Public Key: %[11]s"
+echo "                     Short ID: %[10]s"
 echo "  [4] Trojan:         Port %[4]d (TCP) - Password: %[7]s"
 echo ""
 echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
 `,
-		ssPort,              // %[1]d
-		hysteriaPort,        // %[2]d
-		vlessPort,           // %[3]d
-		trojanPort,          // %[4]d
-		shellEscape(ssPassword),        // %[5]s
-		shellEscape(hysteriaPassword),  // %[6]s
-		shellEscape(trojanPassword),    // %[7]s
-		vlessUUID,           // %[8]s
-		realityPrivateKey,   // %[9]s
-		realityShortID,      // %[10]s
-	)
+			ssPort,                        // %[1]d
+			hysteriaPort,                  // %[2]d
+			vlessPort,                     // %[3]d
+			trojanPort,                    // %[4]d
+			shellEscape(ssPassword),       // %[5]s
+			shellEscape(hysteriaPassword), // %[6]s
+			shellEscape(trojanPassword),   // %[7]s
+			vlessUUID,                     // %[8]s
+			realityPrivateKey,             // %[9]s
+			realityShortID,                // %[10]s
+			realityPublicKey,              // %[11]s
+		)
 	}
 
 	var payload struct {
@@ -1181,6 +1220,8 @@ echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
 		nodeRecord.HysteriaPassword = hysteriaPassword
 		nodeRecord.VLESSPort = vlessPort
 		nodeRecord.VLESSUUID = vlessUUID
+		nodeRecord.VLESSPublicKey = realityPublicKey
+		nodeRecord.VLESSShortID = realityShortID
 		nodeRecord.TrojanPort = trojanPort
 		nodeRecord.TrojanPassword = trojanPassword
 	}
@@ -1237,6 +1278,8 @@ echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
 		result.HysteriaPassword = hysteriaPassword
 		result.VLESSPort = vlessPort
 		result.VLESSUUID = vlessUUID
+		result.VLESSPublicKey = realityPublicKey
+		result.VLESSShortID = realityShortID
 		result.TrojanPort = trojanPort
 		result.TrojanPassword = trojanPassword
 	}

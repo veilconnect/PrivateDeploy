@@ -43,6 +43,8 @@ export interface VultrNode {
   hysteriaPassword?: string
   vlessPort?: number
   vlessUUID?: string
+  vlessPublicKey?: string
+  vlessShortId?: string
   trojanPort?: number
   trojanPassword?: string
 }

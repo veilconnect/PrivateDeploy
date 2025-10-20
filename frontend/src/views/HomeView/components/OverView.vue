@@ -12,7 +12,6 @@ import CommonController from './CommonController.vue'
 import ConnectionsController from './ConnectionsController.vue'
 import LogsController from './LogsController.vue'
 
-const trafficHistory = ref<[number[], number[]]>([[], []])
 const statistics = ref({
   upload: 0,
   download: 0,
@@ -109,14 +108,6 @@ const unregisterTrafficHandler = kernelApiStore.onTraffic((data) => {
   const { up, down } = data
   statistics.value.upload = up
   statistics.value.download = down
-
-  trafficHistory.value[0].push(up)
-  trafficHistory.value[1].push(down)
-
-  if (trafficHistory.value[0].length > 60) {
-    trafficHistory.value[0].shift()
-    trafficHistory.value[1].shift()
-  }
 })
 
 const unregisterConnectionsHandler = kernelApiStore.onConnections((data) => {
@@ -181,6 +172,16 @@ onUnmounted(() => {
       />
     </div>
     <div class="flex mt-20 gap-12">
+      <Card :title="t('kernel.mode')" class="flex-1">
+        <div class="py-8">
+          <Select
+            v-model="kernelApiStore.config.mode"
+            :options="ModeOptions.map(m => ({ label: t(m.label), value: m.value }))"
+            @change="handleChangeMode"
+            size="small"
+          />
+        </div>
+      </Card>
       <Card :title="t('home.overview.realtimeTraffic')" class="flex-1">
         <div class="py-8 text-12">
           ↑ {{ formatBytes(statistics.upload) }}/s ↓ {{ formatBytes(statistics.download) }}/s
@@ -205,34 +206,6 @@ onUnmounted(() => {
           {{ formatBytes(statistics.inuse) }}
         </div>
       </Card>
-    </div>
-    <div class="flex">
-      <div class="w-[60%]">
-        <div class="py-16 font-bold" style="color: var(--card-color)">
-          {{ t('home.overview.traffic') }}
-        </div>
-        <TrafficChart
-          :series="trafficHistory"
-          :legend="[t('home.overview.transmit'), t('home.overview.receive')]"
-        />
-      </div>
-      <div class="ml-12 flex-1">
-        <div class="py-16 font-bold" style="color: var(--card-color)">
-          {{ t('kernel.mode') }}
-        </div>
-        <div class="flex flex-col gap-12">
-          <Card
-            v-for="mode in ModeOptions"
-            :key="mode.value"
-            :selected="kernelApiStore.config.mode === mode.value"
-            @click="handleChangeMode(mode.value as any)"
-            :title="t(mode.label)"
-            class="cursor-pointer"
-          >
-            <div class="text-12 py-2">{{ t(mode.desc) }}</div>
-          </Card>
-        </div>
-      </div>
     </div>
   </div>
 

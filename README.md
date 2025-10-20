@@ -1,47 +1,52 @@
-<div align="center">
-  <img src="build/appicon.png" alt="GUI.for.SingBox" width="200">
-  <h1>GUI.for.SingBox</h1>
-  <p>A GUI program developed by vue3 + wails.</p>
-</div>
+# VeilDeploy
 
-## Preview
+VeilDeploy is a cross-platform desktop application (Vue 3 + Wails) that automates the provisioning of hardened proxy nodes on Vultr. A single deployment script brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – and the GUI keeps credentials, client profiles, and health information in sync.
 
-Take a look at the live version here: 👉 <a href="https://gui-for-cores.github.io/guide/gfs/" target="_blank">Live Demo</a>
+## Highlights
 
-<div align="center">
-  <img src="docs/imgs/light.png">
-</div>
+- **Multi-protocol stack** – Deploy Shadowsocks, Hysteria2, VLESS-Reality (with Reality public key + short ID), and Trojan in one pass. Low-memory plans automatically fall back to a lightweight Shadowsocks-only setup.
+- **Automatic credential sync** – The app persists every protocol credential (ports, passwords, UUID, Reality keys) and exposes them in the cloud panel with one-click copy actions.
+- **Subscription integration** – Generated nodes are converted into sing-box compatible subscriptions and injected into the active profile, so local clients rotate across all available protocols.
+- **Fire-and-forget provisioning** – User-data scripts handle Docker setup, firewall rules, systemd services, TLS certificates, and health checks directly on the VPS.
 
-## Document
+## Build From Source
 
-[Community](https://gui-for-cores.github.io/guide/gfs/community)
-
-## Build
-
-1、Build Environment
-
-- Node.js [link](https://nodejs.org/en)
-
-- pnpm ：`npm i -g pnpm`
-
-- Go [link](https://go.dev/)
-
-- Wails [link](https://wails.io/) ：`go install github.com/wailsapp/wails/v2/cmd/wails@latest`
-
-2、Pull and Build
+> Requirements: Node.js, pnpm, Go, Wails CLI.
 
 ```bash
-git clone https://github.com/GUI-for-Cores/GUI.for.SingBox.git
+# install pnpm if needed
+npm install -g pnpm
 
-cd GUI.for.SingBox/frontend
+# build the frontend bundle
+cd frontend
+pnpm install --frozen-lockfile
+pnpm build
 
-pnpm install --frozen-lockfile && pnpm build
-
+# build the desktop app
 cd ..
-
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
 wails build
 ```
 
-## Stargazers over time
+## Using the Cloud Panel
 
-[![Stargazers over time](https://starchart.cc/GUI-for-Cores/GUI.for.SingBox.svg)](https://starchart.cc/GUI-for-Cores/GUI.for.SingBox)
+1. Paste a Vultr API key with instance + firewall permissions and save it.
+2. Pick a region/plan and deploy – high-memory plans receive all four protocols automatically.
+3. After provisioning completes, expand the node row to view protocol details:
+   - Shadowsocks port/password and ss:// link
+   - Hysteria2 port/password with hysteria2:// link
+   - VLESS-Reality UUID, public key, and short ID with vless:// link
+   - Trojan port/password with trojan:// link
+4. Use *Copy All Links* or per-protocol copy buttons to share credentials.
+5. Click *Use Node* to inject the subscription into the current sing-box profile.
+
+Reality parameters (public key + short ID) are stored on the VPS under `/etc/veildeploy/vless/reality.txt` and surfaced in the UI for clients that need manual configuration.
+
+## Additional Documentation
+
+- `MULTI-PROTOCOL-DESIGN.md` – Deep dive into the multi-protocol deployment flow.
+- `DEPLOYMENT-IMPROVEMENTS.md` – Notes on user-data hardening and firewall fixes.
+
+## License
+
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
