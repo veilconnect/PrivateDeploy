@@ -169,14 +169,14 @@ const ensurePlanForRegion = (region: string) => {
 }
 
 const columns = [
-  { title: 'cloud.table.label', key: 'label', minWidth: '160px' },
-  { title: 'cloud.table.region', key: 'region', minWidth: '160px' },
-  { title: 'cloud.table.plan', key: 'plan', minWidth: '200px' },
-  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', minWidth: '220px' },
-  { title: 'cloud.table.protocols', key: 'protocols', minWidth: '320px' },
-  { title: 'cloud.table.status', key: 'status', minWidth: '120px' },
-  { title: 'cloud.table.createdAt', key: 'createdAt', minWidth: '180px' },
-  { title: 'cloud.table.actions', key: 'actions', minWidth: '160px' },
+  { title: 'cloud.table.label', key: 'label', width: '13%' },
+  { title: 'cloud.table.region', key: 'region', width: '10%' },
+  { title: 'cloud.table.plan', key: 'plan', width: '13%' },
+  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '15%' },
+  { title: 'cloud.table.protocols', key: 'protocols', width: '20%' },
+  { title: 'cloud.table.status', key: 'status', width: '8%' },
+  { title: 'cloud.table.createdAt', key: 'createdAt', width: '10%' },
+  { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
 
 const applyDefaults = async () => {
@@ -640,20 +640,14 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
             </div>
           </template>
           <template #ipAddresses="{ record }">
-            <div class="flex flex-col gap-4">
-              <div v-if="isPublicIPv4(record.ipv4)" class="flex items-center gap-4">
-                <Tag size="small" color="cyan">IPv4</Tag>
-                <span class="font-mono text-12">{{ record.ipv4 }}</span>
-                <Button @click="copyValue(record.ipv4)" type="text" size="small">
-                  {{ t('cloud.nodes.copy') }}
-                </Button>
+            <div class="flex flex-col gap-2">
+              <div v-if="isPublicIPv4(record.ipv4)" class="flex items-center gap-2" style="font-size: 11px">
+                <Tag size="small" color="cyan">v4</Tag>
+                <span class="font-mono" style="max-width: 120px; overflow: hidden; text-overflow: ellipsis" :title="record.ipv4">{{ record.ipv4 }}</span>
               </div>
-              <div v-if="record.ipv6" class="flex items-center gap-4">
-                <Tag size="small" color="green">IPv6</Tag>
-                <span class="font-mono text-12">{{ record.ipv6 }}</span>
-                <Button @click="copyValue(record.ipv6)" type="text" size="small">
-                  {{ t('cloud.nodes.copy') }}
-                </Button>
+              <div v-if="record.ipv6" class="flex items-center gap-2" style="font-size: 11px">
+                <Tag size="small" color="green">v6</Tag>
+                <span class="font-mono" style="max-width: 120px; overflow: hidden; text-overflow: ellipsis" :title="record.ipv6">{{ record.ipv6 }}</span>
               </div>
               <div v-if="!isPublicIPv4(record.ipv4) && !record.ipv6">
                 <span class="text-secondary">-</span>
@@ -663,57 +657,23 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
           <template #protocols="{ record }">
             <div class="protocol-list">
               <div v-if="hasShadowsocks(record)" class="protocol-item">
-                <div class="protocol-header">
-                  <Tag size="small" color="primary">Shadowsocks</Tag>
-                  <Button @click="copyShadowsocksLink(record)" type="text" size="small">
-                    {{ t('cloud.nodes.copy') }}
-                  </Button>
-                </div>
-                <div class="protocol-meta">
-                  <span>{{ t('cloud.protocol.port') }} {{ record.ssPort || record.port }}</span>
-                  <span>{{ t('cloud.protocol.password') }} {{ record.ssPassword || record.password }}</span>
-                </div>
+                <Tag size="small" color="primary">SS</Tag>
+                <span class="protocol-meta">:{{ record.ssPort || record.port }}</span>
               </div>
 
               <div v-if="hasHysteria(record)" class="protocol-item">
-                <div class="protocol-header">
-                  <Tag size="small" color="cyan">Hysteria2</Tag>
-                  <Button @click="copyHysteriaLink(record)" type="text" size="small">
-                    {{ t('cloud.nodes.copy') }}
-                  </Button>
-                </div>
-                <div class="protocol-meta">
-                  <span>{{ t('cloud.protocol.port') }} {{ record.hysteriaPort }}</span>
-                  <span>{{ t('cloud.protocol.password') }} {{ record.hysteriaPassword }}</span>
-                </div>
+                <Tag size="small" color="cyan">HY2</Tag>
+                <span class="protocol-meta">:{{ record.hysteriaPort }}</span>
               </div>
 
               <div v-if="hasVless(record)" class="protocol-item">
-                <div class="protocol-header">
-                  <Tag size="small" color="green">VLESS-Reality</Tag>
-                  <Button @click="copyVlessLink(record)" type="text" size="small">
-                    {{ t('cloud.nodes.copy') }}
-                  </Button>
-                </div>
-                <div class="protocol-meta">
-                  <span>{{ t('cloud.protocol.port') }} {{ record.vlessPort }}</span>
-                  <span>{{ t('cloud.protocol.uuid') }} {{ record.vlessUUID }}</span>
-                  <span>{{ t('cloud.protocol.publicKey') }} {{ record.vlessPublicKey }}</span>
-                  <span>{{ t('cloud.protocol.shortId') }} {{ record.vlessShortId }}</span>
-                </div>
+                <Tag size="small" color="green">VLESS</Tag>
+                <span class="protocol-meta">:{{ record.vlessPort }}</span>
               </div>
 
               <div v-if="hasTrojan(record)" class="protocol-item">
-                <div class="protocol-header">
-                  <Tag size="small" color="red">Trojan</Tag>
-                  <Button @click="copyTrojanLink(record)" type="text" size="small">
-                    {{ t('cloud.nodes.copy') }}
-                  </Button>
-                </div>
-                <div class="protocol-meta">
-                  <span>{{ t('cloud.protocol.port') }} {{ record.trojanPort }}</span>
-                  <span>{{ t('cloud.protocol.password') }} {{ record.trojanPassword }}</span>
-                </div>
+                <Tag size="small" color="red">Trojan</Tag>
+                <span class="protocol-meta">:{{ record.trojanPort }}</span>
               </div>
 
               <div v-if="!hasShadowsocks(record) && !hasHysteria(record) && !hasVless(record) && !hasTrojan(record)" class="text-secondary">
@@ -722,13 +682,13 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
             </div>
           </template>
           <template #createdAt="{ record }">
-            <div class="flex flex-col">
-              <span>{{ formatDate(record.createdAt, 'YYYY-MM-DD HH:mm:ss') }}</span>
-              <span class="text-12 text-secondary">{{ formatRelativeTime(record.createdAt) }}</span>
+            <div class="flex flex-col" style="font-size: 11px">
+              <span>{{ formatDate(record.createdAt, 'YYYY-MM-DD') }}</span>
+              <span class="text-secondary">{{ formatRelativeTime(record.createdAt) }}</span>
             </div>
           </template>
           <template #actions="{ record }">
-            <div class="flex items-center gap-8">
+            <div class="flex items-center gap-4">
               <Button
                 @click="handleUseNode(record)"
                 type="primary"
@@ -737,9 +697,7 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
               >
                 {{ t('cloud.nodes.apply') }}
               </Button>
-              <Button @click="copyNodeConfig(record)" type="text" size="small">
-                {{ t('cloud.nodes.copyLink') }}
-              </Button>
+              <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
               <Button
                 @click="handleDestroy(record)"
                 type="text"
@@ -775,28 +733,36 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
 
 .protocol-list {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .protocol-item {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
 }
 
 .protocol-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
 }
 
 .protocol-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace);
-  font-size: 12px;
-  word-break: break-all;
+  font-size: 10px;
+  line-height: 1.2;
+
+  span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60px;
+  }
 }
 </style>
