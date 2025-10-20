@@ -149,8 +149,8 @@ function formatPlan(plan: VultrPlan) {
   ]
 
   // Add price if available
-  if (plan.monthly_cost && plan.monthly_cost > 0) {
-    meta.push(`$${plan.monthly_cost.toFixed(2)}${t('cloud.format.monthly')}`)
+  if (plan.monthlyCost && plan.monthlyCost > 0) {
+    meta.push(`$${plan.monthlyCost.toFixed(2)}${t('cloud.format.monthly')}`)
   }
 
   return plan.description ? `${plan.description} · ${meta.join(' · ')}` : `${plan.id} · ${meta.join(' · ')}`

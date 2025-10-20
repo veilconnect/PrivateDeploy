@@ -42,3 +42,9 @@ export const ListVultrAvailability = App.ListVultrAvailability
 export const CreateVultrInstance = App.CreateVultrInstance
 
 export const DestroyVultrInstance = App.DestroyVultrInstance
+
+export const ListCloudProviders = App.ListCloudProviders
+
+export const GetCloudProvider = App.GetCloudProvider
+
+export const SetCloudProvider = App.SetCloudProvider
