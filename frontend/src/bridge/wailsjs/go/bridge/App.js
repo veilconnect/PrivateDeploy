@@ -14,8 +14,16 @@ export function CopyFile(arg1, arg2) {
   return window['go']['bridge']['App']['CopyFile'](arg1, arg2);
 }
 
+export function CreateCloudInstance(arg1) {
+  return window['go']['bridge']['App']['CreateCloudInstance'](arg1);
+}
+
 export function CreateVultrInstance(arg1) {
   return window['go']['bridge']['App']['CreateVultrInstance'](arg1);
+}
+
+export function DestroyCloudInstance(arg1) {
+  return window['go']['bridge']['App']['DestroyCloudInstance'](arg1);
 }
 
 export function DestroyVultrInstance(arg1) {
@@ -66,8 +74,24 @@ export function KillProcess(arg1, arg2) {
   return window['go']['bridge']['App']['KillProcess'](arg1, arg2);
 }
 
+export function ListCloudAvailability(arg1) {
+  return window['go']['bridge']['App']['ListCloudAvailability'](arg1);
+}
+
+export function ListCloudInstances() {
+  return window['go']['bridge']['App']['ListCloudInstances']();
+}
+
+export function ListCloudPlans() {
+  return window['go']['bridge']['App']['ListCloudPlans']();
+}
+
 export function ListCloudProviders() {
   return window['go']['bridge']['App']['ListCloudProviders']();
+}
+
+export function ListCloudRegions() {
+  return window['go']['bridge']['App']['ListCloudRegions']();
 }
 
 export function ListServer() {

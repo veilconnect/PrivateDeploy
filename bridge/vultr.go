@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"veildeploy/bridge/cloud"
+
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -452,6 +454,27 @@ func parseVultrResponse(res *http.Response, v any) error {
 }
 
 func (a *App) GetVultrConfig() FlagResult {
+	// Try to use CloudManager if available
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			cfg, err := provider.LoadConfig()
+			if err == nil {
+				// Convert cloud.ProviderConfig to VultrConfig for backward compatibility
+				vultrCfg := VultrConfig{
+					APIKey:        cfg.APIKey,
+					DefaultRegion: cfg.DefaultRegion,
+					DefaultPlan:   cfg.DefaultPlan,
+				}
+				data, err := json.Marshal(vultrCfg)
+				if err == nil {
+					return FlagResult{Flag: true, Data: string(data)}
+				}
+			}
+		}
+	}
+
+	// Fallback to legacy method
 	cfg, err := loadVultrConfig()
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -475,6 +498,24 @@ func (a *App) SaveVultrConfig(configJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: "API key cannot be empty"}
 	}
 
+	// Try to use CloudManager if available
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			// Convert VultrConfig to cloud.ProviderConfig
+			providerCfg := &cloud.ProviderConfig{
+				Provider:      provider.Name(),
+				APIKey:        cfg.APIKey,
+				DefaultRegion: cfg.DefaultRegion,
+				DefaultPlan:   cfg.DefaultPlan,
+			}
+			if err := provider.SaveConfig(providerCfg); err == nil {
+				return FlagResult{Flag: true, Data: "Success"}
+			}
+		}
+	}
+
+	// Fallback to legacy method
 	if err := saveVultrConfig(&cfg); err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}

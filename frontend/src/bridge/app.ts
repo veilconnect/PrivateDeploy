@@ -48,3 +48,15 @@ export const ListCloudProviders = App.ListCloudProviders
 export const GetCloudProvider = App.GetCloudProvider
 
 export const SetCloudProvider = App.SetCloudProvider
+
+export const ListCloudInstances = App.ListCloudInstances
+
+export const CreateCloudInstance = App.CreateCloudInstance
+
+export const DestroyCloudInstance = App.DestroyCloudInstance
+
+export const ListCloudRegions = App.ListCloudRegions
+
+export const ListCloudPlans = App.ListCloudPlans
+
+export const ListCloudAvailability = App.ListCloudAvailability

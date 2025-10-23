@@ -23,6 +23,13 @@ const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loading
 const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 
 function formatRegion(region: VultrRegion) {
+  // For DigitalOcean, backend already provides bilingual format (e.g., "New York 1 (纽约1)")
+  // Just display the city field directly
+  if (cloudStore.currentProvider === 'digitalocean') {
+    return region.city
+  }
+
+  // For other providers (Vultr), use i18n translation
   const cityKey = `cloud.regions.${region.city}`
   const countryKey = `cloud.regions.${region.country}`
 
@@ -71,11 +78,12 @@ const getStatusColor = (status?: string): TagColor => statusColors[(status || 'u
 const availablePlanIds = computed(() => cloudStore.availability[form.region] || [])
 
 const planOptions = computed(() => {
-  // 强制响应式依赖
   const availabilityData = cloudStore.availability
   const currentRegion = form.region
 
-  console.log('[CloudView] planOptions computed - region:', currentRegion, 'availability:', availabilityData[currentRegion])
+  if (!cloudStore.plans.length) {
+    return []
+  }
 
   if (!currentRegion) {
     return cloudStore.plans.map((plan: VultrPlan) => ({
@@ -84,24 +92,16 @@ const planOptions = computed(() => {
     }))
   }
 
-  // 获取当前区域的可用套餐ID列表
   const ids = availabilityData[currentRegion] || []
 
-  console.log('[CloudView] Available plan IDs for region:', ids)
-
-  // 如果有可用性数据,只显示该区域可用的套餐
   if (ids.length > 0) {
     const source = cloudStore.plans.filter((plan: VultrPlan) => ids.includes(plan.id))
-    console.log('[CloudView] Filtered plans:', source.length, 'out of', cloudStore.plans.length)
     return source.map((plan: VultrPlan) => ({
       label: formatPlan(plan),
       value: plan.id,
     }))
   }
 
-  // 如果没有可用性数据,暂时显示所有套餐
-  // (在部署时会再次验证,如果不可用会报错)
-  console.log('[CloudView] No availability data, showing all plans:', cloudStore.plans.length)
   return cloudStore.plans.map((plan: VultrPlan) => ({
     label: formatPlan(plan),
     value: plan.id,
@@ -119,6 +119,24 @@ const planMap = computed(() => {
   return map
 })
 
+// Function to translate region ID or name in node list
+function formatNodeRegion(regionId: string): string {
+  // First try to translate as region ID (e.g., "atl" -> "亚特兰大")
+  const idKey = `cloud.regions.${regionId}`
+  if (t(idKey) !== idKey) {
+    return t(idKey)
+  }
+
+  // If not found, try regionMap (for formatted region strings)
+  const mapped = regionMap.value.get(regionId)
+  if (mapped) {
+    return mapped
+  }
+
+  // Last resort: try to translate as city name
+  return t(idKey) !== idKey ? t(idKey) : regionId
+}
+
 const tableData = computed(() =>
   cloudStore.instances.map((node) => ({
     ...node,
@@ -127,6 +145,7 @@ const tableData = computed(() =>
 )
 
 const applyingNodeId = ref('')
+const refreshIntervalId = ref<number | null>(null)
 
 const disableDeploy = computed(
   () => !hasApiKey.value || !form.region || !form.plan || !form.label.trim(),
@@ -137,12 +156,13 @@ function defaultLabel() {
 }
 
 function formatPlan(plan: VultrPlan) {
+  const cpuCount = (plan as Record<string, any>).vcpu_count ?? (plan as Record<string, any>).vcpus ?? plan.vcpu_count
   const ram = plan.ram >= 1024 ? `${(plan.ram / 1024).toFixed(1)}GB` : `${plan.ram}MB`
   const disk = plan.disk >= 1024 ? `${(plan.disk / 1024).toFixed(1)}TB` : `${plan.disk}GB`
   const bandwidth = plan.bandwidth >= 1024 ? `${(plan.bandwidth / 1024).toFixed(1)}TB` : `${plan.bandwidth}GB`
 
   const meta = [
-    `${plan.vcpu_count} ${t('cloud.format.vcpu')}`,
+    `${cpuCount ?? 0} ${t('cloud.format.vcpu')}`,
     `${ram} ${t('cloud.format.ram')}`,
     `${disk} ${t('cloud.format.disk')}`,
     `${bandwidth} ${t('cloud.format.bandwidth')}`
@@ -187,11 +207,26 @@ const columns = [
 ]
 
 const applyDefaults = async () => {
+  console.log('[CloudView] applyDefaults called, form.region:', form.region, 'config.defaultRegion:', cloudStore.config.defaultRegion, 'regions[0]:', cloudStore.regions[0]?.id)
+
+  // Drop stale selections when provider defaults were cleared
+  const validRegionIds = new Set(cloudStore.regions.map((region) => region.id))
+  if (form.region && !validRegionIds.has(form.region)) {
+    form.region = ''
+  }
+  const validPlanIds = new Set(cloudStore.plans.map((plan) => plan.id))
+  if (form.plan && !validPlanIds.has(form.plan)) {
+    form.plan = ''
+  }
+
   if (!form.region) {
-    form.region = cloudStore.config.defaultRegion || cloudStore.regions[0]?.id || ''
+    const defaultRegion = cloudStore.config.defaultRegion
+    const autoPickRegion = defaultRegion || (cloudStore.regions.length === 1 ? cloudStore.regions[0]?.id : '')
+    form.region = autoPickRegion || ''
+    console.log('[CloudView] Set form.region to:', form.region)
   }
   if (form.region) {
-    await cloudStore.ensureRegionAvailability(form.region)
+    await cloudStore.ensureRegionAvailability(form.region, true)
     if (!form.plan) {
       form.plan = cloudStore.config.defaultPlan || pickPlanForRegion(form.region)
     } else {
@@ -211,7 +246,16 @@ watch(
   () => form.region,
   async (value, oldValue) => {
     console.log('[CloudView] Region changed:', oldValue, '->', value)
-    cloudStore.config.defaultRegion = value
+
+    // Only save region to config if it's valid for the current provider
+    const isValidRegion = value && cloudStore.regions.some(r => r.id === value)
+    if (isValidRegion) {
+      cloudStore.config.defaultRegion = value
+      console.log('[CloudView] Saved valid region to config:', value)
+    } else {
+      console.log('[CloudView] Skipped saving invalid region:', value)
+    }
+
     if (value && value !== oldValue) {
       console.log('[CloudView] Forcing availability reload for region:', value)
       // 强制重新加载可用性数据
@@ -225,10 +269,20 @@ watch(
 watch(
   () => form.plan,
   (value) => {
-    if (!value) return
-    cloudStore.config.defaultPlan = value
+    // Only save plan to config if it's valid for the current provider
+    const isValidPlan = value && cloudStore.plans.some(p => p.id === value)
+    if (isValidPlan) {
+      cloudStore.config.defaultPlan = value
+    }
   },
 )
+
+onUnmounted(() => {
+  if (refreshIntervalId.value !== null) {
+    clearInterval(refreshIntervalId.value)
+    refreshIntervalId.value = null
+  }
+})
 
 onMounted(async () => {
   try {
@@ -246,14 +300,14 @@ onMounted(async () => {
       })
 
       // Start background refresh (silent, updates every 30 seconds)
-      const refreshInterval = setInterval(() => {
+      if (refreshIntervalId.value !== null) {
+        clearInterval(refreshIntervalId.value)
+      }
+      refreshIntervalId.value = window.setInterval(() => {
         if (cloudStore.config.apiKey) {
           cloudStore.refreshInstances(true).catch((e) => logError('[CloudView] Background refresh failed:', e))
         }
       }, 30000)
-
-      // Clean up interval when component unmounts
-      onUnmounted(() => clearInterval(refreshInterval))
     } else {
       await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
     }
@@ -296,6 +350,18 @@ const handleProviderChange = async () => {
   try {
     await cloudStore.switchProvider(cloudStore.currentProvider)
     message.success(t('cloud.provider.switched'))
+
+    // Clear form values since region/plan IDs are provider-specific
+    form.region = ''
+    form.plan = ''
+
+    // Auto-refresh regions and plans if API key is available
+    if (hasApiKey.value) {
+      await fetchMeta()
+    }
+
+    // Apply defaults for the new provider
+    await applyDefaults()
   } catch (error) {
     logError('[CloudView] Failed to switch provider:', error)
     handleError(error)
@@ -323,6 +389,7 @@ const fetchMeta = async () => {
   }
   try {
     await Promise.all([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
+    await cloudStore.refreshInstances(true)
     applyDefaults()
   } catch (error) {
     handleError(error)
@@ -561,26 +628,29 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
     <Card :title="t('cloud.credentials.title')">
       <div class="flex flex-col gap-12 py-8">
         <div class="flex flex-wrap items-center gap-8">
-          <span class="text-14 shrink-0">{{ t('cloud.provider.label') }}:</span>
+          <span id="cloud-provider-label" class="text-14 shrink-0">{{ t('cloud.provider.label') }}:</span>
           <Select
             v-model="cloudStore.currentProvider"
             :options="providerOptions"
             @change="handleProviderChange"
             size="small"
             auto-size
+            aria-labelledby="cloud-provider-label"
           />
-        </div>
-        <div class="flex flex-wrap items-center gap-8">
           <Input
             v-model="cloudStore.config.apiKey"
+            type="password"
+            :show-password="true"
             :auto-size="true"
             :placeholder="t('cloud.credentials.placeholder')"
             class="flex-1 min-w-240"
+            aria-label="API Key"
           />
           <Button
             @click="handleSaveConfig"
             type="primary"
             :loading="cloudStore.savingConfig"
+            :disabled="!hasApiKey"
           >
             {{ t('cloud.credentials.save') }}
           </Button>
@@ -656,7 +726,7 @@ const handleDestroy = async (record: VultrNode | Record<string, any>) => {
       <div v-else class="py-8">
         <Table :columns="columns" :data-source="tableData">
           <template #region="{ record }">
-            <div>{{ regionMap.get(record.region) || record.region }}</div>
+            <div>{{ formatNodeRegion(record.region) }}</div>
           </template>
           <template #plan="{ record }">
             <div>{{ planMap.get(record.plan) || record.plan }}</div>

@@ -8,7 +8,11 @@ export function CloseMMDB(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
+export function CreateCloudInstance(arg1:string):Promise<bridge.FlagResult>;
+
 export function CreateVultrInstance(arg1:string):Promise<bridge.FlagResult>;
+
+export function DestroyCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 
 export function DestroyVultrInstance(arg1:string):Promise<bridge.FlagResult>;
 
@@ -34,7 +38,15 @@ export function IsStartup():Promise<boolean>;
 
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
 
+export function ListCloudAvailability(arg1:string):Promise<bridge.FlagResult>;
+
+export function ListCloudInstances():Promise<bridge.FlagResult>;
+
+export function ListCloudPlans():Promise<bridge.FlagResult>;
+
 export function ListCloudProviders():Promise<bridge.FlagResult>;
+
+export function ListCloudRegions():Promise<bridge.FlagResult>;
 
 export function ListServer():Promise<bridge.FlagResult>;
 

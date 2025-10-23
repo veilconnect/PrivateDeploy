@@ -8,7 +8,7 @@ export interface Props {
   modelValue: string | number
   autoSize?: boolean
   placeholder?: string
-  type?: 'number' | 'text' | 'code'
+  type?: 'number' | 'text' | 'code' | 'password'
   lang?: 'yaml' | 'json' | 'javascript'
   size?: 'default' | 'small'
   editable?: boolean
@@ -22,6 +22,7 @@ export interface Props {
   delay?: number
   pl?: string
   pr?: string
+  showPassword?: boolean  // 是否显示密码切换按钮
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -38,6 +39,7 @@ const props = withDefaults(defineProps<Props>(), {
   delay: 0,
   pl: '8px',
   pr: '8px',
+  showPassword: false,
 })
 
 const emits = defineEmits(['update:modelValue', 'submit'])
@@ -45,6 +47,13 @@ const emits = defineEmits(['update:modelValue', 'submit'])
 const showEdit = ref(false)
 const inputRef = useTemplateRef('inputRef')
 const innerClearable = computed(() => props.clearable && props.type !== 'code' && props.modelValue)
+const passwordVisible = ref(false)  // 密码可见性状态
+const actualInputType = computed(() => {
+  if (props.type === 'password' && passwordVisible.value) {
+    return 'text'
+  }
+  return props.type === 'password' ? 'password' : props.type
+})
 
 const { t } = useI18n.global
 
@@ -132,11 +141,11 @@ defineExpose({
         v-else
         :value="modelValue"
         :placeholder="placeholder"
-        :type="type"
+        :type="actualInputType"
         :style="{
           width: !autoSize ? '0' : width,
           paddingLeft: pl,
-          paddingRight: clearable ? '0' : pr,
+          paddingRight: clearable || showPassword ? '0' : pr,
         }"
         :disabled="disabled"
         @input="($event) => onInput($event)"
@@ -146,6 +155,15 @@ defineExpose({
         autocomplete="off"
         ref="inputRef"
         class="flex-1 inline-block py-6 outline-none border-0 bg-transparent"
+      />
+      <Button
+        v-if="showPassword && type === 'password'"
+        @click="passwordVisible = !passwordVisible"
+        icon="preview"
+        :icon-size="14"
+        type="text"
+        size="small"
+        :title="passwordVisible ? t('common.hide') : t('common.show')"
       />
       <Button
         v-if="innerClearable"
