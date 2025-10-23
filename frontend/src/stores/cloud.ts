@@ -23,7 +23,7 @@ import * as ProfileDefaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
 import { Outbound } from '@/enums/kernel'
 import { sampleID, deepClone } from '@/utils'
-import { logError } from '@/utils/logger'
+import { logError, logInfo } from '@/utils/logger'
 
 import { useSubscribesStore } from './subscribes'
 import { useProfilesStore } from './profiles'
@@ -440,6 +440,9 @@ export const useCloudStore = defineStore('cloud', () => {
         normalizedNodes.map((node) => ensureRegionAvailability(node.region).catch(() => [])),
       )
 
+      // Store previous instances for comparison
+      const previousInstances = instances.value
+
       const statusMap = new Map(instances.value.map((node) => [node.instanceId, node.statusText || 'unknown']))
       const enriched: CloudNode[] = normalizedNodes.map((node) => ({
         ...node,
@@ -463,6 +466,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
       instances.value = enriched
 
+      // Create subscriptions for all nodes with IP addresses
       await Promise.all(
         enriched
           .filter((node) => node.instanceId && (node.ipv4 || node.ipv6))
@@ -471,6 +475,42 @@ export const useCloudStore = defineStore('cloud', () => {
             return undefined
           })),
       )
+
+      // Auto-apply nodes that were pending and now have IP addresses
+      const nodesToAutoApply = enriched.filter((node) => {
+        const oldNode = previousInstances.find((n) => n.instanceId === node.instanceId)
+        const isNewlyReady =
+          node.instanceId &&
+          (node.ipv4 || node.ipv6) &&
+          (!oldNode || (!oldNode.ipv4 && !oldNode.ipv6)) &&
+          (node.statusText === 'applying' || node.statusText === 'pending')
+        return isNewlyReady
+      })
+
+      for (const node of nodesToAutoApply) {
+        try {
+          logInfo('[CloudStore] Auto-applying newly ready node:', node.label)
+          await applyNodeToProfile(node)
+          if (kernelApiStore.running) {
+            await kernelApiStore.restartCore()
+          } else {
+            await kernelApiStore.startCore()
+          }
+          // Update status to 'connected' after successful apply
+          node.statusText = 'connected'
+          instances.value = instances.value.map((n) =>
+            n.instanceId === node.instanceId ? node : n
+          )
+          logInfo('[CloudStore] Successfully auto-applied node:', node.label)
+        } catch (error) {
+          logError('[CloudStore] Auto-apply failed for node:', node.label, error)
+          // If auto-apply fails, reset status to 'pending' so user can manually apply
+          node.statusText = 'pending'
+          instances.value = instances.value.map((n) =>
+            n.instanceId === node.instanceId ? node : n
+          )
+        }
+      }
     } catch (error) {
       logError('[CloudStore] refreshInstances error:', error)
       throw error
