@@ -85,16 +85,17 @@ envStore.setupEnv().then(async () => {
   percent.value = 40
   await pluginsStore.onReadyTrigger().catch(showError)
 
-  // Auto-apply cloud nodes on startup
+  // Auto-apply cloud nodes on startup (fire and forget)
   percent.value = 60
-  try {
-    await cloudStore.loadConfig()
+  cloudStore.loadConfig().then(() => {
     if (cloudStore.config.apiKey) {
-      await cloudStore.refreshInstances(true)
+      cloudStore.refreshInstances(true).catch((error) => {
+        console.error('[App] Failed to auto-apply cloud nodes:', error)
+      })
     }
-  } catch (error) {
-    console.error('[App] Failed to auto-apply cloud nodes:', error)
-  }
+  }).catch((error) => {
+    console.error('[App] Failed to load cloud config:', error)
+  })
 
   const duration = performance.now() - startTime
   percent.value = duration < 500 ? 80 : 100
