@@ -85,17 +85,24 @@ envStore.setupEnv().then(async () => {
   percent.value = 40
   await pluginsStore.onReadyTrigger().catch(showError)
 
-  // Auto-apply cloud nodes on startup (fire and forget)
+  // Auto-apply cloud nodes on startup
   percent.value = 60
-  cloudStore.loadConfig().then(() => {
+  let autoApplyPromise: Promise<void> | undefined
+  try {
+    await cloudStore.loadConfig()
     if (cloudStore.config.apiKey) {
-      cloudStore.refreshInstances(true).catch((error) => {
-        console.error('[App] Failed to auto-apply cloud nodes:', error)
-      })
+      await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
+      autoApplyPromise = cloudStore
+        .refreshInstances(true)
+        .then(() => cloudStore.applyAllNodesToProfile())
+        .then(() => undefined)
+        .catch((error) => {
+          console.error('[App] Failed to auto-apply cloud nodes:', error)
+        })
     }
-  }).catch((error) => {
-    console.error('[App] Failed to load cloud config:', error)
-  })
+  } catch (error) {
+    console.error('[App] Failed to prepare cloud data:', error)
+  }
 
   const duration = performance.now() - startTime
   percent.value = duration < 500 ? 80 : 100
@@ -108,6 +115,14 @@ envStore.setupEnv().then(async () => {
   // Auto-start kernel if profiles exist and kernel is not running
   percent.value = 100
   try {
+    if (!kernelApiStore.running) {
+      if (profilesStore.profiles.length === 0 && autoApplyPromise) {
+        await autoApplyPromise
+      } else {
+        autoApplyPromise?.catch(() => undefined)
+      }
+    }
+
     if (profilesStore.profiles.length > 0 && !kernelApiStore.running) {
       console.log('[App] Auto-starting kernel...')
       await kernelApiStore.startCore()

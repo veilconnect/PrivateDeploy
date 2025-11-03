@@ -449,16 +449,20 @@ export const generateConfigFile = async (
 
   // Validate: check for invalid server addresses (0.0.0.0 or empty)
   if (config.outbounds && Array.isArray(config.outbounds)) {
+    const filtered: Recordable[] = []
     for (const outbound of config.outbounds) {
       if (outbound.server) {
         const server = String(outbound.server).trim()
         if (server === '0.0.0.0' || server === '' || server === '::') {
-          console.error(`[Generator] Invalid server address detected for ${outbound.tag}: "${server}"`)
-          console.error(`[Generator] Outbound config:`, outbound)
-          throw new Error(`Invalid server address for proxy ${outbound.tag}: server cannot be ${server}`)
+          console.warn(
+            `[Generator] Skipping outbound ${outbound.tag} due to invalid server address "${server}"`,
+          )
+          continue
         }
       }
+      filtered.push(outbound)
     }
+    config.outbounds = filtered
   }
 
   await WriteFile(CoreConfigFilePath, JSON.stringify(config, null, 2))

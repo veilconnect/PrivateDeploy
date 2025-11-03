@@ -733,6 +733,46 @@ export const useCloudStore = defineStore('cloud', () => {
     node.statusText = status
   }
 
+  const applyAllNodesToProfile = async () => {
+    const isValidIPv4 = (ip?: string) => {
+      if (!ip) return false
+      const octets = ip.split('.')
+      if (octets.length !== 4) return false
+      const first = parseInt(octets[0], 10)
+      const second = parseInt(octets[1], 10)
+      if (first === 100 && second >= 64 && second <= 127) return false
+      if (first === 10) return false
+      if (first === 192 && second === 168) return false
+      if (first === 172 && second >= 16 && second <= 31) return false
+      return true
+    }
+
+    const candidates = instances.value.filter((node) => {
+      const hasId = typeof node.instanceId === 'string' && node.instanceId.length > 0
+      const hasIp = (node.ipv4 && isValidIPv4(node.ipv4)) || !!node.ipv6
+      return hasId && hasIp
+    })
+
+    const applied: string[] = []
+    for (const node of candidates) {
+      try {
+        await applyNodeToProfile(node)
+        markNodeStatus(node.instanceId, 'connected')
+        applied.push(node.instanceId)
+      } catch (error) {
+        logError('[CloudStore] Auto-apply failed for node:', node.label, error)
+      }
+    }
+
+    if (applied.length && kernelApiStore.running) {
+      await kernelApiStore.refreshProviderProxies().catch((error) =>
+        logError('[CloudStore] Failed to refresh provider proxies after auto-apply:', error),
+      )
+    }
+
+    return applied
+  }
+
   const applyNodeToProfile = async (node: CloudNode, profileId?: string) => {
     await ensureSubscriptionForNode(node)
 
@@ -953,5 +993,6 @@ export const useCloudStore = defineStore('cloud', () => {
     createInstance,
     destroyInstance,
     applyNodeToProfile,
+    applyAllNodesToProfile,
   }
 })
