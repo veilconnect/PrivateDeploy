@@ -1,4 +1,4 @@
-module veildeploy
+module privatedeploy
 
 go 1.23.0
 

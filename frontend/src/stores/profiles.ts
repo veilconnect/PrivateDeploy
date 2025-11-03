@@ -73,6 +73,22 @@ export const useProfilesStore = defineStore('profiles', () => {
           needsDiskSync = true
         }
       })
+
+      // Remove deprecated remote ruleset references to avoid boot failures when offline
+      const routeRuleCount = profile.route.rules.length
+      profile.route.rules = profile.route.rules.filter((rule) => rule.type !== 'rule_set')
+      if (profile.route.rules.length !== routeRuleCount) {
+        needsDiskSync = true
+      }
+      if (profile.route.rule_set?.length) {
+        profile.route.rule_set = []
+        needsDiskSync = true
+      }
+      const dnsRuleCount = profile.dns.rules.length
+      profile.dns.rules = profile.dns.rules.filter((rule) => rule.type !== 'rule_set')
+      if (profile.dns.rules.length !== dnsRuleCount) {
+        needsDiskSync = true
+      }
     })
 
     if (needsDiskSync) {

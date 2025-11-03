@@ -40,6 +40,7 @@ const groups = computed(() => {
             appSettings.app.kernel.unAvailable ||
             ['direct', 'block'].includes(proxy) ||
             proxies[proxy].all ||
+            proxy.startsWith('cloud-') ||
             alive
           const keywords = filterKeywordsMap.value[group.name]
           const condition2 = keywords ? new RegExp(keywords, 'i').test(proxy) : true

@@ -5,9 +5,9 @@ import { useI18n } from 'vue-i18n'
 import { ClipboardSetText } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
-import { logError } from '@/utils/logger'
+import { logError, logInfo } from '@/utils/logger'
 
-import type { VultrNode, VultrPlan, VultrRegion } from '@/types/cloud'
+import type { CloudNode, CloudPlan, CloudRegion } from '@/types/cloud'
 
 const { t } = useI18n()
 const cloudStore = useCloudStore()
@@ -22,7 +22,7 @@ const form = reactive({
 const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loadingRegions)
 const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 
-function formatRegion(region: VultrRegion) {
+function formatRegion(region: CloudRegion) {
   // For DigitalOcean, backend already provides bilingual format (e.g., "New York 1 (纽约1)")
   // Just display the city field directly
   if (cloudStore.currentProvider === 'digitalocean') {
@@ -47,7 +47,7 @@ const providerOptions = computed(() =>
 )
 
 const regionOptions = computed(() =>
-  cloudStore.regions.map((region: VultrRegion) => ({
+  cloudStore.regions.map((region: CloudRegion) => ({
     label: formatRegion(region),
     value: region.id,
   })),
@@ -78,6 +78,7 @@ const getStatusColor = (status?: string): TagColor => statusColors[(status || 'u
 const availablePlanIds = computed(() => cloudStore.availability[form.region] || [])
 
 const planOptions = computed(() => {
+  const availabilityData = cloudStore.availability
   const currentRegion = form.region
 
   if (!cloudStore.plans.length) {
@@ -85,23 +86,23 @@ const planOptions = computed(() => {
   }
 
   if (!currentRegion) {
-    return cloudStore.plans.map((plan: VultrPlan) => ({
+    return cloudStore.plans.map((plan: CloudPlan) => ({
       label: formatPlan(plan),
       value: plan.id,
     }))
   }
 
-  // Filter plans based on their locations field (most reliable source)
-  const availablePlans = cloudStore.plans.filter((plan: VultrPlan) => {
-    // If plan has locations array, check if current region is in it
-    if (plan.locations && Array.isArray(plan.locations)) {
-      return plan.locations.includes(currentRegion)
-    }
-    // Fallback: if no locations field, show all plans
-    return true
-  })
+  const ids = availabilityData[currentRegion] || []
 
-  return availablePlans.map((plan: VultrPlan) => ({
+  if (ids.length > 0) {
+    const source = cloudStore.plans.filter((plan: CloudPlan) => ids.includes(plan.id))
+    return source.map((plan: CloudPlan) => ({
+      label: formatPlan(plan),
+      value: plan.id,
+    }))
+  }
+
+  return cloudStore.plans.map((plan: CloudPlan) => ({
     label: formatPlan(plan),
     value: plan.id,
   }))
@@ -109,12 +110,17 @@ const planOptions = computed(() => {
 
 const regionMap = computed(() => new Map(cloudStore.regions.map((r) => [r.id, formatRegion(r)])))
 const planMap = computed(() => {
-  const map = new Map(cloudStore.plans.map((p) => [p.id, formatPlan(p)]))
-  console.log('[CloudView] planMap updated, size:', map.size, 'plans:', cloudStore.plans.length)
-  if (cloudStore.plans.length > 0) {
-    const firstPlan = cloudStore.plans[0]
-    console.log('[CloudView] First plan:', firstPlan.id, 'formatted:', formatPlan(firstPlan))
+  const map = new Map()
+  for (const p of cloudStore.plans) {
+    try {
+      map.set(p.id, formatPlan(p))
+    } catch (error) {
+      console.error('[CloudView] Error formatting plan:', p.id, error)
+      // Fallback to plan ID if formatting fails
+      map.set(p.id, p.id)
+    }
   }
+  console.log('[CloudView] planMap updated, size:', map.size, 'plans:', cloudStore.plans.length)
   return map
 })
 
@@ -136,12 +142,14 @@ function formatNodeRegion(regionId: string): string {
   return t(idKey) !== idKey ? t(idKey) : regionId
 }
 
-const tableData = computed(() =>
-  cloudStore.instances.map((node) => ({
+const tableData = computed(() => {
+  // TEMPORARY: Disable provider filtering to debug node list display issue
+  const data = cloudStore.instances.map((node) => ({
     ...node,
     id: node.instanceId,
-  })),
-)
+  }))
+  return data
+})
 
 const applyingNodeId = ref('')
 const refreshIntervalId = ref<number | null>(null)
@@ -155,14 +163,25 @@ function defaultLabel(provider: string = cloudStore.currentProvider) {
   return `${safePrefix}-${Date.now().toString(36)}`
 }
 
-function formatPlan(plan: VultrPlan) {
-  const cpuCount = (plan as Record<string, any>).vcpu_count ?? (plan as Record<string, any>).vcpus ?? plan.vcpu_count
-  const ram = plan.ram >= 1024 ? `${(plan.ram / 1024).toFixed(1)}GB` : `${plan.ram}MB`
-  const disk = plan.disk >= 1024 ? `${(plan.disk / 1024).toFixed(1)}TB` : `${plan.disk}GB`
-  const bandwidth = plan.bandwidth >= 1024 ? `${(plan.bandwidth / 1024).toFixed(1)}TB` : `${plan.bandwidth}GB`
+function formatPlan(plan: CloudPlan) {
+  // Defensive: handle missing or invalid plan data
+  if (!plan || typeof plan !== 'object') {
+    return String(plan || '')
+  }
+
+  const cpuCount = (plan as Record<string, any>).vcpu_count ?? (plan as Record<string, any>).vcpus ?? plan.vcpus ?? 0
+
+  // Defensive: ensure numeric values are valid before formatting
+  const ramValue = typeof plan.ram === 'number' && !isNaN(plan.ram) && isFinite(plan.ram) ? plan.ram : 0
+  const diskValue = typeof plan.disk === 'number' && !isNaN(plan.disk) && isFinite(plan.disk) ? plan.disk : 0
+  const bandwidthValue = typeof plan.bandwidth === 'number' && !isNaN(plan.bandwidth) && isFinite(plan.bandwidth) ? plan.bandwidth : 0
+
+  const ram = ramValue >= 1024 ? `${(ramValue / 1024).toFixed(1)}GB` : `${ramValue}MB`
+  const disk = diskValue >= 1024 ? `${(diskValue / 1024).toFixed(1)}TB` : `${diskValue}GB`
+  const bandwidth = bandwidthValue >= 1024 ? `${(bandwidthValue / 1024).toFixed(1)}TB` : `${bandwidthValue}GB`
 
   const meta = [
-    `${cpuCount ?? 0} ${t('cloud.format.vcpu')}`,
+    `${cpuCount} ${t('cloud.format.vcpu')}`,
     `${ram} ${t('cloud.format.ram')}`,
     `${disk} ${t('cloud.format.disk')}`,
     `${bandwidth} ${t('cloud.format.bandwidth')}`
@@ -170,7 +189,7 @@ function formatPlan(plan: VultrPlan) {
 
   // Add price if available (check both camelCase and snake_case)
   const monthlyCost = plan.monthlyCost || (plan as Record<string, any>).monthly_cost
-  if (monthlyCost && monthlyCost > 0) {
+  if (monthlyCost && monthlyCost > 0 && isFinite(monthlyCost)) {
     meta.push(`$${monthlyCost.toFixed(2)}${t('cloud.format.monthly')}`)
   }
 
@@ -359,7 +378,16 @@ const handleError = (error: unknown) => {
   }
   // "API key" 相关错误
   else if (lowerMessage.includes('api key') || lowerMessage.includes('apikey')) {
-    messageText = t('cloud.errors.apiKeyRequired')
+    const missingHints = ['missing', 'empty', 'require', 'not configured', 'cannot be empty']
+    const invalidHints = ['invalid', 'unauthorized', 'forbidden']
+    const isMissingKey = missingHints.some((hint) => lowerMessage.includes(hint))
+    const isInvalidKey = invalidHints.some((hint) => lowerMessage.includes(hint))
+
+    if (isMissingKey) {
+      messageText = t('cloud.errors.apiKeyRequired')
+    } else if (isInvalidKey) {
+      messageText = t('cloud.errors.apiKeyInvalid')
+    }
   }
 
   message.error(messageText)
@@ -403,10 +431,6 @@ const handleSaveConfig = async () => {
 }
 
 const fetchMeta = async () => {
-  if (!hasApiKey.value) {
-    message.error(t('cloud.errors.apiKeyRequired'))
-    return
-  }
   try {
     await Promise.all([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
     await cloudStore.refreshInstances(true)
@@ -456,8 +480,8 @@ const handleDeploy = async () => {
   }
 }
 
-const handleUseNode = async (node: VultrNode | Record<string, any>) => {
-  const target = node as VultrNode
+const handleUseNode = async (node: CloudNode | Record<string, any>) => {
+  const target = node as CloudNode
   cloudStore.markNodeStatus(target.instanceId, 'applying')
   applyingNodeId.value = target.instanceId
   try {
@@ -509,11 +533,11 @@ const copyValue = async (value: string) => {
   }
 }
 
-const ensureNode = (node: VultrNode | Record<string, any>): VultrNode => node as VultrNode
+const ensureNode = (node: CloudNode | Record<string, any>): CloudNode => node as CloudNode
 
-const getPreferredAddress = (node: VultrNode | Record<string, any>): string | undefined => {
+const getPreferredAddress = (node: CloudNode | Record<string, any>): string | undefined => {
   const target = ensureNode(node)
-  if (isPublicIPv4(target.ipv4)) return target.ipv4
+  if (target.ipv4 && isPublicIPv4(target.ipv4)) return target.ipv4
   if (target.ipv6) return target.ipv6
   return undefined
 }
@@ -523,7 +547,7 @@ const wrapHostForUri = (host: string): string => {
   return host.startsWith('[') ? host : `[${host}]`
 }
 
-const buildShadowsocksLink = (node: VultrNode | Record<string, any>): string | null => {
+const buildShadowsocksLink = (node: CloudNode | Record<string, any>): string | null => {
   const target = ensureNode(node)
   const port = target.ssPort || target.port
   const password = target.ssPassword || target.password
@@ -533,7 +557,7 @@ const buildShadowsocksLink = (node: VultrNode | Record<string, any>): string | n
   return `ss://${encoded}#${encodeURIComponent(target.label)}`
 }
 
-const buildHysteriaLink = (node: VultrNode | Record<string, any>): string | null => {
+const buildHysteriaLink = (node: CloudNode | Record<string, any>): string | null => {
   const target = ensureNode(node)
   if (!target.hysteriaPort || !target.hysteriaPassword) return null
   const host = getPreferredAddress(target)
@@ -542,7 +566,7 @@ const buildHysteriaLink = (node: VultrNode | Record<string, any>): string | null
   return `hysteria2://${encodeURIComponent(target.hysteriaPassword)}@${wrapHostForUri(host)}:${target.hysteriaPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 
-const buildVlessLink = (node: VultrNode | Record<string, any>): string | null => {
+const buildVlessLink = (node: CloudNode | Record<string, any>): string | null => {
   const target = ensureNode(node)
   if (!target.vlessPort || !target.vlessUUID || !target.vlessPublicKey || !target.vlessShortId) return null
   const host = getPreferredAddress(target)
@@ -559,7 +583,7 @@ const buildVlessLink = (node: VultrNode | Record<string, any>): string | null =>
   return `vless://${target.vlessUUID}@${wrapHostForUri(host)}:${target.vlessPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 
-const buildTrojanLink = (node: VultrNode | Record<string, any>): string | null => {
+const buildTrojanLink = (node: CloudNode | Record<string, any>): string | null => {
   const target = ensureNode(node)
   if (!target.trojanPort || !target.trojanPassword) return null
   const host = getPreferredAddress(target)
@@ -568,19 +592,19 @@ const buildTrojanLink = (node: VultrNode | Record<string, any>): string | null =
   return `trojan://${encodeURIComponent(target.trojanPassword)}@${wrapHostForUri(host)}:${target.trojanPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 
-const hasShadowsocks = (node: VultrNode | Record<string, any>): boolean => {
+const hasShadowsocks = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
   return Boolean((target.ssPort || target.port) && (target.ssPassword || target.password))
 }
-const hasHysteria = (node: VultrNode | Record<string, any>): boolean => {
+const hasHysteria = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
   return Boolean(target.hysteriaPort && target.hysteriaPassword)
 }
-const hasVless = (node: VultrNode | Record<string, any>): boolean => {
+const hasVless = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
   return Boolean(target.vlessPort && target.vlessUUID && target.vlessPublicKey && target.vlessShortId)
 }
-const hasTrojan = (node: VultrNode | Record<string, any>): boolean => {
+const hasTrojan = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
   return Boolean(target.trojanPort && target.trojanPassword)
 }
@@ -593,23 +617,23 @@ const copyProtocolLink = async (link: string | null) => {
   await copyValue(link)
 }
 
-const copyShadowsocksLink = async (node: VultrNode | Record<string, any>) => {
+const copyShadowsocksLink = async (node: CloudNode | Record<string, any>) => {
   await copyProtocolLink(buildShadowsocksLink(node))
 }
 
-const copyHysteriaLink = async (node: VultrNode | Record<string, any>) => {
+const copyHysteriaLink = async (node: CloudNode | Record<string, any>) => {
   await copyProtocolLink(buildHysteriaLink(node))
 }
 
-const copyVlessLink = async (node: VultrNode | Record<string, any>) => {
+const copyVlessLink = async (node: CloudNode | Record<string, any>) => {
   await copyProtocolLink(buildVlessLink(node))
 }
 
-const copyTrojanLink = async (node: VultrNode | Record<string, any>) => {
+const copyTrojanLink = async (node: CloudNode | Record<string, any>) => {
   await copyProtocolLink(buildTrojanLink(node))
 }
 
-const copyNodeConfig = async (record: VultrNode | Record<string, any>) => {
+const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
   const node = ensureNode(record)
   const links = [
     { label: 'Shadowsocks', url: buildShadowsocksLink(node) },
@@ -627,8 +651,8 @@ const copyNodeConfig = async (record: VultrNode | Record<string, any>) => {
   await copyValue(payload)
 }
 
-const handleDestroy = async (record: VultrNode | Record<string, any>) => {
-  const node = record as VultrNode
+const handleDestroy = async (record: CloudNode | Record<string, any>) => {
+  const node = record as CloudNode
   try {
     await confirm('common.warning', t('cloud.confirmDestroy', { label: node.label }))
   } catch (error) {

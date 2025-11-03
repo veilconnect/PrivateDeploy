@@ -3,10 +3,9 @@ package bridge
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 
-	"veildeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud"
 )
 
 // CloudProviderInfo represents basic information about a cloud provider
@@ -94,32 +93,21 @@ func (a *App) ListCloudInstances() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.ListVultrInstances()
-	case "digitalocean":
-		// DigitalOcean provider is fully implemented
-		ctx := context.Background()
-		instances, err := provider.ListInstances(ctx)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to list instances: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		data, err := json.Marshal(instances)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to marshal instances: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Listed %d instances for provider %s", len(instances), provider.Name())
-		return FlagResult{Flag: true, Data: string(data)}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	ctx := context.Background()
+	instances, err := provider.ListInstances(ctx)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to list instances: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	data, err := json.Marshal(instances)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal instances: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Listed %d instances for provider %s", len(instances), provider.Name())
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // CreateCloudInstance creates a new instance on the active provider
@@ -132,38 +120,27 @@ func (a *App) CreateCloudInstance(optionsJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.CreateVultrInstance(optionsJSON)
-	case "digitalocean":
-		// DigitalOcean provider is fully implemented
-		var opts cloud.CreateInstanceOptions
-		if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to parse options: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		ctx := context.Background()
-		instance, err := provider.CreateInstance(ctx, &opts)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to create instance: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		data, err := json.Marshal(instance)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to marshal instance: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Created instance %s on provider %s", instance.ID, provider.Name())
-		return FlagResult{Flag: true, Data: string(data)}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	var opts cloud.CreateInstanceOptions
+	if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to parse options: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	ctx := context.Background()
+	instance, err := provider.CreateInstance(ctx, &opts)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to create instance: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(instance)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal instance: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Created instance %s on provider %s", instance.ID, provider.Name())
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // DestroyCloudInstance destroys an instance on the active provider
@@ -176,26 +153,14 @@ func (a *App) DestroyCloudInstance(instanceID string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.DestroyVultrInstance(instanceID)
-	case "digitalocean":
-		// DigitalOcean provider is fully implemented
-		ctx := context.Background()
-		err = provider.DestroyInstance(ctx, instanceID)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to destroy instance: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Destroyed instance %s on provider %s", instanceID, provider.Name())
-		return FlagResult{Flag: true, Data: "Instance destroyed successfully"}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	ctx := context.Background()
+	if err := provider.DestroyInstance(ctx, instanceID); err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to destroy instance: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	log.Printf("[CloudBridge] Destroyed instance %s on provider %s", instanceID, provider.Name())
+	return FlagResult{Flag: true, Data: "Instance destroyed successfully"}
 }
 
 // ListCloudRegions returns all regions for the active provider
@@ -208,32 +173,21 @@ func (a *App) ListCloudRegions() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.ListVultrRegions()
-	case "digitalocean":
-		// DigitalOcean provider is fully implemented
-		ctx := context.Background()
-		regions, err := provider.ListRegions(ctx)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to list regions: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		data, err := json.Marshal(regions)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to marshal regions: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Listed %d regions for provider %s", len(regions), provider.Name())
-		return FlagResult{Flag: true, Data: string(data)}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	ctx := context.Background()
+	regions, err := provider.ListRegions(ctx)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to list regions: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	data, err := json.Marshal(regions)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal regions: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Listed %d regions for provider %s", len(regions), provider.Name())
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // ListCloudPlans returns all plans for the active provider
@@ -246,33 +200,21 @@ func (a *App) ListCloudPlans() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.ListVultrPlans()
-	case "digitalocean":
-		// DigitalOcean provider is fully implemented
-		// Note: DigitalOcean's ListPlans requires a region parameter, but for now we'll pass empty string
-		ctx := context.Background()
-		plans, err := provider.ListPlans(ctx, "")
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to list plans: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		data, err := json.Marshal(plans)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to marshal plans: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Listed %d plans for provider %s", len(plans), provider.Name())
-		return FlagResult{Flag: true, Data: string(data)}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	ctx := context.Background()
+	plans, err := provider.ListPlans(ctx, "")
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to list plans: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	data, err := json.Marshal(plans)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal plans: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Listed %d plans for provider %s", len(plans), provider.Name())
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // ListCloudAvailability returns plan availability for the active provider
@@ -285,29 +227,19 @@ func (a *App) ListCloudAvailability(region string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Active provider: %s", provider.Name())
-
-	// Route to legacy methods for now
-	switch provider.Name() {
-	case "vultr":
-		return a.ListVultrAvailability(region)
-	case "digitalocean":
-		ctx := context.Background()
-		plans, err := provider.ListAvailability(ctx, region)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to list availability: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		data, err := json.Marshal(plans)
-		if err != nil {
-			log.Printf("[CloudBridge] ERROR: Failed to marshal availability: %v", err)
-			return FlagResult{Flag: false, Data: err.Error()}
-		}
-
-		log.Printf("[CloudBridge] Listed %d available plans for provider %s region %s", len(plans), provider.Name(), region)
-		return FlagResult{Flag: true, Data: string(data)}
-	default:
-		return FlagResult{Flag: false, Data: fmt.Sprintf("Unknown provider: %s", provider.Name())}
+	ctx := context.Background()
+	plans, err := provider.ListAvailability(ctx, region)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to list availability: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
+
+	data, err := json.Marshal(plans)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal availability: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Listed %d available plans for provider %s region %s", len(plans), provider.Name(), region)
+	return FlagResult{Flag: true, Data: string(data)}
 }

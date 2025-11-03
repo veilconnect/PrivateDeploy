@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"veildeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 )

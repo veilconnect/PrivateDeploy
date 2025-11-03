@@ -1,6 +1,6 @@
-# VeilDeploy
+# PrivateDeploy
 
-VeilDeploy is a cross-platform desktop application (Vue 3 + Wails) that automates the provisioning of hardened proxy nodes on Vultr. A single deployment script brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – and the GUI keeps credentials, client profiles, and health information in sync.
+PrivateDeploy is a cross-platform desktop application (Vue 3 + Wails) that automates the provisioning of hardened proxy nodes on Vultr. A single deployment script brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – and the GUI keeps credentials, client profiles, and health information in sync.
 
 ## Highlights
 
@@ -40,7 +40,7 @@ wails build
 4. Use *Copy All Links* or per-protocol copy buttons to share credentials.
 5. Click *Use Node* to inject the subscription into the current sing-box profile.
 
-Reality parameters (public key + short ID) are stored on the VPS under `/etc/veildeploy/vless/reality.txt` and surfaced in the UI for clients that need manual configuration.
+Reality parameters (public key + short ID) are stored on the VPS under `/etc/privatedeploy/vless/reality.txt` and surfaced in the UI for clients that need manual configuration.
 
 ## Additional Documentation
 

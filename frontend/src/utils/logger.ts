@@ -23,7 +23,7 @@ const logToRuntime = (level: 'Log' | 'LogInfo' | 'LogError' | 'LogWarning', mess
 
 const emitLog = (level: 'info' | 'warn' | 'error', args: unknown[]) => {
   const formatted = formatArgs(args)
-  const prefix = '[VeilDeploy]'
+  const prefix = '[PrivateDeploy]'
   const joined = `${prefix} ${formatted.join(' ')}`
   switch (level) {
     case 'error':

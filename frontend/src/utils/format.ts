@@ -1,6 +1,7 @@
 import i18n from '@/lang'
 
 export function formatBytes(bytes: number, decimals: number = 1): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '--'
   if (bytes === 0) return '0 B'
 
   const k = 1024
@@ -15,6 +16,7 @@ export function formatBytes(bytes: number, decimals: number = 1): string {
 export function formatRelativeTime(d: string | number) {
   const formatter = new Intl.RelativeTimeFormat(i18n.global.locale.value, { numeric: 'auto' })
   const date = new Date(d)
+  if (Number.isNaN(date.getTime())) return '--'
   const now = Date.now()
   const diffMs = date.getTime() - now
 
@@ -40,6 +42,7 @@ export function formatRelativeTime(d: string | number) {
 
 export function formatDate(timestamp: number | string, format: string) {
   const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '--'
 
   const map: Record<string, any> = {
     YYYY: date.getFullYear(),

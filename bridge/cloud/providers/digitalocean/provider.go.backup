@@ -3,11 +3,12 @@ package digitalocean
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -17,8 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"privatedeploy/bridge/cloud"
-	"privatedeploy/bridge/cloud/deploy"
+	"veildeploy/bridge/cloud"
 )
 
 const (
@@ -46,7 +46,7 @@ func New(config *cloud.ProviderConfig) *Provider {
 	}
 
 	// Get base path from environment or use current directory
-	basePath := os.Getenv("PRIVATEDEPLOY_BASE_PATH")
+	basePath := os.Getenv("VEILDEPLOY_BASE_PATH")
 	if basePath == "" {
 		basePath, _ = os.Getwd()
 	}
@@ -129,7 +129,7 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+	if err := os.WriteFile(p.configPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -454,30 +454,6 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		if record.SSPassword != "" {
 			instance.SSPassword = record.SSPassword
 		}
-		if record.HysteriaPort != 0 {
-			instance.HysteriaPort = record.HysteriaPort
-		}
-		if record.HysteriaPassword != "" {
-			instance.HysteriaPassword = record.HysteriaPassword
-		}
-		if record.VLESSPort != 0 {
-			instance.VLESSPort = record.VLESSPort
-		}
-		if record.VLESSUUID != "" {
-			instance.VLESSUUID = record.VLESSUUID
-		}
-		if record.VLESSPublicKey != "" {
-			instance.VLESSPublicKey = record.VLESSPublicKey
-		}
-		if record.VLESSShortID != "" {
-			instance.VLESSShortID = record.VLESSShortID
-		}
-		if record.TrojanPort != 0 {
-			instance.TrojanPort = record.TrojanPort
-		}
-		if record.TrojanPassword != "" {
-			instance.TrojanPassword = record.TrojanPassword
-		}
 
 		records[instanceID] = record
 		seen[instanceID] = struct{}{}
@@ -509,42 +485,11 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("create options cannot be nil")
 	}
 
-	// Generate credentials for all protocols
 	ssPort := 23650
-	ssPassword := deploy.GenerateRandomPassword(16)
-	hysteriaPort := 23651
-	hysteriaPassword := deploy.GenerateRandomPassword(22)
-	vlessPort := 23652
-	vlessUUID := deploy.GenerateUUID()
-	trojanPort := 23653
-	trojanPassword := deploy.GenerateRandomPassword(22)
-
-	// Generate Reality keypair
-	realityPrivateKey, realityPublicKey, err := deploy.GenerateRealityKeyPair()
-	if err != nil {
-		fmt.Printf("Warning: failed to generate Reality keypair: %v\n", err)
-		realityPrivateKey = ""
-		realityPublicKey = ""
-	}
-	realityShortID := fmt.Sprintf("%016x", mathrand.Int63())
+	ssPassword := generateRandomPassword(16)
 
 	// Generate cloud-init user data script
-	userData := deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
-		SSPort:           ssPort,
-		SSPassword:       ssPassword,
-		HysteriaPort:     hysteriaPort,
-		HysteriaPassword: hysteriaPassword,
-		VLESSPort:        vlessPort,
-		VLESSUUID:        vlessUUID,
-		VLESSPrivateKey:  realityPrivateKey,
-		VLESSPublicKey:   realityPublicKey,
-		VLESSShortID:     realityShortID,
-		TrojanPort:       trojanPort,
-		TrojanPassword:   trojanPassword,
-	})
-	if userData == "" {
-		return nil, fmt.Errorf("failed to render deployment script")
-	}
+	userData := generateCloudInitScript(opts, ssPort, ssPassword)
 
 	// Prepare droplet creation request
 	createReq := map[string]interface{}{
@@ -613,23 +558,15 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	instanceID := fmt.Sprintf("cloud-do-%d", result.Droplet.ID)
 
 	instance := &cloud.Instance{
-		ID:               instanceID,
-		Provider:         "digitalocean",
-		Label:            result.Droplet.Name,
-		Status:           result.Droplet.Status,
-		Region:           result.Droplet.Region.Slug,
-		Plan:             result.Droplet.Size.Slug,
-		CreatedAt:        result.Droplet.CreatedAt,
-		SSPort:           ssPort,
-		SSPassword:       ssPassword,
-		HysteriaPort:     hysteriaPort,
-		HysteriaPassword: hysteriaPassword,
-		VLESSPort:        vlessPort,
-		VLESSUUID:        vlessUUID,
-		VLESSPublicKey:   realityPublicKey,
-		VLESSShortID:     realityShortID,
-		TrojanPort:       trojanPort,
-		TrojanPassword:   trojanPassword,
+		ID:         instanceID,
+		Provider:   "digitalocean",
+		Label:      result.Droplet.Name,
+		Status:     result.Droplet.Status,
+		Region:     result.Droplet.Region.Slug,
+		Plan:       result.Droplet.Size.Slug,
+		CreatedAt:  result.Droplet.CreatedAt,
+		SSPort:     ssPort,
+		SSPassword: ssPassword,
 	}
 
 	records, err := p.loadNodeRecords()
@@ -638,18 +575,10 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	record := cloud.InstanceRecord{
-		Plan:             opts.Plan,
-		CreatedAt:        result.Droplet.CreatedAt.Format(time.RFC3339),
-		SSPort:           ssPort,
-		SSPassword:       ssPassword,
-		HysteriaPort:     hysteriaPort,
-		HysteriaPassword: hysteriaPassword,
-		VLESSPort:        vlessPort,
-		VLESSUUID:        vlessUUID,
-		VLESSPublicKey:   realityPublicKey,
-		VLESSShortID:     realityShortID,
-		TrojanPort:       trojanPort,
-		TrojanPassword:   trojanPassword,
+		Plan:       opts.Plan,
+		CreatedAt:  result.Droplet.CreatedAt.Format(time.RFC3339),
+		SSPort:     ssPort,
+		SSPassword: ssPassword,
 	}
 
 	if instance.IPv4 != "" {
@@ -667,7 +596,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	// Ensure firewall exists and associate it with the new droplet
-	firewallID, err := p.ensurePrivateDeployFirewall(ctx)
+	firewallID, err := p.ensureVeilDeployFirewall(ctx)
 	if err != nil {
 		// Log error but don't fail the instance creation
 		// The instance was created successfully, just without firewall
@@ -688,7 +617,7 @@ func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error
 		return cloud.ErrInstanceNotFound
 	}
 
-	// DigitalOcean API expects the numeric droplet ID. Instances in PrivateDeploy are
+	// DigitalOcean API expects the numeric droplet ID. Instances in VeilDeploy are
 	// prefixed with "cloud-do-", so strip that prefix if present.
 	actualID := strings.TrimPrefix(instanceID, "cloud-do-")
 	if actualID == "" {
@@ -842,30 +771,6 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		if record.SSPassword != "" {
 			instance.SSPassword = record.SSPassword
 		}
-		if record.HysteriaPort != 0 {
-			instance.HysteriaPort = record.HysteriaPort
-		}
-		if record.HysteriaPassword != "" {
-			instance.HysteriaPassword = record.HysteriaPassword
-		}
-		if record.VLESSPort != 0 {
-			instance.VLESSPort = record.VLESSPort
-		}
-		if record.VLESSUUID != "" {
-			instance.VLESSUUID = record.VLESSUUID
-		}
-		if record.VLESSPublicKey != "" {
-			instance.VLESSPublicKey = record.VLESSPublicKey
-		}
-		if record.VLESSShortID != "" {
-			instance.VLESSShortID = record.VLESSShortID
-		}
-		if record.TrojanPort != 0 {
-			instance.TrojanPort = record.TrojanPort
-		}
-		if record.TrojanPassword != "" {
-			instance.TrojanPassword = record.TrojanPassword
-		}
 
 		records[instance.ID] = record
 		if updated {
@@ -922,9 +827,96 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// ensurePrivateDeployFirewall ensures a PrivateDeploy firewall exists and returns its ID
-func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context) (string, error) {
-	// First, check if PrivateDeploy firewall already exists
+// generateRandomPassword generates a random password of specified length
+func generateRandomPassword(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)[:length]
+}
+
+// generateCloudInitScript generates a cloud-init user data script for DigitalOcean droplets
+func generateCloudInitScript(opts *cloud.CreateInstanceOptions, ssPort int, ssPassword string) string {
+	// Use default protocol ports
+	hysteriaPort := 23651
+	vlessPort := 23652
+	trojanPort := 23653
+
+	_ = hysteriaPort // Placeholder for future Hysteria2 support
+	_ = vlessPort    // Placeholder for future VLESS support
+	_ = trojanPort   // Placeholder for future Trojan support
+
+	return fmt.Sprintf(`#!/bin/bash
+# VeilDeploy Multi-Protocol Deployment Script for DigitalOcean
+# Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+LOGFILE="/var/log/veildeploy-init.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== VeilDeploy Multi-Protocol Init Started at $(date) ==="
+
+# Update and install packages
+echo "[1/8] Installing Docker, UFW and required packages..."
+apt-get update -qq
+apt-get install -y docker.io ufw iptables openssl curl
+
+# Start Docker
+echo "[2/8] Starting Docker service..."
+systemctl enable docker
+systemctl start docker
+sleep 3
+
+# Generate self-signed certificates
+echo "[3/8] Generating TLS certificates..."
+mkdir -p /etc/veildeploy/{hysteria,trojan,vless}
+
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/veildeploy/hysteria/key.pem \
+  -out /etc/veildeploy/hysteria/cert.pem \
+  -days 365 -subj "/CN=www.bing.com" 2>/dev/null
+
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/veildeploy/trojan/key.pem \
+  -out /etc/veildeploy/trojan/cert.pem \
+  -days 365 -subj "/CN=www.microsoft.com" 2>/dev/null
+
+# Configure UFW firewall
+echo "[4/8] Configuring UFW firewall..."
+ufw --force disable || true
+ufw --force reset
+ufw logging on
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow %d/tcp comment 'Shadowsocks-TCP'
+ufw allow %d/udp comment 'Shadowsocks-UDP'
+ufw allow %d/udp comment 'Hysteria2'
+ufw allow %d/tcp comment 'VLESS-Reality'
+ufw allow %d/tcp comment 'Trojan'
+echo "y" | ufw enable
+
+echo "[5/8] Verifying firewall configuration..."
+ufw status verbose
+
+# Deploy Shadowsocks
+echo "[6/8] Deploying Shadowsocks server (port %d)..."
+docker rm -f ss-server >/dev/null 2>&1 || true
+docker pull teddysun/shadowsocks-libev
+docker run -d --name ss-server --restart=always \
+  -p %d:%d/tcp -p %d:%d/udp \
+  teddysun/shadowsocks-libev ss-server \
+  -s 0.0.0.0 -p %d -k %s -m aes-256-gcm
+
+echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
+echo "Configuration saved to /var/log/veildeploy-init.log"
+`, ssPort, ssPort, hysteriaPort, vlessPort, trojanPort,
+		ssPort, ssPort, ssPort, ssPort, ssPort, ssPort, ssPassword)
+}
+
+// ensureVeilDeployFirewall ensures a VeilDeploy firewall exists and returns its ID
+func (p *Provider) ensureVeilDeployFirewall(ctx context.Context) (string, error) {
+	// First, check if VeilDeploy firewall already exists
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/firewalls", nil)
 	if err != nil {
 		return "", err
@@ -954,55 +946,55 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context) (string, err
 		return "", err
 	}
 
-	// Check if PrivateDeploy firewall exists
+	// Check if VeilDeploy firewall exists
 	for _, fw := range listResult.Firewalls {
-		if fw.Name == "privatedeploy-multi-protocol" {
+		if fw.Name == "veildeploy-multi-protocol" {
 			return fw.ID, nil
 		}
 	}
 
 	// Create new firewall
 	firewallReq := map[string]interface{}{
-		"name": "privatedeploy-multi-protocol",
+		"name": "veildeploy-multi-protocol",
 		"inbound_rules": []map[string]interface{}{
 			{
-				"protocol": "tcp",
-				"ports":    "22",
+				"protocol":  "tcp",
+				"ports":     "22",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
-				"protocol": "tcp",
-				"ports":    "23650",
+				"protocol":  "tcp",
+				"ports":     "23650",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
-				"protocol": "udp",
-				"ports":    "23650",
+				"protocol":  "udp",
+				"ports":     "23650",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
-				"protocol": "udp",
-				"ports":    "23651",
+				"protocol":  "udp",
+				"ports":     "23651",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
-				"protocol": "tcp",
-				"ports":    "23652",
+				"protocol":  "tcp",
+				"ports":     "23652",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
-				"protocol": "tcp",
-				"ports":    "23653",
+				"protocol":  "tcp",
+				"ports":     "23653",
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},

@@ -4,7 +4,6 @@ import { reactive, ref } from 'vue'
 import {
   GetVultrConfig,
   SaveVultrConfig,
-  ListVultrAvailability,
   ListCloudProviders,
   GetCloudProvider,
   SetCloudProvider,
@@ -31,17 +30,17 @@ import { useAppSettingsStore } from './appSettings'
 import { useKernelApiStore } from './kernelApi'
 
 import type { Subscription } from '@/types/app'
-import type { CloudProvider, VultrConfig, VultrNode, VultrPlan, VultrRegion } from '@/types/cloud'
+import type { CloudProvider, CloudConfig, CloudNode, CloudPlan, CloudRegion } from '@/types/cloud'
 
 
 type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
-type CloudNode = VultrNode & { statusText?: CloudNodeStatus }
+type ManagedCloudNode = CloudNode & { statusText?: CloudNodeStatus }
 const parseJSON = <T>(data: string | undefined | null, fallback: T): T => {
   if (!data) return fallback
   try {
     return JSON.parse(data) as T
   } catch (error) {
-    logError('Failed to parse Vultr response', error)
+    logError('Failed to parse provider response', error)
     return fallback
   }
 }
@@ -59,7 +58,7 @@ const subscriptionId = (instanceId: string) => {
 }
 const subscriptionPath = (instanceId: string) => `data/subscribes/${subscriptionId(instanceId)}.json`
 
-const normalizeCloudNode = (rawNode: Record<string, any>, providerFallback: CloudProvider): CloudNode => {
+const normalizeCloudNode = (rawNode: Record<string, any>, providerFallback: CloudProvider): ManagedCloudNode => {
   const node = { ...rawNode } as Record<string, any>
 
   node.instanceId = node.instanceId || node.InstanceID || node.id || node.ID || ''
@@ -71,7 +70,7 @@ const normalizeCloudNode = (rawNode: Record<string, any>, providerFallback: Clou
     node.createdAt = Number.isNaN(date.getTime()) ? String(node.createdAt) : date.toISOString()
   }
 
-  return node as CloudNode
+  return node as ManagedCloudNode
 }
 
 export const useCloudStore = defineStore('cloud', () => {
@@ -79,7 +78,7 @@ export const useCloudStore = defineStore('cloud', () => {
   const availableProviders = ref<Array<{ name: string; displayName: string }>>([])
   const currentProvider = ref<CloudProvider>('vultr')
 
-  const config = reactive<VultrConfig>({
+  const config = reactive<CloudConfig>({
     apiKey: '',
     defaultPlan: '',
     defaultRegion: '',
@@ -87,10 +86,10 @@ export const useCloudStore = defineStore('cloud', () => {
   const configLoaded = ref(false)
   const savingConfig = ref(false)
 
-  const regions = ref<VultrRegion[]>([])
-  const plans = ref<VultrPlan[]>([])
+  const regions = ref<CloudRegion[]>([])
+  const plans = ref<CloudPlan[]>([])
   const availability = reactive<Record<string, string[]>>({})
-  const instances = ref<CloudNode[]>([])
+  const instances = ref<ManagedCloudNode[]>([])
 
   const loadingRegions = ref(false)
   const loadingPlans = ref(false)
@@ -118,34 +117,20 @@ export const useCloudStore = defineStore('cloud', () => {
       return availability[region]
     }
 
-    const fetchAvailability = async () => {
-      if (typeof ListCloudAvailability === 'function') {
-        const res = await ListCloudAvailability(region)
-        ensureFlag(res.flag, res.data)
-        return parseJSON<string[]>(res.data, [])
-      }
-      if (typeof ListVultrAvailability === 'function') {
-        const res = await ListVultrAvailability(region)
-        ensureFlag(res.flag, res.data)
-        return parseJSON<string[]>(res.data, [])
-      }
-      return [] as string[]
-    }
-
     try {
-      availability[region] = await fetchAvailability()
+      const res = await ListCloudAvailability(region)
+      ensureFlag(res.flag, res.data)
+      availability[region] = parseJSON<string[]>(res.data, [])
     } catch (error) {
       logError('[CloudStore] Failed to load availability:', error)
       availability[region] = availability[region] || []
-      if (currentProvider.value === 'vultr') {
-        throw error
-      }
+      throw error
     }
 
     return availability[region]
   }
 
-  const ensureSubscriptionForNode = async (node: VultrNode) => {
+  const ensureSubscriptionForNode = async (node: CloudNode) => {
     // Check if we have at least one IP address
     if (!node.instanceId || (!node.ipv4 && !node.ipv6)) return
 
@@ -183,7 +168,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
     // Generate configurations for all available public IPs
     // sing-box will automatically try available connections
-    if (hasIPv4) {
+    if (hasIPv4 && node.ipv4) {
       ipVersions.push({ ip: node.ipv4, suffix: '-v4' })
     }
     if (hasIPv6 && node.ipv6) {
@@ -383,12 +368,9 @@ export const useCloudStore = defineStore('cloud', () => {
   const loadConfig = async () => {
     const res = await GetVultrConfig()
     ensureFlag(res.flag, res.data)
-    Object.assign(config, {
-      apiKey: '',
-      defaultPlan: '',
-      defaultRegion: '',
-    })
-    Object.assign(config, parseJSON<VultrConfig>(res.data, {} as VultrConfig))
+    const loadedConfig = parseJSON<CloudConfig>(res.data, {} as CloudConfig)
+    Object.assign(config, loadedConfig)
+    logInfo('[CloudStore] Loaded config, apiKey length:', config.apiKey?.length || 0)
     configLoaded.value = true
   }
 
@@ -407,7 +389,7 @@ export const useCloudStore = defineStore('cloud', () => {
     try {
       const res = await ListCloudRegions()
       ensureFlag(res.flag, res.data)
-      regions.value = parseJSON<VultrRegion[]>(res.data, [])
+      regions.value = parseJSON<CloudRegion[]>(res.data, [])
     } finally {
       loadingRegions.value = false
     }
@@ -418,7 +400,7 @@ export const useCloudStore = defineStore('cloud', () => {
     try {
       const res = await ListCloudPlans()
       ensureFlag(res.flag, res.data)
-      plans.value = parseJSON<VultrPlan[]>(res.data, [])
+      plans.value = parseJSON<CloudPlan[]>(res.data, [])
     } finally {
       loadingPlans.value = false
     }
@@ -432,19 +414,23 @@ export const useCloudStore = defineStore('cloud', () => {
       const res = await ListCloudInstances()
       ensureFlag(res.flag, res.data)
       const rawNodes = parseJSON<Record<string, any>[]>(res.data, [])
+      console.log('[CloudStore] Raw nodes from backend:', rawNodes.length, rawNodes)
       const normalizedNodes = rawNodes
         .map((node) => normalizeCloudNode(node, currentProvider.value))
-        .filter((node) => node.instanceId)
+      console.log('[CloudStore] Normalized nodes:', normalizedNodes.length, normalizedNodes)
+      const filteredNodes = normalizedNodes.filter((node) => node.instanceId)
+      console.log('[CloudStore] After filtering by instanceId:', filteredNodes.length, filteredNodes)
+      const nodesToProcess = filteredNodes
 
       await Promise.all(
-        normalizedNodes.map((node) => ensureRegionAvailability(node.region).catch(() => [])),
+        nodesToProcess.map((node) => ensureRegionAvailability(node.region || '').catch(() => [])),
       )
 
       // Store previous instances for comparison
       const previousInstances = instances.value
 
       const statusMap = new Map(instances.value.map((node) => [node.instanceId, node.statusText || 'unknown']))
-      const enriched: CloudNode[] = normalizedNodes.map((node) => ({
+      const enriched: ManagedCloudNode[] = nodesToProcess.map((node) => ({
         ...node,
         statusText: statusMap.get(node.instanceId) || 'unknown',
       }))
@@ -465,6 +451,7 @@ export const useCloudStore = defineStore('cloud', () => {
       }
 
       instances.value = enriched
+      logInfo(`[CloudStore] Set instances.value to ${enriched.length} nodes:`, JSON.stringify(enriched.map(n => ({ id: n.instanceId, label: n.label, ipv4: n.ipv4 }))))
 
       // Create subscriptions for all nodes with IP addresses
       await Promise.all(
@@ -511,6 +498,46 @@ export const useCloudStore = defineStore('cloud', () => {
           )
         }
       }
+
+      // Ensure there is at least one active cloud subscription when nodes exist
+      const refreshedProfile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
+      const hasCloudSubscription =
+        !!refreshedProfile &&
+        refreshedProfile.outbounds?.some((outbound: any) =>
+          Array.isArray(outbound.outbounds) &&
+          outbound.outbounds.some(
+            (child: any) => typeof child?.id === 'string' && child.id.startsWith('cloud-'),
+          ),
+        )
+
+      if (!hasCloudSubscription) {
+        const candidate = enriched.find((node) => node.instanceId && (node.ipv4 || node.ipv6))
+        if (candidate) {
+          try {
+            logInfo('[CloudStore] No active cloud subscription found, applying node:', candidate.label)
+            await applyNodeToProfile(candidate)
+            if (kernelApiStore.running) {
+              await kernelApiStore.restartCore()
+            } else {
+              await kernelApiStore.startCore()
+            }
+            candidate.statusText = 'connected'
+            instances.value = instances.value.map((n) =>
+              n.instanceId === candidate.instanceId ? candidate : n,
+            )
+            logInfo('[CloudStore] Applied node as default subscription:', candidate.label)
+          } catch (error) {
+            logError('[CloudStore] Failed to apply default node:', candidate.label, error)
+          }
+        }
+      }
+
+      if (kernelApiStore.running) {
+        // Refresh proxy groups so Overview reflects latest subscriptions
+        await kernelApiStore.refreshProviderProxies().catch((error) =>
+          logError('[CloudStore] Failed to refresh provider proxies:', error),
+        )
+      }
     } catch (error) {
       logError('[CloudStore] refreshInstances error:', error)
       throw error
@@ -526,11 +553,11 @@ export const useCloudStore = defineStore('cloud', () => {
     try {
       const res = await CreateCloudInstance(JSON.stringify(options))
       ensureFlag(res.flag, res.data)
-      const rawNode = parseJSON<Record<string, any>>(res.data, {} as VultrNode)
+      const rawNode = parseJSON<Record<string, any>>(res.data, {} as CloudNode)
       const node = normalizeCloudNode(rawNode, currentProvider.value)
       if (node.instanceId) {
-        await ensureRegionAvailability(node.region)
-        const cloudNode: CloudNode = { ...node, statusText: 'applying' }
+        await ensureRegionAvailability(node.region || '')
+        const cloudNode: ManagedCloudNode = { ...node, statusText: 'applying' }
         instances.value = [cloudNode, ...instances.value.filter((n) => n.instanceId !== node.instanceId)]
         await ensureSubscriptionForNode(cloudNode)
 
@@ -577,10 +604,10 @@ export const useCloudStore = defineStore('cloud', () => {
   const markNodeStatus = (instanceId: string, status: CloudNodeStatus) => {
     const node = instances.value.find((item) => item.instanceId === instanceId)
     if (!node) return
-    ;(node as any).statusText = status
+    node.statusText = status
   }
 
-  const applyNodeToProfile = async (node: VultrNode, profileId?: string) => {
+  const applyNodeToProfile = async (node: CloudNode, profileId?: string) => {
     await ensureSubscriptionForNode(node)
 
     const subscription = subscribesStore.getSubscribeById(subscriptionId(node.instanceId))

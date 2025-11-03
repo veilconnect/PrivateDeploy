@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ModeOptions } from '@/constant/kernel'
-import { useEnvStore, useAppStore, useKernelApiStore } from '@/stores'
+import { useEnvStore, useAppStore, useKernelApiStore, useCloudStore } from '@/stores'
 import { formatBytes, handleChangeMode, message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import { useModal } from '@/components/Modal'
 
@@ -26,6 +27,32 @@ const [Modal, modalApi] = useModal({})
 const appStore = useAppStore()
 const envStore = useEnvStore()
 const kernelApiStore = useKernelApiStore()
+const cloudStore = useCloudStore()
+
+const cloudNodes = computed(() =>
+  cloudStore.instances.map((node: any) => ({
+    ...node,
+    id: node.instanceId || node.id,
+    label: node.label || node.instanceId || node.id,
+    status: node.status || node.statusText || 'unknown',
+  })),
+)
+
+onMounted(async () => {
+  try {
+    if (!cloudStore.availableProviders.length) {
+      await cloudStore.loadProviders()
+    }
+    if (!cloudStore.configLoaded) {
+      await cloudStore.loadConfig()
+    }
+    if (!cloudStore.loadingInstances && !cloudStore.instances.length) {
+      await cloudStore.refreshInstances(true)
+    }
+  } catch (error) {
+    logError('[OverView] Failed to prepare cloud data:', error)
+  }
+})
 
 const handleRestartKernel = async () => {
   try {
@@ -207,6 +234,21 @@ onUnmounted(() => {
         </div>
       </Card>
     </div>
+    <Card v-if="cloudNodes.length" :title="t('home.overview.cloudNodes')" class="mt-20">
+      <div class="flex flex-col gap-8 py-8 text-12">
+        <div
+          v-for="node in cloudNodes"
+          :key="node.id"
+          class="flex items-center gap-8"
+          style="border-bottom: 1px solid var(--divider-color); padding-bottom: 8px"
+        >
+          <div class="font-bold">{{ node.label }}</div>
+          <Tag size="small" color="primary">{{ node.status }}</Tag>
+          <span v-if="node.ipv4" class="font-mono text-secondary">IPv4: {{ node.ipv4 }}</span>
+          <span v-if="node.ipv6" class="font-mono text-secondary">IPv6: {{ node.ipv6 }}</span>
+        </div>
+      </div>
+    </Card>
   </div>
 
   <Modal />

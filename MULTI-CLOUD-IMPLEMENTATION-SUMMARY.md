@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented a complete multi-cloud architecture for VeilDeploy, enabling support for multiple cloud providers (Vultr, DigitalOcean, and extensible to others) through a modular, plugin-style architecture.
+Successfully implemented a complete multi-cloud architecture for PrivateDeploy, enabling support for multiple cloud providers (Vultr, DigitalOcean, and extensible to others) through a modular, plugin-style architecture.
 
 ## Implementation Phases
 

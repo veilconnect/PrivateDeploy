@@ -42,7 +42,7 @@ package vultr
 
 import (
 	"context"
-	"veildeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud"
 )
 
 // Provider implements cloud.CloudProvider for Vultr
@@ -280,7 +280,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"veildeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud"
 )
 
 const baseURL = "https://api.digitalocean.com/v2"

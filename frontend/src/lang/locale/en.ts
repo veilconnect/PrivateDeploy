@@ -370,6 +370,7 @@ export default {
     },
     errors: {
       apiKeyRequired: 'Please save a valid Vultr API key first.',
+      apiKeyInvalid: 'The Vultr API key is invalid or unauthorized.',
       formIncomplete: 'Complete the region, plan, and label before deploying.',
       ipv4Missing: 'The instance IPv4 address is not ready yet. Please wait and try again.',
       planUnavailable: 'Selected plan is unavailable in this region. Please choose another plan.',
@@ -419,6 +420,7 @@ export default {
       totalTraffic: 'Total Traffic',
       connections: 'Connections',
       memory: 'Memory',
+      cloudNodes: 'Cloud Nodes',
       transmit: 'Transmit',
       receive: 'Receive',
       settings: 'Kernel Settings',

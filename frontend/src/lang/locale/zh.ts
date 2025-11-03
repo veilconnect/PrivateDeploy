@@ -371,6 +371,7 @@ export default {
     },
     errors: {
       apiKeyRequired: '请先保存可用的 Vultr API Key。',
+      apiKeyInvalid: 'Vultr API Key 无效或未授权。',
       formIncomplete: '请先选择区域、套餐并填写实例名称。',
       ipv4Missing: '实例 IPv4 地址尚未就绪，请稍后再试。',
       planUnavailable: '所选套餐在该区域不可用，请选择其他套餐。',
@@ -512,6 +513,7 @@ export default {
       totalTraffic: '总流量',
       connections: '活动连接',
       memory: '内存',
+      cloudNodes: '云端节点',
       transmit: '上行速率',
       receive: '下行速率',
       settings: '内核设置',

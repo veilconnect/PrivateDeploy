@@ -14,9 +14,9 @@ import (
 
 	sysruntime "runtime"
 
-	"veildeploy/bridge/cloud"
-	"veildeploy/bridge/cloud/providers/digitalocean"
-	"veildeploy/bridge/cloud/providers/vultr"
+	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/providers/digitalocean"
+	"privatedeploy/bridge/cloud/providers/vultr"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"

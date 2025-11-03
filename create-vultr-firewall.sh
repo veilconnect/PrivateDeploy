@@ -19,7 +19,7 @@ FIREWALL_RESPONSE=$(curl -s -X POST "https://api.vultr.com/v2/firewalls" \
   -H "Authorization: Bearer $VULTR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "description": "VeilDeploy Shadowsocks Firewall"
+    "description": "PrivateDeploy Shadowsocks Firewall"
   }')
 
 FIREWALL_ID=$(echo "$FIREWALL_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['firewall_group']['id'])" 2>/dev/null)

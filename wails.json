@@ -1,18 +1,18 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "VeilDeploy",
-  "outputfilename": "VeilDeploy",
+  "name": "PrivateDeploy",
+  "outputfilename": "PrivateDeploy",
   "frontend:install": "pnpm install",
   "frontend:build": "pnpm run build",
   "frontend:dev:watcher": "pnpm run dev",
   "frontend:dev:serverUrl": "auto",
   "wailsjsdir": "frontend/src/bridge",
   "author": {
-    "name": "VeilDeploy Team",
-    "email": "team@veildeploy.dev"
+    "name": "PrivateDeploy Team",
+    "email": "team@privatedeploy.dev"
   },
   "info": {
     "copyright": "Copyright",
-    "comments": "https://github.com/VeilDeploy/VeilDeploy"
+    "comments": "https://github.com/PrivateDeploy/PrivateDeploy"
   }
 }

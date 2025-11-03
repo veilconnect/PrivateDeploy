@@ -3,7 +3,7 @@ export type CloudProvider = 'vultr' | 'digitalocean' | 'linode' | 'aws' | 'hetzn
 
 // Generic Cloud Configuration
 export interface CloudConfig {
-  provider: CloudProvider
+  provider?: CloudProvider
   apiKey: string
   defaultRegion?: string
   defaultPlan?: string
@@ -35,17 +35,17 @@ export interface CloudPlan {
 // Generic Cloud Node/Instance
 export interface CloudNode {
   instanceId: string
-  provider: CloudProvider  // Which cloud provider this instance belongs to
+  provider?: CloudProvider  // Which cloud provider this instance belongs to
   label: string
-  status: string
-  region: string
-  plan: string
-  osId: number
-  ipv4: string
+  status?: string
+  region?: string
+  plan?: string
+  osId?: number
+  ipv4?: string
   ipv6?: string
-  port: number
-  password: string
-  createdAt: string
+  port?: number
+  password?: string
+  createdAt?: string
   // Multi-protocol configuration
   ssPort?: number
   ssPassword?: string
@@ -60,25 +60,12 @@ export interface CloudNode {
 }
 
 // Legacy types for backward compatibility
-export interface VultrConfig {
-  apiKey: string
-  defaultRegion?: string
-  defaultPlan?: string
-}
+export type VultrConfig = CloudConfig
+export type VultrRegion = CloudRegion
+export type VultrPlan = CloudPlan
+export type VultrNode = CloudNode
 
-export interface VultrRegion extends CloudRegion {}
-export interface VultrPlan extends Omit<CloudPlan, 'vcpus'> {
-  vcpu_count: number  // Vultr uses this field name
-}
-export interface VultrNode extends CloudNode {}
-
-// DigitalOcean specific types
-export interface DigitalOceanConfig {
-  apiKey: string
-  defaultRegion?: string
-  defaultPlan?: string
-}
-
-export interface DigitalOceanRegion extends CloudRegion {}
-export interface DigitalOceanPlan extends CloudPlan {}
-export interface DigitalOceanDroplet extends CloudNode {}
+export type DigitalOceanConfig = CloudConfig
+export type DigitalOceanRegion = CloudRegion
+export type DigitalOceanPlan = CloudPlan
+export type DigitalOceanDroplet = CloudNode

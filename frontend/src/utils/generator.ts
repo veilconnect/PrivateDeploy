@@ -95,6 +95,28 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
   const result: Recordable[] = []
   const SubscriptionCache: Recordable<any[]> = {}
   const proxiesSet = new Set<any>()
+  let outboundFallbackCounter = 0
+  let proxyFallbackCounter = 0
+
+  const ensureTag = (tag: unknown, fallback: string) => {
+    if (typeof tag === 'string') {
+      const trimmed = tag.trim()
+      if (trimmed.length > 0) {
+        return trimmed
+      }
+    }
+    return fallback
+  }
+
+  const normalizeProxy = (proxy: Recordable, defaultFallback?: string) => {
+    const fallback =
+      defaultFallback ||
+      (proxy.id && String(proxy.id).trim()) ||
+      (proxy.type && String(proxy.type).trim()) ||
+      `proxy-${++proxyFallbackCounter}`
+    proxy.tag = ensureTag(proxy.tag, fallback)
+    return proxy.tag
+  }
 
   const createTagMatcher = (include: string, exclude: string) => {
     const includeRegex = include ? new RegExp(include) : null
@@ -109,6 +131,10 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
   const subscribesStore = useSubscribesStore()
 
   for (const outbound of outbounds) {
+    const fallbackTag =
+      (outbound.id && String(outbound.id).trim()) || `outbound-${++outboundFallbackCounter}`
+    outbound.tag = ensureTag(outbound.tag, fallbackTag)
+
     const _outbound: Recordable = {
       type: outbound.type,
       tag: outbound.tag,
@@ -124,7 +150,8 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
       const isTagMatching = createTagMatcher(outbound.include, outbound.exclude)
       for (const proxy of outbound.outbounds) {
         if (proxy.type === 'Built-in') {
-          _outbound.outbounds.push(proxy.tag)
+          const tag = normalizeProxy(proxy)
+          tag && _outbound.outbounds.push(tag)
         } else {
           const subId = proxy.type === 'Subscription' ? proxy.id : proxy.type
           if (!SubscriptionCache[subId]) {
@@ -139,16 +166,28 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
               } else {
                 SubscriptionCache[subId] = []
               }
+
+              if (Array.isArray(SubscriptionCache[subId])) {
+                SubscriptionCache[subId] = SubscriptionCache[subId]
+                  .map((entry) => {
+                    const clone = { ...entry }
+                    const tag = normalizeProxy(clone)
+                    return tag ? clone : null
+                  })
+                  .filter(Boolean)
+              }
             }
           }
           const entries = Array.isArray(SubscriptionCache[subId]) ? SubscriptionCache[subId] : []
           if (proxy.type === 'Subscription') {
+            const tags = entries.map((v) => v.tag).filter((tag) => isTagMatching(tag))
             _outbound.outbounds.push(
-              ...entries.map((v) => v.tag).filter((tag) => isTagMatching(tag)),
+              ...tags,
             )
             entries.forEach((v) => proxiesSet.add(v))
           } else {
-            const _proxy = entries.find((v) => v.tag === proxy.tag)
+            const proxyTag = normalizeProxy(proxy)
+            const _proxy = entries.find((v) => v.tag === proxyTag)
             if (_proxy && isTagMatching(_proxy.tag)) {
               _outbound.outbounds.push(_proxy.tag)
               proxiesSet.add(_proxy)
@@ -156,11 +195,18 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
           }
         }
       }
+      if (_outbound.outbounds.length === 0) {
+        const directOutbound = outbounds.find((v) => v.type === Outbound.Direct)
+        const directTag = ensureTag(directOutbound?.tag, directOutbound?.id || 'direct')
+        _outbound.outbounds.push(directTag)
+      }
     }
     result.push(_outbound)
   }
 
-  result.push(...proxiesSet)
+  result.push(
+    ...Array.from(proxiesSet).filter((proxy) => typeof proxy?.tag === 'string' && proxy.tag.length),
+  )
 
   return result
 }

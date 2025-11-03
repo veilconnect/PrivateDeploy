@@ -1,0 +1,426 @@
+package deploy
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	mathrand "math/rand"
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/curve25519"
+)
+
+// MultiProtocolParams describes the inputs for the multi-protocol user-data script.
+type MultiProtocolParams struct {
+	SSPort           int
+	SSPassword       string
+	HysteriaPort     int
+	HysteriaPassword string
+	VLESSPort        int
+	VLESSUUID        string
+	VLESSPrivateKey  string
+	VLESSPublicKey   string
+	VLESSShortID     string
+	TrojanPort       int
+	TrojanPassword   string
+}
+
+// GenerateUUID returns RFC-4122 UUID v4.
+func GenerateUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		mathrand.Read(b)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// GenerateRandomPassword returns a base64 URL-safe password of the requested length.
+func GenerateRandomPassword(length int) string {
+	if length <= 0 {
+		return ""
+	}
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		mathrand.Read(b)
+	}
+	return base64.URLEncoding.EncodeToString(b)[:length]
+}
+
+// GenerateRealityKeyPair produces a private/public key pair compatible with sing-box Reality.
+func GenerateRealityKeyPair() (privateKey, publicKey string, err error) {
+	priv := make([]byte, 32)
+	if _, err := rand.Read(priv); err != nil {
+		for i := range priv {
+			priv[i] = byte(mathrand.Intn(256))
+		}
+	}
+
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
+
+	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate Reality public key: %w", err)
+	}
+
+	privateKey = base64.RawURLEncoding.EncodeToString(priv)
+	publicKey = base64.RawURLEncoding.EncodeToString(pub)
+
+	return privateKey, publicKey, nil
+}
+
+// shellEscape safely escapes shell-special characters.
+func shellEscape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if strings.ContainsAny(s, " \t\n\\\"'`$") {
+		return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+	}
+	return s
+}
+
+// GenerateMultiProtocolScript renders the multi-protocol deployment bash script.
+func GenerateMultiProtocolScript(p MultiProtocolParams) string {
+	return fmt.Sprintf(`#!/bin/bash
+# PrivateDeploy Multi-Protocol Deployment Script
+# Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+LOGFILE="/var/log/privatedeploy-init.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== PrivateDeploy Multi-Protocol Init Started at $(date) ==="
+
+# Update and install packages
+echo "[1/8] Installing Docker, UFW and required packages..."
+apt-get update -qq
+apt-get install -y docker.io ufw iptables openssl curl ca-certificates net-tools
+
+# Start Docker
+echo "[2/8] Starting Docker service..."
+systemctl enable docker
+systemctl start docker
+sleep 3
+
+# Generate self-signed certificates
+echo "[3/8] Generating TLS certificates..."
+mkdir -p /etc/privatedeploy/{hysteria,trojan,vless}
+
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/privatedeploy/hysteria/key.pem \
+  -out /etc/privatedeploy/hysteria/cert.pem \
+  -days 365 -subj "/CN=www.bing.com" 2>/dev/null
+
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/privatedeploy/trojan/key.pem \
+  -out /etc/privatedeploy/trojan/cert.pem \
+  -days 365 -subj "/CN=www.microsoft.com" 2>/dev/null
+
+# Configure UFW firewall
+echo "[4/8] Configuring UFW firewall..."
+ufw --force disable || true
+ufw --force reset
+ufw logging on
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
+ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
+ufw allow %[2]d/udp comment 'Hysteria2'
+ufw allow %[3]d/tcp comment 'VLESS-Reality'
+ufw allow %[4]d/tcp comment 'Trojan'
+echo "y" | ufw enable
+
+echo "[5/8] Verifying firewall configuration..."
+ufw status verbose
+
+# Deploy Shadowsocks
+echo "[6/8] Deploying Shadowsocks server (port %[1]d)..."
+docker rm -f ss-server >/dev/null 2>&1 || true
+docker pull --quiet teddysun/shadowsocks-libev || true
+docker run -d --name ss-server --restart=always \
+  -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp \
+  teddysun/shadowsocks-libev ss-server \
+  -s 0.0.0.0 -p %[1]d -k %[5]s -m aes-256-gcm
+
+sleep 2
+echo "Shadowsocks container status:"
+docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
+
+# Deploy Hysteria2
+echo "[7/8] Deploying Hysteria2 server (port %[2]d)..."
+cat > /etc/privatedeploy/hysteria/config.yaml <<'HYSTEOF'
+listen: :%[2]d
+tls:
+  cert: /etc/privatedeploy/hysteria/cert.pem
+  key: /etc/privatedeploy/hysteria/key.pem
+auth:
+  type: password
+  password: %[6]s
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.bing.com
+    rewriteHost: true
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+HYSTEOF
+
+docker rm -f hysteria-server >/dev/null 2>&1 || true
+docker pull --quiet tobyxdd/hysteria:latest || true
+docker run -d --name hysteria-server --restart=always \
+  -p %[2]d:%[2]d/udp \
+  -v /etc/privatedeploy/hysteria:/etc/privatedeploy/hysteria \
+  tobyxdd/hysteria:latest server -c /etc/privatedeploy/hysteria/config.yaml
+
+sleep 2
+echo "Hysteria2 container status:"
+docker ps -a --filter "name=hysteria-server" --format "{{.Names}}: {{.Status}}"
+docker logs hysteria-server 2>&1 | tail -n 10 || true
+
+# Deploy VLESS-Reality with sing-box
+echo "[8/8] Deploying VLESS-Reality server (port %[3]d)..."
+
+SINGBOX_VERSION=$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K[^"]+' || echo "1.10.0")
+SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
+FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v1.10.0/sing-box-1.10.0-linux-amd64.tar.gz"
+
+mkdir -p /tmp/privatedeploy
+if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
+  echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback..." >&2
+  if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
+    echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan deployment." >&2
+    SKIP_SINGBOX=1
+  else
+    SINGBOX_VERSION="1.10.0"
+  fi
+fi
+
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ]; then
+  tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
+  find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
+  chmod +x /usr/local/bin/sing-box
+
+  cat > /etc/privatedeploy/vless/config.json <<VLESSEOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [{
+    "type": "vless",
+    "tag": "vless-in",
+    "listen": "::",
+    "listen_port": %[3]d,
+    "users": [{
+      "uuid": "%[8]s",
+      "flow": "xtls-rprx-vision"
+    }],
+    "tls": {
+      "enabled": true,
+      "server_name": "www.microsoft.com",
+      "reality": {
+        "enabled": true,
+        "handshake": {
+          "server": "www.microsoft.com",
+          "server_port": 443
+        },
+        "private_key": "%[9]s",
+        "short_id": ["%[10]s"]
+      }
+    }
+  }],
+  "outbounds": [{
+    "type": "direct",
+    "tag": "direct"
+  }]
+}
+VLESSEOF
+
+  cat > /etc/privatedeploy/vless/reality.txt <<REALITYINFO
+PublicKey: %[11]s
+ShortID: %[10]s
+REALITYINFO
+  chmod 600 /etc/privatedeploy/vless/reality.txt
+
+  cat > /etc/systemd/system/vless-server.service <<'SERVICEEOF'
+[Unit]
+Description=VLESS-Reality Server (sing-box)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+  systemctl daemon-reload
+  systemctl enable vless-server
+  systemctl start vless-server
+
+  sleep 3
+  echo "VLESS-Reality service status:"
+  systemctl status vless-server --no-pager --lines=10 || journalctl -u vless-server -n 20 --no-pager
+
+  cat > /etc/privatedeploy/trojan/config.json <<'TROJANEOF'
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [{
+    "type": "trojan",
+    "tag": "trojan-in",
+    "listen": "::",
+    "listen_port": %[4]d,
+    "users": [{
+      "password": "%[7]s"
+    }],
+    "tls": {
+      "enabled": true,
+      "server_name": "www.microsoft.com",
+      "key_path": "/etc/privatedeploy/trojan/key.pem",
+      "certificate_path": "/etc/privatedeploy/trojan/cert.pem"
+    }
+  }],
+  "outbounds": [{
+    "type": "direct",
+    "tag": "direct"
+  }]
+}
+TROJANEOF
+
+  cat > /etc/systemd/system/trojan-server.service <<'TROJANSERVICE'
+[Unit]
+Description=Trojan Server (sing-box)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/trojan/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+TROJANSERVICE
+
+  systemctl daemon-reload
+  systemctl enable trojan-server
+  systemctl start trojan-server
+
+  sleep 3
+  echo "Trojan service status:"
+  systemctl status trojan-server --no-pager --lines=10 || journalctl -u trojan-server -n 20 --no-pager
+else
+  echo "[WARN] sing-box installation skipped; VLESS and Trojan services were not provisioned." >&2
+fi
+
+# Cleanup temp files
+rm -rf /tmp/privatedeploy
+
+# Verification and summary
+sleep 5
+echo ""
+echo "=== Deployment Summary ==="
+echo "Firewall status:"
+ufw status numbered || true
+echo ""
+echo "Docker containers:"
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+echo ""
+echo "Systemd services:"
+echo "  VLESS-Reality: $(systemctl is-active vless-server 2>/dev/null || echo 'inactive')"
+echo "  Trojan: $(systemctl is-active trojan-server 2>/dev/null || echo 'inactive')"
+echo ""
+echo "Listening ports:"
+ss -tlnup | grep -E ':%[1]d |:%[2]d |:%[3]d |:%[4]d ' || echo 'Warning: Some ports not yet listening'
+echo ""
+echo "Protocol Configuration:"
+echo "  [1] Shadowsocks:    Port %[1]d (TCP/UDP) - Password: %[5]s"
+echo "  [2] Hysteria2:      Port %[2]d (UDP) - Password: %[6]s"
+echo "  [3] VLESS-Reality:  Port %[3]d (TCP) - UUID: %[8]s"
+echo "                     Public Key: %[11]s"
+echo "                     Short ID: %[10]s"
+echo "  [4] Trojan:         Port %[4]d (TCP) - Password: %[7]s"
+echo ""
+echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
+`,
+		p.SSPort,
+		p.HysteriaPort,
+		p.VLESSPort,
+		p.TrojanPort,
+		shellEscape(p.SSPassword),
+		shellEscape(p.HysteriaPassword),
+		shellEscape(p.TrojanPassword),
+		p.VLESSUUID,
+		p.VLESSPrivateKey,
+		p.VLESSShortID,
+		p.VLESSPublicKey,
+	)
+}
+
+// GenerateLightweightScript returns the Shadowsocks-only bootstrap script.
+func GenerateLightweightScript(ssPort int, ssPassword string) string {
+	return fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+LOGFILE="/var/log/privatedeploy-init.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== PrivateDeploy Lightweight Init Started at $(date) ==="
+
+apt-get update -qq
+apt-get install -y docker.io ufw
+
+systemctl enable docker
+systemctl start docker
+
+ufw --force disable || true
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
+ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
+echo "y" | ufw enable
+
+docker rm -f ss-server >/dev/null 2>&1 || true
+docker pull --quiet teddysun/shadowsocks-libev || true
+docker run -d --name ss-server --restart=always \
+  -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp \
+  teddysun/shadowsocks-libev ss-server \
+  -s 0.0.0.0 -p %[1]d -k %[2]s -m aes-256-gcm
+
+sleep 3
+echo "Shadowsocks container status:"
+docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
+
+echo ""
+echo "=== PrivateDeploy Lightweight Init Completed at $(date) ==="
+`, ssPort, shellEscape(ssPassword))
+}
+
+func init() {
+	mathrand.Seed(time.Now().UnixNano())
+}

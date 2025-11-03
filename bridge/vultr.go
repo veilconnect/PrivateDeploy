@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"veildeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud"
 
 	"golang.org/x/crypto/curve25519"
 )
@@ -120,6 +120,7 @@ type VultrNode struct {
 	Port       int    `json:"port"`     // Legacy: Shadowsocks port
 	Password   string `json:"password"` // Legacy: Shadowsocks password
 	CreatedAt  string `json:"createdAt"`
+	Provider   string `json:"provider"` // Cloud provider identifier
 	// Multi-protocol configuration
 	SSPort           int    `json:"ssPort,omitempty"`
 	SSPassword       string `json:"ssPassword,omitempty"`
@@ -211,6 +212,73 @@ func saveVultrNodes(nodes map[string]vultrNodeRecord) error {
 	}
 
 	return os.WriteFile(nodesPath, data, 0o600)
+}
+
+func buildVultrNodesFromRecords(records map[string]vultrNodeRecord) []VultrNode {
+	nodes := make([]VultrNode, 0, len(records))
+
+	for id, record := range records {
+		node := VultrNode{
+			InstanceID:       firstNonEmpty(record.InstanceID, id),
+			Label:            record.Label,
+			Status:           "unknown",
+			Region:           record.Region,
+			Plan:             record.Plan,
+			OSID:             record.OSID,
+			IPv4:             record.IPv4,
+			IPv6:             record.IPv6,
+			Port:             record.Port,
+			Password:         record.Password,
+			CreatedAt:        record.CreatedAt,
+			Provider:         "vultr",
+			SSPort:           record.SSPort,
+			SSPassword:       record.SSPassword,
+			HysteriaPort:     record.HysteriaPort,
+			HysteriaPassword: record.HysteriaPassword,
+			VLESSPort:        record.VLESSPort,
+			VLESSUUID:        record.VLESSUUID,
+			VLESSPublicKey:   record.VLESSPublicKey,
+			VLESSShortID:     record.VLESSShortID,
+			TrojanPort:       record.TrojanPort,
+			TrojanPassword:   record.TrojanPassword,
+		}
+
+		if node.Label == "" {
+			node.Label = node.InstanceID
+		}
+
+		nodes = append(nodes, node)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		switch {
+		case nodes[i].CreatedAt == "" && nodes[j].CreatedAt == "":
+			return nodes[i].InstanceID < nodes[j].InstanceID
+		case nodes[i].CreatedAt == "":
+			return false
+		case nodes[j].CreatedAt == "":
+			return true
+		case nodes[i].CreatedAt != nodes[j].CreatedAt:
+			return nodes[i].CreatedAt < nodes[j].CreatedAt
+		default:
+			return nodes[i].InstanceID < nodes[j].InstanceID
+		}
+	})
+
+	return nodes
+}
+
+func loadCachedVultrNodes() ([]VultrNode, error) {
+	vultrNodesMu.Lock()
+	records, err := loadVultrNodes()
+	vultrNodesMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return []VultrNode{}, nil
+	}
+	return buildVultrNodesFromRecords(records), nil
 }
 
 func appendUniqueInt(list *[]int, candidate int) {
@@ -524,10 +592,32 @@ func (a *App) SaveVultrConfig(configJSON string) FlagResult {
 }
 
 func (a *App) ListVultrRegions() FlagResult {
-	cfg, err := loadVultrConfig()
-	if err != nil {
-		return FlagResult{Flag: false, Data: err.Error()}
+	// Try to use CloudManager if available
+	var cfg *VultrConfig
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			providerCfg, err := provider.LoadConfig()
+			if err == nil {
+				// Convert cloud.ProviderConfig to VultrConfig
+				cfg = &VultrConfig{
+					APIKey:        providerCfg.APIKey,
+					DefaultRegion: providerCfg.DefaultRegion,
+					DefaultPlan:   providerCfg.DefaultPlan,
+				}
+			}
+		}
 	}
+
+	// Fallback to legacy method if CloudManager didn't work
+	if cfg == nil {
+		var err error
+		cfg, err = loadVultrConfig()
+		if err != nil {
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+	}
+
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return FlagResult{Flag: false, Data: errMissingVultrAPIKey.Error()}
 	}
@@ -555,10 +645,32 @@ func (a *App) ListVultrRegions() FlagResult {
 func (a *App) ListVultrAvailability(region string) FlagResult {
 	fmt.Printf("[ListVultrAvailability] Called for region: %s\n", region)
 
-	cfg, err := loadVultrConfig()
-	if err != nil {
-		return FlagResult{Flag: false, Data: err.Error()}
+	// Try to use CloudManager if available
+	var cfg *VultrConfig
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			providerCfg, err := provider.LoadConfig()
+			if err == nil {
+				// Convert cloud.ProviderConfig to VultrConfig
+				cfg = &VultrConfig{
+					APIKey:        providerCfg.APIKey,
+					DefaultRegion: providerCfg.DefaultRegion,
+					DefaultPlan:   providerCfg.DefaultPlan,
+				}
+			}
+		}
 	}
+
+	// Fallback to legacy method if CloudManager didn't work
+	if cfg == nil {
+		var err error
+		cfg, err = loadVultrConfig()
+		if err != nil {
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+	}
+
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return FlagResult{Flag: false, Data: errMissingVultrAPIKey.Error()}
 	}
@@ -601,10 +713,32 @@ func (a *App) ListVultrAvailability(region string) FlagResult {
 }
 
 func (a *App) ListVultrPlans() FlagResult {
-	cfg, err := loadVultrConfig()
-	if err != nil {
-		return FlagResult{Flag: false, Data: err.Error()}
+	// Try to use CloudManager if available
+	var cfg *VultrConfig
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			providerCfg, err := provider.LoadConfig()
+			if err == nil {
+				// Convert cloud.ProviderConfig to VultrConfig
+				cfg = &VultrConfig{
+					APIKey:        providerCfg.APIKey,
+					DefaultRegion: providerCfg.DefaultRegion,
+					DefaultPlan:   providerCfg.DefaultPlan,
+				}
+			}
+		}
 	}
+
+	// Fallback to legacy method if CloudManager didn't work
+	if cfg == nil {
+		var err error
+		cfg, err = loadVultrConfig()
+		if err != nil {
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+	}
+
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return FlagResult{Flag: false, Data: errMissingVultrAPIKey.Error()}
 	}
@@ -631,10 +765,33 @@ func (a *App) ListVultrPlans() FlagResult {
 
 func (a *App) ListVultrInstances() FlagResult {
 	fmt.Printf("[ListVultrInstances] Called\n")
-	cfg, err := loadVultrConfig()
-	if err != nil {
-		return FlagResult{Flag: false, Data: err.Error()}
+
+	// Try to use CloudManager if available
+	var cfg *VultrConfig
+	if a.CloudManager != nil {
+		provider, err := a.CloudManager.GetActiveProvider()
+		if err == nil {
+			providerCfg, err := provider.LoadConfig()
+			if err == nil {
+				// Convert cloud.ProviderConfig to VultrConfig
+				cfg = &VultrConfig{
+					APIKey:        providerCfg.APIKey,
+					DefaultRegion: providerCfg.DefaultRegion,
+					DefaultPlan:   providerCfg.DefaultPlan,
+				}
+			}
+		}
 	}
+
+	// Fallback to legacy method if CloudManager didn't work
+	if cfg == nil {
+		var err error
+		cfg, err = loadVultrConfig()
+		if err != nil {
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+	}
+
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return FlagResult{Flag: false, Data: errMissingVultrAPIKey.Error()}
 	}
@@ -660,6 +817,19 @@ func (a *App) ListVultrInstances() FlagResult {
 	res, err := vultrRequest(http.MethodGet, "/instances", cfg.APIKey, nil)
 	if err != nil {
 		fmt.Printf("[ListVultrInstances] API request failed: %v\n", err)
+		fallbackNodes, loadErr := loadCachedVultrNodes()
+		if loadErr != nil {
+			fmt.Printf("[ListVultrInstances] Failed to load cached node records: %v\n", loadErr)
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+		if len(fallbackNodes) > 0 {
+			fmt.Printf("[ListVultrInstances] Returning %d nodes from cached records due to API error\n", len(fallbackNodes))
+			data, marshalErr := json.Marshal(fallbackNodes)
+			if marshalErr != nil {
+				return FlagResult{Flag: false, Data: marshalErr.Error()}
+			}
+			return FlagResult{Flag: true, Data: string(data)}
+		}
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 	fmt.Printf("[ListVultrInstances] API request successful\n")
@@ -669,6 +839,19 @@ func (a *App) ListVultrInstances() FlagResult {
 	}
 	if err := parseVultrResponse(res, &payload); err != nil {
 		fmt.Printf("[ListVultrInstances] Failed to parse response: %v\n", err)
+		fallbackNodes, loadErr := loadCachedVultrNodes()
+		if loadErr != nil {
+			fmt.Printf("[ListVultrInstances] Failed to load cached node records: %v\n", loadErr)
+			return FlagResult{Flag: false, Data: err.Error()}
+		}
+		if len(fallbackNodes) > 0 {
+			fmt.Printf("[ListVultrInstances] Returning %d nodes from cached records due to parse error\n", len(fallbackNodes))
+			data, marshalErr := json.Marshal(fallbackNodes)
+			if marshalErr != nil {
+				return FlagResult{Flag: false, Data: marshalErr.Error()}
+			}
+			return FlagResult{Flag: true, Data: string(data)}
+		}
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 	fmt.Printf("[ListVultrInstances] Found %d instances from API\n", len(payload.Instances))
@@ -685,37 +868,57 @@ func (a *App) ListVultrInstances() FlagResult {
 	result := make([]VultrNode, 0, len(payload.Instances))
 	for _, inst := range payload.Instances {
 		record, ok := records[inst.ID]
+
+		var node VultrNode
 		if !ok {
-			continue
-		}
-		node := VultrNode{
-			InstanceID:       inst.ID,
-			Label:            inst.Label,
-			Status:           inst.Status,
-			Region:           inst.Region,
-			Plan:             record.Plan,
-			OSID:             record.OSID,
-			IPv4:             firstNonEmpty(inst.MainIP, record.IPv4),
-			IPv6:             firstNonEmpty(inst.V6MainIP, record.IPv6),
-			Port:             record.Port,
-			Password:         record.Password,
-			CreatedAt:        firstNonEmpty(record.CreatedAt, inst.CreatedAt),
-			SSPort:           record.SSPort,
-			SSPassword:       record.SSPassword,
-			HysteriaPort:     record.HysteriaPort,
-			HysteriaPassword: record.HysteriaPassword,
-			VLESSPort:        record.VLESSPort,
-			VLESSUUID:        record.VLESSUUID,
-			VLESSPublicKey:   record.VLESSPublicKey,
-			VLESSShortID:     record.VLESSShortID,
-			TrojanPort:       record.TrojanPort,
-			TrojanPassword:   record.TrojanPassword,
-		}
-		if node.IPv4 == "" {
-			node.IPv4 = inst.MainIP
-		}
-		if node.IPv6 == "" {
-			node.IPv6 = inst.V6MainIP
+			// Instance exists in Vultr but no local node record yet
+			// This happens when a node is being deployed but the deployment script hasn't completed
+			// Show the instance anyway so the UI can display deployment progress
+			fmt.Printf("[ListVultrInstances] Instance %s has no node record yet (likely still deploying)\n", inst.ID)
+			node = VultrNode{
+				InstanceID: inst.ID,
+				Label:      inst.Label,
+				Status:     inst.Status,
+				Region:     inst.Region,
+				Plan:       "", // Will be empty until node record is created
+				OSID:       0,
+				IPv4:       inst.MainIP,
+				IPv6:       inst.V6MainIP,
+				CreatedAt:  inst.CreatedAt,
+				Provider:   "vultr",
+			}
+		} else {
+			// Instance has a local node record with proxy configuration
+			node = VultrNode{
+				InstanceID:       inst.ID,
+				Label:            inst.Label,
+				Status:           inst.Status,
+				Region:           inst.Region,
+				Plan:             record.Plan,
+				OSID:             record.OSID,
+				IPv4:             firstNonEmpty(inst.MainIP, record.IPv4),
+				IPv6:             firstNonEmpty(inst.V6MainIP, record.IPv6),
+				Port:             record.Port,
+				Password:         record.Password,
+				CreatedAt:        firstNonEmpty(record.CreatedAt, inst.CreatedAt),
+				Provider:         "vultr",
+				SSPort:           record.SSPort,
+				SSPassword:       record.SSPassword,
+				HysteriaPort:     record.HysteriaPort,
+				HysteriaPassword: record.HysteriaPassword,
+				VLESSPort:        record.VLESSPort,
+				VLESSUUID:        record.VLESSUUID,
+				VLESSPublicKey:   record.VLESSPublicKey,
+				VLESSShortID:     record.VLESSShortID,
+				TrojanPort:       record.TrojanPort,
+				TrojanPassword:   record.TrojanPassword,
+			}
+			if node.IPv4 == "" {
+				node.IPv4 = inst.MainIP
+			}
+			if node.IPv6 == "" {
+				node.IPv6 = inst.V6MainIP
+			}
 		}
 		result = append(result, node)
 	}
@@ -730,6 +933,12 @@ func (a *App) ListVultrInstances() FlagResult {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	// Debug: Print first instance to see exact JSON structure
+	if len(result) > 0 {
+		firstInstance, _ := json.MarshalIndent(result[0], "", "  ")
+		fmt.Printf("[ListVultrInstances] First instance JSON:\n%s\n", string(firstInstance))
 	}
 
 	return FlagResult{Flag: true, Data: string(data)}
@@ -759,15 +968,15 @@ func getPlanRAM(apiKey, planID string) (int, error) {
 
 func generateLightweightScript(ssPort int, ssPassword string) string {
 	return fmt.Sprintf(`#!/bin/bash
-# VeilDeploy Lightweight Deployment for Low-Memory VPS (512MB RAM)
+# PrivateDeploy Lightweight Deployment for Low-Memory VPS (512MB RAM)
 # Protocol: Shadowsocks only (no Docker)
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-LOGFILE="/var/log/veildeploy-init.log"
+LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-echo "=== VeilDeploy Lightweight Init Started at $(date) ==="
+echo "=== PrivateDeploy Lightweight Init Started at $(date) ==="
 echo "Deploying Shadowsocks-only configuration for 512MB RAM VPS"
 
 # Update and install minimal packages
@@ -830,7 +1039,7 @@ echo ""
 echo "Protocol Configuration:"
 echo "  Shadowsocks: Port %d (TCP/UDP) - Password: %s"
 echo ""
-echo "=== VeilDeploy Lightweight Init Completed at $(date) ==="
+echo "=== PrivateDeploy Lightweight Init Completed at $(date) ==="
 `, ssPort, ssPort, ssPort, ssPort, ssPassword, ssPort, ssPort, ssPort, ssPort, ssPassword)
 }
 
@@ -907,15 +1116,15 @@ func (a *App) CreateVultrInstance(optionsJSON string) FlagResult {
 		realityShortID = fmt.Sprintf("%016x", mathrand.Int63())
 
 		userDataScript = fmt.Sprintf(`#!/bin/bash
-# VeilDeploy Multi-Protocol Deployment Script
+# PrivateDeploy Multi-Protocol Deployment Script
 # Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-LOGFILE="/var/log/veildeploy-init.log"
+LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-echo "=== VeilDeploy Multi-Protocol Init Started at $(date) ==="
+echo "=== PrivateDeploy Multi-Protocol Init Started at $(date) ==="
 
 # Update and install packages
 echo "[1/8] Installing Docker, UFW and required packages..."
@@ -930,18 +1139,18 @@ sleep 3
 
 # Generate self-signed certificates
 echo "[3/8] Generating TLS certificates..."
-mkdir -p /etc/veildeploy/{hysteria,trojan,vless}
+mkdir -p /etc/privatedeploy/{hysteria,trojan,vless}
 
 # Certificate for Hysteria2
 openssl req -x509 -nodes -newkey rsa:2048 \
-  -keyout /etc/veildeploy/hysteria/key.pem \
-  -out /etc/veildeploy/hysteria/cert.pem \
+  -keyout /etc/privatedeploy/hysteria/key.pem \
+  -out /etc/privatedeploy/hysteria/cert.pem \
   -days 365 -subj "/CN=www.bing.com" 2>/dev/null
 
 # Certificate for Trojan
 openssl req -x509 -nodes -newkey rsa:2048 \
-  -keyout /etc/veildeploy/trojan/key.pem \
-  -out /etc/veildeploy/trojan/cert.pem \
+  -keyout /etc/privatedeploy/trojan/key.pem \
+  -out /etc/privatedeploy/trojan/cert.pem \
   -days 365 -subj "/CN=www.microsoft.com" 2>/dev/null
 
 # Configure UFW firewall
@@ -977,11 +1186,11 @@ docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
 
 # Deploy Hysteria2
 echo "[7/8] Deploying Hysteria2 server (port %[2]d)..."
-cat > /etc/veildeploy/hysteria/config.yaml <<'HYSTEOF'
+cat > /etc/privatedeploy/hysteria/config.yaml <<'HYSTEOF'
 listen: :%[2]d
 tls:
-  cert: /etc/veildeploy/hysteria/cert.pem
-  key: /etc/veildeploy/hysteria/key.pem
+  cert: /etc/privatedeploy/hysteria/cert.pem
+  key: /etc/privatedeploy/hysteria/key.pem
 auth:
   type: password
   password: %[6]s
@@ -1001,8 +1210,8 @@ docker rm -f hysteria-server >/dev/null 2>&1 || true
 docker pull tobyxdd/hysteria:latest
 docker run -d --name hysteria-server --restart=always \
   -p %[2]d:%[2]d/udp \
-  -v /etc/veildeploy/hysteria:/etc/veildeploy/hysteria \
-  tobyxdd/hysteria:latest server -c /etc/veildeploy/hysteria/config.yaml
+  -v /etc/privatedeploy/hysteria:/etc/privatedeploy/hysteria \
+  tobyxdd/hysteria:latest server -c /etc/privatedeploy/hysteria/config.yaml
 
 sleep 2
 echo "Hysteria2 container status:"
@@ -1022,7 +1231,7 @@ chmod +x /usr/local/bin/sing-box
 rm -rf /tmp/singbox.tar.gz /tmp/sing-box-*
 
 # Create VLESS configuration with pre-generated Reality keys
-cat > /etc/veildeploy/vless/config.json <<VLESSEOF
+cat > /etc/privatedeploy/vless/config.json <<VLESSEOF
 {
   "log": {
     "level": "info",
@@ -1059,11 +1268,11 @@ cat > /etc/veildeploy/vless/config.json <<VLESSEOF
 VLESSEOF
 
 # Store Reality client parameters for reference
-cat > /etc/veildeploy/vless/reality.txt <<REALITYINFO
+cat > /etc/privatedeploy/vless/reality.txt <<REALITYINFO
 PublicKey: %[11]s
 ShortID: %[10]s
 REALITYINFO
-chmod 600 /etc/veildeploy/vless/reality.txt
+chmod 600 /etc/privatedeploy/vless/reality.txt
 
 # Run sing-box as systemd service
 cat > /etc/systemd/system/vless-server.service <<'SERVICEEOF'
@@ -1073,7 +1282,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sing-box run -c /etc/veildeploy/vless/config.json
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/config.json
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -1093,7 +1302,7 @@ systemctl status vless-server --no-pager --lines=10 || journalctl -u vless-serve
 
 # Deploy Trojan with sing-box
 echo "[9/9] Deploying Trojan server (port %[4]d)..."
-cat > /etc/veildeploy/trojan/config.json <<'TROJANEOF'
+cat > /etc/privatedeploy/trojan/config.json <<'TROJANEOF'
 {
   "log": {
     "level": "info",
@@ -1110,8 +1319,8 @@ cat > /etc/veildeploy/trojan/config.json <<'TROJANEOF'
     "tls": {
       "enabled": true,
       "server_name": "www.microsoft.com",
-      "key_path": "/etc/veildeploy/trojan/key.pem",
-      "certificate_path": "/etc/veildeploy/trojan/cert.pem"
+      "key_path": "/etc/privatedeploy/trojan/key.pem",
+      "certificate_path": "/etc/privatedeploy/trojan/cert.pem"
     }
   }],
   "outbounds": [{
@@ -1129,7 +1338,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sing-box run -c /etc/veildeploy/trojan/config.json
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/trojan/config.json
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -1172,7 +1381,7 @@ echo "                     Public Key: %[11]s"
 echo "                     Short ID: %[10]s"
 echo "  [4] Trojan:         Port %[4]d (TCP) - Password: %[7]s"
 echo ""
-echo "=== VeilDeploy Multi-Protocol Init Completed at $(date) ==="
+echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
 `,
 			ssPort,                        // %[1]d
 			hysteriaPort,                  // %[2]d

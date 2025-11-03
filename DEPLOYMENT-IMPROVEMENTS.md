@@ -1,4 +1,4 @@
-# VeilDeploy 部署流程改进文档
+# PrivateDeploy 部署流程改进文档
 
 ## 更新日期
 2025-10-16
@@ -17,7 +17,7 @@
 - ✅ **命令格式优化** - 使用单行格式避免参数解析问题
 
 #### 主要特性
-- ✅ **详细日志记录** - 所有输出记录到 `/var/log/veildeploy-init.log`
+- ✅ **详细日志记录** - 所有输出记录到 `/var/log/privatedeploy-init.log`
 - ✅ **分步骤执行** - 5个清晰的步骤,每步都有状态输出
 - ✅ **UFW防火墙配置** - 自动配置并启用防火墙规则
 - ✅ **Docker容器验证** - 部署后验证容器运行状态
@@ -77,7 +77,7 @@ echo "y" | ufw enable           # 强制启用
 ### 查看部署日志
 如果需要诊断问题,可以通过Vultr Web Console登录并查看:
 ```bash
-cat /var/log/veildeploy-init.log
+cat /var/log/privatedeploy-init.log
 ```
 
 ### 验证部署
@@ -115,7 +115,7 @@ nmap -Pn -p <PORT> <IP>
 
 2. **检查user-data日志**
    ```bash
-   tail -f /var/log/veildeploy-init.log
+   tail -f /var/log/privatedeploy-init.log
    ```
 
 3. **检查UFW状态**
@@ -177,7 +177,7 @@ docker run -d teddysun/shadowsocks-libev ss-server -s 0.0.0.0 -p 31750 ...
 - `POST /v2/firewalls/{id}/rules` - 添加防火墙规则
 
 ### 日志文件
-- `/var/log/veildeploy-init.log` - 部署脚本执行日志
+- `/var/log/privatedeploy-init.log` - 部署脚本执行日志
 - `/var/log/cloud-init-output.log` - Cloud-init完整日志
 
 ## 未来改进建议
