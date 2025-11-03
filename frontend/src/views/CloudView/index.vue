@@ -221,7 +221,7 @@ const columns = [
   { title: 'cloud.table.plan', key: 'plan', width: '13%' },
   { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '15%' },
   { title: 'cloud.table.protocols', key: 'protocols', width: '20%' },
-  { title: 'cloud.table.status', key: 'status', width: '8%' },
+  { title: 'cloud.table.status', key: 'status', width: '16%' },
   { title: 'cloud.table.createdAt', key: 'createdAt', width: '10%' },
   { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
@@ -504,7 +504,7 @@ const handleUseNode = async (node: CloudNode | Record<string, any>) => {
   }
 }
 
-const isPublicIPv4 = (ip: string): boolean => {
+const isPublicIPv4 = (ip?: string): boolean => {
   if (!ip) return false
   const octets = ip.split('.')
   if (octets.length !== 4) return false
@@ -533,7 +533,9 @@ const copyValue = async (value: string) => {
   }
 }
 
-const ensureNode = (node: CloudNode | Record<string, any>): CloudNode => node as CloudNode
+type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
+
+const ensureNode = (node: CloudNode | Record<string, any>): DisplayCloudNode => node as DisplayCloudNode
 
 const getPreferredAddress = (node: CloudNode | Record<string, any>): string | undefined => {
   const target = ensureNode(node)
@@ -607,6 +609,67 @@ const hasVless = (node: CloudNode | Record<string, any>): boolean => {
 const hasTrojan = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
   return Boolean(target.trojanPort && target.trojanPassword)
+}
+
+type DeploymentStepState = 'done' | 'current' | 'pending'
+type DeploymentStep = { label: string; state: DeploymentStepState }
+
+const shouldShowDeploymentProgress = (node: CloudNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return target.statusText !== 'connected' && target.statusText !== 'error'
+}
+
+const computeDeploymentSteps = (node: CloudNode | Record<string, any>): DeploymentStep[] => {
+  const target = ensureNode(node)
+  const normalizedStatus = (target.status || '').toString().toLowerCase()
+  const instanceReady = ['active', 'running', 'ok', 'started', 'poweron', 'power on', 'power_on'].some((key) =>
+    normalizedStatus.includes(key),
+  )
+  const ipReady = Boolean(isPublicIPv4(target.ipv4) || target.ipv6)
+  const protocolsReady = hasShadowsocks(target) || hasHysteria(target) || hasVless(target) || hasTrojan(target)
+  const applied = target.statusText === 'connected'
+
+  const rawSteps = [
+    { label: t('cloud.progress.submitted'), done: true },
+    { label: t('cloud.progress.provisioning'), done: instanceReady },
+    { label: t('cloud.progress.waitingIp'), done: ipReady },
+    { label: t('cloud.progress.configuring'), done: protocolsReady },
+    { label: t('cloud.progress.ready'), done: applied },
+  ]
+
+  const firstIncomplete = rawSteps.findIndex((step) => !step.done)
+
+  return rawSteps.map((step, index) => {
+    const state: DeploymentStepState =
+      step.done || firstIncomplete === -1
+        ? 'done'
+        : index === firstIncomplete
+          ? 'current'
+          : 'pending'
+    return {
+      label: step.label,
+      state,
+    }
+  })
+}
+
+const getDeploymentSteps = (node: CloudNode | Record<string, any>): DeploymentStep[] => computeDeploymentSteps(node)
+
+const getDeploymentSummary = (node: CloudNode | Record<string, any>): string => {
+  const steps = computeDeploymentSteps(node)
+  const total = steps.length
+  const currentIndex = steps.findIndex((step) => step.state === 'current')
+  const effectiveIndex = currentIndex === -1 ? total - 1 : currentIndex
+  const label: string =
+    steps[effectiveIndex]?.label ??
+    steps[Math.min(steps.length - 1, Math.max(0, effectiveIndex))]?.label ??
+    ''
+  const stepNumber = currentIndex === -1 ? total : currentIndex + 1
+  return t('cloud.progress.summary', {
+    current: stepNumber,
+    total,
+    label,
+  })
 }
 
 const copyProtocolLink = async (link: string | null) => {
@@ -776,11 +839,29 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
             <div>{{ planMap.get(record.plan) || record.plan }}</div>
           </template>
           <template #status="{ record }">
-            <div class="flex items-center gap-4">
-              <span class="capitalize">{{ record.status }}</span>
-              <Tag :color="getStatusColor(record.statusText)" size="small">
-                {{ getStatusLabel(record.statusText) }}
-              </Tag>
+            <div class="flex flex-col gap-2">
+              <div class="flex items-center gap-4">
+                <span class="capitalize">{{ record.status }}</span>
+                <Tag :color="getStatusColor(record.statusText)" size="small">
+                  {{ getStatusLabel(record.statusText) }}
+                </Tag>
+              </div>
+              <div v-if="shouldShowDeploymentProgress(record)" class="deployment-progress">
+                <div class="deployment-progress__summary">
+                  {{ getDeploymentSummary(record) }}
+                </div>
+                <div class="deployment-progress__steps">
+                  <div
+                    v-for="(step, index) in getDeploymentSteps(record)"
+                    :key="index"
+                    class="deployment-progress__step"
+                    :class="`deployment-progress__step--${step.state}`"
+                  >
+                    <span class="deployment-progress__bullet" />
+                    <span class="deployment-progress__label">{{ step.label }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
           <template #ipAddresses="{ record }">
@@ -908,5 +989,55 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
     text-overflow: ellipsis;
     max-width: 60px;
   }
+}
+
+.deployment-progress {
+  font-size: 11px;
+  color: var(--text-secondary-color);
+}
+
+.deployment-progress__summary {
+  font-weight: 600;
+}
+
+.deployment-progress__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deployment-progress__step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deployment-progress__bullet {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--divider-color);
+  flex-shrink: 0;
+}
+
+.deployment-progress__step--done .deployment-progress__bullet {
+  background: var(--success-color);
+}
+
+.deployment-progress__step--current .deployment-progress__bullet {
+  background: var(--primary-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 20%, transparent);
+}
+
+.deployment-progress__step--pending .deployment-progress__label {
+  opacity: 0.7;
+}
+
+.deployment-progress__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

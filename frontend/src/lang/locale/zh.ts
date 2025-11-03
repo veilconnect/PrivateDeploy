@@ -356,6 +356,14 @@ export default {
       connected: '已启用',
       error: '失败',
     },
+    progress: {
+      submitted: '已提交部署请求',
+      provisioning: '实例创建中',
+      waitingIp: '等待公网 IP',
+      configuring: '配置多协议服务',
+      ready: '部署完成',
+      summary: '正在进行：{label}（步骤 {current}/{total}）',
+    },
     table: {
       label: '名称',
       region: '区域',

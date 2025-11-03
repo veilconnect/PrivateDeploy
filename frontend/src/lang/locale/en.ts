@@ -355,6 +355,14 @@ export default {
       connected: 'Active',
       error: 'Error',
     },
+    progress: {
+      submitted: 'Deployment request submitted',
+      provisioning: 'Provisioning instance',
+      waitingIp: 'Waiting for public IP',
+      configuring: 'Configuring proxy services',
+      ready: 'Deployment completed',
+      summary: 'In progress: {label} (step {current}/{total})',
+    },
     table: {
       label: 'Label',
       region: 'Region',
