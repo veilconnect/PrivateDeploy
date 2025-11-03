@@ -2,3 +2,6 @@ build/bin
 frontend/dist
 
 .DS_Store
+
+# Sensitive data - Cloud provider configs and node information
+data/
