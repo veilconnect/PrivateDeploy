@@ -114,7 +114,10 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
       (proxy.id && String(proxy.id).trim()) ||
       (proxy.type && String(proxy.type).trim()) ||
       `proxy-${++proxyFallbackCounter}`
-    proxy.tag = ensureTag(proxy.tag, fallback)
+    // Don't mutate the original object, just ensure tag is set
+    if (!proxy.tag || typeof proxy.tag !== 'string' || !proxy.tag.trim()) {
+      proxy.tag = fallback
+    }
     return proxy.tag
   }
 
@@ -168,11 +171,11 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
               }
 
               if (Array.isArray(SubscriptionCache[subId])) {
+                // Normalize proxies in cache (only process valid entries)
                 SubscriptionCache[subId] = SubscriptionCache[subId]
                   .map((entry) => {
-                    const clone = { ...entry }
-                    const tag = normalizeProxy(clone)
-                    return tag ? clone : null
+                    const tag = normalizeProxy(entry)
+                    return tag ? entry : null
                   })
                   .filter(Boolean)
               }
@@ -443,6 +446,20 @@ export const generateConfigFile = async (
   }
 
   config.experimental.cache_file.path = 'cache.db'
+
+  // Validate: check for invalid server addresses (0.0.0.0 or empty)
+  if (config.outbounds && Array.isArray(config.outbounds)) {
+    for (const outbound of config.outbounds) {
+      if (outbound.server) {
+        const server = String(outbound.server).trim()
+        if (server === '0.0.0.0' || server === '' || server === '::') {
+          console.error(`[Generator] Invalid server address detected for ${outbound.tag}: "${server}"`)
+          console.error(`[Generator] Outbound config:`, outbound)
+          throw new Error(`Invalid server address for proxy ${outbound.tag}: server cannot be ${server}`)
+        }
+      }
+    }
+  }
 
   await WriteFile(CoreConfigFilePath, JSON.stringify(config, null, 2))
 }

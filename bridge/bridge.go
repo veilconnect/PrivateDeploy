@@ -53,6 +53,10 @@ func CreateApp(fs embed.FS) *App {
 	Env.BasePath = filepath.Dir(exePath)
 	Env.AppName = filepath.Base(exePath)
 
+	if err := os.Setenv("PRIVATEDEPLOY_BASE_PATH", Env.BasePath); err != nil {
+		log.Printf("Warning: failed to set PRIVATEDEPLOY_BASE_PATH: %v", err)
+	}
+
 	if slices.Contains(os.Args, "tasksch") {
 		Env.FromTaskSch = true
 	}

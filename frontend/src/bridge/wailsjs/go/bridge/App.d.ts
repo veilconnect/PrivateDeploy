@@ -10,11 +10,7 @@ export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CreateCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 
-export function CreateVultrInstance(arg1:string):Promise<bridge.FlagResult>;
-
 export function DestroyCloudInstance(arg1:string):Promise<bridge.FlagResult>;
-
-export function DestroyVultrInstance(arg1:string):Promise<bridge.FlagResult>;
 
 export function Download(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>,arg5:string,arg6:bridge.RequestOptions):Promise<bridge.HTTPResult>;
 
@@ -26,13 +22,13 @@ export function ExitApp():Promise<void>;
 
 export function FileExists(arg1:string):Promise<bridge.FlagResult>;
 
+export function GetCloudConfig():Promise<bridge.FlagResult>;
+
 export function GetCloudProvider():Promise<bridge.FlagResult>;
 
 export function GetEnv():Promise<bridge.EnvResult>;
 
 export function GetInterfaces():Promise<bridge.FlagResult>;
-
-export function GetVultrConfig():Promise<bridge.FlagResult>;
 
 export function IsStartup():Promise<boolean>;
 
@@ -49,14 +45,6 @@ export function ListCloudProviders():Promise<bridge.FlagResult>;
 export function ListCloudRegions():Promise<bridge.FlagResult>;
 
 export function ListServer():Promise<bridge.FlagResult>;
-
-export function ListVultrAvailability(arg1:string):Promise<bridge.FlagResult>;
-
-export function ListVultrInstances():Promise<bridge.FlagResult>;
-
-export function ListVultrPlans():Promise<bridge.FlagResult>;
-
-export function ListVultrRegions():Promise<bridge.FlagResult>;
 
 export function MakeDir(arg1:string):Promise<bridge.FlagResult>;
 
@@ -80,7 +68,7 @@ export function Requests(arg1:string,arg2:string,arg3:Record<string, string>,arg
 
 export function RestartApp():Promise<bridge.FlagResult>;
 
-export function SaveVultrConfig(arg1:string):Promise<bridge.FlagResult>;
+export function SaveCloudConfig(arg1:string):Promise<bridge.FlagResult>;
 
 export function SetCloudProvider(arg1:string):Promise<bridge.FlagResult>;
 

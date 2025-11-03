@@ -83,6 +83,85 @@ func (a *App) GetCloudProvider() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
+// GetCloudConfig returns the persisted configuration for the active provider
+func (a *App) GetCloudConfig() FlagResult {
+	log.Printf("[CloudBridge] GetCloudConfig called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	cfg, err := provider.LoadConfig()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to load config: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	if cfg == nil {
+		cfg = &cloud.ProviderConfig{}
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = provider.Name()
+	}
+	if cfg.Extra == nil {
+		cfg.Extra = map[string]string{}
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal config: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Loaded config for provider %s", cfg.Provider)
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// SaveCloudConfig persists configuration for the active provider
+func (a *App) SaveCloudConfig(configJSON string) FlagResult {
+	log.Printf("[CloudBridge] SaveCloudConfig called with payload length: %d", len(configJSON))
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	var cfg cloud.ProviderConfig
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to parse config JSON: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	if cfg.Provider == "" {
+		cfg.Provider = provider.Name()
+	}
+	if cfg.Extra == nil {
+		cfg.Extra = map[string]string{}
+	}
+
+	if cfg.Provider != provider.Name() {
+		errMsg := "config provider mismatch with active provider"
+		log.Printf("[CloudBridge] ERROR: %s (config=%s, active=%s)", errMsg, cfg.Provider, provider.Name())
+		return FlagResult{Flag: false, Data: errMsg}
+	}
+
+	if err := provider.ValidateConfig(&cfg); err != nil {
+		log.Printf("[CloudBridge] ERROR: Config validation failed: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	if err := provider.SaveConfig(&cfg); err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to save config: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Config saved for provider %s (defaultRegion=%s, defaultPlan=%s)", cfg.Provider, cfg.DefaultRegion, cfg.DefaultPlan)
+	return FlagResult{Flag: true, Data: "Success"}
+}
+
 // ListCloudInstances returns all instances for the active provider
 func (a *App) ListCloudInstances() FlagResult {
 	log.Printf("[CloudBridge] ListCloudInstances called")

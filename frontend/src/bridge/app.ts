@@ -27,21 +27,9 @@ export const GetInterfaces = async () => {
   return data.split('|')
 }
 
-export const GetVultrConfig = App.GetVultrConfig
+export const GetCloudConfig = App.GetCloudConfig
 
-export const SaveVultrConfig = App.SaveVultrConfig
-
-export const ListVultrRegions = App.ListVultrRegions
-
-export const ListVultrPlans = App.ListVultrPlans
-
-export const ListVultrInstances = App.ListVultrInstances
-
-export const ListVultrAvailability = App.ListVultrAvailability
-
-export const CreateVultrInstance = App.CreateVultrInstance
-
-export const DestroyVultrInstance = App.DestroyVultrInstance
+export const SaveCloudConfig = App.SaveCloudConfig
 
 export const ListCloudProviders = App.ListCloudProviders
 

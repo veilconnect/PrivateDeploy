@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 
 import {
-  GetVultrConfig,
-  SaveVultrConfig,
+  GetCloudConfig,
+  SaveCloudConfig,
   ListCloudProviders,
   GetCloudProvider,
   SetCloudProvider,
@@ -73,6 +73,24 @@ const normalizeCloudNode = (rawNode: Record<string, any>, providerFallback: Clou
   return node as ManagedCloudNode
 }
 
+const providerStatusToNodeStatus = (status?: string): CloudNodeStatus => {
+  if (!status) return 'unknown'
+  const normalized = status.toLowerCase()
+  if (['active', 'running', 'ok', 'online', 'started'].includes(normalized)) {
+    return 'connected'
+  }
+  if (['pending', 'installing', 'starting', 'booting', 'provisioning'].includes(normalized)) {
+    return 'pending'
+  }
+  if (['applying', 'deploying', 'configuring'].includes(normalized)) {
+    return 'applying'
+  }
+  if (['failed', 'error', 'stopped', 'poweroff', 'locked', 'blocked'].includes(normalized)) {
+    return 'error'
+  }
+  return 'unknown'
+}
+
 export const useCloudStore = defineStore('cloud', () => {
   // Multi-cloud provider management
   const availableProviders = ref<Array<{ name: string; displayName: string }>>([])
@@ -82,6 +100,7 @@ export const useCloudStore = defineStore('cloud', () => {
     apiKey: '',
     defaultPlan: '',
     defaultRegion: '',
+    extra: {},
   })
   const configLoaded = ref(false)
   const savingConfig = ref(false)
@@ -363,13 +382,58 @@ export const useCloudStore = defineStore('cloud', () => {
       await subscribesStore.deleteSubscribe(id)
     }
     await RemoveFile(path).catch(() => undefined)
+
+    // Remove references from all profiles that used this subscription
+    const toPrune: Array<Promise<void>> = []
+    for (const profile of profilesStore.profiles) {
+      if (!profile) continue
+      let changed = false
+      const updated = deepClone(profile)
+
+      const pruneOutbound = (outbound: IOutbound) => {
+        if (!outbound) return
+        if (Array.isArray(outbound.outbounds)) {
+          const before = outbound.outbounds.length
+          outbound.outbounds = outbound.outbounds
+            .map((item: any) => (item && typeof item === 'object' ? { ...item } : item))
+            .filter((item: any) => item?.id !== id)
+          if (before !== outbound.outbounds.length) {
+            changed = true
+          }
+        }
+      }
+
+      updated.outbounds.forEach(pruneOutbound)
+
+      // Remove direct subscription outbounds (non-selector/urltest)
+      const beforeLength = updated.outbounds.length
+      updated.outbounds = updated.outbounds.filter((outbound: IOutbound) => outbound.id !== id)
+      if (beforeLength !== updated.outbounds.length) {
+        changed = true
+      }
+
+      if (changed) {
+        toPrune.push(profilesStore.editProfile(profile.id, updated))
+      }
+    }
+
+    if (toPrune.length > 0) {
+      await Promise.all(toPrune)
+      if (kernelApiStore.running) {
+        await kernelApiStore.restartCore().catch((error) =>
+          logError('[CloudStore] Failed to restart core after pruning subscription:', error),
+        )
+      }
+    }
   }
 
   const loadConfig = async () => {
-    const res = await GetVultrConfig()
+    const res = await GetCloudConfig()
     ensureFlag(res.flag, res.data)
     const loadedConfig = parseJSON<CloudConfig>(res.data, {} as CloudConfig)
     Object.assign(config, loadedConfig)
+    config.provider = loadedConfig.provider ?? currentProvider.value
+    config.extra = loadedConfig.extra ?? {}
     logInfo('[CloudStore] Loaded config, apiKey length:', config.apiKey?.length || 0)
     configLoaded.value = true
   }
@@ -377,7 +441,10 @@ export const useCloudStore = defineStore('cloud', () => {
   const saveConfig = async () => {
     savingConfig.value = true
     try {
-      const res = await SaveVultrConfig(JSON.stringify(config))
+      const payload = deepClone(config) as CloudConfig
+      payload.provider = currentProvider.value
+      payload.extra = payload.extra ?? {}
+      const res = await SaveCloudConfig(JSON.stringify(payload))
       ensureFlag(res.flag, res.data)
     } finally {
       savingConfig.value = false
@@ -407,6 +474,11 @@ export const useCloudStore = defineStore('cloud', () => {
   }
 
   const refreshInstances = async (silent = false) => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      instances.value = []
+      return
+    }
+
     if (!silent) {
       loadingInstances.value = true
     }
@@ -430,10 +502,26 @@ export const useCloudStore = defineStore('cloud', () => {
       const previousInstances = instances.value
 
       const statusMap = new Map(instances.value.map((node) => [node.instanceId, node.statusText || 'unknown']))
-      const enriched: ManagedCloudNode[] = nodesToProcess.map((node) => ({
-        ...node,
-        statusText: statusMap.get(node.instanceId) || 'unknown',
-      }))
+      const enriched: ManagedCloudNode[] = nodesToProcess.map((node) => {
+        const previousStatus = statusMap.get(node.instanceId) || 'unknown'
+        const providerStatus = providerStatusToNodeStatus(node.status)
+        let statusText: CloudNodeStatus = previousStatus
+
+        if (providerStatus === 'connected') {
+          statusText = 'connected'
+        } else if (previousStatus === 'unknown' && providerStatus !== 'unknown') {
+          statusText = providerStatus
+        } else if (previousStatus === 'pending' && providerStatus === 'applying') {
+          statusText = 'applying'
+        } else if (previousStatus !== 'error' && providerStatus === 'error') {
+          statusText = 'error'
+        }
+
+        return {
+          ...node,
+          statusText,
+        }
+      })
 
       const activeProfile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
       if (activeProfile) {
@@ -466,12 +554,17 @@ export const useCloudStore = defineStore('cloud', () => {
       // Auto-apply nodes that were pending and now have IP addresses
       const nodesToAutoApply = enriched.filter((node) => {
         const oldNode = previousInstances.find((n) => n.instanceId === node.instanceId)
-        const isNewlyReady =
-          node.instanceId &&
-          (node.ipv4 || node.ipv6) &&
-          (!oldNode || (!oldNode.ipv4 && !oldNode.ipv6)) &&
-          (node.statusText === 'applying' || node.statusText === 'pending')
-        return isNewlyReady
+        const hasAddress = node.instanceId && (node.ipv4 || node.ipv6)
+        if (!hasAddress) return false
+
+        const wasMissingAddress = !oldNode || (!oldNode.ipv4 && !oldNode.ipv6)
+        if (!wasMissingAddress) return false
+
+        const wasPendingBefore = !oldNode || oldNode.statusText === 'pending' || oldNode.statusText === 'applying'
+        const isPendingNow = node.statusText === 'pending' || node.statusText === 'applying'
+        const providerJustConnected = node.statusText === 'connected' && wasPendingBefore
+
+        return isPendingNow || providerJustConnected
       })
 
       for (const node of nodesToAutoApply) {
@@ -497,6 +590,25 @@ export const useCloudStore = defineStore('cloud', () => {
             n.instanceId === node.instanceId ? node : n
           )
         }
+      }
+
+      const removedNodes = previousInstances.filter(
+        (prev) => prev.instanceId && !nodesToProcess.some((node) => node.instanceId === prev.instanceId),
+      )
+      if (removedNodes.length > 0) {
+        await Promise.all(removedNodes.map((node) => removeSubscriptionForNode(node.instanceId)))
+      }
+
+      const activeSubscriptionIds = new Set(
+        enriched
+          .filter((node) => node.instanceId)
+          .map((node) => subscriptionId(node.instanceId)),
+      )
+      const staleSubscriptions = subscribesStore.subscribes.filter(
+        (sub) => sub.id.startsWith('cloud-') && !activeSubscriptionIds.has(sub.id),
+      )
+      if (staleSubscriptions.length > 0) {
+        await Promise.all(staleSubscriptions.map((sub) => removeSubscriptionForNode(sub.id)))
       }
 
       // Ensure there is at least one active cloud subscription when nodes exist
@@ -559,6 +671,20 @@ export const useCloudStore = defineStore('cloud', () => {
         await ensureRegionAvailability(node.region || '')
         const cloudNode: ManagedCloudNode = { ...node, statusText: 'applying' }
         instances.value = [cloudNode, ...instances.value.filter((n) => n.instanceId !== node.instanceId)]
+
+        // If node doesn't have IP yet, wait for it with retry mechanism
+        // Backend should have waited, but if it failed we retry here
+        if (!cloudNode.ipv4 && !cloudNode.ipv6) {
+          logInfo('[CloudStore] Node created without IP, will retry subscription creation after refresh')
+          cloudNode.statusText = 'pending'
+          instances.value = instances.value.map((n) =>
+            n.instanceId === cloudNode.instanceId ? cloudNode : n
+          )
+          // Trigger immediate refresh to get IP address
+          setTimeout(() => refreshInstances().catch(() => undefined), 5000)
+          return node
+        }
+
         await ensureSubscriptionForNode(cloudNode)
 
         // Auto-apply: Add newly created node to active profile and restart core
@@ -734,6 +860,8 @@ export const useCloudStore = defineStore('cloud', () => {
         apiKey: '',
         defaultPlan: '',
         defaultRegion: '',
+        provider: provider,
+        extra: {},
       })
 
       if (typeof SetCloudProvider !== 'function') {
