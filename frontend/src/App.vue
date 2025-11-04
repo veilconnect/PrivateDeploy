@@ -115,15 +115,11 @@ envStore.setupEnv().then(async () => {
   // Auto-start kernel if profiles exist and kernel is not running
   percent.value = 100
   try {
-    if (!kernelApiStore.running) {
-      if (profilesStore.profiles.length === 0 && autoApplyPromise) {
-        await autoApplyPromise
-      } else {
-        autoApplyPromise?.catch(() => undefined)
-      }
+    if (!kernelApiStore.running && autoApplyPromise) {
+      await autoApplyPromise
     }
 
-    if (profilesStore.profiles.length > 0 && !kernelApiStore.running) {
+    if (!kernelApiStore.running && cloudStore.hasReadyInstances) {
       console.log('[App] Auto-starting kernel...')
       await kernelApiStore.startCore()
       console.log('[App] Kernel auto-started successfully')

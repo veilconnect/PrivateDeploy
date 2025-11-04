@@ -5,18 +5,50 @@ import { useI18n } from 'vue-i18n'
 import { ClipboardSetText } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
-import { logError, logInfo } from '@/utils/logger'
+import { logError } from '@/utils/logger'
 
+import { useModal } from '@/components/Modal'
+
+import ImportNodesModal from './components/ImportNodesModal.vue'
+import ManualNodeModal from './components/ManualNodeModal.vue'
+
+import type { ManualNodeSkipEntry } from '@/stores/cloud'
 import type { CloudNode, CloudPlan, CloudRegion } from '@/types/cloud'
 
 const { t } = useI18n()
 const cloudStore = useCloudStore()
 const kernelApiStore = useKernelApiStore()
+const [Modal, modalApi] = useModal({
+  minWidth: '52',
+  maskClosable: true,
+})
+
+type ManualNodeInput = Parameters<typeof cloudStore.addManualNode>[0]
 
 const form = reactive({
   label: defaultLabel(cloudStore.currentProvider),
   region: '',
   plan: '',
+})
+
+const manualForm = reactive({
+  label: '',
+  ipv4: '',
+  ipv6: '',
+  ssPort: '',
+  ssPassword: '',
+  hysteriaPort: '',
+  hysteriaPassword: '',
+  vlessPort: '',
+  vlessUUID: '',
+  vlessPublicKey: '',
+  vlessShortId: '',
+  trojanPort: '',
+  trojanPassword: '',
+})
+
+const importForm = reactive({
+  raw: '',
 })
 
 const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loadingRegions)
@@ -108,6 +140,476 @@ const planOptions = computed(() => {
   }))
 })
 
+const resetManualForm = () => {
+  manualForm.label = ''
+  manualForm.ipv4 = ''
+  manualForm.ipv6 = ''
+  manualForm.ssPort = ''
+  manualForm.ssPassword = ''
+  manualForm.hysteriaPort = ''
+  manualForm.hysteriaPassword = ''
+  manualForm.vlessPort = ''
+  manualForm.vlessUUID = ''
+  manualForm.vlessPublicKey = ''
+  manualForm.vlessShortId = ''
+  manualForm.trojanPort = ''
+  manualForm.trojanPassword = ''
+}
+
+const resetImportForm = () => {
+  importForm.raw = ''
+}
+
+const toOptionalNumber = (value: string) => {
+  if (!value) return undefined
+  const num = Number(value)
+  if (!Number.isFinite(num)) return undefined
+  const port = Math.trunc(num)
+  if (port <= 0 || port > 65535) return undefined
+  return port
+}
+
+const isManualNode = (node: CloudNode | Record<string, any>) => (node as any).provider === 'manual'
+
+const manualEditingId = ref('')
+
+const mapManualError = (error: unknown) => {
+  const messageText = error instanceof Error ? error.message : String(error)
+  if (messageText === 'label-required') {
+    return t('cloud.errors.manualLabelRequired')
+  }
+  if (messageText === 'address-required') {
+    return t('cloud.errors.manualAddressRequired')
+  }
+  if (messageText === 'protocol-required') {
+    return t('cloud.errors.manualProtocolRequired')
+  }
+  if (messageText === 'duplicate') {
+    return t('cloud.errors.manualDuplicate')
+  }
+  if (messageText === 'manual-node-not-found') {
+    return t('cloud.errors.importInvalid')
+  }
+  return messageText
+}
+
+const formatSkippedImportEntry = (entry: ManualNodeSkipEntry) => {
+  if (entry.reason === 'ipv4') {
+    return t('cloud.manual.importSkippedIpv4', { value: entry.identifier })
+  }
+  if (entry.reason === 'ipv6') {
+    return t('cloud.manual.importSkippedIpv6', { value: entry.identifier })
+  }
+  return t('cloud.manual.importSkippedLabel', { value: entry.identifier })
+}
+
+const getManualInputFromForm = (): ManualNodeInput => {
+  const label = manualForm.label.trim()
+  if (!label) {
+    throw new Error('label-required')
+  }
+  const ipv4 = manualForm.ipv4.trim()
+  const ipv6 = manualForm.ipv6.trim()
+  if (!ipv4 && !ipv6) {
+    throw new Error('address-required')
+  }
+  const input: ManualNodeInput = {
+    label,
+    ipv4: ipv4 || undefined,
+    ipv6: ipv6 || undefined,
+    ssPort: toOptionalNumber(manualForm.ssPort) ?? undefined,
+    ssPassword: manualForm.ssPassword.trim() || undefined,
+    hysteriaPort: toOptionalNumber(manualForm.hysteriaPort) ?? undefined,
+    hysteriaPassword: manualForm.hysteriaPassword.trim() || undefined,
+    vlessPort: toOptionalNumber(manualForm.vlessPort) ?? undefined,
+    vlessUUID: manualForm.vlessUUID.trim() || undefined,
+    vlessPublicKey: manualForm.vlessPublicKey.trim() || undefined,
+    vlessShortId: manualForm.vlessShortId.trim() || undefined,
+    trojanPort: toOptionalNumber(manualForm.trojanPort) ?? undefined,
+    trojanPassword: manualForm.trojanPassword.trim() || undefined,
+  }
+
+  const hasProtocol =
+    (input.ssPort && input.ssPassword) ||
+    (input.hysteriaPort && input.hysteriaPassword) ||
+    (input.vlessPort && input.vlessUUID && input.vlessPublicKey) ||
+    (input.trojanPort && input.trojanPassword)
+
+  if (!hasProtocol) {
+    throw new Error('protocol-required')
+  }
+
+  return input
+}
+
+const handleManualSubmit = async () => {
+  try {
+    const input = getManualInputFromForm()
+    const node = await cloudStore.addManualNode(input)
+    await cloudStore.applyNodeToProfile(node)
+    message.success(t('cloud.manual.addSuccess'))
+    return true
+  } catch (error) {
+    message.error(mapManualError(error))
+    return false
+  }
+}
+
+const handleManualUpdate = async () => {
+  const id = manualEditingId.value
+  if (!id) {
+    return false
+  }
+  try {
+    const input = getManualInputFromForm()
+    const node = await cloudStore.updateManualNode(id, input)
+    await cloudStore.applyNodeToProfile(node)
+    message.success(t('cloud.manual.updateSuccess'))
+    return true
+  } catch (error) {
+    message.error(mapManualError(error))
+    return false
+  }
+}
+
+const populateManualFormFromNode = (node: Record<string, any>) => {
+  manualForm.label = node.label || ''
+  manualForm.ipv4 = node.ipv4 || ''
+  manualForm.ipv6 = node.ipv6 || ''
+  manualForm.ssPort = node.ssPort ? String(node.ssPort) : node.port ? String(node.port) : ''
+  manualForm.ssPassword = node.ssPassword || node.password || ''
+  manualForm.hysteriaPort = node.hysteriaPort ? String(node.hysteriaPort) : ''
+  manualForm.hysteriaPassword = node.hysteriaPassword || ''
+  manualForm.vlessPort = node.vlessPort ? String(node.vlessPort) : ''
+  manualForm.vlessUUID = node.vlessUUID || ''
+  manualForm.vlessPublicKey = node.vlessPublicKey || ''
+  manualForm.vlessShortId = node.vlessShortId || ''
+  manualForm.trojanPort = node.trojanPort ? String(node.trojanPort) : ''
+  manualForm.trojanPassword = node.trojanPassword || ''
+}
+
+const decodeBase64 = (value: string): string => {
+  try {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
+    if (typeof atob === 'function') {
+      return atob(padded)
+    }
+    // @ts-expect-error - Buffer is available in Node contexts (build time) and polyfilled in browsers
+    return Buffer.from(padded, 'base64').toString('utf-8')
+  } catch {
+    return ''
+  }
+}
+
+const normalizeHost = (host: string) => host.replace(/^\[/, '').replace(/\]$/, '')
+
+const assignIpFields = (host: string): Pick<ManualNodeInput, 'ipv4' | 'ipv6'> => {
+  const normalized = normalizeHost(host)
+  if (!normalized) {
+    return {}
+  }
+  if (normalized.includes(':')) {
+    return { ipv6: normalized }
+  }
+  return { ipv4: normalized }
+}
+
+const parseShadowSocksUrl = (text: string): ManualNodeInput | null => {
+  let payload = text.slice('ss://'.length)
+  let label = ''
+  const hashIndex = payload.indexOf('#')
+  if (hashIndex >= 0) {
+    label = decodeURIComponent(payload.slice(hashIndex + 1))
+    payload = payload.slice(0, hashIndex)
+  }
+  const queryIndex = payload.indexOf('?')
+  if (queryIndex >= 0) {
+    payload = payload.slice(0, queryIndex)
+  }
+  const decoded = decodeBase64(payload)
+  if (!decoded || !decoded.includes('@')) {
+    return null
+  }
+  const [methodPart, hostPart] = decoded.split('@')
+  if (!hostPart) {
+    return null
+  }
+  const [method, password] = methodPart.split(':')
+  const [host, portStr] = hostPart.split(':')
+  const port = toOptionalNumber(portStr || '')
+  if (!method || !password || !host || !port) {
+    return null
+  }
+  const ipFields = assignIpFields(host)
+  const resolvedLabel = label || host
+  return {
+    label: resolvedLabel,
+    ...ipFields,
+    ssPort: port,
+    ssPassword: password,
+  }
+}
+
+const parseTrojanUrl = (text: string): ManualNodeInput | null => {
+  try {
+    const url = new URL(text)
+    const host = url.hostname
+    const port = toOptionalNumber(url.port || '')
+    if (!host || !port) {
+      return null
+    }
+    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
+    const password = url.username
+    if (!password) {
+      return null
+    }
+    const ipFields = assignIpFields(host)
+    return {
+      label,
+      ...ipFields,
+      trojanPort: port,
+      trojanPassword: decodeURIComponent(password),
+    }
+  } catch {
+    return null
+  }
+}
+
+const parseVlessUrl = (text: string): ManualNodeInput | null => {
+  try {
+    const url = new URL(text)
+    const host = url.hostname
+    const port = toOptionalNumber(url.port || '')
+    const uuid = url.username
+    if (!host || !port || !uuid) {
+      return null
+    }
+    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
+    const publicKey = url.searchParams.get('reality-public-key') || url.searchParams.get('pbk') || undefined
+    const shortId = url.searchParams.get('reality-short-id') || url.searchParams.get('sid') || undefined
+    const ipFields = assignIpFields(host)
+    return {
+      label,
+      ...ipFields,
+      vlessPort: port,
+      vlessUUID: decodeURIComponent(uuid),
+      vlessPublicKey: publicKey || undefined,
+      vlessShortId: shortId || undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+const parseHysteriaUrl = (text: string): ManualNodeInput | null => {
+  try {
+    const url = new URL(text)
+    const host = url.hostname
+    const port = toOptionalNumber(url.port || '')
+    if (!host || !port) {
+      return null
+    }
+    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
+    const password = url.username || url.searchParams.get('auth') || url.searchParams.get('password') || ''
+    if (!password) {
+      return null
+    }
+    const ipFields = assignIpFields(host)
+    return {
+      label,
+      ...ipFields,
+      hysteriaPort: port,
+      hysteriaPassword: decodeURIComponent(password),
+    }
+  } catch {
+    return null
+  }
+}
+
+const parseProtocolUrl = (text: string): ManualNodeInput | null => {
+  const lower = text.toLowerCase()
+  if (lower.startsWith('ss://')) {
+    return parseShadowSocksUrl(text)
+  }
+  if (lower.startsWith('trojan://')) {
+    return parseTrojanUrl(text)
+  }
+  if (lower.startsWith('vless://')) {
+    return parseVlessUrl(text)
+  }
+  if (lower.startsWith('hysteria2://') || lower.startsWith('hy2://')) {
+    return parseHysteriaUrl(text)
+  }
+  return null
+}
+
+const parseProtocolList = (raw: string): ManualNodeInput[] => {
+  const matches = raw.match(/((ss|trojan|vless|hysteria2|hy2):\/\/[\S]+)/gi)
+  if (!matches) {
+    return []
+  }
+  const inputs: ManualNodeInput[] = []
+  for (const entry of matches) {
+    const parsed = parseProtocolUrl(entry.trim())
+    if (parsed) {
+      inputs.push(parsed)
+    }
+  }
+  return inputs
+}
+
+const parseImportedNodes = (raw: string): ManualNodeInput[] => {
+  try {
+    const data = JSON.parse(raw)
+    const entries = Array.isArray(data) ? data : [data]
+    const inputs: ManualNodeInput[] = []
+    for (const item of entries) {
+      if (!item || typeof item !== 'object') continue
+      const record = item as Record<string, any>
+      const label = String(record.label ?? record.name ?? '').trim()
+      if (!label) continue
+      const ipv4 = typeof record.ipv4 === 'string' ? record.ipv4.trim() : ''
+      const ipv6 = typeof record.ipv6 === 'string' ? record.ipv6.trim() : ''
+      const input: ManualNodeInput = {
+        label,
+        ipv4: ipv4 || undefined,
+        ipv6: ipv6 || undefined,
+        region: typeof record.region === 'string' ? record.region : undefined,
+        plan: typeof record.plan === 'string' ? record.plan : undefined,
+        ssPort: toOptionalNumber(String(record.ssPort ?? record.port ?? '')) ?? undefined,
+        ssPassword: typeof record.ssPassword === 'string' && record.ssPassword.trim()
+          ? record.ssPassword.trim()
+          : typeof record.password === 'string' && record.password.trim()
+            ? record.password.trim()
+            : undefined,
+        hysteriaPort: toOptionalNumber(String(record.hysteriaPort ?? '')) ?? undefined,
+        hysteriaPassword:
+          typeof record.hysteriaPassword === 'string' && record.hysteriaPassword.trim()
+            ? record.hysteriaPassword.trim()
+            : undefined,
+        vlessPort: toOptionalNumber(String(record.vlessPort ?? '')) ?? undefined,
+        vlessUUID: typeof record.vlessUUID === 'string' && record.vlessUUID.trim() ? record.vlessUUID.trim() : undefined,
+        vlessPublicKey:
+          typeof record.vlessPublicKey === 'string' && record.vlessPublicKey.trim()
+            ? record.vlessPublicKey.trim()
+            : undefined,
+        vlessShortId:
+          typeof record.vlessShortId === 'string' && record.vlessShortId.trim()
+            ? record.vlessShortId.trim()
+            : undefined,
+        trojanPort: toOptionalNumber(String(record.trojanPort ?? '')) ?? undefined,
+        trojanPassword:
+          typeof record.trojanPassword === 'string' && record.trojanPassword.trim()
+            ? record.trojanPassword.trim()
+            : undefined,
+      }
+      inputs.push(input)
+    }
+    if (inputs.length) {
+      return inputs
+    }
+  } catch {
+    // Fallback to protocol parsing
+  }
+  const protocolInputs = parseProtocolList(raw)
+  if (protocolInputs.length) {
+    return protocolInputs
+  }
+  throw new Error('invalid')
+}
+
+const handleImportSubmit = async () => {
+  const raw = importForm.raw.trim()
+  if (!raw) {
+    message.error(t('cloud.errors.importEmpty'))
+    return false
+  }
+
+  let inputs: ManualNodeInput[]
+  try {
+    inputs = parseImportedNodes(raw)
+  } catch {
+    message.error(t('cloud.errors.importInvalid'))
+    return false
+  }
+
+  if (!inputs.length) {
+    message.error(t('cloud.errors.importInvalid'))
+    return false
+  }
+
+  try {
+    const { added, skipped } = await cloudStore.addManualNodes(inputs)
+    if (!added.length) {
+      message.error(t('cloud.errors.importInvalid'))
+      return false
+    }
+    await Promise.all(added.map((node) => cloudStore.applyNodeToProfile(node).catch(() => undefined)))
+    if (skipped.length) {
+      const detail = skipped.map(formatSkippedImportEntry).join('; ')
+      message.warn(t('cloud.manual.importSkippedList', { count: skipped.length, labels: detail }))
+    }
+    message.success(t('cloud.manual.importSuccess', { count: added.length }))
+    return true
+  } catch (error) {
+    message.error(mapManualError(error))
+    return false
+  }
+}
+
+const openManualNodeModal = () => {
+  resetManualForm()
+  manualEditingId.value = ''
+  modalApi
+    .setProps({
+      title: t('cloud.manual.addTitle'),
+      cancelText: 'common.cancel',
+      submitText: 'common.save',
+      onOk: handleManualSubmit,
+    })
+    .setContent(ManualNodeModal, {
+      form: manualForm,
+      'onUpdate:form': (value: Record<string, any>) => Object.assign(manualForm, value),
+    })
+    .open()
+}
+
+const openImportModal = () => {
+  resetImportForm()
+  modalApi
+    .setProps({
+      title: t('cloud.manual.importTitle'),
+      cancelText: 'common.cancel',
+      submitText: 'common.import',
+      onOk: handleImportSubmit,
+    })
+    .setContent(ImportNodesModal, {
+      form: importForm,
+      'onUpdate:form': (value: Record<string, any>) => {
+        importForm.raw = typeof value?.raw === 'string' ? value.raw : ''
+      },
+    })
+    .open()
+}
+
+const openEditManualNode = (record: CloudNode | Record<string, any>) => {
+  manualEditingId.value = record.instanceId
+  populateManualFormFromNode(record as Record<string, any>)
+  modalApi
+    .setProps({
+      title: t('cloud.manual.editTitle'),
+      cancelText: 'common.cancel',
+      submitText: 'common.save',
+      onOk: handleManualUpdate,
+    })
+    .setContent(ManualNodeModal, {
+      form: manualForm,
+      'onUpdate:form': (value: Record<string, any>) => Object.assign(manualForm, value),
+    })
+    .open()
+}
+
 const regionMap = computed(() => new Map(cloudStore.regions.map((r) => [r.id, formatRegion(r)])))
 const planMap = computed(() => {
   const map = new Map()
@@ -149,6 +651,20 @@ const tableData = computed(() => {
     id: node.instanceId,
   }))
   return data
+})
+
+const lastInstancesUpdateRelative = computed(() => {
+  if (!cloudStore.instancesUpdatedAt) {
+    return ''
+  }
+  return formatRelativeTime(cloudStore.instancesUpdatedAt)
+})
+
+const lastInstancesUpdateExact = computed(() => {
+  if (!cloudStore.instancesUpdatedAt) {
+    return ''
+  }
+  return formatDate(cloudStore.instancesUpdatedAt, 'YYYY-MM-DD HH:mm:ss')
 })
 
 const applyingNodeId = ref('')
@@ -327,6 +843,8 @@ onMounted(async () => {
     // Load available providers and get current provider
     await Promise.allSettled([cloudStore.loadProviders(), cloudStore.getCurrentProvider()])
 
+    await cloudStore.loadManualNodes()
+
     await cloudStore.loadConfig()
     if (cloudStore.config.apiKey) {
       // Load regions and plans in parallel
@@ -458,6 +976,7 @@ const handleDeploy = async () => {
     return
   }
   try {
+    message.info(t('cloud.create.deployingHint'))
     await cloudStore.ensureRegionAvailability(form.region)
     const ids = availablePlanIds.value
     if (ids.length && !ids.includes(form.plan)) {
@@ -474,7 +993,7 @@ const handleDeploy = async () => {
     })
     message.success('common.success')
     form.label = defaultLabel()
-    await cloudStore.refreshInstances()
+    await cloudStore.refreshInstances(true)
   } catch (error) {
     handleError(error)
   }
@@ -672,30 +1191,6 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>): string => 
   })
 }
 
-const copyProtocolLink = async (link: string | null) => {
-  if (!link) {
-    message.error(t('cloud.errors.protocolUnavailable'))
-    return
-  }
-  await copyValue(link)
-}
-
-const copyShadowsocksLink = async (node: CloudNode | Record<string, any>) => {
-  await copyProtocolLink(buildShadowsocksLink(node))
-}
-
-const copyHysteriaLink = async (node: CloudNode | Record<string, any>) => {
-  await copyProtocolLink(buildHysteriaLink(node))
-}
-
-const copyVlessLink = async (node: CloudNode | Record<string, any>) => {
-  await copyProtocolLink(buildVlessLink(node))
-}
-
-const copyTrojanLink = async (node: CloudNode | Record<string, any>) => {
-  await copyProtocolLink(buildTrojanLink(node))
-}
-
 const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
   const node = ensureNode(record)
   const links = [
@@ -717,8 +1212,11 @@ const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
 const handleDestroy = async (record: CloudNode | Record<string, any>) => {
   const node = record as CloudNode
   try {
-    await confirm('common.warning', t('cloud.confirmDestroy', { label: node.label }))
-  } catch (error) {
+    const messageText = isManualNode(node)
+      ? t('cloud.manual.confirmRemove', { label: node.label })
+      : t('cloud.confirmDestroy', { label: node.label })
+    await confirm('common.warning', messageText)
+  } catch {
     return
   }
   try {
@@ -817,33 +1315,71 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
           >
             {{ t('cloud.create.refresh') }}
           </Button>
+          <Button @click="openManualNodeModal" type="normal">
+            {{ t('cloud.manual.add') }}
+          </Button>
+          <Button @click="openImportModal" type="normal">
+            {{ t('cloud.manual.import') }}
+          </Button>
+        </div>
+        <div v-if="cloudStore.creatingInstance" class="text-12 text-tertiary">
+          {{ t('cloud.create.deployingProgress') }}
         </div>
       </div>
     </Card>
 
     <Card :title="t('cloud.nodes.title')">
-      <div v-if="cloudStore.loadingInstances" class="py-32 text-center text-14">
-        {{ t('cloud.nodes.loading') }}
-      </div>
-      <div v-else-if="!tableData.length" class="py-32">
-        <Empty>
-          <template #description>{{ t('cloud.nodes.empty') }}</template>
-        </Empty>
-      </div>
-      <div v-else class="py-8">
-        <Table :columns="columns" :data-source="tableData">
-          <template #region="{ record }">
+      <div class="flex flex-col gap-12 py-8">
+        <div
+          v-if="cloudStore.loadingInstances || lastInstancesUpdateRelative"
+          class="flex flex-wrap items-center justify-between gap-6 text-12 text-secondary"
+        >
+          <div class="flex flex-wrap items-center gap-4">
+            <span v-if="cloudStore.loadingInstances">{{ t('cloud.nodes.loading') }}</span>
+            <span v-if="cloudStore.loadingInstances" class="text-tertiary">
+              {{ t('cloud.nodes.loadingHint') }}
+            </span>
+          </div>
+          <div
+            v-if="lastInstancesUpdateRelative"
+            class="flex items-center gap-2 text-tertiary"
+            :title="lastInstancesUpdateExact || ''"
+          >
+            {{ t('cloud.nodes.lastSynced', { time: lastInstancesUpdateRelative }) }}
+          </div>
+        </div>
+
+        <div v-if="!tableData.length">
+          <div v-if="cloudStore.loadingInstances" class="py-32 text-center text-14">
+            <div>{{ t('cloud.nodes.loading') }}</div>
+            <div class="mt-6 text-12 text-tertiary">
+              {{ t('cloud.nodes.loadingHint') }}
+            </div>
+          </div>
+          <div v-else class="py-32">
+            <Empty>
+              <template #description>{{ t('cloud.nodes.empty') }}</template>
+            </Empty>
+          </div>
+        </div>
+
+        <div v-else class="py-8">
+          <Table :columns="columns" :data-source="tableData">
+            <template #region="{ record }">
             <div>{{ formatNodeRegion(record.region) }}</div>
-          </template>
-          <template #plan="{ record }">
+            </template>
+            <template #plan="{ record }">
             <div>{{ planMap.get(record.plan) || record.plan }}</div>
-          </template>
-          <template #status="{ record }">
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center gap-4">
-                <span class="capitalize">{{ record.status }}</span>
-                <Tag :color="getStatusColor(record.statusText)" size="small">
-                  {{ getStatusLabel(record.statusText) }}
+            </template>
+            <template #status="{ record }">
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-4">
+                  <span class="capitalize">{{ record.status }}</span>
+                  <Tag :color="getStatusColor(record.statusText)" size="small">
+                    {{ getStatusLabel(record.statusText) }}
+                  </Tag>
+                <Tag v-if="isManualNode(record)" color="cyan" size="small">
+                  {{ t('cloud.manual.badge') }}
                 </Tag>
               </div>
               <div v-if="shouldShowDeploymentProgress(record)" class="deployment-progress">
@@ -862,8 +1398,8 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
                   </div>
                 </div>
               </div>
-            </div>
-          </template>
+              </div>
+            </template>
           <template #ipAddresses="{ record }">
             <div class="flex flex-col gap-2">
               <div v-if="isPublicIPv4(record.ipv4)" class="flex items-center gap-2" style="font-size: 11px">
@@ -922,6 +1458,14 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
               >
                 {{ t('cloud.nodes.apply') }}
               </Button>
+              <Button
+                v-if="isManualNode(record)"
+                @click="openEditManualNode(record)"
+                type="text"
+                size="small"
+              >
+                {{ t('cloud.manual.edit') }}
+              </Button>
               <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
               <Button
                 @click="handleDestroy(record)"
@@ -934,9 +1478,12 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
             </div>
           </template>
         </Table>
+        </div>
       </div>
     </Card>
   </div>
+
+  <Modal />
 </template>
 
 <style lang="less" scoped>
