@@ -1,5 +1,5 @@
 // Cloud Provider Types
-export type CloudProvider = 'vultr' | 'digitalocean' | 'linode' | 'aws' | 'hetzner'
+export type CloudProvider = 'vultr' | 'digitalocean' | 'linode' | 'aws' | 'hetzner' | 'manual'
 
 // Generic Cloud Configuration
 export interface CloudConfig {

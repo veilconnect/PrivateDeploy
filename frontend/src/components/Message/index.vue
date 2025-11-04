@@ -16,8 +16,6 @@ const props = withDefaults(defineProps<Props>(), {
 
 defineEmits(['close'])
 
-const { t } = i18n.global
-
 const iconMap = {
   info: 'messageInfo',
   success: 'messageSuccess',
@@ -26,13 +24,25 @@ const iconMap = {
 }
 
 const icon = computed(() => iconMap[props.icon] as any)
+const resolvedContent = computed(() => {
+  try {
+    if ((i18n.global.te as (key: string) => boolean)(props.content)) {
+      return (i18n.global.t as (key: string) => string)(props.content)
+    }
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('[Message] Failed to translate content:', error)
+    }
+  }
+  return props.content
+})
 </script>
 
 <template>
   <Transition name="slide-down" appear>
     <div class="gui-message flex items-center p-8 pl-16 rounded-8 my-4 shadow">
       <Icon class="shrink-0" :icon="icon" />
-      <div class="text-14 pl-12 break-all">{{ t(content) }}</div>
+      <div class="text-14 pl-12 break-all">{{ resolvedContent }}</div>
       <Button
         @click="$emit('close')"
         icon="close"

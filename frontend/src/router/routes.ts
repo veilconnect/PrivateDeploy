@@ -1,7 +1,7 @@
 import { type RouteRecordRaw } from 'vue-router'
 
-import HomeView from '@/views/HomeView/index.vue'
 import CloudView from '@/views/CloudView/index.vue'
+import HomeView from '@/views/HomeView/index.vue'
 import ProfilesView from '@/views/ProfilesView/index.vue'
 import RulesetsView from '@/views/RulesetsView/index.vue'
 import ScheduledTasksView from '@/views/ScheduledTasksView/index.vue'
