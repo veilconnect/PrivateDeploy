@@ -12,7 +12,7 @@ jobs:
   Build:
     permissions: write-all
     runs-on: ubuntu-latest
-    if: github.repository == 'VeilDeploy/VeilDeploy'
+    if: github.repository == 'veilconnect/PrivateDeploy'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +40,7 @@ jobs:
       - name: Generate Changelog
         run: |
           set +e
-          LAST_COMMIT=$(curl -L https://github.com/VeilDeploy/VeilDeploy/releases/download/rolling-release-alpha/version.txt)
+          LAST_COMMIT=$(curl -L https://github.com/veilconnect/PrivateDeploy/releases/download/rolling-release-alpha/version.txt)
           echo -e "## Change log\n\n> Update time: $(TZ='Asia/Shanghai' date "+%Y-%m-%d %H:%M:%S")\n" > changelog.md
           git log $LAST_COMMIT..HEAD --pretty=format:"* %s" >> changelog.md
           if [ $? -ne 0 ]; then

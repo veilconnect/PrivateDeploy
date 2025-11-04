@@ -1,4 +1,4 @@
-name: Build VeilDeploy
+name: Build PrivateDeploy
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   Build-Frontend:
     runs-on: ubuntu-latest
-    if: github.repository == 'VeilDeploy/VeilDeploy'
+    if: github.repository == 'veilconnect/PrivateDeploy'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -35,7 +35,7 @@ jobs:
     needs: Build-Frontend
     runs-on: windows-latest
     env:
-      APP_NAME: VeilDeploy
+      APP_NAME: PrivateDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -77,7 +77,7 @@ jobs:
     needs: Build-Frontend
     runs-on: macos-latest
     env:
-      APP_NAME: VeilDeploy
+      APP_NAME: PrivateDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -118,7 +118,7 @@ jobs:
     needs: Build-Frontend
     runs-on: ubuntu-latest
     env:
-      APP_NAME: VeilDeploy
+      APP_NAME: PrivateDeploy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
