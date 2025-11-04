@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"privatedeploy/api/config"
+	"privatedeploy/api/handlers"
 	"privatedeploy/api/models"
 	"privatedeploy/api/routes"
 	"privatedeploy/api/utils"
@@ -34,6 +35,10 @@ func main() {
 		log.Fatalf("❌ Failed to initialize default user: %v", err)
 	}
 
+	// Setup WebSocket hub
+	wsHub := handlers.NewWSHub()
+	log.Println("✅ WebSocket hub initialized")
+
 	// Setup Gin
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -41,7 +46,7 @@ func main() {
 	router := gin.Default()
 
 	// Setup routes
-	routes.SetupRoutes(router, db, cfg)
+	routes.SetupRoutes(router, db, cfg, wsHub)
 	log.Println("✅ Routes configured")
 
 	// Start server
