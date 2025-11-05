@@ -1,96 +1,23 @@
 package handlers
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
+	"privatedeploy/bridge/cloud"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CloudManager interface for cloud operations
-type CloudManager interface {
-	ListProviders() []string
-	GetProvider(name string) (CloudProvider, error)
-	GetActiveProvider() (CloudProvider, error)
-	SetActiveProvider(name string) error
-}
-
 // CloudHandler handles cloud-related requests
 type CloudHandler struct {
-	cloudManager CloudManager
-}
-
-// CloudProvider interface (simplified for API server)
-type CloudProvider interface {
-	Name() string
-	DisplayName() string
-	LoadConfig() (*ProviderConfig, error)
-	SaveConfig(*ProviderConfig) error
-	ValidateConfig(*ProviderConfig) error
-	ListInstances(ctx context.Context) ([]Instance, error)
-	CreateInstance(ctx context.Context, opts *CreateInstanceOptions) (*Instance, error)
-	DestroyInstance(ctx context.Context, id string) error
-	ListRegions(ctx context.Context) ([]Region, error)
-	ListPlans(ctx context.Context, region string) ([]Plan, error)
-	ListAvailability(ctx context.Context, region string) ([]Plan, error)
-}
-
-// ProviderConfig represents cloud provider configuration
-type ProviderConfig struct {
-	Provider      string            `json:"provider"`
-	APIKey        string            `json:"apiKey"`
-	DefaultRegion string            `json:"defaultRegion"`
-	DefaultPlan   string            `json:"defaultPlan"`
-	Extra         map[string]string `json:"extra"`
-}
-
-// Instance represents a cloud instance
-type Instance struct {
-	ID        string   `json:"id"`
-	Label     string   `json:"label"`
-	Status    string   `json:"status"`
-	Region    string   `json:"region"`
-	Plan      string   `json:"plan"`
-	IPv4      string   `json:"ipv4"`
-	IPv6      string   `json:"ipv6"`
-	CreatedAt string   `json:"createdAt"`
-	Tags      []string `json:"tags,omitempty"`
-}
-
-// CreateInstanceOptions represents options for creating an instance
-type CreateInstanceOptions struct {
-	Region     string `json:"region" binding:"required"`
-	Plan       string `json:"plan" binding:"required"`
-	Label      string `json:"label" binding:"required"`
-	OSId       string `json:"osId"`
-	EnableIPv6 bool   `json:"enableIpv6"`
-}
-
-// Region represents a cloud region
-type Region struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Country   string `json:"country"`
-	Available bool   `json:"available"`
-}
-
-// Plan represents a cloud plan
-type Plan struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	VCPU      int     `json:"vcpu"`
-	RAM       int     `json:"ram"`
-	Disk      int     `json:"disk"`
-	Bandwidth int     `json:"bandwidth"`
-	Price     float64 `json:"price"`
+	manager *cloud.Manager
 }
 
 // NewCloudHandler creates a new CloudHandler
-func NewCloudHandler(cloudManager CloudManager) *CloudHandler {
+func NewCloudHandler(manager *cloud.Manager) *CloudHandler {
 	return &CloudHandler{
-		cloudManager: cloudManager,
+		manager: manager,
 	}
 }
 
@@ -98,17 +25,16 @@ func NewCloudHandler(cloudManager CloudManager) *CloudHandler {
 func (h *CloudHandler) ListProviders(c *gin.Context) {
 	log.Printf("[CloudHandler] ListProviders called")
 
-	providers := h.cloudManager.ListProviders()
+	providerNames := h.manager.ListProviders()
 
 	type ProviderInfo struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"displayName"`
-		Enabled     bool   `json:"enabled"`
 	}
 
-	result := make([]ProviderInfo, 0, len(providers))
-	for _, name := range providers {
-		provider, err := h.cloudManager.GetProvider(name)
+	result := make([]ProviderInfo, 0, len(providerNames))
+	for _, name := range providerNames {
+		provider, err := h.manager.GetProvider(name)
 		if err != nil {
 			log.Printf("[CloudHandler] Warning: Failed to get provider %s: %v", name, err)
 			continue
@@ -117,10 +43,10 @@ func (h *CloudHandler) ListProviders(c *gin.Context) {
 		result = append(result, ProviderInfo{
 			Name:        provider.Name(),
 			DisplayName: provider.DisplayName(),
-			Enabled:     true,
 		})
 	}
 
+	log.Printf("[CloudHandler] Found %d providers", len(result))
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"providers": result,
 	}))
@@ -130,7 +56,7 @@ func (h *CloudHandler) ListProviders(c *gin.Context) {
 func (h *CloudHandler) GetActiveProvider(c *gin.Context) {
 	log.Printf("[CloudHandler] GetActiveProvider called")
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		log.Printf("[CloudHandler] ERROR: No active provider: %v", err)
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
@@ -162,7 +88,7 @@ func (h *CloudHandler) SetActiveProvider(c *gin.Context) {
 
 	log.Printf("[CloudHandler] SetActiveProvider: %s", req.Provider)
 
-	if err := h.cloudManager.SetActiveProvider(req.Provider); err != nil {
+	if err := h.manager.SetActiveProvider(req.Provider); err != nil {
 		log.Printf("[CloudHandler] ERROR: Failed to set provider: %v", err)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(
 			models.ErrProviderError,
@@ -171,6 +97,7 @@ func (h *CloudHandler) SetActiveProvider(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Active provider set to: %s", req.Provider)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"provider": req.Provider,
 	}))
@@ -180,7 +107,7 @@ func (h *CloudHandler) SetActiveProvider(c *gin.Context) {
 func (h *CloudHandler) GetConfig(c *gin.Context) {
 	log.Printf("[CloudHandler] GetConfig called")
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -200,7 +127,7 @@ func (h *CloudHandler) GetConfig(c *gin.Context) {
 	}
 
 	if cfg == nil {
-		cfg = &ProviderConfig{
+		cfg = &cloud.ProviderConfig{
 			Provider: provider.Name(),
 			Extra:    map[string]string{},
 		}
@@ -211,7 +138,7 @@ func (h *CloudHandler) GetConfig(c *gin.Context) {
 
 // SaveConfig saves the configuration for the active provider
 func (h *CloudHandler) SaveConfig(c *gin.Context) {
-	var cfg ProviderConfig
+	var cfg cloud.ProviderConfig
 
 	if err := c.ShouldBindJSON(&cfg); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(
@@ -223,13 +150,21 @@ func (h *CloudHandler) SaveConfig(c *gin.Context) {
 
 	log.Printf("[CloudHandler] SaveConfig for provider: %s", cfg.Provider)
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
 			"No active provider",
 		))
 		return
+	}
+
+	// Ensure provider match
+	if cfg.Provider == "" {
+		cfg.Provider = provider.Name()
+	}
+	if cfg.Extra == nil {
+		cfg.Extra = map[string]string{}
 	}
 
 	if cfg.Provider != provider.Name() {
@@ -258,6 +193,7 @@ func (h *CloudHandler) SaveConfig(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Config saved successfully")
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "Configuration saved successfully",
 	}))
@@ -267,7 +203,7 @@ func (h *CloudHandler) SaveConfig(c *gin.Context) {
 func (h *CloudHandler) ListInstances(c *gin.Context) {
 	log.Printf("[CloudHandler] ListInstances called")
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -286,6 +222,7 @@ func (h *CloudHandler) ListInstances(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Listed %d instances", len(instances))
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"instances": instances,
 	}))
@@ -293,7 +230,7 @@ func (h *CloudHandler) ListInstances(c *gin.Context) {
 
 // CreateInstance creates a new instance
 func (h *CloudHandler) CreateInstance(c *gin.Context) {
-	var opts CreateInstanceOptions
+	var opts cloud.CreateInstanceOptions
 
 	if err := c.ShouldBindJSON(&opts); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse(
@@ -306,7 +243,7 @@ func (h *CloudHandler) CreateInstance(c *gin.Context) {
 	log.Printf("[CloudHandler] CreateInstance: region=%s, plan=%s, label=%s",
 		opts.Region, opts.Plan, opts.Label)
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -326,8 +263,7 @@ func (h *CloudHandler) CreateInstance(c *gin.Context) {
 	}
 
 	log.Printf("[CloudHandler] Instance created: %s", instance.ID)
-
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusCreated, models.SuccessResponse(gin.H{
 		"instance": instance,
 	}))
 }
@@ -338,7 +274,7 @@ func (h *CloudHandler) DestroyInstance(c *gin.Context) {
 
 	log.Printf("[CloudHandler] DestroyInstance: %s", instanceID)
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -357,7 +293,6 @@ func (h *CloudHandler) DestroyInstance(c *gin.Context) {
 	}
 
 	log.Printf("[CloudHandler] Instance destroyed: %s", instanceID)
-
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message": "Instance destroyed successfully",
 	}))
@@ -367,7 +302,7 @@ func (h *CloudHandler) DestroyInstance(c *gin.Context) {
 func (h *CloudHandler) ListRegions(c *gin.Context) {
 	log.Printf("[CloudHandler] ListRegions called")
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -386,6 +321,7 @@ func (h *CloudHandler) ListRegions(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Listed %d regions", len(regions))
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"regions": regions,
 	}))
@@ -393,11 +329,10 @@ func (h *CloudHandler) ListRegions(c *gin.Context) {
 
 // ListPlans returns all plans for the active provider
 func (h *CloudHandler) ListPlans(c *gin.Context) {
-	log.Printf("[CloudHandler] ListPlans called")
-
 	region := c.Query("region")
+	log.Printf("[CloudHandler] ListPlans called (region: %s)", region)
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -416,6 +351,7 @@ func (h *CloudHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Listed %d plans", len(plans))
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"plans": plans,
 	}))
@@ -424,10 +360,17 @@ func (h *CloudHandler) ListPlans(c *gin.Context) {
 // ListAvailability returns plan availability for a region
 func (h *CloudHandler) ListAvailability(c *gin.Context) {
 	region := c.Query("region")
+	if region == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(
+			models.ErrValidationError,
+			"region parameter is required",
+		))
+		return
+	}
 
 	log.Printf("[CloudHandler] ListAvailability for region: %s", region)
 
-	provider, err := h.cloudManager.GetActiveProvider()
+	provider, err := h.manager.GetActiveProvider()
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse(
 			models.ErrNotFound,
@@ -436,7 +379,7 @@ func (h *CloudHandler) ListAvailability(c *gin.Context) {
 		return
 	}
 
-	plans, err := provider.ListAvailability(c.Request.Context(), region)
+	availability, err := provider.ListAvailability(c.Request.Context(), region)
 	if err != nil {
 		log.Printf("[CloudHandler] ERROR: Failed to list availability: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
@@ -446,7 +389,8 @@ func (h *CloudHandler) ListAvailability(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[CloudHandler] Listed %d available plans", len(availability))
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"plans": plans,
+		"availability": availability,
 	}))
 }

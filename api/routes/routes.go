@@ -4,22 +4,24 @@ import (
 	"privatedeploy/api/config"
 	"privatedeploy/api/handlers"
 	"privatedeploy/api/middleware"
+	"privatedeploy/bridge/cloud"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // SetupRoutes configures all API routes
-func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *handlers.WSHub) {
+func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *handlers.WSHub, cloudManager *cloud.Manager) {
 	// Middleware
 	router.Use(middleware.CORS())
 
 	// Handlers
 	authHandler := handlers.NewAuthHandler(db, cfg)
 	systemHandler := handlers.NewSystemHandler("1.10.1", "/opt/privatedeploy")
+	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
 	// Note: These require actual implementations, using nil for now
-	// In production, you would inject real CloudManager and VPNManager instances
+	// In production, you would inject real VPNManager instances
 	profileHandler := handlers.NewProfileHandler(db)
 	subscriptionHandler := handlers.NewSubscriptionHandler(db)
 
@@ -76,21 +78,21 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 			subscriptions.PUT("/:id/refresh", subscriptionHandler.Refresh)
 		}
 
-		// Cloud (commented out until CloudManager is properly integrated)
-		// cloud := protected.Group("/cloud")
-		// {
-		//     cloud.GET("/providers", cloudHandler.ListProviders)
-		//     cloud.GET("/provider/active", cloudHandler.GetActiveProvider)
-		//     cloud.POST("/provider/active", cloudHandler.SetActiveProvider)
-		//     cloud.GET("/config", cloudHandler.GetConfig)
-		//     cloud.POST("/config", cloudHandler.SaveConfig)
-		//     cloud.GET("/instances", cloudHandler.ListInstances)
-		//     cloud.POST("/instances", cloudHandler.CreateInstance)
-		//     cloud.DELETE("/instances/:id", cloudHandler.DestroyInstance)
-		//     cloud.GET("/regions", cloudHandler.ListRegions)
-		//     cloud.GET("/plans", cloudHandler.ListPlans)
-		//     cloud.GET("/availability", cloudHandler.ListAvailability)
-		// }
+		// Cloud
+		cloudGroup := protected.Group("/cloud")
+		{
+			cloudGroup.GET("/providers", cloudHandler.ListProviders)
+			cloudGroup.GET("/provider/active", cloudHandler.GetActiveProvider)
+			cloudGroup.POST("/provider/active", cloudHandler.SetActiveProvider)
+			cloudGroup.GET("/config", cloudHandler.GetConfig)
+			cloudGroup.POST("/config", cloudHandler.SaveConfig)
+			cloudGroup.GET("/instances", cloudHandler.ListInstances)
+			cloudGroup.POST("/instances", cloudHandler.CreateInstance)
+			cloudGroup.DELETE("/instances/:id", cloudHandler.DestroyInstance)
+			cloudGroup.GET("/regions", cloudHandler.ListRegions)
+			cloudGroup.GET("/plans", cloudHandler.ListPlans)
+			cloudGroup.GET("/availability", cloudHandler.ListAvailability)
+		}
 
 		// VPN (commented out until VPNManager is properly integrated)
 		// vpn := protected.Group("/vpn")

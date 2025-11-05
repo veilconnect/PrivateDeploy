@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,9 @@ import (
 	"privatedeploy/api/models"
 	"privatedeploy/api/routes"
 	"privatedeploy/api/utils"
+	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/providers/digitalocean"
+	"privatedeploy/bridge/cloud/providers/vultr"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -39,6 +43,10 @@ func main() {
 	wsHub := handlers.NewWSHub()
 	log.Println("✅ WebSocket hub initialized")
 
+	// Setup Cloud Manager
+	cloudManager := initializeCloudManager()
+	log.Println("✅ Cloud manager initialized")
+
 	// Setup Gin
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -46,7 +54,7 @@ func main() {
 	router := gin.Default()
 
 	// Setup routes
-	routes.SetupRoutes(router, db, cfg, wsHub)
+	routes.SetupRoutes(router, db, cfg, wsHub, cloudManager)
 	log.Println("✅ Routes configured")
 
 	// Start server
@@ -118,4 +126,25 @@ func initializeDefaultUser(db *gorm.DB) error {
 	log.Println("⚠️  Please change the default password after first login!")
 
 	return nil
+}
+
+// initializeCloudManager sets up the cloud provider manager
+func initializeCloudManager() *cloud.Manager {
+	// Create manager
+	manager := cloud.NewManager(context.Background())
+
+	// Register providers
+	vultrProvider := vultr.New(nil)
+	digitaloceanProvider := digitalocean.New(nil)
+
+	cloud.Register("vultr", vultrProvider)
+	cloud.Register("digitalocean", digitaloceanProvider)
+
+	// Set Vultr as the default active provider
+	if err := manager.SetActiveProvider("vultr"); err != nil {
+		log.Printf("⚠️  Warning: Failed to set default provider: %v", err)
+	}
+
+	log.Println("📦 Registered cloud providers: vultr, digitalocean")
+	return manager
 }

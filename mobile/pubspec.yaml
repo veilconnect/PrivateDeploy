@@ -1,0 +1,56 @@
+name: privatedeploy_mobile
+description: PrivateDeploy Mobile Application - Cross-platform VPN management app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UI
+  flutter_screenutil: ^5.9.0
+  flutter_svg: ^2.0.9
+  
+  # State Management
+  provider: ^6.1.1
+  
+  # Network
+  dio: ^5.4.0
+  retrofit: ^4.0.3
+  web_socket_channel: ^2.4.0
+  
+  # Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  shared_preferences: ^2.2.2
+  
+  # Utilities
+  intl: ^0.18.1
+  logger: ^2.0.2
+  path_provider: ^2.1.1
+  permission_handler: ^11.1.0
+  package_info_plus: ^5.0.1
+  
+  # Notifications
+  flutter_local_notifications: ^16.3.0
+  
+  # Charts
+  fl_chart: ^0.66.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.7
+  retrofit_generator: ^8.0.0
+  hive_generator: ^2.0.1
+
+flutter:
+  uses-material-design: true
+  
+  # assets:
+  #   - assets/images/
+  #   - assets/icons/
