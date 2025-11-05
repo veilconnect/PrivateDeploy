@@ -1,11 +1,21 @@
-name: Build Android
+name: Mobile - Build Android
 
 on:
   push:
     branches: [ main, develop ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-build-android.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-build-android.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mobile
 
 jobs:
   build-gomobile:

@@ -1,11 +1,21 @@
-name: Build iOS
+name: Mobile - Build iOS
 
 on:
   push:
     branches: [ main, develop ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-build-ios.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-build-ios.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mobile
 
 jobs:
   build-gomobile:

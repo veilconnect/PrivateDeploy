@@ -1,14 +1,24 @@
-name: Continuous Integration
+name: Mobile - Continuous Integration
 
 on:
   push:
     branches: [ main, develop, feature/* ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ci.yml'
   pull_request:
     branches: [ main, develop ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ci.yml'
   schedule:
     # 每天凌晨 2 点运行
     - cron: '0 2 * * *'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mobile
 
 jobs:
   lint:
