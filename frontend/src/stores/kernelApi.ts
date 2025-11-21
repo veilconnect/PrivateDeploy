@@ -720,7 +720,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * This provides immediate UI feedback without waiting for kernel restart
    */
   const removeProxyFromGroups = (subscriptionId: string) => {
-    const updated = { ...proxies.value }
+    // Use deep clone to ensure Vue can track nested object changes
+    const updated = deepClone(proxies.value)
 
     // Remove from all selector and urltest groups
     Object.keys(updated).forEach((groupName) => {
@@ -747,7 +748,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * This provides immediate UI feedback without waiting for kernel restart
    */
   const addProxyToGroups = (subscriptionId: string, displayName: string) => {
-    const updated = { ...proxies.value }
+    // Use deep clone to ensure Vue can track nested object changes
+    const updated = deepClone(proxies.value)
 
     // Add a temporary proxy entry
     updated[subscriptionId] = {

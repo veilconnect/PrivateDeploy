@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vue 3 响应式系统演示：浅拷贝 vs 深拷贝</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    .panel {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .problem { border-left: 4px solid #f44336; }
+    .solution { border-left: 4px solid #4caf50; }
+    h2 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .icon { font-size: 24px; }
+    button {
+      background: #2196f3;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin: 5px;
+    }
+    button:hover { background: #1976d2; }
+    button.danger { background: #f44336; }
+    button.danger:hover { background: #d32f2f; }
+    .proxy-list {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+    .proxy-group {
+      margin: 10px 0;
+      padding: 10px;
+      background: white;
+      border-radius: 4px;
+    }
+    .proxy-group h4 {
+      margin: 0 0 8px 0;
+      color: #1976d2;
+    }
+    .log {
+      background: #263238;
+      color: #aed581;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 10px;
+    }
+    .log-error { color: #ff5252; }
+    .log-success { color: #69f0ae; }
+    .log-info { color: #64b5f6; }
+    .update-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-left: 10px;
+      animation: pulse 0.5s;
+    }
+    .updated { background: #4caf50; }
+    .not-updated { background: #f44336; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .explanation {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+    .explanation h3 {
+      margin-top: 0;
+      color: #f57c00;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>Vue 3 响应式系统演示：浅拷贝陷阱</h1>
+
+    <div class="explanation">
+      <h3>问题说明</h3>
+      <p>左侧使用<strong>浅拷贝</strong> <code>{ ...proxies.value }</code>，右侧使用<strong>深拷贝</strong>。</p>
+      <p>点击"删除代理"按钮，观察哪边的UI会正确更新。</p>
+      <p>观察更新计数器和日志输出，理解 Vue 响应式系统的工作原理。</p>
+    </div>
+
+    <div class="container">
+      <!-- 问题示例：浅拷贝 -->
+      <div class="panel problem">
+        <h2>
+          <span class="icon">❌</span>
+          问题示例：浅拷贝
+          <span class="update-indicator" :class="shallowUpdateClass"></span>
+        </h2>
+
+        <div>
+          <button @click="removeWithShallowCopy('proxy-2')">删除 proxy-2</button>
+          <button @click="addWithShallowCopy('proxy-new')">添加 proxy-new</button>
+          <button class="danger" @click="resetShallow">重置</button>
+        </div>
+
+        <div class="proxy-list">
+          <div><strong>更新计数：{{ shallowUpdateCount }}</strong></div>
+          <div v-for="(group, name) in shallowProxies" :key="name" class="proxy-group">
+            <h4>{{ name }}</h4>
+            <div>类型: {{ group.type }}</div>
+            <div>当前: {{ group.now }}</div>
+            <div>所有: [{{ group.all.join(', ') }}]</div>
+          </div>
+        </div>
+
+        <div class="log">
+          <div v-for="(log, index) in shallowLogs" :key="index" :class="log.class">
+            {{ log.message }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 解决方案：深拷贝 -->
+      <div class="panel solution">
+        <h2>
+          <span class="icon">✅</span>
+          解决方案：深拷贝
+          <span class="update-indicator" :class="deepUpdateClass"></span>
+        </h2>
+
+        <div>
+          <button @click="removeWithDeepCopy('proxy-2')">删除 proxy-2</button>
+          <button @click="addWithDeepCopy('proxy-new')">添加 proxy-new</button>
+          <button class="danger" @click="resetDeep">重置</button>
+        </div>
+
+        <div class="proxy-list">
+          <div><strong>更新计数：{{ deepUpdateCount }}</strong></div>
+          <div v-for="(group, name) in deepProxies" :key="name" class="proxy-group">
+            <h4>{{ name }}</h4>
+            <div>类型: {{ group.type }}</div>
+            <div>当前: {{ group.now }}</div>
+            <div>所有: [{{ group.all.join(', ') }}]</div>
+          </div>
+        </div>
+
+        <div class="log">
+          <div v-for="(log, index) in deepLogs" :key="index" :class="log.class">
+            {{ log.message }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="explanation">
+      <h3>技术分析</h3>
+      <ul>
+        <li><strong>浅拷贝问题</strong>：<code>const updated = { ...proxies.value }</code> 只复制顶层对象，内部的 group 对象仍然是原始引用。</li>
+        <li><strong>引用共享</strong>：修改 <code>updated.group1.all</code> 时，实际上修改的是原始对象。</li>
+        <li><strong>响应式失效</strong>：当执行 <code>proxies.value = updated</code> 时，Vue 检测到内部对象引用没变，可能不触发更新。</li>
+        <li><strong>深拷贝解决</strong>：完全创建新的对象树，每次赋值都是全新的引用，保证响应式系统正确追踪。</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, watch } = Vue
+
+    createApp({
+      setup() {
+        // 初始数据
+        const createInitialData = () => ({
+          'group-selector': {
+            name: 'group-selector',
+            type: 'Selector',
+            now: 'proxy-1',
+            all: ['proxy-1', 'proxy-2', 'proxy-3'],
+            history: [],
+            alive: true,
+            udp: false
+          },
+          'group-urltest': {
+            name: 'group-urltest',
+            type: 'URLTest',
+            now: 'proxy-2',
+            all: ['proxy-1', 'proxy-2', 'proxy-3'],
+            history: [],
+            alive: true,
+            udp: false
+          },
+          'proxy-1': {
+            name: 'proxy-1',
+            type: 'Subscription',
+            now: '',
+            all: [],
+            history: [],
+            alive: true,
+            udp: false
+          },
+          'proxy-2': {
+            name: 'proxy-2',
+            type: 'Subscription',
+            now: '',
+            all: [],
+            history: [],
+            alive: true,
+            udp: false
+          }
+        })
+
+        // 浅拷贝示例
+        const shallowProxies = ref(createInitialData())
+        const shallowLogs = ref([])
+        const shallowUpdateCount = ref(0)
+        const shallowUpdateClass = ref('')
+
+        // 深拷贝示例
+        const deepProxies = ref(createInitialData())
+        const deepLogs = ref([])
+        const deepUpdateCount = ref(0)
+        const deepUpdateClass = ref('')
+
+        // 深拷贝函数
+        const deepClone = (obj) => JSON.parse(JSON.stringify(obj))
+
+        // 添加日志
+        const addLog = (logs, message, type = 'info') => {
+          logs.value.push({
+            message: `[${new Date().toLocaleTimeString()}] ${message}`,
+            class: `log-${type}`
+          })
+          if (logs.value.length > 20) {
+            logs.value.shift()
+          }
+        }
+
+        // 监控浅拷贝示例
+        watch(shallowProxies, (newVal, oldVal) => {
+          shallowUpdateCount.value++
+          shallowUpdateClass.value = 'updated'
+          setTimeout(() => shallowUpdateClass.value = '', 500)
+
+          const newKeys = Object.keys(newVal)
+          const oldKeys = Object.keys(oldVal)
+
+          if (newKeys.length !== oldKeys.length) {
+            addLog(shallowLogs, `Vue 检测到更新！键数量变化: ${oldKeys.length} -> ${newKeys.length}`, 'success')
+          } else {
+            // 检查内部对象引用
+            const group1Same = newVal['group-selector'] === oldVal['group-selector']
+            if (group1Same) {
+              addLog(shallowLogs, `警告：内部对象引用未变！group-selector 引用相同`, 'error')
+            } else {
+              addLog(shallowLogs, `Vue 检测到更新！内部对象已更新`, 'success')
+            }
+          }
+        }, { deep: true })
+
+        // 监控深拷贝示例
+        watch(deepProxies, (newVal, oldVal) => {
+          deepUpdateCount.value++
+          deepUpdateClass.value = 'updated'
+          setTimeout(() => deepUpdateClass.value = '', 500)
+
+          const newKeys = Object.keys(newVal)
+          const oldKeys = Object.keys(oldVal)
+
+          if (newKeys.length !== oldKeys.length) {
+            addLog(deepLogs, `Vue 检测到更新！键数量变化: ${oldKeys.length} -> ${newKeys.length}`, 'success')
+          } else {
+            addLog(deepLogs, `Vue 检测到更新！深拷贝确保所有引用都是新的`, 'success')
+          }
+        }, { deep: true })
+
+        // 浅拷贝删除（问题实现）
+        const removeWithShallowCopy = (subscriptionId) => {
+          addLog(shallowLogs, `开始删除 ${subscriptionId}（使用浅拷贝）...`, 'info')
+
+          const original = shallowProxies.value
+          const updated = { ...shallowProxies.value }  // 浅拷贝
+
+          addLog(shallowLogs, `浅拷贝完成：顶层对象 ${original === updated ? '相同' : '不同'}`, 'info')
+
+          // 检查内部引用
+          if (updated['group-selector']) {
+            const refSame = original['group-selector'] === updated['group-selector']
+            addLog(shallowLogs, `内部对象引用：${refSame ? '相同 ❌' : '不同 ✅'}`, refSame ? 'error' : 'success')
+          }
+
+          Object.keys(updated).forEach((groupName) => {
+            const group = updated[groupName]
+            if (group.all && Array.isArray(group.all)) {
+              const oldLength = group.all.length
+              group.all = group.all.filter((proxyName) => proxyName !== subscriptionId)
+
+              if (oldLength !== group.all.length) {
+                addLog(shallowLogs, `从 ${groupName} 删除：${oldLength} -> ${group.all.length}`, 'info')
+              }
+
+              if (group.now === subscriptionId && group.all.length > 0) {
+                group.now = group.all[0]
+                addLog(shallowLogs, `${groupName} 切换到：${group.now}`, 'info')
+              }
+            }
+          })
+
+          delete updated[subscriptionId]
+          addLog(shallowLogs, `删除顶层代理：${subscriptionId}`, 'info')
+
+          shallowProxies.value = updated
+          addLog(shallowLogs, `尝试触发响应式更新...`, 'info')
+
+          // 检查是否真的更新了
+          setTimeout(() => {
+            if (shallowProxies.value[subscriptionId]) {
+              addLog(shallowLogs, `失败：代理仍然存在！`, 'error')
+            } else {
+              const groupStillHasIt = Object.values(shallowProxies.value)
+                .some(g => g.all && g.all.includes(subscriptionId))
+              if (groupStillHasIt) {
+                addLog(shallowLogs, `警告：某些组中仍包含该代理！`, 'error')
+              }
+            }
+          }, 100)
+        }
+
+        // 深拷贝删除（正确实现）
+        const removeWithDeepCopy = (subscriptionId) => {
+          addLog(deepLogs, `开始删除 ${subscriptionId}（使用深拷贝）...`, 'info')
+
+          const original = deepProxies.value
+          const updated = deepClone(deepProxies.value)  // 深拷贝
+
+          addLog(deepLogs, `深拷贝完成：所有对象都是全新的`, 'success')
+
+          Object.keys(updated).forEach((groupName) => {
+            const group = updated[groupName]
+            if (group.all && Array.isArray(group.all)) {
+              const oldLength = group.all.length
+              group.all = group.all.filter((proxyName) => proxyName !== subscriptionId)
+
+              if (oldLength !== group.all.length) {
+                addLog(deepLogs, `从 ${groupName} 删除：${oldLength} -> ${group.all.length}`, 'info')
+              }
+
+              if (group.now === subscriptionId && group.all.length > 0) {
+                group.now = group.all[0]
+                addLog(deepLogs, `${groupName} 切换到：${group.now}`, 'info')
+              }
+            }
+          })
+
+          delete updated[subscriptionId]
+          addLog(deepLogs, `删除顶层代理：${subscriptionId}`, 'info')
+
+          deepProxies.value = updated
+          addLog(deepLogs, `触发响应式更新成功！`, 'success')
+        }
+
+        // 浅拷贝添加
+        const addWithShallowCopy = (subscriptionId) => {
+          addLog(shallowLogs, `开始添加 ${subscriptionId}（使用浅拷贝）...`, 'info')
+
+          const updated = { ...shallowProxies.value }
+
+          updated[subscriptionId] = {
+            name: subscriptionId,
+            type: 'Subscription',
+            now: '',
+            all: [],
+            history: [],
+            alive: false,
+            udp: false
+          }
+
+          Object.keys(updated).forEach((groupName) => {
+            const group = updated[groupName]
+            if (group.type === 'Selector' || group.type === 'URLTest') {
+              if (group.all && Array.isArray(group.all) && !group.all.includes(subscriptionId)) {
+                group.all = [...group.all, subscriptionId]
+                addLog(shallowLogs, `添加到 ${groupName}`, 'info')
+              }
+            }
+          })
+
+          shallowProxies.value = updated
+          addLog(shallowLogs, `尝试触发响应式更新...`, 'info')
+        }
+
+        // 深拷贝添加
+        const addWithDeepCopy = (subscriptionId) => {
+          addLog(deepLogs, `开始添加 ${subscriptionId}（使用深拷贝）...`, 'info')
+
+          const updated = deepClone(deepProxies.value)
+
+          updated[subscriptionId] = {
+            name: subscriptionId,
+            type: 'Subscription',
+            now: '',
+            all: [],
+            history: [],
+            alive: false,
+            udp: false
+          }
+
+          Object.keys(updated).forEach((groupName) => {
+            const group = updated[groupName]
+            if (group.type === 'Selector' || group.type === 'URLTest') {
+              if (group.all && Array.isArray(group.all) && !group.all.includes(subscriptionId)) {
+                group.all = [...group.all, subscriptionId]
+                addLog(deepLogs, `添加到 ${groupName}`, 'info')
+              }
+            }
+          })
+
+          deepProxies.value = updated
+          addLog(deepLogs, `触发响应式更新成功！`, 'success')
+        }
+
+        // 重置
+        const resetShallow = () => {
+          shallowProxies.value = createInitialData()
+          shallowLogs.value = []
+          shallowUpdateCount.value = 0
+          addLog(shallowLogs, `已重置`, 'info')
+        }
+
+        const resetDeep = () => {
+          deepProxies.value = createInitialData()
+          deepLogs.value = []
+          deepUpdateCount.value = 0
+          addLog(deepLogs, `已重置`, 'info')
+        }
+
+        // 初始日志
+        addLog(shallowLogs, `浅拷贝示例已初始化`, 'info')
+        addLog(deepLogs, `深拷贝示例已初始化`, 'info')
+
+        return {
+          shallowProxies,
+          shallowLogs,
+          shallowUpdateCount,
+          shallowUpdateClass,
+          deepProxies,
+          deepLogs,
+          deepUpdateCount,
+          deepUpdateClass,
+          removeWithShallowCopy,
+          removeWithDeepCopy,
+          addWithShallowCopy,
+          addWithDeepCopy,
+          resetShallow,
+          resetDeep
+        }
+      }
+    }).mount('#app')
+  </script>
+</body>
+</html>
