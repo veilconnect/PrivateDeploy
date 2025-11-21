@@ -259,7 +259,7 @@ func CreateApp(fs embed.FS) *App {
     // ... existing code ...
 
     linodeProvider := linode.New(nil)
-    cloud.Register("linode", linodeProvider)
+    app.CloudManager.RegisterProvider("linode", linodeProvider)
 
     // ... existing code ...
 }

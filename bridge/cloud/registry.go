@@ -13,24 +13,11 @@ type Registry struct {
 	providers map[string]CloudProvider
 }
 
-// Global registry instance
-var globalRegistry = &Registry{
-	providers: make(map[string]CloudProvider),
-}
-
-// Register adds a provider to the global registry
-func Register(name string, provider CloudProvider) {
-	globalRegistry.Register(name, provider)
-}
-
-// Get retrieves a provider from the global registry
-func Get(name string) (CloudProvider, error) {
-	return globalRegistry.Get(name)
-}
-
-// List returns all registered provider names
-func List() []string {
-	return globalRegistry.List()
+// NewRegistry constructs an empty provider registry.
+func NewRegistry() *Registry {
+	return &Registry{
+		providers: make(map[string]CloudProvider),
+	}
 }
 
 // Register adds a provider to the registry
@@ -74,17 +61,29 @@ func (r *Registry) Has(name string) bool {
 
 // Manager provides a unified interface for managing multiple cloud providers
 type Manager struct {
+	mu             sync.RWMutex // protects activeProvider
 	registry       *Registry
 	activeProvider string
 	ctx            context.Context
 }
 
 // NewManager creates a new cloud provider manager
-func NewManager(ctx context.Context) *Manager {
+func NewManager(ctx context.Context, registry *Registry) *Manager {
+	if registry == nil {
+		registry = NewRegistry()
+	}
 	return &Manager{
-		registry: globalRegistry,
+		registry: registry,
 		ctx:      ctx,
 	}
+}
+
+// RegisterProvider adds a provider to the underlying registry.
+func (m *Manager) RegisterProvider(name string, provider CloudProvider) {
+	if m.registry == nil {
+		m.registry = NewRegistry()
+	}
+	m.registry.Register(name, provider)
 }
 
 // SetActiveProvider sets the active cloud provider
@@ -92,16 +91,23 @@ func (m *Manager) SetActiveProvider(name string) error {
 	if !m.registry.Has(name) {
 		return fmt.Errorf("%w: %s", ErrProviderNotRegistered, name)
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.activeProvider = name
 	return nil
 }
 
 // GetActiveProvider returns the currently active provider
 func (m *Manager) GetActiveProvider() (CloudProvider, error) {
-	if m.activeProvider == "" {
+	m.mu.RLock()
+	activeProviderName := m.activeProvider
+	m.mu.RUnlock()
+
+	if activeProviderName == "" {
 		return nil, errors.New("no active provider set")
 	}
-	return m.registry.Get(m.activeProvider)
+	return m.registry.Get(activeProviderName)
 }
 
 // GetProvider retrieves a specific provider by name
@@ -111,6 +117,9 @@ func (m *Manager) GetProvider(name string) (CloudProvider, error) {
 
 // ListProviders returns all available provider names
 func (m *Manager) ListProviders() []string {
+	if m.registry == nil {
+		return nil
+	}
 	return m.registry.List()
 }
 

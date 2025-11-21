@@ -157,7 +157,7 @@ func (a *App) handleHttpRequest(serverID string) http.HandlerFunc {
 					ioOptions := IOOptions{Mode: "Text"}
 					json.Unmarshal([]byte(optionsStr), &ioOptions)
 
-					if ioOptions.Mode == Binary {
+					if strings.EqualFold(ioOptions.Mode, "Binary") {
 						body, err = base64.StdEncoding.DecodeString(resp.Body)
 						if err != nil {
 							resp.Status = 500

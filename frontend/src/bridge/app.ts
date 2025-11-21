@@ -48,3 +48,20 @@ export const ListCloudRegions = App.ListCloudRegions
 export const ListCloudPlans = App.ListCloudPlans
 
 export const ListCloudAvailability = App.ListCloudAvailability
+
+export const TestAllCloudRegions = App.TestAllCloudRegions
+
+export const TestCloudRegionLatency = App.TestCloudRegionLatency
+
+export const GetFastestCloudRegion = App.GetFastestCloudRegion
+
+export const GetAvailablePort = App.GetAvailablePort
+
+export const TestConnectivity = async (ip: string, ports: number[]): Promise<import('@/types/cloud').ConnectivityResult> => {
+  const portsJSON = JSON.stringify(ports)
+  const { flag, data } = await App.TestConnectivity(ip, portsJSON)
+  if (!flag) {
+    throw new Error(data)
+  }
+  return JSON.parse(data)
+}

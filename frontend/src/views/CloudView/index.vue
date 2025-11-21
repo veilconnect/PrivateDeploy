@@ -2,10 +2,10 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { ClipboardSetText } from '@/bridge'
+import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
-import { logError } from '@/utils/logger'
+import { logError, logInfo } from '@/utils/logger'
 
 import { useModal } from '@/components/Modal'
 
@@ -13,7 +13,7 @@ import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
 
 import type { ManualNodeSkipEntry } from '@/stores/cloud'
-import type { CloudNode, CloudPlan, CloudRegion } from '@/types/cloud'
+import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
 const cloudStore = useCloudStore()
@@ -54,6 +54,71 @@ const importForm = reactive({
 const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loadingRegions)
 const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 
+// Latency testing state
+const testingLatency = ref(false)
+const latencyResults = ref<RegionLatency[]>([])
+const showLatencyResults = ref(false)
+
+// Reachability Risk Rating for regions
+// Low: Generally stable, less likely to be blocked
+// Medium: Occasional blocking, moderate risk
+// High: Frequently targeted, higher risk
+// Critical: High blocking risk, unstable
+const reachabilityRiskRating: Record<string, 'low' | 'medium' | 'high' | 'critical'> = {
+  // Low Risk - Generally stable
+  'sgp': 'low',        // Singapore
+  'nrt': 'low',        // Tokyo
+  'icn': 'low',        // Seoul
+  'hkg': 'medium',     // Hong Kong (升级为medium due to recent events)
+  'tpe': 'low',        // Taipei
+  'bom': 'low',        // Mumbai
+  'syd': 'low',        // Sydney
+
+  // Medium Risk - Occasionally targeted
+  'lax': 'medium',     // Los Angeles
+  'sjc': 'medium',     // San Jose
+  'sea': 'medium',     // Seattle
+  'ams': 'medium',     // Amsterdam
+  'fra': 'medium',     // Frankfurt
+  'lhr': 'medium',     // London
+
+  // High Risk - Frequently blocked
+  'ewr': 'high',       // New York
+  'ord': 'high',       // Chicago
+  'dfw': 'high',       // Dallas
+  'mia': 'high',       // Miami
+  'atl': 'high',       // Atlanta
+  'yto': 'high',       // Toronto
+  'cdg': 'high',       // Paris
+
+  // Critical Risk - Very unstable
+  'default': 'medium'  // Default for unknown regions
+}
+
+const getRiskLevel = (regionId: string): 'low' | 'medium' | 'high' | 'critical' => {
+  return reachabilityRiskRating[regionId] || reachabilityRiskRating['default']
+}
+
+const getRiskIcon = (risk: 'low' | 'medium' | 'high' | 'critical'): string => {
+  const iconMap = {
+    low: '🟢',
+    medium: '🟡',
+    high: '🟠',
+    critical: '🔴'
+  }
+  return iconMap[risk]
+}
+
+const getRiskLabel = (risk: 'low' | 'medium' | 'high' | 'critical'): string => {
+  const keyMap = {
+    low: 'cloud.reachabilityRisk.low',
+    medium: 'cloud.reachabilityRisk.medium',
+    high: 'cloud.reachabilityRisk.high',
+    critical: 'cloud.reachabilityRisk.critical'
+  }
+  return t(keyMap[risk])
+}
+
 function formatRegion(region: CloudRegion) {
   // For DigitalOcean, backend already provides bilingual format (e.g., "New York 1 (纽约1)")
   // Just display the city field directly
@@ -78,12 +143,51 @@ const providerOptions = computed(() =>
   })),
 )
 
-const regionOptions = computed(() =>
-  cloudStore.regions.map((region: CloudRegion) => ({
-    label: formatRegion(region),
-    value: region.id,
-  })),
-)
+const regionOptions = computed(() => {
+  // Create a map of region code to latency
+  const latencyMap = new Map<string, RegionLatency>()
+  latencyResults.value.forEach((result) => {
+    latencyMap.set(result.code, result)
+  })
+
+  // Map regions with latency and risk info
+  const regionsWithInfo = cloudStore.regions.map((region: CloudRegion) => {
+    const latency = latencyMap.get(region.id)
+    const regionLabel = formatRegion(region)
+    const riskLevel = getRiskLevel(region.id)
+    const riskIcon = getRiskIcon(riskLevel)
+
+    // Format label with risk icon and latency if available
+    let label = `${riskIcon} ${regionLabel}`
+    if (latency) {
+      if (latency.status === 'ok') {
+        label = `${riskIcon} ${regionLabel} · ${latency.latency.toFixed(0)}ms`
+      } else {
+        label = `${riskIcon} ${regionLabel} · ${t('cloud.latency.timeout')}`
+      }
+    }
+
+    return {
+      label,
+      value: region.id,
+      latency: latency?.latency || 9999,
+      status: latency?.status || 'unknown',
+      riskLevel,
+    }
+  })
+
+  // Sort by risk level first (low risk first), then by latency
+  return regionsWithInfo.sort((a, b) => {
+    const riskOrder = { low: 0, medium: 1, high: 2, critical: 3 }
+    const riskDiff = riskOrder[a.riskLevel] - riskOrder[b.riskLevel]
+    if (riskDiff !== 0) return riskDiff
+
+    // Within same risk level, sort by latency
+    if (a.status === 'timeout' && b.status !== 'timeout') return 1
+    if (a.status !== 'timeout' && b.status === 'timeout') return -1
+    return a.latency - b.latency
+  })
+})
 
 type StatusKey = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
 
@@ -106,6 +210,22 @@ const statusColors: Record<StatusKey, TagColor> = {
 
 const getStatusLabel = (status?: string) => statusLabels.value[(status || 'unknown') as StatusKey]
 const getStatusColor = (status?: string): TagColor => statusColors[(status || 'unknown') as StatusKey]
+
+const getConnectivityLabel = (status?: string) => {
+  const key = `cloud.connectivity.${status || 'unknown'}`
+  return t(key)
+}
+
+const getConnectivityColor = (status?: string): TagColor => {
+  const colorMap: Record<string, TagColor> = {
+    reachable: 'green',
+    icmp_blocked: 'cyan',
+    blocked: 'red',
+    testing: 'default',
+    unknown: 'default',
+  }
+  return colorMap[status || 'unknown'] || 'default'
+}
 
 const availablePlanIds = computed(() => cloudStore.availability[form.region] || [])
 
@@ -732,13 +852,14 @@ const ensurePlanForRegion = (region: string) => {
 }
 
 const columns = [
-  { title: 'cloud.table.label', key: 'label', width: '13%' },
+  { title: 'cloud.table.label', key: 'label', width: '12%' },
   { title: 'cloud.table.region', key: 'region', width: '10%' },
-  { title: 'cloud.table.plan', key: 'plan', width: '13%' },
-  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '15%' },
-  { title: 'cloud.table.protocols', key: 'protocols', width: '20%' },
-  { title: 'cloud.table.status', key: 'status', width: '16%' },
-  { title: 'cloud.table.createdAt', key: 'createdAt', width: '10%' },
+  { title: 'cloud.table.plan', key: 'plan', width: '12%' },
+  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '13%' },
+  { title: 'cloud.table.protocols', key: 'protocols', width: '18%' },
+  { title: 'cloud.table.status', key: 'status', width: '14%' },
+  { title: 'cloud.table.connectivity', key: 'connectivity', width: '9%' },
+  { title: 'cloud.table.createdAt', key: 'createdAt', width: '9%' },
   { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
 
@@ -773,9 +894,102 @@ const applyDefaults = async () => {
   }
 }
 
+// Latency testing functions
+const testLatencySilently = async () => {
+  if (!hasApiKey.value || cloudStore.regions.length === 0 || testingLatency.value) {
+    return
+  }
+
+  console.log('[CloudView] Auto-testing region latency...')
+  testingLatency.value = true
+
+  try {
+    const result = await TestAllCloudRegions()
+
+    if (!result.flag) {
+      console.warn('[CloudView] Latency test failed:', result.data)
+      return
+    }
+
+    const results: RegionLatency[] = JSON.parse(result.data)
+    latencyResults.value = results
+    console.log('[CloudView] Latency test completed, results:', results.length)
+
+    // Auto-select the fastest region if no region is selected
+    if (!form.region) {
+      const fastest = results.find((r) => r.status === 'ok')
+      if (fastest) {
+        form.region = fastest.code
+        console.log('[CloudView] Auto-selected fastest region:', fastest.name, fastest.latency + 'ms')
+      }
+    }
+  } catch (error) {
+    console.error('[CloudView] Latency test error:', error)
+  } finally {
+    testingLatency.value = false
+  }
+}
+
+const handleTestLatency = async () => {
+  console.log('[CloudView] Manual latency test triggered')
+
+  if (!hasApiKey.value) {
+    message.warn(t('cloud.latency.noApiKey'))
+    return
+  }
+
+  testingLatency.value = true
+  latencyResults.value = []
+
+  try {
+    const result = await TestAllCloudRegions()
+
+    if (!result.flag) {
+      throw new Error(result.data)
+    }
+
+    const results: RegionLatency[] = JSON.parse(result.data)
+    latencyResults.value = results
+    showLatencyResults.value = true
+
+    // Auto-select the fastest region
+    const fastest = results.find((r) => r.status === 'ok')
+    if (fastest) {
+      form.region = fastest.code
+      message.success(
+        t('cloud.latency.testComplete', {
+          region: fastest.name,
+          latency: fastest.latency.toFixed(1),
+        })
+      )
+    } else {
+      message.warn(t('cloud.latency.noAvailableRegion'))
+    }
+  } catch (error) {
+    logError('TestLatency', error)
+    message.error(t('cloud.latency.testFailed'))
+  } finally {
+    testingLatency.value = false
+  }
+}
+
 watch(
   () => [cloudStore.regions.length, cloudStore.plans.length, cloudStore.config.defaultPlan, cloudStore.config.defaultRegion],
   applyDefaults,
+)
+
+// Auto-test latency when regions are loaded and API key is available
+watch(
+  () => [cloudStore.regions.length, hasApiKey.value] as const,
+  ([regionsCount, hasKey]) => {
+    if (regionsCount > 0 && hasKey && latencyResults.value.length === 0) {
+      // Delay a bit to ensure the UI is ready
+      setTimeout(() => {
+        testLatencySilently()
+      }, 500)
+    }
+  },
+  { immediate: true }
 )
 
 watch(
@@ -832,10 +1046,14 @@ watch(
 )
 
 onUnmounted(() => {
+  // 清理本组件的定时器
   if (refreshIntervalId.value !== null) {
     clearInterval(refreshIntervalId.value)
     refreshIntervalId.value = null
   }
+
+  // 清理cloudStore中的所有定时器，防止内存泄漏
+  cloudStore.clearAllTimers()
 })
 
 onMounted(async () => {
@@ -965,6 +1183,15 @@ const handleRefreshInstances = async () => {
   }
   try {
     await cloudStore.refreshInstances()
+  } catch (error) {
+    handleError(error)
+  }
+}
+
+const handleTestAllConnectivity = async () => {
+  try {
+    await cloudStore.testAllNodesConnectivity()
+    message.success(t('cloud.connectivity.testAll') + ' completed')
   } catch (error) {
     handleError(error)
   }
@@ -1209,6 +1436,35 @@ const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
   await copyValue(payload)
 }
 
+const rotatingNodeId = ref('')
+
+const handleRotateIP = async (record: CloudNode | Record<string, any>) => {
+  const node = record as CloudNode
+
+  // Check if it's a manual node
+  if (isManualNode(node)) {
+    message.error(t('cloud.nodes.rotateIPBlocked'))
+    return
+  }
+
+  try {
+    await confirm('common.warning', t('cloud.nodes.rotateIPConfirm'))
+  } catch {
+    return
+  }
+
+  rotatingNodeId.value = node.instanceId
+  try {
+    const newNode = await cloudStore.rotateIP(node.instanceId)
+    message.success(t('cloud.nodes.rotateIPSuccess'))
+    logInfo('[CloudView] IP rotated successfully. New node:', newNode.instanceId)
+  } catch (error) {
+    handleError(error)
+  } finally {
+    rotatingNodeId.value = ''
+  }
+}
+
 const handleDestroy = async (record: CloudNode | Record<string, any>) => {
   const node = record as CloudNode
   try {
@@ -1308,12 +1564,27 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
             {{ t('cloud.create.deploy') }}
           </Button>
           <Button
+            @click="handleTestLatency"
+            type="normal"
+            :loading="testingLatency"
+            :disabled="!hasApiKey || testingLatency"
+          >
+            {{ testingLatency ? t('cloud.latency.testing') : t('cloud.latency.test') }}
+          </Button>
+          <Button
             @click="handleRefreshInstances"
             type="link"
             :loading="cloudStore.loadingInstances"
             :disabled="!hasApiKey"
           >
             {{ t('cloud.create.refresh') }}
+          </Button>
+          <Button
+            @click="handleTestAllConnectivity"
+            type="link"
+            :disabled="!hasApiKey || tableData.length === 0"
+          >
+            {{ t('cloud.connectivity.testAll') }}
           </Button>
           <Button @click="openManualNodeModal" type="normal">
             {{ t('cloud.manual.add') }}
@@ -1400,6 +1671,18 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
               </div>
               </div>
             </template>
+            <template #connectivity="{ record }">
+              <div class="flex flex-col gap-2">
+                <Tag
+                  v-if="record.connectivityStatus"
+                  :color="getConnectivityColor(record.connectivityStatus)"
+                  size="small"
+                >
+                  {{ getConnectivityLabel(record.connectivityStatus) }}
+                </Tag>
+                <span v-else class="text-secondary">-</span>
+              </div>
+            </template>
           <template #ipAddresses="{ record }">
             <div class="flex flex-col gap-2">
               <div v-if="isPublicIPv4(record.ipv4)" class="flex items-center gap-2" style="font-size: 11px">
@@ -1467,6 +1750,15 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
                 {{ t('cloud.manual.edit') }}
               </Button>
               <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
+              <Button
+                v-if="!isManualNode(record) && record.connectivityStatus === 'blocked'"
+                @click="handleRotateIP(record)"
+                type="text"
+                size="small"
+                :loading="rotatingNodeId === record.instanceId"
+              >
+                {{ rotatingNodeId === record.instanceId ? t('cloud.nodes.rotatingIP') : t('cloud.nodes.rotateIP') }}
+              </Button>
               <Button
                 @click="handleDestroy(record)"
                 type="text"

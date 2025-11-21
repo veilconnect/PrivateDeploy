@@ -42,6 +42,10 @@ export function FileExists(arg1) {
   return window['go']['bridge']['App']['FileExists'](arg1);
 }
 
+export function GetAvailablePort() {
+  return window['go']['bridge']['App']['GetAvailablePort']();
+}
+
 export function GetCloudConfig() {
   return window['go']['bridge']['App']['GetCloudConfig']();
 }
@@ -52,6 +56,10 @@ export function GetCloudProvider() {
 
 export function GetEnv() {
   return window['go']['bridge']['App']['GetEnv']();
+}
+
+export function GetFastestCloudRegion() {
+  return window['go']['bridge']['App']['GetFastestCloudRegion']();
 }
 
 export function GetInterfaces() {
@@ -152,6 +160,18 @@ export function StartServer(arg1, arg2, arg3) {
 
 export function StopServer(arg1) {
   return window['go']['bridge']['App']['StopServer'](arg1);
+}
+
+export function TestAllCloudRegions() {
+  return window['go']['bridge']['App']['TestAllCloudRegions']();
+}
+
+export function TestCloudRegionLatency(arg1) {
+  return window['go']['bridge']['App']['TestCloudRegionLatency'](arg1);
+}
+
+export function TestConnectivity(arg1, arg2) {
+  return window['go']['bridge']['App']['TestConnectivity'](arg1, arg2);
 }
 
 export function UnzipGZFile(arg1, arg2) {

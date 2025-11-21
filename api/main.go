@@ -130,15 +130,15 @@ func initializeDefaultUser(db *gorm.DB) error {
 
 // initializeCloudManager sets up the cloud provider manager
 func initializeCloudManager() *cloud.Manager {
-	// Create manager
-	manager := cloud.NewManager(context.Background())
-
-	// Register providers
+	// Create manager with explicit provider registry
+	registry := cloud.NewRegistry()
 	vultrProvider := vultr.New(nil)
 	digitaloceanProvider := digitalocean.New(nil)
 
-	cloud.Register("vultr", vultrProvider)
-	cloud.Register("digitalocean", digitaloceanProvider)
+	registry.Register("vultr", vultrProvider)
+	registry.Register("digitalocean", digitaloceanProvider)
+
+	manager := cloud.NewManager(context.Background(), registry)
 
 	// Set Vultr as the default active provider
 	if err := manager.SetActiveProvider("vultr"); err != nil {

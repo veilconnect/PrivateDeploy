@@ -17,6 +17,7 @@ import (
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/providers/digitalocean"
 	"privatedeploy/bridge/cloud/providers/vultr"
+	filesystem "privatedeploy/bridge/services/filesystem"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
@@ -62,16 +63,17 @@ func CreateApp(fs embed.FS) *App {
 	}
 
 	app := NewApp()
+	app.FileService = filesystem.NewService(Env.BasePath)
 
-	// Initialize CloudManager
-	app.CloudManager = cloud.NewManager(context.Background())
-
-	// Register cloud providers
+	// Initialize CloudManager with explicit provider registry
+	registry := cloud.NewRegistry()
 	vultrProvider := vultr.New(nil)
 	digitaloceanProvider := digitalocean.New(nil)
 
-	cloud.Register("vultr", vultrProvider)
-	cloud.Register("digitalocean", digitaloceanProvider)
+	registry.Register("vultr", vultrProvider)
+	registry.Register("digitalocean", digitaloceanProvider)
+
+	app.CloudManager = cloud.NewManager(context.Background(), registry)
 
 	// Set Vultr as the default active provider
 	if err := app.CloudManager.SetActiveProvider("vultr"); err != nil {

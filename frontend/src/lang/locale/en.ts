@@ -58,6 +58,8 @@ export default {
     directDesc: 'Directly connect all traffic',
     errors: {
       coreMissing: 'Sing-box core binary is missing. Please download it from Settings → Kernel and retry.',
+      cacheResetting: 'Detected invalid cache file. Cleaning it up and retrying...',
+      portResetting: 'Detected port conflict. Reassigning new ports automatically...',
     },
     log: {
       disabled: 'Disabled',
@@ -351,6 +353,11 @@ export default {
       applied: 'Node applied to profile.',
       applyTip: 'Profile updated and core restarted.',
       lastSynced: 'Last updated {time}.',
+      rotateIP: 'Rotate IP',
+      rotatingIP: 'Rotating IP…',
+      rotateIPSuccess: 'IP rotation completed. New node created.',
+      rotateIPConfirm: 'This will destroy the current node and create a new one with a different IP. Continue?',
+      rotateIPBlocked: 'This node appears to be blocked. Would you like to rotate its IP address?',
     },
     status: {
       unknown: 'Unknown',
@@ -358,6 +365,21 @@ export default {
       applying: 'Applying…',
       connected: 'Active',
       error: 'Error',
+    },
+    connectivity: {
+      reachable: 'Reachable',
+      icmp_blocked: 'ICMP Blocked',
+      blocked: 'Blocked',
+      testing: 'Testing…',
+      unknown: 'Unknown',
+      testButton: 'Test Connectivity',
+      testAll: 'Test All Nodes',
+    },
+    reachabilityRisk: {
+      low: 'Low Risk',
+      medium: 'Medium Risk',
+      high: 'High Risk',
+      critical: 'Critical Risk',
     },
     progress: {
       submitted: 'Deployment request submitted',
@@ -377,6 +399,7 @@ export default {
       port: 'Port',
       password: 'Password',
       status: 'Status',
+      connectivity: 'Connectivity',
       createdAt: 'Created At',
       actions: 'Actions',
     },
@@ -437,6 +460,15 @@ export default {
       importSkippedIpv4: 'IPv4 address {value} already exists.',
       importSkippedIpv6: 'IPv6 address {value} already exists.',
       confirmRemove: 'Remove local node "{label}"?',
+    },
+    latency: {
+      test: 'Test Latency',
+      testing: 'Testing...',
+      timeout: 'Timeout',
+      noApiKey: 'Please save API key first',
+      testComplete: 'Fastest region: {region} ({latency}ms)',
+      testFailed: 'Latency test failed',
+      noAvailableRegion: 'No available region found',
     },
   },
   home: {

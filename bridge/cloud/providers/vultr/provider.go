@@ -87,6 +87,22 @@ type vultrOS struct {
 	Family string `json:"family"`
 }
 
+type vultrFirewallGroup struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	DateCreated string `json:"date_created"`
+}
+
+type vultrFirewallRule struct {
+	ID         int    `json:"id,omitempty"`
+	IPType     string `json:"ip_type"`
+	Protocol   string `json:"protocol"`
+	Subnet     string `json:"subnet"`
+	SubnetSize int    `json:"subnet_size"`
+	Port       string `json:"port,omitempty"`
+	Notes      string `json:"notes,omitempty"`
+}
+
 // New creates a new Vultr provider instance
 func New(config *cloud.ProviderConfig) *Provider {
 	if config == nil {
@@ -783,6 +799,15 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 			_ = p.saveNodeRecords(records)
 			record = rec
 		}
+
+		// Configure firewall after instance is active
+		if firewallID, err := p.ensureFirewallGroup(ctx); err == nil {
+			// Add firewall rules for this instance's ports
+			if err := p.ensureFirewallRules(ctx, firewallID, ssPort, hysteriaPort, vlessPort, trojanPort, opts.Label); err == nil {
+				// Attach firewall to instance
+				_ = p.attachFirewallToInstance(ctx, instanceID, firewallID)
+			}
+		}
 	} else {
 		instance = payload.Instance
 	}
@@ -1019,4 +1044,205 @@ func (p *Provider) getInstanceRaw(ctx context.Context, instanceID string) (vultr
 	}
 
 	return payload.Instance, nil
+}
+
+// ensureFirewallGroup gets or creates a firewall group for PrivateDeploy
+func (p *Provider) ensureFirewallGroup(ctx context.Context) (string, error) {
+	// List existing firewall groups
+	res, err := p.apiRequest(ctx, http.MethodGet, "/firewalls", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to list firewall groups: %w", err)
+	}
+
+	var listPayload struct {
+		FirewallGroups []vultrFirewallGroup `json:"firewall_groups"`
+	}
+	if err := p.parseResponse(res, &listPayload); err != nil {
+		return "", fmt.Errorf("failed to parse firewall groups: %w", err)
+	}
+
+	// Check if PrivateDeploy firewall group already exists
+	for _, fg := range listPayload.FirewallGroups {
+		if strings.Contains(fg.Description, "PrivateDeploy") {
+			return fg.ID, nil
+		}
+	}
+
+	// Create a new firewall group
+	createPayload := map[string]any{
+		"description": "PrivateDeploy Auto-Managed Firewall",
+	}
+
+	res, err = p.apiRequest(ctx, http.MethodPost, "/firewalls", createPayload)
+	if err != nil {
+		return "", fmt.Errorf("failed to create firewall group: %w", err)
+	}
+
+	var createResult struct {
+		FirewallGroup vultrFirewallGroup `json:"firewall_group"`
+	}
+	if err := p.parseResponse(res, &createResult); err != nil {
+		return "", fmt.Errorf("failed to parse created firewall group: %w", err)
+	}
+
+	// Add default SSH rule
+	sshRule := vultrFirewallRule{
+		IPType:     "v4",
+		Protocol:   "tcp",
+		Subnet:     "0.0.0.0",
+		SubnetSize: 0,
+		Port:       "22",
+		Notes:      "SSH Access",
+	}
+	if err := p.addFirewallRule(ctx, createResult.FirewallGroup.ID, sshRule); err != nil {
+		return "", fmt.Errorf("failed to add SSH rule: %w", err)
+	}
+
+	return createResult.FirewallGroup.ID, nil
+}
+
+// addFirewallRule adds a rule to a firewall group
+func (p *Provider) addFirewallRule(ctx context.Context, firewallID string, rule vultrFirewallRule) error {
+	res, err := p.apiRequest(ctx, http.MethodPost, "/firewalls/"+firewallID+"/rules", rule)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 400 {
+		body, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("failed to add firewall rule: %s", decodeVultrError(body))
+	}
+
+	return nil
+}
+
+// ensureFirewallRules ensures all necessary firewall rules exist for the given ports
+func (p *Provider) ensureFirewallRules(ctx context.Context, firewallID string, ssPort, hysteriaPort, vlessPort, trojanPort int, label string) error {
+	// List existing rules
+	res, err := p.apiRequest(ctx, http.MethodGet, "/firewalls/"+firewallID+"/rules", nil)
+	if err != nil {
+		return fmt.Errorf("failed to list firewall rules: %w", err)
+	}
+
+	var listPayload struct {
+		FirewallRules []vultrFirewallRule `json:"firewall_rules"`
+	}
+	if err := p.parseResponse(res, &listPayload); err != nil {
+		return fmt.Errorf("failed to parse firewall rules: %w", err)
+	}
+
+	// Check which ports already have rules (using "protocol:port" as key to distinguish TCP/UDP)
+	existingRules := make(map[string]bool)
+	for _, rule := range listPayload.FirewallRules {
+		ruleKey := fmt.Sprintf("%s:%s", rule.Protocol, rule.Port)
+		existingRules[ruleKey] = true
+	}
+
+	// Add Shadowsocks TCP rule if not exist
+	ssPortStr := fmt.Sprintf("%d", ssPort)
+	ssTCPKey := fmt.Sprintf("tcp:%s", ssPortStr)
+	if !existingRules[ssTCPKey] {
+		if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "tcp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       ssPortStr,
+			Notes:      fmt.Sprintf("%s Shadowsocks TCP", label),
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Add Shadowsocks UDP rule if not exist
+	ssUDPKey := fmt.Sprintf("udp:%s", ssPortStr)
+	if !existingRules[ssUDPKey] {
+		if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "udp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       ssPortStr,
+			Notes:      fmt.Sprintf("%s Shadowsocks UDP", label),
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Add Hysteria2 rule if not exist and port is valid
+	if hysteriaPort > 0 {
+		hyPortStr := fmt.Sprintf("%d", hysteriaPort)
+		hyUDPKey := fmt.Sprintf("udp:%s", hyPortStr)
+		if !existingRules[hyUDPKey] {
+			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
+				IPType:     "v4",
+				Protocol:   "udp",
+				Subnet:     "0.0.0.0",
+				SubnetSize: 0,
+				Port:       hyPortStr,
+				Notes:      fmt.Sprintf("%s Hysteria2", label),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Add VLESS rule if not exist and port is valid
+	if vlessPort > 0 {
+		vlessPortStr := fmt.Sprintf("%d", vlessPort)
+		vlessTCPKey := fmt.Sprintf("tcp:%s", vlessPortStr)
+		if !existingRules[vlessTCPKey] {
+			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
+				IPType:     "v4",
+				Protocol:   "tcp",
+				Subnet:     "0.0.0.0",
+				SubnetSize: 0,
+				Port:       vlessPortStr,
+				Notes:      fmt.Sprintf("%s VLESS", label),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Add Trojan rule if not exist and port is valid
+	if trojanPort > 0 {
+		trojanPortStr := fmt.Sprintf("%d", trojanPort)
+		trojanTCPKey := fmt.Sprintf("tcp:%s", trojanPortStr)
+		if !existingRules[trojanTCPKey] {
+			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
+				IPType:     "v4",
+				Protocol:   "tcp",
+				Subnet:     "0.0.0.0",
+				SubnetSize: 0,
+				Port:       trojanPortStr,
+				Notes:      fmt.Sprintf("%s Trojan", label),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// attachFirewallToInstance attaches a firewall group to an instance
+func (p *Provider) attachFirewallToInstance(ctx context.Context, instanceID, firewallID string) error {
+	payload := map[string]any{
+		"firewall_group_id": firewallID,
+	}
+
+	res, err := p.apiRequest(ctx, http.MethodPatch, "/instances/"+instanceID, payload)
+	if err != nil {
+		return fmt.Errorf("failed to attach firewall: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 400 {
+		body, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("failed to attach firewall to instance: %s", decodeVultrError(body))
+	}
+
+	return nil
 }

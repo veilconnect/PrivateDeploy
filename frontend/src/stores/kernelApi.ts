@@ -2,14 +2,29 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { getProxies, getConfigs, setConfigs, Api } from '@/api/kernel'
-import { ProcessInfo, KillProcess, ExecBackground, ReadFile, WriteFile, RemoveFile, FileExists } from '@/bridge'
+import {
+  ProcessInfo,
+  KillProcess,
+  ExecBackground,
+  ReadFile,
+  WriteFile,
+  RemoveFile,
+  FileExists,
+} from '@/bridge'
+import { GetAvailablePort } from '@/bridge/app'
 import {
   CoreConfigFilePath,
+  CoreCacheFilePath,
   CorePidFilePath,
   CoreStopOutputKeyword,
   CoreWorkingDirectory,
 } from '@/constant/kernel'
-import { DefaultInboundMixed } from '@/constant/profile'
+import {
+  DefaultExperimental,
+  DefaultInboundMixed,
+  DefaultInboundHttp,
+  DefaultInboundSocks,
+} from '@/constant/profile'
 import { Branch } from '@/enums/app'
 import { Inbound, TunStack } from '@/enums/kernel'
 import {
@@ -426,14 +441,208 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     }
 
     starting.value = true
+    let lastError: any = null
+    const profileToUse = deepClone(profile)
+    let portsAdjusted = false
+
+    const reassignProfilePorts = async (target: IProfile) => {
+      const usedPorts = new Set<number>()
+      const collectPort = (value?: number) => {
+        if (typeof value === 'number' && value > 0) {
+          usedPorts.add(value)
+        }
+      }
+
+      target.inbounds.forEach((inbound) => {
+        const block = inbound[inbound.type as keyof typeof inbound]
+        const listen = (block as any)?.listen
+        collectPort((listen?.listen_port as number | undefined) ?? undefined)
+      })
+
+      target.experimental = target.experimental || DefaultExperimental()
+
+      const ensureInbound = (
+        type: Inbound,
+        factory: () => IInbound['mixed'] | IInbound['http'] | IInbound['socks'],
+      ) => {
+        let inbound = target.inbounds.find((item) => item.type === type)
+        if (!inbound) {
+          inbound = {
+            id: `${type}-auto`,
+            type,
+            tag: `${type}-in`,
+            enable: true,
+            [type]: factory(),
+          } as IInbound
+          target.inbounds.push(inbound)
+        }
+        return inbound
+      }
+
+      const allocatePort = async () => {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const port = await GetAvailablePort()
+          if (!usedPorts.has(port)) {
+            usedPorts.add(port)
+            return port
+          }
+        }
+        const fallback = await GetAvailablePort()
+        usedPorts.add(fallback)
+        return fallback
+      }
+
+      const changes: Record<string, number> = {}
+
+      const updateInboundPort = async (type: Inbound) => {
+        const inbound = ensureInbound(type, () => {
+          switch (type) {
+            case Inbound.Http:
+              return DefaultInboundHttp()
+            case Inbound.Socks:
+              return DefaultInboundSocks()
+            default:
+              return DefaultInboundMixed()
+          }
+        })
+        const block: any = inbound[type]
+        if (!block) return
+        block.listen = block.listen || { listen: '127.0.0.1', listen_port: 0 }
+        block.listen.listen = block.listen.listen || '127.0.0.1'
+        const newPort = await allocatePort()
+        block.listen.listen_port = newPort
+        inbound.enable = true
+        changes[type] = newPort
+      }
+
+      await updateInboundPort(Inbound.Mixed)
+      await updateInboundPort(Inbound.Http)
+      await updateInboundPort(Inbound.Socks)
+
+      const controller = target.experimental?.clash_api?.external_controller
+      if (controller) {
+        let host = '127.0.0.1'
+        let rawPort = ''
+
+        if (controller.includes('://')) {
+          try {
+            const parsed = new URL(controller)
+            host = parsed.hostname ? parsed.hostname : host
+            rawPort = parsed.port || ''
+          } catch {
+            // ignore parsing failure
+          }
+        } else if (controller.startsWith('[')) {
+          const closing = controller.indexOf(']')
+          if (closing !== -1) {
+            host = controller.slice(0, closing + 1)
+            rawPort = controller.slice(closing + 1)
+          }
+        } else {
+          const idx = controller.lastIndexOf(':')
+          if (idx !== -1) {
+            host = controller.slice(0, idx)
+            rawPort = controller.slice(idx + 1)
+          } else {
+            host = controller
+          }
+        }
+
+        collectPort(Number(rawPort))
+
+        const newPort = await allocatePort()
+        const trimmedHost = host?.trim()?.length ? host.trim() : '127.0.0.1'
+        target.experimental.clash_api.external_controller = `${trimmedHost}:${newPort}`
+        changes.controller = newPort
+      }
+
+      return { changed: Object.keys(changes).length > 0, ports: changes }
+    }
+
     try {
-      await generateConfigFile(profile, (config) =>
-        pluginsStore.onBeforeCoreStartTrigger(config, profile),
-      )
-      const pid = await runCoreProcess(isAlpha)
-      pid && (await onCoreStarted(pid))
+      const maxAttempts = 5  // 增加到5次
+      const backoffDelays = [0, 500, 1000, 2000, 3000]  // 退避延迟（毫秒）
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // 如果不是第一次尝试，等待一段时间
+        if (attempt > 1 && backoffDelays[attempt - 1] > 0) {
+          logsStore.recordKernelLog(
+            `[KernelApi] Waiting ${backoffDelays[attempt - 1]}ms before retry ${attempt}/${maxAttempts}`,
+          )
+          await new Promise(resolve => setTimeout(resolve, backoffDelays[attempt - 1]))
+        }
+
+        await generateConfigFile(profileToUse, (config) =>
+          pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
+        )
+
+        try {
+          const pid = await runCoreProcess(isAlpha)
+          if (pid) {
+            await onCoreStarted(pid)
+          }
+          lastError = null
+          logsStore.recordKernelLog(`[KernelApi] Core started successfully on attempt ${attempt}`)
+          break
+        } catch (error) {
+          lastError = error
+          const messageText = String(error ?? '').toLowerCase()
+          logsStore.recordKernelLog(
+            `[KernelApi] startCore attempt ${attempt}/${maxAttempts} failed: ${String(error ?? '')}`,
+          )
+
+          const cacheError =
+            messageText.includes('initialize cache-file') || messageText.includes('cache-file')
+          if (cacheError && attempt < maxAttempts) {
+            await RemoveFile(CoreCacheFilePath).catch(() => undefined)
+            message.warn('kernel.errors.cacheResetting')
+            logsStore.recordKernelLog('[KernelApi] Cache file removed, retrying...')
+            continue
+          }
+
+          const portConflict =
+            messageText.includes('address already in use') ||
+            messageText.includes('bind: address already in use')
+          if (portConflict && attempt < maxAttempts) {
+            logsStore.recordKernelLog('[KernelApi] Port conflict detected, reassigning ports...')
+            const result = await reassignProfilePorts(profileToUse)
+            if (result.changed) {
+              portsAdjusted = true
+              const ports = result.ports
+              if (ports[Inbound.Mixed]) {
+                config.value['mixed-port'] = ports[Inbound.Mixed]
+              }
+              if (ports[Inbound.Http]) {
+                config.value['port'] = ports[Inbound.Http]
+              }
+              if (ports[Inbound.Socks]) {
+                config.value['socks-port'] = ports[Inbound.Socks]
+              }
+              logsStore.recordKernelLog(`[KernelApi] Ports reassigned: ${JSON.stringify(ports)}`)
+              message.warn('kernel.errors.portResetting')
+              continue
+            } else {
+              logsStore.recordKernelLog('[KernelApi] Port reassignment returned no changes')
+            }
+          }
+
+          // 如果是最后一次尝试，或者不是可重试的错误，抛出异常
+          if (attempt === maxAttempts) {
+            logsStore.recordKernelLog(`[KernelApi] All ${maxAttempts} attempts failed, giving up`)
+          }
+          throw error
+        }
+      }
     } finally {
       starting.value = false
+    }
+
+    if (lastError) {
+      throw lastError
+    }
+
+    if (portsAdjusted && profileToUse.id) {
+      await profilesStore.editProfile(profileToUse.id, deepClone(profileToUse))
     }
   }
 

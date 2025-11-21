@@ -58,6 +58,8 @@ export default {
     directDesc: '直接连接所有流量',
     errors: {
       coreMissing: '未找到内核可执行文件，请在设置-内核中下载后再试。',
+      cacheResetting: '检测到缓存文件异常，正在自动清理并重试...',
+      portResetting: '检测到端口被占用，正在自动重新分配新端口...',
     },
     log: {
       disabled: '禁用日志',
@@ -352,6 +354,11 @@ export default {
       applied: '节点已写入配置。',
       applyTip: '已更新配置并重启内核。',
       lastSynced: '上次刷新 {time}',
+      rotateIP: '更换IP',
+      rotatingIP: '正在更换IP…',
+      rotateIPSuccess: 'IP更换完成，已创建新节点。',
+      rotateIPConfirm: '这将销毁当前节点并创建一个新的节点（IP不同）。是否继续？',
+      rotateIPBlocked: '该节点疑似被屏蔽，是否更换IP地址？',
     },
     status: {
       unknown: '未知',
@@ -359,6 +366,21 @@ export default {
       applying: '正在应用',
       connected: '已启用',
       error: '失败',
+    },
+    connectivity: {
+      reachable: '可达',
+      icmp_blocked: 'ICMP被阻断',
+      blocked: '被阻断',
+      testing: '测试中…',
+      unknown: '未知',
+      testButton: '测试连通性',
+      testAll: '测试所有节点',
+    },
+    reachabilityRisk: {
+      low: '低风险',
+      medium: '中风险',
+      high: '高风险',
+      critical: '极高风险',
     },
     progress: {
       submitted: '已提交部署请求',
@@ -378,6 +400,7 @@ export default {
       port: '端口',
       password: '密码',
       status: '状态',
+      connectivity: '连通性',
       createdAt: '创建时间',
       actions: '操作',
     },
@@ -437,7 +460,16 @@ export default {
       importSkippedLabel: '节点名称“{value}”已存在。',
       importSkippedIpv4: 'IPv4 地址 {value} 已存在。',
       importSkippedIpv6: 'IPv6 地址 {value} 已存在。',
-      confirmRemove: '确定删除本地节点“{label}”？',
+      confirmRemove: '确定删除本地节点"{label}"？',
+    },
+    latency: {
+      test: '测试延迟',
+      testing: '测试中...',
+      timeout: '超时',
+      noApiKey: '请先保存 API 密钥',
+      testComplete: '最快区域：{region} ({latency}毫秒)',
+      testFailed: '延迟测试失败',
+      noAvailableRegion: '未找到可用区域',
     },
     regions: {
       // Vultr 区域代码翻译 (如果 Vultr API 返回的是代码而不是城市名称)

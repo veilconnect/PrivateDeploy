@@ -69,3 +69,23 @@ export type DigitalOceanConfig = CloudConfig
 export type DigitalOceanRegion = CloudRegion
 export type DigitalOceanPlan = CloudPlan
 export type DigitalOceanDroplet = CloudNode
+
+// Region Latency Testing
+export interface RegionLatency {
+  code: string         // Region code (nrt, fra, lax...)
+  name: string         // Region name (Tokyo, Frankfurt...)
+  ip: string          // Test IP address
+  latency: number     // Average latency in milliseconds
+  loss: number        // Packet loss percentage (0-100)
+  status: string      // Status: "ok", "timeout", "error"
+}
+
+// Connectivity Testing
+export interface ConnectivityResult {
+  ip: string
+  icmpReachable: boolean
+  portsOpen: Record<string, boolean>  // port number -> is open
+  status: 'reachable' | 'icmp_blocked' | 'blocked' | 'unknown'
+}
+
+export type ConnectivityStatus = 'reachable' | 'icmp_blocked' | 'blocked' | 'testing' | 'unknown'

@@ -56,7 +56,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     exitOnClose: true,
     closeKernelOnExit: true,
     autoSetSystemProxy: true,
-    autoStartKernel: false,
+    autoStartKernel: true,
     userAgent: APP_TITLE + '/' + APP_VERSION,
     startupDelay: 30,
     connections: DefaultConnections(),

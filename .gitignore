@@ -5,3 +5,9 @@ frontend/dist
 
 # Sensitive data - Cloud provider configs and node information
 data/
+
+# Local API binary output
+api/privatedeploy-api
+
+# Temporary/backup sources
+*.backup

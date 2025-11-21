@@ -322,3 +322,120 @@ func (a *App) ListCloudAvailability(region string) FlagResult {
 	log.Printf("[CloudBridge] Listed %d available plans for provider %s region %s", len(plans), provider.Name(), region)
 	return FlagResult{Flag: true, Data: string(data)}
 }
+
+// TestCloudRegionLatency tests latency for a specific region on the active provider
+func (a *App) TestCloudRegionLatency(regionCode string) FlagResult {
+	log.Printf("[CloudBridge] TestCloudRegionLatency called for region: %s", regionCode)
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	// Check if provider supports latency testing (currently only Vultr)
+	type LatencyTester interface {
+		TestRegionLatency(ctx context.Context, regionCode string) (interface{}, error)
+	}
+
+	tester, ok := provider.(LatencyTester)
+	if !ok {
+		errMsg := "latency testing not supported for this provider"
+		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
+		return FlagResult{Flag: false, Data: errMsg}
+	}
+
+	ctx := context.Background()
+	result, err := tester.TestRegionLatency(ctx, regionCode)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to test region latency: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal latency result: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Latency test completed for region %s: %s", regionCode, string(data))
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// TestAllCloudRegions tests latency for all regions on the active provider
+func (a *App) TestAllCloudRegions() FlagResult {
+	log.Printf("[CloudBridge] TestAllCloudRegions called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	// Check if provider supports latency testing
+	type LatencyTester interface {
+		TestAllRegions(ctx context.Context) (interface{}, error)
+	}
+
+	tester, ok := provider.(LatencyTester)
+	if !ok {
+		errMsg := "latency testing not supported for this provider"
+		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
+		return FlagResult{Flag: false, Data: errMsg}
+	}
+
+	ctx := context.Background()
+	results, err := tester.TestAllRegions(ctx)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to test all regions: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal latency results: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Latency test completed for all regions")
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// GetFastestCloudRegion returns the fastest available region based on latency test
+func (a *App) GetFastestCloudRegion() FlagResult {
+	log.Printf("[CloudBridge] GetFastestCloudRegion called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	// Check if provider supports latency testing
+	type LatencyTester interface {
+		GetFastestRegion(ctx context.Context) (interface{}, error)
+	}
+
+	tester, ok := provider.(LatencyTester)
+	if !ok {
+		errMsg := "latency testing not supported for this provider"
+		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
+		return FlagResult{Flag: false, Data: errMsg}
+	}
+
+	ctx := context.Background()
+	result, err := tester.GetFastestRegion(ctx)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to get fastest region: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal fastest region: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Fastest region: %s", string(data))
+	return FlagResult{Flag: true, Data: string(data)}
+}

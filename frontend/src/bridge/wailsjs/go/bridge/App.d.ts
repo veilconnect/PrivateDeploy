@@ -22,11 +22,15 @@ export function ExitApp():Promise<void>;
 
 export function FileExists(arg1:string):Promise<bridge.FlagResult>;
 
+export function GetAvailablePort():Promise<number>;
+
 export function GetCloudConfig():Promise<bridge.FlagResult>;
 
 export function GetCloudProvider():Promise<bridge.FlagResult>;
 
 export function GetEnv():Promise<bridge.EnvResult>;
+
+export function GetFastestCloudRegion():Promise<bridge.FlagResult>;
 
 export function GetInterfaces():Promise<bridge.FlagResult>;
 
@@ -77,6 +81,12 @@ export function ShowMainWindow():Promise<void>;
 export function StartServer(arg1:string,arg2:string,arg3:bridge.ServerOptions):Promise<bridge.FlagResult>;
 
 export function StopServer(arg1:string):Promise<bridge.FlagResult>;
+
+export function TestAllCloudRegions():Promise<bridge.FlagResult>;
+
+export function TestCloudRegionLatency(arg1:string):Promise<bridge.FlagResult>;
+
+export function TestConnectivity(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function UnzipGZFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 

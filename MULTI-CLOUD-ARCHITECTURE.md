@@ -110,14 +110,16 @@ type App struct {
 }
 
 func CreateApp(assets fs.FS) *App {
-	app := &App{
-		// ... 现有初始化
-		CloudManager: cloud.NewManager(context.Background()),
-	}
+	registry := cloud.NewRegistry()
 
 	// 注册Vultr provider
 	vultrProvider := vultr.New(nil) // 配置后续加载
-	cloud.Register("vultr", vultrProvider)
+	registry.Register("vultr", vultrProvider)
+
+	app := &App{
+		// ... 现有初始化
+		CloudManager: cloud.NewManager(context.Background(), registry),
+	}
 
 	// 设置默认provider
 	app.CloudManager.SetActiveProvider("vultr")
@@ -131,8 +133,8 @@ func CreateApp(assets fs.FS) *App {
 ```go
 // ListCloudProviders returns all available cloud providers
 func (a *App) ListCloudProviders() FlagResult {
-	providers := a.CloudManager.ListProviders()
-	data, _ := json.Marshal(providers)
+	providerNames := a.CloudManager.ListProviders()
+	data, _ := json.Marshal(providerNames)
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
@@ -147,10 +149,19 @@ func (a *App) SetCloudProvider(providerName string) FlagResult {
 
 // GetCloudProvider returns the current active provider
 func (a *App) GetCloudProvider() FlagResult {
-	if a.CloudManager.activeProvider == "" {
-		return FlagResult{Flag: false, Data: "no active provider"}
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
 	}
-	return FlagResult{Flag: true, Data: a.CloudManager.activeProvider}
+	info := struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+	}{
+		Name:        provider.Name(),
+		DisplayName: provider.DisplayName(),
+	}
+	data, _ := json.Marshal(info)
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // 保持现有API兼容，但内部使用Manager

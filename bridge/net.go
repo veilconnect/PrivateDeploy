@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -166,6 +171,21 @@ func (a *App) Upload(method string, url string, path string, headers map[string]
 	return HTTPResult{true, resp.StatusCode, resp.Header, string(b)}
 }
 
+// GetAvailablePort returns an available TCP port on localhost.
+func (a *App) GetAvailablePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, errors.New("unexpected addr type")
+	}
+	return addr.Port, nil
+}
+
 func (wt *WriteTracker) Write(p []byte) (n int, err error) {
 	n = len(p)
 	wt.Progress += int64(n)
@@ -211,4 +231,87 @@ func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Con
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return client, ctx, cancel
+}
+
+// TestTCPPort tests if a TCP port is open on the given IP address
+func TestTCPPort(ip string, port int, timeout int) bool {
+	address := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+	conn, err := net.DialTimeout("tcp", address, GetTimeout(timeout))
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// TestConnectivity tests the connectivity to a given IP and ports
+// Returns a JSON string with the test results
+func (a *App) TestConnectivity(ip string, portsJSON string) FlagResult {
+	log.Printf("TestConnectivity: %s ports=%s", ip, portsJSON)
+
+	// Parse ports from JSON array string like "[22, 80, 443]"
+	ports := []int{}
+	portsJSON = strings.TrimSpace(portsJSON)
+	if portsJSON != "" && portsJSON != "[]" {
+		// Simple JSON array parsing
+		portsJSON = strings.Trim(portsJSON, "[]")
+		portStrs := strings.Split(portsJSON, ",")
+		for _, portStr := range portStrs {
+			portStr = strings.TrimSpace(portStr)
+			var port int
+			if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil && port > 0 {
+				ports = append(ports, port)
+			}
+		}
+	}
+
+	result := map[string]interface{}{
+		"ip":             ip,
+		"icmpReachable":  false,
+		"portsOpen":      map[string]bool{},
+		"status":         "unknown",
+	}
+
+	// Test ICMP (ping) - using TCP connection to port 80 as fallback
+	// Note: ICMP requires root privileges, so we use TCP as a connectivity check
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Try to resolve the IP first
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "80"))
+	if err == nil {
+		conn.Close()
+		result["icmpReachable"] = true
+	}
+
+	// Test each port
+	portsOpen := make(map[string]bool)
+	anyPortOpen := false
+	for _, port := range ports {
+		portStr := fmt.Sprintf("%d", port)
+		isOpen := TestTCPPort(ip, port, 5000) // 5 second timeout
+		portsOpen[portStr] = isOpen
+		if isOpen {
+			anyPortOpen = true
+		}
+	}
+	result["portsOpen"] = portsOpen
+
+	// Determine overall status
+	if result["icmpReachable"].(bool) && (len(ports) == 0 || anyPortOpen) {
+		result["status"] = "reachable"
+	} else if !result["icmpReachable"].(bool) && anyPortOpen {
+		result["status"] = "icmp_blocked"
+	} else {
+		result["status"] = "blocked"
+	}
+
+	// Convert result to JSON
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	return FlagResult{Flag: true, Data: string(jsonBytes)}
 }

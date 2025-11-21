@@ -16,6 +16,7 @@ import {
   ReadFile,
   WriteFile,
   RemoveFile,
+  TestConnectivity,
 } from '@/bridge'
 import { DefaultSubscribeScript } from '@/constant/app'
 import { DefaultExcludeProtocols } from '@/constant/kernel'
@@ -31,11 +32,15 @@ import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
 
 import type { Subscription } from '@/types/app'
-import type { CloudProvider, CloudConfig, CloudNode, CloudPlan, CloudRegion } from '@/types/cloud'
+import type { CloudProvider, CloudConfig, CloudNode, CloudPlan, CloudRegion, ConnectivityStatus } from '@/types/cloud'
 
 
 type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
-type ManagedCloudNode = CloudNode & { statusText?: CloudNodeStatus }
+type ManagedCloudNode = CloudNode & {
+  statusText?: CloudNodeStatus
+  connectivityStatus?: ConnectivityStatus
+  connectivityTesting?: boolean
+}
 const parseJSON = <T>(data: string | undefined | null, fallback: T): T => {
   if (!data) return fallback
   try {
@@ -168,6 +173,8 @@ export const useCloudStore = defineStore('cloud', () => {
   const destroyingInstance = ref<string>('')
   const manualNodesLoaded = ref(false)
   const manualNodes = ref<ManagedCloudNode[]>([])
+  let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+  const autoApplyTimers = new Map<string, ReturnType<typeof setInterval>>()
 
   const subscribesStore = useSubscribesStore()
   const profilesStore = useProfilesStore()
@@ -728,6 +735,11 @@ export const useCloudStore = defineStore('cloud', () => {
     config.extra = loadedConfig.extra ?? {}
     logInfo('[CloudStore] Loaded config, apiKey length:', config.apiKey?.length || 0)
     configLoaded.value = true
+    if (config.apiKey && config.apiKey.trim() !== '') {
+      startAutoRefresh(true)
+    } else {
+      stopAutoRefresh()
+    }
   }
 
   const saveConfig = async () => {
@@ -738,6 +750,11 @@ export const useCloudStore = defineStore('cloud', () => {
       payload.extra = payload.extra ?? {}
       const res = await SaveCloudConfig(JSON.stringify(payload))
       ensureFlag(res.flag, res.data)
+      if (payload.apiKey && payload.apiKey.trim() !== '') {
+        startAutoRefresh(true)
+      } else {
+        stopAutoRefresh()
+      }
     } finally {
       savingConfig.value = false
     }
@@ -837,6 +854,24 @@ export const useCloudStore = defineStore('cloud', () => {
 
       await loadManualNodes()
       syncManualNodesIntoInstances()
+
+      // schedule auto-apply for nodes that are not fully connected yet
+      enriched.forEach((node) => {
+        if (!node.instanceId) {
+          return
+        }
+        if (hasUsableAddress(node) && node.statusText === 'connected') {
+          stopAutoApplyTimer(node.instanceId)
+        } else {
+          scheduleAutoApply(node.instanceId)
+        }
+      })
+
+      if (enriched.some((node) => hasUsableAddress(node))) {
+        await applyAllNodesToProfile().catch((error) => {
+          logError('[CloudStore] Failed to auto-apply nodes after refresh:', error)
+        })
+      }
 
       // Create subscriptions for all nodes with IP addresses
       await Promise.all(
@@ -976,6 +1011,173 @@ export const useCloudStore = defineStore('cloud', () => {
     }
   }
 
+  const stopAutoRefresh = () => {
+    if (autoRefreshTimer !== null) {
+      clearInterval(autoRefreshTimer)
+      autoRefreshTimer = null
+      logInfo('[CloudStore] Stopped auto refresh timer')
+    }
+  }
+
+  function stopAutoApplyTimer(instanceId: string) {
+    const timer = autoApplyTimers.get(instanceId)
+    if (timer) {
+      clearInterval(timer)
+      autoApplyTimers.delete(instanceId)
+      logInfo(`[CloudStore] Stopped auto apply timer for instance: ${instanceId}`)
+    }
+  }
+
+  /**
+   * 清理所有定时器，防止内存泄漏
+   * 应该在组件卸载时调用
+   */
+  const clearAllTimers = () => {
+    // 停止自动刷新定时器
+    stopAutoRefresh()
+
+    // 停止所有自动应用定时器
+    const instanceIds = Array.from(autoApplyTimers.keys())
+    instanceIds.forEach(id => stopAutoApplyTimer(id))
+
+    logInfo('[CloudStore] Cleared all timers')
+  }
+
+  /**
+   * Test connectivity to a specific node
+   * Tests ICMP reachability and all configured protocol ports
+   */
+  const testNodeConnectivity = async (instanceId: string) => {
+    // Find the node
+    const node = instances.value.find((item) => item.instanceId === instanceId) ||
+                 manualNodes.value.find((item) => item.instanceId === instanceId)
+
+    if (!node) {
+      logError('[CloudStore] Node not found for connectivity test:', instanceId)
+      return
+    }
+
+    // Determine which IP to test (prefer IPv4 for regional reachability detection)
+    const testIP = node.ipv4 || node.ipv6
+    if (!testIP) {
+      logError('[CloudStore] No IP address available for node:', instanceId)
+      node.connectivityStatus = 'unknown'
+      return
+    }
+
+    // Collect all configured ports for this node
+    const ports: number[] = []
+    if (node.ssPort) ports.push(node.ssPort)
+    if (node.hysteriaPort) ports.push(node.hysteriaPort)
+    if (node.vlessPort) ports.push(node.vlessPort)
+    if (node.trojanPort) ports.push(node.trojanPort)
+
+    // Mark as testing
+    node.connectivityTesting = true
+    node.connectivityStatus = 'testing'
+    logInfo(`[CloudStore] Testing connectivity to ${testIP} ports:`, ports)
+
+    try {
+      const result = await TestConnectivity(testIP, ports)
+      logInfo('[CloudStore] Connectivity test result:', result)
+
+      // Update connectivity status based on result
+      node.connectivityStatus = result.status
+      node.connectivityTesting = false
+    } catch (error) {
+      logError('[CloudStore] Connectivity test failed:', error)
+      node.connectivityStatus = 'unknown'
+      node.connectivityTesting = false
+    }
+  }
+
+  /**
+   * Test connectivity for all nodes
+   */
+  const testAllNodesConnectivity = async () => {
+    const allNodes = [...instances.value, ...manualNodes.value]
+    const testPromises = allNodes.map(node => testNodeConnectivity(node.instanceId))
+    await Promise.allSettled(testPromises)
+    logInfo('[CloudStore] Completed connectivity tests for all nodes')
+  }
+
+  function scheduleAutoApply(instanceId: string) {
+    if (autoApplyTimers.has(instanceId)) {
+      return
+    }
+
+    let attempts = 0
+    const run = async () => {
+      const node = instances.value.find((n) => n.instanceId === instanceId)
+      if (!node) {
+        stopAutoApplyTimer(instanceId)
+        return
+      }
+
+      if (!hasUsableAddress(node)) {
+        attempts += 1
+        if (attempts % 3 === 0) {
+          await refreshInstances(true).catch(() => undefined)
+        }
+        if (attempts > 60) {
+          logError('[CloudStore] Auto apply timed out waiting for usable address:', node.label)
+          stopAutoApplyTimer(instanceId)
+        }
+        return
+      }
+
+      try {
+        logInfo('[CloudStore] Auto applying node via scheduler:', node.label)
+        await ensureSubscriptionForNode(node)
+        await applyNodeToProfile(node)
+        markNodeStatus(instanceId, 'connected')
+        instancesUpdatedAt.value = Date.now()
+        if (kernelApiStore.running) {
+          await kernelApiStore.refreshProviderProxies().catch((error) =>
+            logError('[CloudStore] Failed to refresh provider proxies after scheduled apply:', error),
+          )
+        }
+      } catch (error) {
+        logError('[CloudStore] Scheduled auto apply failed:', node.label, error)
+      } finally {
+        stopAutoApplyTimer(instanceId)
+      }
+    }
+
+    const timer = setInterval(run, 5_000)
+    autoApplyTimers.set(instanceId, timer)
+    run()
+  }
+
+  const startAutoRefresh = (refreshImmediately = false) => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      stopAutoRefresh()
+      return
+    }
+    if (autoRefreshTimer !== null) {
+      return
+    }
+
+    const runRefresh = () => {
+      if (!config.apiKey || config.apiKey.trim() === '') {
+        stopAutoRefresh()
+        return
+      }
+      if (loadingInstances.value || creatingInstance.value || destroyingInstance.value) {
+        return
+      }
+      refreshInstances(true).catch((error) => {
+        logError('[CloudStore] Auto refresh failed:', error)
+      })
+    }
+
+    autoRefreshTimer = setInterval(runRefresh, 15_000)
+    logInfo('[CloudStore] Started auto refresh timer')
+    if (refreshImmediately) {
+      runRefresh()
+    }
+  }
+
   const createInstance = async (options: { label: string; region: string; plan: string }) => {
     creatingInstance.value = true
     try {
@@ -989,6 +1191,7 @@ export const useCloudStore = defineStore('cloud', () => {
         instances.value = [cloudNode, ...instances.value.filter((n) => n.instanceId !== node.instanceId)]
         instancesUpdatedAt.value = Date.now()
         syncManualNodesIntoInstances()
+        startAutoRefresh(true)
 
         // If node doesn't have IP yet, wait for it with retry mechanism
         // Backend should have waited, but if it failed we retry here
@@ -1019,6 +1222,12 @@ export const useCloudStore = defineStore('cloud', () => {
             n.instanceId === cloudNode.instanceId ? cloudNode : n
           )
           instancesUpdatedAt.value = Date.now()
+
+          // Auto-test connectivity after deployment
+          logInfo('[CloudStore] Auto-testing connectivity for new node:', cloudNode.label)
+          testNodeConnectivity(cloudNode.instanceId).catch((error) => {
+            logError('[CloudStore] Auto connectivity test failed:', error)
+          })
         } catch (error) {
           logError('[CloudStore] Auto-apply failed for new node:', cloudNode.label, error)
           // If auto-apply fails, reset status to 'pending' so user can manually apply
@@ -1038,6 +1247,7 @@ export const useCloudStore = defineStore('cloud', () => {
   const destroyInstance = async (instanceId: string) => {
     destroyingInstance.value = instanceId
     try {
+      stopAutoApplyTimer(instanceId)
       await loadManualNodes()
       const manualIndex = manualNodes.value.findIndex((node) => node.instanceId === instanceId)
       if (manualIndex !== -1) {
@@ -1058,6 +1268,45 @@ export const useCloudStore = defineStore('cloud', () => {
     } finally {
       destroyingInstance.value = ''
     }
+  }
+
+  /**
+   * Rotate IP for a node by destroying and recreating it
+   * Useful when a node's IP is blocked by regional reachability
+   */
+  const rotateIP = async (instanceId: string) => {
+    // Find the node to get its configuration
+    const node = instances.value.find((item) => item.instanceId === instanceId) ||
+                 manualNodes.value.find((item) => item.instanceId === instanceId)
+
+    if (!node) {
+      throw new Error('Node not found for IP rotation')
+    }
+
+    // Manual nodes cannot rotate IP - they must be manually updated
+    const isManual = manualNodes.value.some((n) => n.instanceId === instanceId)
+    if (isManual) {
+      throw new Error('Manual nodes cannot rotate IP automatically. Please edit the node to update IP address.')
+    }
+
+    // Save node configuration for recreation
+    const nodeConfig = {
+      label: node.label,
+      region: node.region || '',
+      plan: node.plan || '',
+    }
+
+    logInfo('[CloudStore] Rotating IP for node:', node.label, nodeConfig)
+
+    // Destroy the existing instance
+    await destroyInstance(instanceId)
+
+    // Create a new instance with the same configuration
+    logInfo('[CloudStore] Creating replacement instance with same configuration')
+    const newNode = await createInstance(nodeConfig)
+
+    logInfo('[CloudStore] IP rotation completed. New node:', newNode.instanceId)
+    return newNode
   }
 
   const applyAllNodesToProfile = async () => {
@@ -1295,6 +1544,7 @@ export const useCloudStore = defineStore('cloud', () => {
         provider: provider,
         extra: {},
       })
+      stopAutoRefresh()
 
       if (typeof SetCloudProvider !== 'function') {
         console.warn('[CloudStore] SetCloudProvider not available')
@@ -1386,8 +1636,14 @@ export const useCloudStore = defineStore('cloud', () => {
     ensureRegionAvailability,
     createInstance,
     destroyInstance,
+    rotateIP,
     applyNodeToProfile,
     applyAllNodesToProfile,
+    startAutoRefresh,
+    stopAutoRefresh,
+    clearAllTimers,  // 新增：清理所有定时器
+    testNodeConnectivity,
+    testAllNodesConnectivity,
     addManualNode,
     addManualNodes,
     updateManualNode,

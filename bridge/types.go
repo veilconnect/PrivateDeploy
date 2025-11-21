@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"privatedeploy/bridge/cloud"
+	filesystem "privatedeploy/bridge/services/filesystem"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 )
@@ -14,6 +15,7 @@ type App struct {
 	Ctx          context.Context
 	AppMenu      *menu.Menu
 	CloudManager *cloud.Manager
+	FileService  *filesystem.Service
 }
 
 type EnvResult struct {
