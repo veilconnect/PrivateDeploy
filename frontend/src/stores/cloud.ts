@@ -765,9 +765,16 @@ export const useCloudStore = defineStore('cloud', () => {
     if (toPrune.length > 0) {
       await Promise.all(toPrune)
       if (kernelApiStore.running) {
-        await kernelApiStore.restartCore().catch((error) =>
-          logError('[CloudStore] Failed to restart core after pruning subscription:', error),
-        )
+        try {
+          await kernelApiStore.restartCore()
+          logInfo('[CloudStore] Core restarted after removing subscription:', id)
+          // Refresh proxy groups to update the UI
+          await kernelApiStore.refreshProviderProxies().catch((error) =>
+            logError('[CloudStore] Failed to refresh proxies after removing subscription:', error),
+          )
+        } catch (error) {
+          logError('[CloudStore] Failed to restart core after pruning subscription:', error)
+        }
       }
     }
   }
