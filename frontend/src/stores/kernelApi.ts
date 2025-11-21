@@ -775,6 +775,100 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     proxies.value = updated
   }
 
+  /**
+   * Add all proxy nodes from a cloud deployment to proxy groups for instant UI feedback
+   * Generates node tags based on CloudNode configuration (multi-protocol support)
+   */
+  const addCloudNodeToGroups = (node: any) => {
+    // Use deep clone to ensure Vue can track nested object changes
+    const updated = deepClone(proxies.value)
+
+    // Generate all proxy node tags based on available protocols and IPs
+    const proxyTags: string[] = []
+
+    // Determine available IP versions (filter out private IPs for IPv4)
+    const isPublicIPv4 = (ip: string): boolean => {
+      if (!ip) return false
+      // Check for private/internal IP ranges
+      const parts = ip.split('.').map(Number)
+      if (parts[0] === 10) return false // 10.0.0.0/8
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false // 172.16.0.0/12
+      if (parts[0] === 192 && parts[1] === 168) return false // 192.168.0.0/16
+      if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return false // 100.64.0.0/10 CGNAT
+      return true
+    }
+
+    const hasIPv4 = node.ipv4 && isPublicIPv4(node.ipv4)
+    const hasIPv6 = !!node.ipv6
+    const ipVersions: string[] = []
+    if (hasIPv4) ipVersions.push('-v4')
+    if (hasIPv6) ipVersions.push('-v6')
+
+    if (ipVersions.length === 0) {
+      console.warn(`[KernelApi] Node ${node.label} has no usable public IP, skipping`)
+      return
+    }
+
+    // 1. Shadowsocks
+    if (node.ssPort && node.ssPassword) {
+      ipVersions.forEach(suffix => {
+        proxyTags.push(`${node.label}-ss${suffix}`)
+      })
+    }
+
+    // 2. Hysteria2
+    if (node.hysteriaPort && node.hysteriaPassword) {
+      ipVersions.forEach(suffix => {
+        proxyTags.push(`${node.label}-hysteria2${suffix}`)
+      })
+    }
+
+    // 3. VLESS-Reality
+    if (node.vlessPort && node.vlessUUID && node.vlessPublicKey && node.vlessShortId) {
+      ipVersions.forEach(suffix => {
+        proxyTags.push(`${node.label}-vless${suffix}`)
+      })
+    }
+
+    // 4. Trojan
+    if (node.trojanPort && node.trojanPassword) {
+      ipVersions.forEach(suffix => {
+        proxyTags.push(`${node.label}-trojan${suffix}`)
+      })
+    }
+
+    console.log(`[KernelApi] Adding ${proxyTags.length} proxy nodes for ${node.label}:`, proxyTags)
+
+    // Add temporary proxy entries for all generated nodes
+    proxyTags.forEach(tag => {
+      updated[tag] = {
+        name: tag,
+        type: 'Proxy',
+        now: '',
+        all: [],
+        history: [],
+        alive: false,
+        udp: false,
+      }
+    })
+
+    // Add all proxy tags to selector and urltest groups
+    Object.keys(updated).forEach((groupName) => {
+      const group = updated[groupName]
+      if (group.type === 'Selector' || group.type === 'URLTest') {
+        if (group.all && Array.isArray(group.all)) {
+          // Add all new proxy tags that don't already exist
+          const newTags = proxyTags.filter(tag => !group.all.includes(tag))
+          if (newTags.length > 0) {
+            group.all = [...group.all, ...newTags]
+          }
+        }
+      }
+    })
+
+    proxies.value = updated
+  }
+
   return {
     startCore,
     stopCore,
@@ -793,6 +887,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     refreshProviderProxies,
     removeProxyFromGroups,
     addProxyToGroups,
+    addCloudNodeToGroups,
     getProxyPort,
 
     onLogs: createCoreWSHandlerRegister(websocketHandlers.logs, onLogsEvents),

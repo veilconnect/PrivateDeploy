@@ -1088,11 +1088,10 @@ export const useCloudStore = defineStore('cloud', () => {
           logInfo('[CloudStore] Auto-applying newly ready node:', node.label)
           await applyNodeToProfile(node)
 
-          // Optimistic UI update: immediately add to proxy groups for instant feedback
+          // Optimistic UI update: immediately add all proxy nodes to groups for instant feedback
           // Remove running check - update UI regardless of kernel state for instant feedback
-          const subId = subscriptionId(node.instanceId)
-          kernelApiStore.addProxyToGroups(subId, node.label)
-          logInfo('[CloudStore] Optimistically added proxy to groups:', subId)
+          kernelApiStore.addCloudNodeToGroups(node)
+          logInfo('[CloudStore] Optimistically added cloud node proxies to groups:', node.label)
 
           node.statusText = 'connected'
           instances.value = instances.value.map((n) =>
@@ -1456,11 +1455,10 @@ export const useCloudStore = defineStore('cloud', () => {
           applySuccess = true
           logInfo('[CloudStore] Successfully applied new node to profile:', cloudNode.label)
 
-          // Optimistic UI update: immediately add to proxy groups for instant feedback
+          // Optimistic UI update: immediately add all proxy nodes to groups for instant feedback
           // Remove running check - update UI regardless of kernel state for instant feedback
-          const subId = subscriptionId(cloudNode.instanceId)
-          kernelApiStore.addProxyToGroups(subId, cloudNode.label)
-          logInfo('[CloudStore] Optimistically added proxy to groups:', subId)
+          kernelApiStore.addCloudNodeToGroups(cloudNode)
+          logInfo('[CloudStore] Optimistically added cloud node proxies to groups:', cloudNode.label)
 
           // Update status to 'connected' after successful apply
           cloudNode.statusText = 'connected'
