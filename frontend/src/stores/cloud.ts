@@ -773,10 +773,7 @@ export const useCloudStore = defineStore('cloud', () => {
         try {
           await kernelApiStore.restartCore()
           logInfo('[CloudStore] Core restarted after removing subscription:', id)
-          // Refresh proxy groups to update the UI
-          await kernelApiStore.refreshProviderProxies().catch((error) =>
-            logError('[CloudStore] Failed to refresh proxies after removing subscription:', error),
-          )
+          // Note: refreshProviderProxies() is called automatically by onCoreStarted()
         } catch (error) {
           logError('[CloudStore] Failed to restart core after pruning subscription:', error)
         }
@@ -1127,9 +1124,7 @@ export const useCloudStore = defineStore('cloud', () => {
               await kernelApiStore.startCore()
               logInfo('[CloudStore] Kernel started after auto-applying nodes')
             }
-            await kernelApiStore.refreshProviderProxies().catch((error) =>
-              logError('[CloudStore] Failed to refresh provider proxies after auto-apply:', error),
-            )
+            // Note: refreshProviderProxies() is called automatically by onCoreStarted()
           } catch (error) {
             logError('[CloudStore] Failed to restart kernel after auto-applying nodes:', error)
             // Even if kernel fails to start, nodes are already applied to profile
@@ -1496,9 +1491,7 @@ export const useCloudStore = defineStore('cloud', () => {
                 await kernelApiStore.startCore()
                 logInfo('[CloudStore] Kernel started after deploying new node')
               }
-              await kernelApiStore.refreshProviderProxies().catch((error) =>
-                logError('[CloudStore] Failed to refresh proxies after deployment:', error),
-              )
+              // Note: refreshProviderProxies() is called automatically by onCoreStarted()
 
               // Auto-test connectivity after deployment
               logInfo('[CloudStore] Auto-testing connectivity for new node:', cloudNode.label)
@@ -1646,14 +1639,10 @@ export const useCloudStore = defineStore('cloud', () => {
       try {
         if (kernelApiStore.running) {
           await kernelApiStore.restartCore()
-          await kernelApiStore.refreshProviderProxies().catch((error) =>
-            logError('[CloudStore] Failed to refresh provider proxies after auto-apply:', error),
-          )
+          // Note: refreshProviderProxies() is called automatically by onCoreStarted()
         } else {
           await kernelApiStore.startCore()
-          await kernelApiStore.refreshProviderProxies().catch((error) =>
-            logError('[CloudStore] Failed to refresh provider proxies after auto-apply:', error),
-          )
+          // Note: refreshProviderProxies() is called automatically by onCoreStarted()
         }
       } catch (error) {
         logError('[CloudStore] Failed to restart core after auto-applying nodes:', error)
@@ -1666,9 +1655,7 @@ export const useCloudStore = defineStore('cloud', () => {
       if (hasValidProfile) {
         try {
           await kernelApiStore.startCore()
-          await kernelApiStore.refreshProviderProxies().catch((error) =>
-            logError('[CloudStore] Failed to refresh provider proxies after auto-start:', error),
-          )
+          // Note: refreshProviderProxies() is called automatically by onCoreStarted()
         } catch (error) {
           logError('[CloudStore] Failed to start core when applying existing nodes:', error)
         }
@@ -1703,9 +1690,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
         if (!kernelApiStore.running && hasReadyInstances.value && hasValidProfile) {
           await kernelApiStore.startCore()
-          await kernelApiStore.refreshProviderProxies().catch((error) =>
-            logError('[CloudStore] Failed to refresh provider proxies after auto-start:', error),
-          )
+          // Note: refreshProviderProxies() is called automatically by onCoreStarted()
         } else if (!kernelApiStore.running && hasReadyInstances.value && !hasValidProfile) {
           logInfo('[CloudStore] Skipping auto-start in watch: no valid profile configured')
         }
