@@ -4,15 +4,22 @@ import { useI18n } from 'vue-i18n'
 
 import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
-import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
+import { confirm, formatDate, formatRelativeTime, message, debounce } from '@/utils'
 import { logError, logInfo } from '@/utils/logger'
+import { getRecommendedNodes } from '@/utils/recommendation'
+import { createBackup, parseBackup, downloadBackup } from '@/utils/backup'
+import { checkAllNodesHealth, scheduleHealthChecks, getHealthSummary } from '@/utils/healthCheck'
+import { isOnline, initOfflineMode } from '@/utils/offline'
+import { generateMockConnectivityHistory, type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
 
 import { useModal } from '@/components/Modal'
+import ConnectivityChart from '@/components/ConnectivityChart.vue'
+import LatencyChart from '@/components/LatencyChart.vue'
 
 import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
 
-import type { ManualNodeSkipEntry } from '@/stores/cloud'
+import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
@@ -58,6 +65,24 @@ const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 const testingLatency = ref(false)
 const latencyResults = ref<RegionLatency[]>([])
 const showLatencyResults = ref(false)
+
+// Batch operations state
+const selectedNodeIds = ref<Set<string>>(new Set())
+const batchOperating = ref(false)
+
+// Visualization state
+const viewingChartNode = ref<ManagedCloudNode | null>(null)
+const showChartsModal = ref(false)
+
+// Search and filter state
+const searchQuery = ref('')
+const filterConnectivity = ref<string>('all')
+const filterStatus = ref<string>('all')
+const sortBy = ref<string>('')
+const sortOrder = ref<'asc' | 'desc'>('asc')
+
+// Keyboard shortcuts help
+const showKeyboardHelp = ref(false)
 
 // Reachability Risk Rating for regions
 // Low: Generally stable, less likely to be blocked
@@ -765,11 +790,58 @@ function formatNodeRegion(regionId: string): string {
 }
 
 const tableData = computed(() => {
-  // TEMPORARY: Disable provider filtering to debug node list display issue
-  const data = cloudStore.instances.map((node) => ({
+  let data = cloudStore.instances.map((node) => ({
     ...node,
     id: node.instanceId,
   }))
+
+  // Apply search filter
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase().trim()
+    data = data.filter((node) => {
+      return (
+        node.label?.toLowerCase().includes(query) ||
+        node.ipv4?.toLowerCase().includes(query) ||
+        node.ipv6?.toLowerCase().includes(query) ||
+        formatNodeRegion(node.region || '').toLowerCase().includes(query) ||
+        node.region?.toLowerCase().includes(query)
+      )
+    })
+  }
+
+  // Apply connectivity filter
+  if (filterConnectivity.value !== 'all') {
+    data = data.filter((node) => node.connectivityStatus === filterConnectivity.value)
+  }
+
+  // Apply status filter
+  if (filterStatus.value !== 'all') {
+    data = data.filter((node) => node.statusText === filterStatus.value)
+  }
+
+  // Apply sorting
+  if (sortBy.value) {
+    data = [...data].sort((a, b) => {
+      let aVal: any = a[sortBy.value as keyof typeof a]
+      let bVal: any = b[sortBy.value as keyof typeof b]
+
+      // Handle special cases
+      if (sortBy.value === 'createdAt') {
+        aVal = new Date(aVal || 0).getTime()
+        bVal = new Date(bVal || 0).getTime()
+      }
+
+      // Handle undefined/null
+      if (aVal == null) return 1
+      if (bVal == null) return -1
+
+      // Compare
+      if (aVal < bVal) return sortOrder.value === 'asc' ? -1 : 1
+      if (aVal > bVal) return sortOrder.value === 'asc' ? 1 : -1
+      return 0
+    })
+  }
+
   return data
 })
 
@@ -852,14 +924,15 @@ const ensurePlanForRegion = (region: string) => {
 }
 
 const columns = [
-  { title: 'cloud.table.label', key: 'label', width: '12%' },
-  { title: 'cloud.table.region', key: 'region', width: '10%' },
-  { title: 'cloud.table.plan', key: 'plan', width: '12%' },
-  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '13%' },
-  { title: 'cloud.table.protocols', key: 'protocols', width: '18%' },
-  { title: 'cloud.table.status', key: 'status', width: '14%' },
-  { title: 'cloud.table.connectivity', key: 'connectivity', width: '9%' },
-  { title: 'cloud.table.createdAt', key: 'createdAt', width: '9%' },
+  { title: 'selection', key: 'selection', width: '40px' },
+  { title: 'cloud.table.label', key: 'label', width: '11%' },
+  { title: 'cloud.table.region', key: 'region', width: '9%' },
+  { title: 'cloud.table.plan', key: 'plan', width: '11%' },
+  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '12%' },
+  { title: 'cloud.table.protocols', key: 'protocols', width: '17%' },
+  { title: 'cloud.table.status', key: 'status', width: '13%' },
+  { title: 'cloud.table.connectivity', key: 'connectivity', width: '8%' },
+  { title: 'cloud.table.createdAt', key: 'createdAt', width: '8%' },
   { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
 
@@ -900,6 +973,12 @@ const testLatencySilently = async () => {
     return
   }
 
+  // Use cached results if available and valid (24-hour TTL)
+  if (cloudStore.isLatencyCacheValid() && latencyResults.value.length > 0) {
+    console.log('[CloudView] Using cached latency results')
+    return
+  }
+
   console.log('[CloudView] Auto-testing region latency...')
   testingLatency.value = true
 
@@ -913,7 +992,17 @@ const testLatencySilently = async () => {
 
     const results: RegionLatency[] = JSON.parse(result.data)
     latencyResults.value = results
-    console.log('[CloudView] Latency test completed, results:', results.length)
+
+    // Update cache
+    cloudStore.latencyTestResults = {}
+    results.forEach((r) => {
+      if (r.status === 'ok') {
+        cloudStore.latencyTestResults[r.code] = r.latency
+      }
+    })
+    cloudStore.latencyUpdatedAt = Date.now()
+
+    console.log('[CloudView] Latency test completed and cached, results:', results.length)
 
     // Auto-select the fastest region if no region is selected
     if (!form.region) {
@@ -931,7 +1020,7 @@ const testLatencySilently = async () => {
 }
 
 const handleTestLatency = async () => {
-  console.log('[CloudView] Manual latency test triggered')
+  console.log('[CloudView] Manual latency test triggered - forcing refresh')
 
   if (!hasApiKey.value) {
     message.warn(t('cloud.latency.noApiKey'))
@@ -951,6 +1040,16 @@ const handleTestLatency = async () => {
     const results: RegionLatency[] = JSON.parse(result.data)
     latencyResults.value = results
     showLatencyResults.value = true
+
+    // Update cache with fresh results
+    cloudStore.latencyTestResults = {}
+    results.forEach((r) => {
+      if (r.status === 'ok') {
+        cloudStore.latencyTestResults[r.code] = r.latency
+      }
+    })
+    cloudStore.latencyUpdatedAt = Date.now()
+    console.log('[CloudView] Latency cache updated with manual test results')
 
     // Auto-select the fastest region
     const fastest = results.find((r) => r.status === 'ok')
@@ -1025,6 +1124,7 @@ watch(
       cloudStore.config.defaultPlan = value
     }
   },
+  { flush: 'post' }, // Defer execution until after DOM updates for better performance
 )
 
 watch(
@@ -1176,6 +1276,60 @@ const fetchMeta = async () => {
   }
 }
 
+const handleBackupConfig = async () => {
+  try {
+    const backupData = {
+      cloudConfig: cloudStore.config,
+    }
+    const backupString = await createBackup(backupData)
+    downloadBackup(backupString)
+    message.success(t('cloud.backup.exported'))
+  } catch (error) {
+    message.error(t('cloud.backup.exportFailed'))
+    handleError(error)
+  }
+}
+
+const handleRestoreConfig = async () => {
+  try {
+    // Create file input
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      const reader = new FileReader()
+      reader.onload = async (event) => {
+        try {
+          const backupString = event.target?.result as string
+          const backup = parseBackup(backupString)
+
+          // Restore cloud config
+          if (backup.cloudConfig) {
+            cloudStore.config = backup.cloudConfig
+            await cloudStore.saveConfig()
+          }
+
+          message.success(t('cloud.backup.imported'))
+
+          // Refresh data after restore
+          await fetchMeta()
+        } catch (error) {
+          message.error(t('cloud.backup.importFailed'))
+          handleError(error)
+        }
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  } catch (error) {
+    message.error(t('cloud.backup.importFailed'))
+    handleError(error)
+  }
+}
+
 const handleRefreshInstances = async () => {
   if (!hasApiKey.value) {
     message.error(t('cloud.errors.apiKeyRequired'))
@@ -1196,6 +1350,254 @@ const handleTestAllConnectivity = async () => {
     handleError(error)
   }
 }
+
+const handleShowRecommendations = () => {
+  const allNodes = cloudStore.instances
+
+  if (allNodes.length === 0) {
+    message.info(t('cloud.recommendations.noNodes'))
+    return
+  }
+
+  // Build latency map from cached results
+  const latencyMap = new Map<string, number>()
+  if (latencyResults.value.length > 0) {
+    latencyResults.value.forEach(r => {
+      if (r.status === 'ok') {
+        latencyMap.set(r.code, r.latency)
+      }
+    })
+  }
+
+  // Get top 5 recommended nodes
+  const recommendations = getRecommendedNodes(allNodes, {
+    preferLowLatency: true,
+    preferLowRisk: true,
+    preferReachable: true,
+    preferRecent: false,
+  }, latencyMap)
+
+  // Build recommendation message
+  const topNodes = recommendations.slice(0, 5)
+  if (topNodes.length === 0) {
+    message.info(t('cloud.recommendations.noneAvailable'))
+    return
+  }
+
+  const recommendationText = topNodes.map((result, index) => {
+    const { node, score, reasons } = result
+    const ipv4 = node.ipv4 || 'N/A'
+    const region = node.region ? formatNodeRegion(node.region) : 'N/A'
+    return `${index + 1}. ${node.label} (${region})\n   Score: ${score}/100\n   IP: ${ipv4}\n   ${reasons.join(', ')}`
+  }).join('\n\n')
+
+  // Show recommendations using console log since there's no modal API
+  // User can see detailed recommendations in browser console
+  console.log('=== Recommended Nodes ===\n' + recommendationText)
+  message.success(t('cloud.recommendations.title') + ': Check console for details')
+}
+
+// Batch operations
+const toggleNodeSelection = (nodeId: string) => {
+  if (selectedNodeIds.value.has(nodeId)) {
+    selectedNodeIds.value.delete(nodeId)
+  } else {
+    selectedNodeIds.value.add(nodeId)
+  }
+  // Trigger reactivity
+  selectedNodeIds.value = new Set(selectedNodeIds.value)
+}
+
+const toggleSelectAll = () => {
+  if (selectedNodeIds.value.size === tableData.value.length) {
+    selectedNodeIds.value.clear()
+  } else {
+    tableData.value.forEach(node => selectedNodeIds.value.add(node.instanceId))
+  }
+  // Trigger reactivity
+  selectedNodeIds.value = new Set(selectedNodeIds.value)
+}
+
+const clearSelection = () => {
+  selectedNodeIds.value.clear()
+  selectedNodeIds.value = new Set(selectedNodeIds.value)
+}
+
+const handleBatchTestConnectivity = async () => {
+  if (selectedNodeIds.value.size === 0) {
+    message.info(t('cloud.batch.noSelection'))
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const promises = Array.from(selectedNodeIds.value).map(id =>
+      cloudStore.testNodeConnectivity(id)
+    )
+    await Promise.all(promises)
+    message.success(t('cloud.batch.testComplete', { count: selectedNodeIds.value.size }))
+  } catch (error) {
+    handleError(error)
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+const handleBatchRotateIP = async () => {
+  if (selectedNodeIds.value.size === 0) {
+    message.info(t('cloud.batch.noSelection'))
+    return
+  }
+
+  const confirmed = await confirm(
+    t('cloud.batch.rotateIP'),
+    t('cloud.batch.rotateConfirm', { count: selectedNodeIds.value.size })
+  )
+  if (!confirmed) return
+
+  batchOperating.value = true
+  let successCount = 0
+  let failCount = 0
+
+  try {
+    for (const nodeId of selectedNodeIds.value) {
+      try {
+        await cloudStore.rotateIP(nodeId)
+        successCount++
+      } catch (error) {
+        failCount++
+        logError(`[CloudView] Failed to rotate IP for ${nodeId}:`, error)
+      }
+    }
+
+    if (successCount > 0) {
+      message.success(t('cloud.batch.rotateComplete', { success: successCount, fail: failCount }))
+    } else {
+      message.error(t('cloud.batch.allFailed'))
+    }
+
+    clearSelection()
+    await cloudStore.refreshInstances(true)
+  } catch (error) {
+    handleError(error)
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+const handleBatchDestroy = async () => {
+  if (selectedNodeIds.value.size === 0) {
+    message.info(t('cloud.batch.noSelection'))
+    return
+  }
+
+  const confirmed = await confirm(
+    t('cloud.batch.destroy'),
+    t('cloud.batch.destroyConfirm', { count: selectedNodeIds.value.size })
+  )
+  if (!confirmed) return
+
+  batchOperating.value = true
+  let successCount = 0
+  let failCount = 0
+
+  try {
+    for (const nodeId of selectedNodeIds.value) {
+      try {
+        await cloudStore.destroyInstance(nodeId)
+        successCount++
+      } catch (error) {
+        failCount++
+        logError(`[CloudView] Failed to destroy ${nodeId}:`, error)
+      }
+    }
+
+    if (successCount > 0) {
+      message.success(t('cloud.batch.destroyComplete', { success: successCount, fail: failCount }))
+    } else {
+      message.error(t('cloud.batch.allFailed'))
+    }
+
+    clearSelection()
+    await cloudStore.refreshInstances(true)
+  } catch (error) {
+    handleError(error)
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+// Search and filter handlers
+const handleSort = (column: string) => {
+  if (sortBy.value === column) {
+    // Toggle sort order
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    // New column, default to ascending
+    sortBy.value = column
+    sortOrder.value = 'asc'
+  }
+}
+
+const clearFilters = () => {
+  searchQuery.value = ''
+  filterConnectivity.value = 'all'
+  filterStatus.value = 'all'
+  sortBy.value = ''
+  sortOrder.value = 'asc'
+}
+
+const hasActiveFilters = computed(() => {
+  return (
+    searchQuery.value.trim() !== '' ||
+    filterConnectivity.value !== 'all' ||
+    filterStatus.value !== 'all'
+  )
+})
+
+// Visualization handlers
+const handleViewCharts = (node: ManagedCloudNode) => {
+  viewingChartNode.value = node
+  showChartsModal.value = true
+}
+
+const closeChartsModal = () => {
+  showChartsModal.value = false
+  viewingChartNode.value = null
+}
+
+const connectivityChartData = computed<ConnectivityDataPoint[]>(() => {
+  if (!viewingChartNode.value) return []
+  // Generate mock data based on current connectivity status
+  // In production, this would come from backend tracking
+  return generateMockConnectivityHistory(
+    viewingChartNode.value.connectivityStatus || 'unknown',
+    24 // 24 hours
+  )
+})
+
+const latencyChartData = computed<LatencyDataPoint[]>(() => {
+  if (!viewingChartNode.value) return []
+  // Generate mock latency data
+  // In production, this would come from backend tracking
+  const data: LatencyDataPoint[] = []
+  const now = Date.now()
+  const interval = (24 * 60 * 60 * 1000) / 48 // 48 data points over 24 hours
+
+  // Use a default latency as base (no latency tracking in current data model)
+  // In production, this would come from backend latency tracking
+  const baseLatency = 100
+
+  for (let i = 0; i < 48; i++) {
+    const variance = (Math.random() - 0.5) * 40 // +/- 20ms variance
+    data.push({
+      timestamp: now - (48 - i) * interval,
+      latency: Math.max(0, baseLatency + variance),
+    })
+  }
+
+  return data
+})
 
 const handleDeploy = async () => {
   if (disableDeploy.value) {
@@ -1482,11 +1884,169 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
     handleError(error)
   }
 }
+
+// Quick operations for context menu
+const handleCopyNodeConfig = async (node: ManagedCloudNode) => {
+  try {
+    // Build configuration text with all node details
+    const ipv4 = node.ipv4 || 'N/A'
+    const ipv6 = node.ipv6 || 'N/A'
+    const protocols = []
+
+    if (node.ssPort && node.ssPassword) {
+      protocols.push(`Shadowsocks: ${ipv4}:${node.ssPort} (${node.ssPassword})`)
+    }
+    if (node.hysteriaPort && node.hysteriaPassword) {
+      protocols.push(`Hysteria2: ${ipv4}:${node.hysteriaPort} (${node.hysteriaPassword})`)
+    }
+    if (node.vlessPort && node.vlessUUID) {
+      protocols.push(`VLESS: ${ipv4}:${node.vlessPort} (UUID: ${node.vlessUUID})`)
+    }
+    if (node.trojanPort && node.trojanPassword) {
+      protocols.push(`Trojan: ${ipv4}:${node.trojanPort} (${node.trojanPassword})`)
+    }
+
+    const configText = `
+Node: ${node.label}
+Region: ${node.region ? formatNodeRegion(node.region) : 'N/A'}
+IPv4: ${ipv4}
+IPv6: ${ipv6}
+
+Protocols:
+${protocols.join('\n')}
+`.trim()
+
+    await ClipboardSetText(configText)
+    message.success(t('cloud.quickActions.configCopied'))
+  } catch (error) {
+    logError('CopyNodeConfig', error)
+    message.error(t('cloud.quickActions.copyFailed'))
+  }
+}
+
+const handleQuickTestConnectivity = async (node: ManagedCloudNode) => {
+  try {
+    message.info(t('cloud.quickActions.testingConnectivity'))
+    await cloudStore.testNodeConnectivity(node.instanceId)
+    const status = node.connectivityStatus || 'unknown'
+    const statusText = getConnectivityLabel(status)
+    message.success(t('cloud.quickActions.testComplete', { status: statusText }))
+  } catch (error) {
+    logError('QuickTestConnectivity', error)
+    message.error(t('cloud.quickActions.testFailed'))
+  }
+}
+
+// Context menu for table rows
+const tableContextMenu = computed(() => [
+  {
+    label: t('cloud.quickActions.useNode'),
+    handler: (record: ManagedCloudNode) => handleUseNode(record),
+  },
+  {
+    label: t('cloud.quickActions.copyConfig'),
+    handler: (record: ManagedCloudNode) => handleCopyNodeConfig(record),
+  },
+  {
+    label: t('cloud.quickActions.testConnectivity'),
+    handler: (record: ManagedCloudNode) => handleQuickTestConnectivity(record),
+  },
+  {
+    label: t('cloud.quickActions.rotateIP'),
+    handler: (record: ManagedCloudNode) => handleRotateIP(record),
+    hidden: (record: ManagedCloudNode) => isManualNode(record) || record.connectivityStatus !== 'blocked',
+  },
+  {
+    label: t('cloud.quickActions.destroy'),
+    handler: (record: ManagedCloudNode) => handleDestroy(record),
+  },
+])
+
+// Keyboard shortcuts, health checks, and offline mode
+onMounted(() => {
+  // Initialize offline mode detection
+  const cleanupOfflineMode = initOfflineMode()
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // ? - Show keyboard shortcuts help
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault()
+      showKeyboardHelp.value = true
+      return
+    }
+
+    // Escape - Close help modal
+    if (e.key === 'Escape' && showKeyboardHelp.value) {
+      e.preventDefault()
+      showKeyboardHelp.value = false
+      return
+    }
+
+    // Ctrl+T or Cmd+T - Test all nodes connectivity
+    if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+      e.preventDefault()
+      if (cloudStore.instances.length > 0) {
+        cloudStore.testAllNodesConnectivity()
+        message.info(t('cloud.quickActions.testingAll'))
+      }
+    }
+
+    // Ctrl+R or Cmd+R - Refresh instances
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+      e.preventDefault()
+      cloudStore.refreshInstances(false, true) // Force refresh
+      message.info(t('cloud.quickActions.refreshing'))
+    }
+
+    // Ctrl+F or Cmd+F - Focus search box
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault()
+      const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
+      if (searchInput) {
+        searchInput.focus()
+      }
+    }
+  }
+
+  window.addEventListener('keydown', handleKeyDown)
+
+  // Schedule periodic health checks (every 5 minutes)
+  const performHealthCheck = () => {
+    const allNodes = cloudStore.instances
+    if (allNodes.length === 0) return
+
+    const healthResults = checkAllNodesHealth(allNodes)
+    const summary = getHealthSummary(healthResults)
+
+    logInfo(`[CloudView] Health check: ${summary.healthy}/${summary.total} healthy nodes (avg score: ${summary.avgScore})`)
+
+    // Warn if there are critical issues
+    if (summary.criticalIssues > 0) {
+      logInfo(`[CloudView] Warning: ${summary.criticalIssues} nodes have critical health issues`)
+    }
+  }
+
+  const stopHealthChecks = scheduleHealthChecks(performHealthCheck, 5 * 60 * 1000)
+
+  onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeyDown)
+    stopHealthChecks()
+    cleanupOfflineMode()
+  })
+})
 </script>
 
 <template>
   <div class="cloud-view grid gap-16">
-    <Card :title="t('cloud.credentials.title')">
+    <Card>
+      <template #title>
+        <div class="flex items-center gap-8">
+          <span>{{ t('cloud.credentials.title') }}</span>
+          <span v-if="!isOnline" class="text-12 px-8 py-2 rounded bg-yellow-500/20 text-yellow-600">
+            {{ t('cloud.offline.indicator') }}
+          </span>
+        </div>
+      </template>
       <div class="flex flex-col gap-12 py-8">
         <div class="flex flex-wrap items-center gap-8">
           <span id="cloud-provider-label" class="text-14 shrink-0">{{ t('cloud.provider.label') }}:</span>
@@ -1522,6 +2082,19 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
             type="link"
           >
             {{ t('cloud.credentials.syncMeta') }}
+          </Button>
+          <Button
+            @click="handleBackupConfig"
+            type="link"
+            :disabled="!hasApiKey"
+          >
+            {{ t('cloud.backup.export') }}
+          </Button>
+          <Button
+            @click="handleRestoreConfig"
+            type="link"
+          >
+            {{ t('cloud.backup.import') }}
           </Button>
         </div>
         <div class="text-12 text-secondary">
@@ -1586,6 +2159,13 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
           >
             {{ t('cloud.connectivity.testAll') }}
           </Button>
+          <Button
+            @click="handleShowRecommendations"
+            type="link"
+            :disabled="tableData.length === 0"
+          >
+            {{ t('cloud.recommendations.showButton') }}
+          </Button>
           <Button @click="openManualNodeModal" type="normal">
             {{ t('cloud.manual.add') }}
           </Button>
@@ -1634,8 +2214,140 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
           </div>
         </div>
 
+        <!-- Search and Filter Controls -->
+        <div v-if="tableData.length || hasActiveFilters" class="flex flex-wrap items-center gap-8">
+          <!-- Search Box -->
+          <div class="flex-1 min-w-200">
+            <Input
+              v-model="searchQuery"
+              :placeholder="t('cloud.search.placeholder')"
+              size="small"
+              clearable
+            />
+          </div>
+
+          <!-- Connectivity Filter -->
+          <Select
+            v-model="filterConnectivity"
+            :options="[
+              { label: t('cloud.filter.allConnectivity'), value: 'all' },
+              { label: t('cloud.connectivity.reachable'), value: 'reachable' },
+              { label: t('cloud.connectivity.icmp_blocked'), value: 'icmp_blocked' },
+              { label: t('cloud.connectivity.blocked'), value: 'blocked' },
+              { label: t('cloud.connectivity.testing'), value: 'testing' },
+              { label: t('cloud.connectivity.unknown'), value: 'unknown' },
+            ]"
+            :placeholder="t('cloud.filter.connectivity')"
+            size="small"
+            class="min-w-120"
+          />
+
+          <!-- Status Filter -->
+          <Select
+            v-model="filterStatus"
+            :options="[
+              { label: t('cloud.filter.allStatus'), value: 'all' },
+              { label: t('cloud.status.unknown'), value: 'unknown' },
+              { label: t('cloud.status.pending'), value: 'pending' },
+              { label: t('cloud.status.applying'), value: 'applying' },
+              { label: t('cloud.status.connected'), value: 'connected' },
+              { label: t('cloud.status.error'), value: 'error' },
+            ]"
+            :placeholder="t('cloud.filter.status')"
+            size="small"
+            class="min-w-120"
+          />
+
+          <!-- Sort By -->
+          <Select
+            v-model="sortBy"
+            :options="[
+              { label: t('cloud.sort.default'), value: '' },
+              { label: t('cloud.table.label'), value: 'label' },
+              { label: t('cloud.table.region'), value: 'region' },
+              { label: t('cloud.table.status'), value: 'status' },
+              { label: t('cloud.table.createdAt'), value: 'createdAt' },
+            ]"
+            :placeholder="t('cloud.sort.sortBy')"
+            size="small"
+            class="min-w-140"
+          />
+
+          <!-- Sort Order Toggle -->
+          <Button
+            v-if="sortBy"
+            @click="sortOrder = sortOrder === 'asc' ? 'desc' : 'asc'"
+            type="text"
+            size="small"
+            :title="sortOrder === 'asc' ? t('cloud.sort.ascending') : t('cloud.sort.descending')"
+          >
+            {{ sortOrder === 'asc' ? '↑' : '↓' }}
+          </Button>
+
+          <!-- Clear Filters Button -->
+          <Button
+            v-if="hasActiveFilters || sortBy"
+            @click="clearFilters"
+            type="text"
+            size="small"
+          >
+            {{ t('cloud.filter.clear') }}
+          </Button>
+
+          <!-- Result Count -->
+          <span v-if="hasActiveFilters" class="text-12 text-secondary">
+            {{ t('cloud.search.results', { count: tableData.length }) }}
+          </span>
+        </div>
+
+        <!-- Batch operations toolbar -->
+        <div v-if="selectedNodeIds.size > 0" class="flex flex-wrap items-center gap-8 p-12 bg-primary/5 rounded">
+          <span class="text-14 font-medium">{{ t('cloud.batch.selected', { count: selectedNodeIds.size }) }}</span>
+          <Button
+            @click="handleBatchTestConnectivity"
+            type="normal"
+            size="small"
+            :loading="batchOperating"
+          >
+            {{ t('cloud.batch.testConnectivity') }}
+          </Button>
+          <Button
+            @click="handleBatchRotateIP"
+            type="normal"
+            size="small"
+            :loading="batchOperating"
+          >
+            {{ t('cloud.batch.rotateIP') }}
+          </Button>
+          <Button
+            @click="handleBatchDestroy"
+            type="normal"
+            size="small"
+            :loading="batchOperating"
+          >
+            {{ t('cloud.batch.destroy') }}
+          </Button>
+          <Button
+            @click="clearSelection"
+            type="link"
+            size="small"
+          >
+            {{ t('common.cancel') }}
+          </Button>
+        </div>
+
         <div v-else class="py-8">
-          <Table :columns="columns" :data-source="tableData">
+          <Table :columns="columns" :data-source="tableData" :menu="tableContextMenu" @row-click="(record: any) => toggleNodeSelection(record.instanceId)">
+            <template #selection="{ record }">
+              <div class="flex items-center justify-center" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="selectedNodeIds.has(record.instanceId)"
+                  @change="toggleNodeSelection(record.instanceId)"
+                  class="cursor-pointer w-16 h-16"
+                />
+              </div>
+            </template>
             <template #region="{ record }">
             <div>{{ formatNodeRegion(record.region) }}</div>
             </template>
@@ -1750,6 +2462,7 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
                 {{ t('cloud.manual.edit') }}
               </Button>
               <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
+              <Button @click="handleViewCharts(record as ManagedCloudNode)" type="text" size="small" v-tips="'cloud.charts.view'">📊</Button>
               <Button
                 v-if="!isManualNode(record) && record.connectivityStatus === 'blocked'"
                 @click="handleRotateIP(record)"
@@ -1776,6 +2489,78 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
   </div>
 
   <Modal />
+
+  <!-- Charts Modal -->
+  <Modal v-if="showChartsModal" @close="closeChartsModal">
+    <template #title>
+      {{ t('cloud.charts.title', { label: viewingChartNode?.label || '' }) }}
+    </template>
+    <div v-if="viewingChartNode" class="charts-modal-content">
+      <div class="chart-section">
+        <ConnectivityChart
+          :title="t('cloud.charts.connectivity')"
+          :data="connectivityChartData"
+          :width="600"
+          :height="80"
+        />
+      </div>
+      <div class="chart-section">
+        <LatencyChart
+          :title="t('cloud.charts.latency')"
+          :data="latencyChartData"
+          :width="600"
+          :height="120"
+        />
+      </div>
+      <div class="chart-note">
+        <span>{{ t('cloud.charts.note') }}</span>
+      </div>
+    </div>
+  </Modal>
+
+  <!-- Keyboard Shortcuts Help Modal -->
+  <Modal v-if="showKeyboardHelp" @close="showKeyboardHelp = false">
+    <template #title>
+      {{ t('cloud.shortcuts.title') }}
+    </template>
+    <div class="shortcuts-help">
+      <div class="shortcuts-section">
+        <h3 class="shortcuts-section-title">{{ t('cloud.shortcuts.general') }}</h3>
+        <div class="shortcut-item">
+          <kbd>?</kbd>
+          <span>{{ t('cloud.shortcuts.showHelp') }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Esc</kbd>
+          <span>{{ t('cloud.shortcuts.closeModal') }}</span>
+        </div>
+      </div>
+
+      <div class="shortcuts-section">
+        <h3 class="shortcuts-section-title">{{ t('cloud.shortcuts.navigation') }}</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>F</kbd>
+          <span>{{ t('cloud.shortcuts.focusSearch') }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>R</kbd>
+          <span>{{ t('cloud.shortcuts.refresh') }}</span>
+        </div>
+      </div>
+
+      <div class="shortcuts-section">
+        <h3 class="shortcuts-section-title">{{ t('cloud.shortcuts.actions') }}</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>T</kbd>
+          <span>{{ t('cloud.shortcuts.testAll') }}</span>
+        </div>
+      </div>
+
+      <div class="shortcuts-note">
+        {{ t('cloud.shortcuts.note') }}
+      </div>
+    </div>
+  </Modal>
 </template>
 
 <style lang="less" scoped>
@@ -1878,5 +2663,90 @@ const handleDestroy = async (record: CloudNode | Record<string, any>) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Charts Modal */
+.charts-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 0;
+}
+
+.chart-section {
+  border: 1px solid var(--divider-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.chart-note {
+  font-size: 12px;
+  color: var(--text-secondary-color);
+  font-style: italic;
+  text-align: center;
+  padding: 8px;
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+/* Keyboard Shortcuts Help */
+.shortcuts-help {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 0;
+}
+
+.shortcuts-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shortcuts-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary-color);
+  margin: 0 0 8px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider-color);
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.shortcut-item kbd {
+  display: inline-block;
+  padding: 4px 8px;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  min-width: 32px;
+  text-align: center;
+}
+
+.shortcut-item span {
+  flex: 1;
+  color: var(--text-secondary-color);
+}
+
+.shortcuts-note {
+  font-size: 12px;
+  color: var(--text-tertiary-color);
+  font-style: italic;
+  text-align: center;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 4px;
+  margin-top: 8px;
 }
 </style>

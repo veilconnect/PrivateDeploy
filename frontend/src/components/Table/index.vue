@@ -102,7 +102,7 @@ const renderCell = (column: Column, record: Recordable) => {
       <tbody>
         <tr
           v-for="record in tableData"
-          v-menu="menu.map((v) => ({ ...v, handler: () => v.handler?.(record) }))"
+          v-menu="menu.filter(v => typeof v.hidden === 'function' ? !v.hidden(record) : !v.hidden).map((v) => ({ ...v, handler: () => v.handler?.(record) }))"
           :key="record.id"
           class="transition duration-200"
         >

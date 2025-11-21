@@ -65,8 +65,8 @@ func (p *Provider) TestRegionLatency(ctx context.Context, regionCode string) (*R
 	for i := 0; i < testCount; i++ {
 		start := time.Now()
 
-		// 设置超时时间为 3 秒
-		conn, err := net.DialTimeout("tcp", testInfo.IP+":80", 3*time.Second)
+		// 设置超时时间为 2 秒（优化性能）
+		conn, err := net.DialTimeout("tcp", testInfo.IP+":80", 2*time.Second)
 
 		if err == nil {
 			latency := time.Since(start)

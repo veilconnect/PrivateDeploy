@@ -25,6 +25,7 @@ export interface Menu {
   handler?: (...args: any) => void
   separator?: boolean
   children?: Menu[]
+  hidden?: boolean | ((record: any) => boolean)
 }
 
 export interface MenuItem {

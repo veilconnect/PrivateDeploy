@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { reactive, ref, computed, watch } from 'vue'
+import { reactive, ref, shallowRef, computed, watch } from 'vue'
 
 import {
   GetCloudConfig,
@@ -25,6 +25,9 @@ import { RequestMethod } from '@/enums/app'
 import { Outbound } from '@/enums/kernel'
 import { sampleID, deepClone, ignoredError } from '@/utils'
 import { logError, logInfo } from '@/utils/logger'
+import { notifications } from '@/utils/notification'
+import { retryWithBackoff } from '@/utils/errorRecovery'
+import { isOnline, saveToOfflineCache, loadFromOfflineCache, initOfflineMode } from '@/utils/offline'
 
 import { useAppSettingsStore } from './appSettings'
 import { useKernelApiStore } from './kernelApi'
@@ -36,7 +39,7 @@ import type { CloudProvider, CloudConfig, CloudNode, CloudPlan, CloudRegion, Con
 
 
 type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
-type ManagedCloudNode = CloudNode & {
+export type ManagedCloudNode = CloudNode & {
   statusText?: CloudNodeStatus
   connectivityStatus?: ConnectivityStatus
   connectivityTesting?: boolean
@@ -159,20 +162,35 @@ export const useCloudStore = defineStore('cloud', () => {
   const configLoaded = ref(false)
   const savingConfig = ref(false)
 
-  const regions = ref<CloudRegion[]>([])
-  const plans = ref<CloudPlan[]>([])
+  // Use shallowRef for large arrays to reduce reactivity overhead
+  // These arrays contain many items but we only replace them entirely, never mutate items
+  const regions = shallowRef<CloudRegion[]>([])
+  const plans = shallowRef<CloudPlan[]>([])
   const availability = reactive<Record<string, string[]>>({})
-  const instances = ref<ManagedCloudNode[]>([])
+  const instances = shallowRef<ManagedCloudNode[]>([])
   const hasReadyInstances = computed(() => instances.value.some((node) => hasUsableAddress(node)))
 
   const loadingRegions = ref(false)
   const loadingPlans = ref(false)
   const loadingInstances = ref(false)
   const instancesUpdatedAt = ref<number | null>(null)
+
+  // Cache management - timestamps for cache expiration
+  const regionsUpdatedAt = ref<number | null>(null)
+  const plansUpdatedAt = ref<number | null>(null)
+  const latencyUpdatedAt = ref<number | null>(null)
+  const latencyTestResults = ref<Record<string, number>>({}) // region code -> latency in ms
+  const CACHE_TTL = {
+    regions: 30 * 60 * 1000,      // 30 minutes - regions rarely change
+    plans: 30 * 60 * 1000,        // 30 minutes - plans rarely change
+    instances: 2 * 60 * 1000,     // 2 minutes - instances change more frequently
+    instancesBackground: 5 * 60 * 1000,  // 5 minutes for background refresh
+    latency: 24 * 60 * 60 * 1000, // 24 hours - latency tests are expensive
+  }
   const creatingInstance = ref(false)
   const destroyingInstance = ref<string>('')
   const manualNodesLoaded = ref(false)
-  const manualNodes = ref<ManagedCloudNode[]>([])
+  const manualNodes = shallowRef<ManagedCloudNode[]>([])
   let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
   const autoApplyTimers = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -184,6 +202,34 @@ export const useCloudStore = defineStore('cloud', () => {
   const ensureFlag = (flag: boolean, data: string) => {
     if (!flag) throw new Error(data)
   }
+
+  /**
+   * Check if cache is still valid
+   */
+  const isCacheValid = (timestamp: number | null, ttl: number): boolean => {
+    if (!timestamp) return false
+    return Date.now() - timestamp < ttl
+  }
+
+  /**
+   * Check if regions cache is valid
+   */
+  const isRegionsCacheValid = () => isCacheValid(regionsUpdatedAt.value, CACHE_TTL.regions)
+
+  /**
+   * Check if plans cache is valid
+   */
+  const isPlansCacheValid = () => isCacheValid(plansUpdatedAt.value, CACHE_TTL.plans)
+
+  /**
+   * Check if instances cache is valid
+   */
+  const isInstancesCacheValid = () => isCacheValid(instancesUpdatedAt.value, CACHE_TTL.instances)
+
+  /**
+   * Check if latency test cache is valid
+   */
+  const isLatencyCacheValid = () => isCacheValid(latencyUpdatedAt.value, CACHE_TTL.latency)
 
   const markNodeStatus = (instanceId: string, status: CloudNodeStatus) => {
     const node = instances.value.find((item) => item.instanceId === instanceId)
@@ -748,52 +794,173 @@ export const useCloudStore = defineStore('cloud', () => {
       const payload = deepClone(config) as CloudConfig
       payload.provider = currentProvider.value
       payload.extra = payload.extra ?? {}
-      const res = await SaveCloudConfig(JSON.stringify(payload))
+      const res = await retryWithBackoff(
+        () => SaveCloudConfig(JSON.stringify(payload)),
+        'SaveCloudConfig',
+        { maxAttempts: 3, baseDelay: 1000 }
+      )
       ensureFlag(res.flag, res.data)
       if (payload.apiKey && payload.apiKey.trim() !== '') {
         startAutoRefresh(true)
       } else {
         stopAutoRefresh()
       }
+
+      // Notify config saved successfully
+      notifications.configSaved()
+    } catch (error) {
+      // Notify config save failed
+      notifications.error('Configuration Save Failed', error instanceof Error ? error.message : String(error))
+      throw error
     } finally {
       savingConfig.value = false
     }
   }
 
-  const fetchRegions = async () => {
+  /**
+   * Fetch regions with cache support
+   * @param force - Force refresh ignoring cache
+   */
+  const fetchRegions = async (force = false) => {
+    // Return cached data if valid and not forcing refresh
+    if (!force && isRegionsCacheValid() && regions.value.length > 0) {
+      logInfo('[CloudStore] Using cached regions data')
+      return
+    }
+
+    // If offline, try to load from offline cache
+    if (!isOnline.value) {
+      const cached = loadFromOfflineCache<CloudRegion[]>('regions')
+      if (cached) {
+        regions.value = cached
+        regionsUpdatedAt.value = Date.now()
+        logInfo('[CloudStore] Loaded regions from offline cache')
+        return
+      }
+    }
+
     loadingRegions.value = true
     try {
-      const res = await ListCloudRegions()
+      const res = await retryWithBackoff(
+        () => ListCloudRegions(),
+        'ListCloudRegions',
+        { maxAttempts: 2, baseDelay: 1000 }
+      )
       ensureFlag(res.flag, res.data)
       regions.value = parseJSON<CloudRegion[]>(res.data, [])
+      regionsUpdatedAt.value = Date.now()
+
+      // Save to offline cache
+      saveToOfflineCache('regions', regions.value)
+
+      logInfo('[CloudStore] Regions fetched and cached')
+    } catch (error) {
+      // If fetch fails, try offline cache as fallback
+      const cached = loadFromOfflineCache<CloudRegion[]>('regions')
+      if (cached) {
+        regions.value = cached
+        regionsUpdatedAt.value = Date.now()
+        logInfo('[CloudStore] Failed to fetch regions, using offline cache')
+      } else {
+        throw error
+      }
     } finally {
       loadingRegions.value = false
     }
   }
 
-  const fetchPlans = async () => {
+  /**
+   * Fetch plans with cache support
+   * @param force - Force refresh ignoring cache
+   */
+  const fetchPlans = async (force = false) => {
+    // Return cached data if valid and not forcing refresh
+    if (!force && isPlansCacheValid() && plans.value.length > 0) {
+      logInfo('[CloudStore] Using cached plans data')
+      return
+    }
+
+    // If offline, try to load from offline cache
+    if (!isOnline.value) {
+      const cached = loadFromOfflineCache<CloudPlan[]>('plans')
+      if (cached) {
+        plans.value = cached
+        plansUpdatedAt.value = Date.now()
+        logInfo('[CloudStore] Loaded plans from offline cache')
+        return
+      }
+    }
+
     loadingPlans.value = true
     try {
-      const res = await ListCloudPlans()
+      const res = await retryWithBackoff(
+        () => ListCloudPlans(),
+        'ListCloudPlans',
+        { maxAttempts: 2, baseDelay: 1000 }
+      )
       ensureFlag(res.flag, res.data)
       plans.value = parseJSON<CloudPlan[]>(res.data, [])
+      plansUpdatedAt.value = Date.now()
+
+      // Save to offline cache
+      saveToOfflineCache('plans', plans.value)
+
+      logInfo('[CloudStore] Plans fetched and cached')
+    } catch (error) {
+      // If fetch fails, try offline cache as fallback
+      const cached = loadFromOfflineCache<CloudPlan[]>('plans')
+      if (cached) {
+        plans.value = cached
+        plansUpdatedAt.value = Date.now()
+        logInfo('[CloudStore] Failed to fetch plans, using offline cache')
+      } else {
+        throw error
+      }
     } finally {
       loadingPlans.value = false
     }
   }
 
-  const refreshInstances = async (silent = false) => {
+  /**
+   * Refresh instances with cache support
+   * @param silent - Don't show loading indicator
+   * @param force - Force refresh ignoring cache
+   */
+  const refreshInstances = async (silent = false, force = false) => {
     if (!config.apiKey || config.apiKey.trim() === '') {
       instances.value = []
       instancesUpdatedAt.value = Date.now()
       return
     }
 
+    // Use cached data if valid and not forcing refresh
+    if (!force && isInstancesCacheValid() && instances.value.length > 0) {
+      logInfo('[CloudStore] Using cached instances data')
+      return
+    }
+
+    // If offline, try to load from offline cache
+    if (!isOnline.value) {
+      const cached = loadFromOfflineCache<ManagedCloudNode[]>('nodes')
+      if (cached) {
+        instances.value = cached
+        instancesUpdatedAt.value = Date.now()
+        await loadManualNodes()
+        syncManualNodesIntoInstances()
+        logInfo('[CloudStore] Loaded instances from offline cache')
+        return
+      }
+    }
+
     if (!silent) {
       loadingInstances.value = true
     }
     try {
-      const res = await ListCloudInstances()
+      const res = await retryWithBackoff(
+        () => ListCloudInstances(),
+        'ListCloudInstances',
+        { maxAttempts: 3, baseDelay: 1000 }
+      )
       ensureFlag(res.flag, res.data)
       const rawNodes = parseJSON<Record<string, any>[]>(res.data, [])
       console.log('[CloudStore] Raw nodes from backend:', rawNodes.length, rawNodes)
@@ -850,6 +1017,10 @@ export const useCloudStore = defineStore('cloud', () => {
 
       instances.value = enriched
       instancesUpdatedAt.value = Date.now()
+
+      // Save to offline cache
+      saveToOfflineCache('nodes', enriched)
+
       logInfo(`[CloudStore] Set instances.value to ${enriched.length} nodes:`, JSON.stringify(enriched.map(n => ({ id: n.instanceId, label: n.label, ipv4: n.ipv4 }))))
 
       await loadManualNodes()
@@ -1003,7 +1174,18 @@ export const useCloudStore = defineStore('cloud', () => {
       }
     } catch (error) {
       logError('[CloudStore] refreshInstances error:', error)
-      throw error
+
+      // If fetch fails, try offline cache as fallback
+      const cached = loadFromOfflineCache<ManagedCloudNode[]>('nodes')
+      if (cached) {
+        instances.value = cached
+        instancesUpdatedAt.value = Date.now()
+        await loadManualNodes()
+        syncManualNodesIntoInstances()
+        logInfo('[CloudStore] Failed to fetch instances, using offline cache')
+      } else {
+        throw error
+      }
     } finally {
       if (!silent) {
         loadingInstances.value = false
@@ -1078,16 +1260,33 @@ export const useCloudStore = defineStore('cloud', () => {
     logInfo(`[CloudStore] Testing connectivity to ${testIP} ports:`, ports)
 
     try {
-      const result = await TestConnectivity(testIP, ports)
+      const result = await retryWithBackoff(
+        () => TestConnectivity(testIP, ports),
+        'TestConnectivity',
+        { maxAttempts: 2, baseDelay: 1000 }
+      )
       logInfo('[CloudStore] Connectivity test result:', result)
 
       // Update connectivity status based on result
       node.connectivityStatus = result.status
       node.connectivityTesting = false
+
+      // Notify based on connectivity result
+      if (result.status === 'blocked') {
+        notifications.connectivityBlocked(node.label)
+      } else if (result.status === 'reachable') {
+        notifications.connectivityRestored(node.label)
+      }
     } catch (error) {
       logError('[CloudStore] Connectivity test failed:', error)
       node.connectivityStatus = 'unknown'
       node.connectivityTesting = false
+
+      // Notify test failure
+      notifications.error(
+        'Connectivity Test Failed',
+        `Failed to test connectivity for ${node.label}: ${error instanceof Error ? error.message : String(error)}`
+      )
     }
   }
 
@@ -1149,6 +1348,10 @@ export const useCloudStore = defineStore('cloud', () => {
     run()
   }
 
+  /**
+   * Start background auto-refresh with optimized interval
+   * Uses cache to avoid unnecessary API calls
+   */
   const startAutoRefresh = (refreshImmediately = false) => {
     if (!config.apiKey || config.apiKey.trim() === '') {
       stopAutoRefresh()
@@ -1166,13 +1369,16 @@ export const useCloudStore = defineStore('cloud', () => {
       if (loadingInstances.value || creatingInstance.value || destroyingInstance.value) {
         return
       }
-      refreshInstances(true).catch((error) => {
+      // Use cache-aware refresh (will skip if cache is valid)
+      refreshInstances(true, false).catch((error) => {
         logError('[CloudStore] Auto refresh failed:', error)
       })
     }
 
-    autoRefreshTimer = setInterval(runRefresh, 15_000)
-    logInfo('[CloudStore] Started auto refresh timer')
+    // Optimized: 5 minutes interval (cache handles freshness check)
+    // Previously: 15 seconds (too aggressive)
+    autoRefreshTimer = setInterval(runRefresh, CACHE_TTL.instancesBackground)
+    logInfo('[CloudStore] Started optimized auto refresh timer (5min interval)')
     if (refreshImmediately) {
       runRefresh()
     }
@@ -1181,7 +1387,11 @@ export const useCloudStore = defineStore('cloud', () => {
   const createInstance = async (options: { label: string; region: string; plan: string }) => {
     creatingInstance.value = true
     try {
-      const res = await CreateCloudInstance(JSON.stringify(options))
+      const res = await retryWithBackoff(
+        () => CreateCloudInstance(JSON.stringify(options)),
+        'CreateCloudInstance',
+        { maxAttempts: 3, baseDelay: 2000 }
+      )
       ensureFlag(res.flag, res.data)
       const rawNode = parseJSON<Record<string, any>>(res.data, {} as CloudNode)
       const node = normalizeCloudNode(rawNode, currentProvider.value)
@@ -1223,6 +1433,9 @@ export const useCloudStore = defineStore('cloud', () => {
           )
           instancesUpdatedAt.value = Date.now()
 
+          // Notify deployment success
+          notifications.deploymentComplete(cloudNode.label)
+
           // Auto-test connectivity after deployment
           logInfo('[CloudStore] Auto-testing connectivity for new node:', cloudNode.label)
           testNodeConnectivity(cloudNode.instanceId).catch((error) => {
@@ -1236,6 +1449,9 @@ export const useCloudStore = defineStore('cloud', () => {
             n.instanceId === cloudNode.instanceId ? cloudNode : n
           )
           instancesUpdatedAt.value = Date.now()
+
+          // Notify deployment failure
+          notifications.deploymentFailed(cloudNode.label, error instanceof Error ? error.message : String(error))
         }
       }
       return node
@@ -1298,15 +1514,28 @@ export const useCloudStore = defineStore('cloud', () => {
 
     logInfo('[CloudStore] Rotating IP for node:', node.label, nodeConfig)
 
-    // Destroy the existing instance
-    await destroyInstance(instanceId)
+    // Notify IP rotation start
+    notifications.info('IP Rotation Started', `Rotating IP for ${node.label}...`)
 
-    // Create a new instance with the same configuration
-    logInfo('[CloudStore] Creating replacement instance with same configuration')
-    const newNode = await createInstance(nodeConfig)
+    try {
+      // Destroy the existing instance
+      await destroyInstance(instanceId)
 
-    logInfo('[CloudStore] IP rotation completed. New node:', newNode.instanceId)
-    return newNode
+      // Create a new instance with the same configuration
+      logInfo('[CloudStore] Creating replacement instance with same configuration')
+      const newNode = await createInstance(nodeConfig)
+
+      logInfo('[CloudStore] IP rotation completed. New node:', newNode.instanceId)
+
+      // Notify IP rotation success
+      notifications.rotationComplete(node.label)
+
+      return newNode
+    } catch (error) {
+      // Notify IP rotation failure
+      notifications.rotationFailed(node.label, error instanceof Error ? error.message : String(error))
+      throw error
+    }
   }
 
   const applyAllNodesToProfile = async () => {
@@ -1634,6 +1863,12 @@ export const useCloudStore = defineStore('cloud', () => {
     fetchPlans,
     refreshInstances,
     ensureRegionAvailability,
+    isRegionsCacheValid,
+    isPlansCacheValid,
+    isInstancesCacheValid,
+    isLatencyCacheValid,
+    latencyTestResults,
+    latencyUpdatedAt,
     createInstance,
     destroyInstance,
     rotateIP,
