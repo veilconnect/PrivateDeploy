@@ -119,10 +119,16 @@ envStore.setupEnv().then(async () => {
       await autoApplyPromise
     }
 
-    if (!kernelApiStore.running && cloudStore.hasReadyInstances) {
+    // Only auto-start if we have ready instances AND a valid profile
+    const profileId = appSettings.app.kernel.profile
+    const hasValidProfile = profileId && profilesStore.getProfileById(profileId)
+
+    if (!kernelApiStore.running && cloudStore.hasReadyInstances && hasValidProfile) {
       console.log('[App] Auto-starting kernel...')
       await kernelApiStore.startCore()
       console.log('[App] Kernel auto-started successfully')
+    } else if (!kernelApiStore.running && cloudStore.hasReadyInstances && !hasValidProfile) {
+      console.log('[App] Skipping auto-start: no valid profile configured')
     }
   } catch (error) {
     console.error('[App] Failed to auto-start kernel:', error)
