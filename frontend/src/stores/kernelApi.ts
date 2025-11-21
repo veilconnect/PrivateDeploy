@@ -715,6 +715,64 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
 
   watch([watchSources, running], updateTrayMenus)
 
+  /**
+   * Optimistically remove a subscription from all proxy groups
+   * This provides immediate UI feedback without waiting for kernel restart
+   */
+  const removeProxyFromGroups = (subscriptionId: string) => {
+    const updated = { ...proxies.value }
+
+    // Remove from all selector and urltest groups
+    Object.keys(updated).forEach((groupName) => {
+      const group = updated[groupName]
+      if (group.all && Array.isArray(group.all)) {
+        const originalLength = group.all.length
+        group.all = group.all.filter((proxyName) => proxyName !== subscriptionId)
+
+        // If the current selection was the removed proxy, switch to first available
+        if (group.now === subscriptionId && group.all.length > 0) {
+          group.now = group.all[0]
+        }
+      }
+    })
+
+    // Remove the proxy itself if it exists as a top-level entry
+    delete updated[subscriptionId]
+
+    proxies.value = updated
+  }
+
+  /**
+   * Optimistically add a subscription to all selector and urltest groups
+   * This provides immediate UI feedback without waiting for kernel restart
+   */
+  const addProxyToGroups = (subscriptionId: string, displayName: string) => {
+    const updated = { ...proxies.value }
+
+    // Add a temporary proxy entry
+    updated[subscriptionId] = {
+      name: subscriptionId,
+      type: 'Subscription',
+      now: '',
+      all: [],
+      history: [],
+      alive: false,
+      udp: false,
+    }
+
+    // Add to selector and urltest groups
+    Object.keys(updated).forEach((groupName) => {
+      const group = updated[groupName]
+      if (group.type === 'Selector' || group.type === 'URLTest') {
+        if (group.all && Array.isArray(group.all) && !group.all.includes(subscriptionId)) {
+          group.all = [...group.all, subscriptionId]
+        }
+      }
+    })
+
+    proxies.value = updated
+  }
+
   return {
     startCore,
     stopCore,
@@ -731,6 +789,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     refreshConfig,
     updateConfig,
     refreshProviderProxies,
+    removeProxyFromGroups,
+    addProxyToGroups,
     getProxyPort,
 
     onLogs: createCoreWSHandlerRegister(websocketHandlers.logs, onLogsEvents),

@@ -728,6 +728,12 @@ export const useCloudStore = defineStore('cloud', () => {
     }
     await RemoveFile(path).catch(() => undefined)
 
+    // Optimistic UI update: immediately remove from proxy groups for instant feedback
+    if (kernelApiStore.running) {
+      kernelApiStore.removeProxyFromGroups(id)
+      logInfo('[CloudStore] Optimistically removed proxy from groups:', id)
+    }
+
     // Remove references from all profiles that used this subscription
     const toPrune: Array<Promise<void>> = []
     for (const profile of profilesStore.profiles) {
@@ -1082,6 +1088,14 @@ export const useCloudStore = defineStore('cloud', () => {
         try {
           logInfo('[CloudStore] Auto-applying newly ready node:', node.label)
           await applyNodeToProfile(node)
+
+          // Optimistic UI update: immediately add to proxy groups for instant feedback
+          if (kernelApiStore.running) {
+            const subId = subscriptionId(node.instanceId)
+            kernelApiStore.addProxyToGroups(subId, node.label)
+            logInfo('[CloudStore] Optimistically added proxy to groups:', subId)
+          }
+
           node.statusText = 'connected'
           instances.value = instances.value.map((n) =>
             n.instanceId === node.instanceId ? node : n,
@@ -1443,6 +1457,13 @@ export const useCloudStore = defineStore('cloud', () => {
           await applyNodeToProfile(cloudNode)
           applySuccess = true
           logInfo('[CloudStore] Successfully applied new node to profile:', cloudNode.label)
+
+          // Optimistic UI update: immediately add to proxy groups for instant feedback
+          if (kernelApiStore.running) {
+            const subId = subscriptionId(cloudNode.instanceId)
+            kernelApiStore.addProxyToGroups(subId, cloudNode.label)
+            logInfo('[CloudStore] Optimistically added proxy to groups:', subId)
+          }
 
           // Update status to 'connected' after successful apply
           cloudNode.statusText = 'connected'
