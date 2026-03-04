@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../../core/network/api_client.dart';
 import '../../shared/utils/logger.dart';
-import 'package:dio/dio.dart';
 
 class ProfileProvider with ChangeNotifier {
   final ApiClient apiClient;
@@ -369,6 +368,7 @@ class Profile {
   factory Profile.fromJson(Map<String, dynamic> json) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
+      if (value is DateTime) return value;
       if (value is String && value.isNotEmpty) {
         return DateTime.tryParse(value);
       }
