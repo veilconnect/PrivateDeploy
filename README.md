@@ -46,6 +46,18 @@ Reality parameters (public key + short ID) are stored on the VPS under `/etc/pri
 
 - `MULTI-PROTOCOL-DESIGN.md` – Deep dive into the multi-protocol deployment flow.
 - `DEPLOYMENT-IMPROVEMENTS.md` – Notes on user-data hardening and firewall fixes.
+- `docs/GO-NO-GO-CHECKLIST.md` – Release decision checklist with rollback template.
+
+## Quality Gate (Local)
+
+```bash
+go test ./...
+cd api && go test ./...
+cd ../frontend && pnpm run type-check && pnpm run lint:ci
+cd .. && python3 e2e/run_cloud_ui_e2e.py
+```
+
+The cloud UI regression script always uses an isolated localhost port (`127.0.0.1:4174`) and rejects `7890` to avoid interfering with system proxy settings.
 
 ## License
 

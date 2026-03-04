@@ -33,7 +33,9 @@ func main() {
 
 	// Load configuration
 	cfg := config.Load()
-	ensureJWTSecret(cfg)
+	if err := ensureJWTSecret(cfg); err != nil {
+		log.Fatalf("❌ Security bootstrap failed: %v", err)
+	}
 	log.Printf("📋 Configuration loaded (Port: %s)", cfg.Server.Port)
 
 	// Setup database
@@ -128,6 +130,9 @@ func initializeDefaultUser(db *gorm.DB) error {
 
 	password := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD"))
 	if password == "" {
+		if isProductionMode() {
+			return fmt.Errorf("INITIAL_ADMIN_PASSWORD is required in production when bootstrapping the first admin user")
+		}
 		password = generateSecureToken(20)
 		log.Printf("⚠️  INITIAL_ADMIN_PASSWORD not set, generated one-time password for %q: %s", username, password)
 		log.Println("⚠️  Set INITIAL_ADMIN_PASSWORD in environment to avoid random bootstrap credentials.")
@@ -153,15 +158,20 @@ func initializeDefaultUser(db *gorm.DB) error {
 	return nil
 }
 
-func ensureJWTSecret(cfg *config.Config) {
+func ensureJWTSecret(cfg *config.Config) error {
 	secret := strings.TrimSpace(cfg.JWT.Secret)
 	if secret != "" && secret != insecureJWTSecret {
-		return
+		return nil
+	}
+
+	if isProductionMode() {
+		return fmt.Errorf("JWT_SECRET is required in production and cannot use the default insecure value")
 	}
 
 	cfg.JWT.Secret = generateSecureToken(48)
 	log.Println("⚠️  JWT_SECRET is missing or insecure. Generated an in-memory secret for this process.")
 	log.Println("⚠️  Set JWT_SECRET in environment for stable tokens across restarts.")
+	return nil
 }
 
 func generateSecureToken(length int) string {
@@ -201,4 +211,14 @@ func initializeCloudManager() *cloud.Manager {
 
 	log.Println("📦 Registered cloud providers: vultr, digitalocean")
 	return manager
+}
+
+func isProductionMode() bool {
+	for _, key := range []string{"API_ENV", "APP_ENV"} {
+		value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+		if value == "production" || value == "prod" {
+			return true
+		}
+	}
+	return false
 }

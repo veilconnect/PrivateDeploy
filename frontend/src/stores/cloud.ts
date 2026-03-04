@@ -28,7 +28,7 @@ import { sampleID, deepClone, ignoredError } from '@/utils'
 import { logError, logInfo } from '@/utils/logger'
 import { notifications } from '@/utils/notification'
 import { retryWithBackoff } from '@/utils/errorRecovery'
-import { isOnline, saveToOfflineCache, loadFromOfflineCache, initOfflineMode } from '@/utils/offline'
+import { isOnline, saveToOfflineCache, loadFromOfflineCache } from '@/utils/offline'
 
 import { useAppSettingsStore } from './appSettings'
 import { useKernelApiStore } from './kernelApi'

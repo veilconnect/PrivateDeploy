@@ -948,7 +948,6 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     Object.keys(updated).forEach((groupName) => {
       const group = updated[groupName]
       if (group.all && Array.isArray(group.all)) {
-        const originalLength = group.all.length
         group.all = group.all.filter((proxyName) => proxyName !== subscriptionId)
 
         // If the current selection was the removed proxy, switch to first available
@@ -968,7 +967,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * Optimistically add a subscription to all selector and urltest groups
    * This provides immediate UI feedback without waiting for kernel restart
    */
-  const addProxyToGroups = (subscriptionId: string, displayName: string) => {
+  const addProxyToGroups = (subscriptionId: string) => {
     // Use deep clone to ensure Vue can track nested object changes
     const updated = deepClone(proxies.value)
 

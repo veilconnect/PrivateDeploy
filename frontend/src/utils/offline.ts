@@ -104,7 +104,7 @@ export function getCacheAge(key: keyof typeof OFFLINE_CACHE_KEYS): number | null
 
     const cacheData = JSON.parse(cached)
     return Date.now() - cacheData.timestamp
-  } catch (error) {
+  } catch {
     return null
   }
 }
