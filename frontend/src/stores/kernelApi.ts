@@ -359,6 +359,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
   const coreStateLoading = ref(true)
   let isCoreStartedByThisInstance = false
   let { promise: coreStoppedPromise, resolve: coreStoppedResolver } = Promise.withResolvers()
+  let startCoreTask: Promise<void> | null = null
+  let restartCoreTask: Promise<void> | null = null
 
   const updateCoreState = async () => {
     corePid.value = Number(await ReadFile(CorePidFilePath).catch(() => -1))
@@ -518,44 +520,50 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
   }
 
   const startCore = async (_profile?: IProfile) => {
-    if (running.value) throw 'The core is already running'
-    if (starting.value) {
-      logsStore.recordKernelLog(
-        '[KernelApi] startCore ignored because another start attempt is in progress',
-      )
-      return
+    if (startCoreTask) {
+      logsStore.recordKernelLog('[KernelApi] startCore joined existing start attempt')
+      return startCoreTask
     }
 
-    logsStore.clearKernelLog()
+    const startTask = (async () => {
+      if (running.value) throw 'The core is already running'
+      if (starting.value) {
+        logsStore.recordKernelLog(
+          '[KernelApi] startCore ignored because another start attempt is in progress',
+        )
+        return
+      }
 
-    const { profile: profileID, branch } = appSettingsStore.app.kernel
-    const profile = _profile || profilesStore.getProfileById(profileID)
-    if (!profile) throw 'Choose a profile first'
+      logsStore.clearKernelLog()
 
-    if (!_profile) {
-      runtimeProfile = undefined
-    }
+      const { profile: profileID, branch } = appSettingsStore.app.kernel
+      const profile = _profile || profilesStore.getProfileById(profileID)
+      if (!profile) throw 'Choose a profile first'
 
-    const isAlpha = branch === Branch.Alpha
-    const corePath = `${CoreWorkingDirectory}/${getKernelFileName(isAlpha)}`
-    const coreReady = await ensureCoreExecutable(isAlpha, corePath).catch((error) => {
-      logsStore.recordKernelLog(
-        `[KernelApi] Failed to prepare core executable: ${String(error ?? '')}`,
-      )
-      return false
-    })
-    if (!coreReady) {
-      message.error('kernel.errors.coreMissing')
-      return
-    }
+      if (!_profile) {
+        runtimeProfile = undefined
+      }
 
-    starting.value = true
-    let lastError: any = null
-    const profileToUse = deepClone(profile)
-    let portsAdjusted = false
-    let missingCloudSubscriptionsPruned = false
+      const isAlpha = branch === Branch.Alpha
+      const corePath = `${CoreWorkingDirectory}/${getKernelFileName(isAlpha)}`
+      const coreReady = await ensureCoreExecutable(isAlpha, corePath).catch((error) => {
+        logsStore.recordKernelLog(
+          `[KernelApi] Failed to prepare core executable: ${String(error ?? '')}`,
+        )
+        return false
+      })
+      if (!coreReady) {
+        message.error('kernel.errors.coreMissing')
+        return
+      }
 
-    const reassignProfilePorts = async (target: IProfile) => {
+      starting.value = true
+      let lastError: any = null
+      const profileToUse = deepClone(profile)
+      let portsAdjusted = false
+      let missingCloudSubscriptionsPruned = false
+
+      const reassignProfilePorts = async (target: IProfile) => {
       const usedPorts = new Set<number>()
       const collectPort = (value?: number) => {
         if (typeof value === 'number' && value > 0) {
@@ -669,7 +677,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       return { changed: Object.keys(changes).length > 0, ports: changes }
     }
 
-    const pruneMissingCloudSubscriptions = async (target: IProfile) => {
+      const pruneMissingCloudSubscriptions = async (target: IProfile) => {
       const cloudSubscriptionIDs = new Set<string>()
       const addCloudID = (id?: string) => {
         if (typeof id === 'string' && id.startsWith('cloud-')) {
@@ -729,105 +737,115 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       return { changed, removed }
     }
 
-    try {
-      const maxAttempts = 5  // 增加到5次
-      const backoffDelays = [0, 500, 1000, 2000, 3000]  // 退避延迟（毫秒）
+      try {
+        const maxAttempts = 5  // 增加到5次
+        const backoffDelays = [0, 500, 1000, 2000, 3000]  // 退避延迟（毫秒）
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // 如果不是第一次尝试，等待一段时间
-        if (attempt > 1 && backoffDelays[attempt - 1] > 0) {
-          logsStore.recordKernelLog(
-            `[KernelApi] Waiting ${backoffDelays[attempt - 1]}ms before retry ${attempt}/${maxAttempts}`,
-          )
-          await new Promise(resolve => setTimeout(resolve, backoffDelays[attempt - 1]))
-        }
-
-        try {
-          await generateConfigFile(profileToUse, (config) =>
-            pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
-          )
-
-          const pid = await runCoreProcess(isAlpha)
-          if (pid) {
-            await onCoreStarted(pid)
-          }
-          lastError = null
-          logsStore.recordKernelLog(`[KernelApi] Core started successfully on attempt ${attempt}`)
-          break
-        } catch (error) {
-          lastError = error
-          const messageText = String(error ?? '').toLowerCase()
-          logsStore.recordKernelLog(
-            `[KernelApi] startCore attempt ${attempt}/${maxAttempts} failed: ${String(error ?? '')}`,
-          )
-
-          const cacheError =
-            messageText.includes('initialize cache-file') || messageText.includes('cache-file')
-          if (cacheError && attempt < maxAttempts) {
-            await RemoveFile(CoreCacheFilePath).catch(() => undefined)
-            message.warn('kernel.errors.cacheResetting')
-            logsStore.recordKernelLog('[KernelApi] Cache file removed, retrying...')
-            continue
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          // 如果不是第一次尝试，等待一段时间
+          if (attempt > 1 && backoffDelays[attempt - 1] > 0) {
+            logsStore.recordKernelLog(
+              `[KernelApi] Waiting ${backoffDelays[attempt - 1]}ms before retry ${attempt}/${maxAttempts}`,
+            )
+            await new Promise(resolve => setTimeout(resolve, backoffDelays[attempt - 1]))
           }
 
-          const portConflict =
-            messageText.includes('address already in use') ||
-            messageText.includes('bind: address already in use')
-          if (portConflict && attempt < maxAttempts) {
-            logsStore.recordKernelLog('[KernelApi] Port conflict detected, reassigning ports...')
-            const result = await reassignProfilePorts(profileToUse)
-            if (result.changed) {
-              portsAdjusted = true
-              const ports = result.ports
-              if (ports[Inbound.Mixed]) {
-                config.value['mixed-port'] = ports[Inbound.Mixed]
-              }
-              if (ports[Inbound.Http]) {
-                config.value['port'] = ports[Inbound.Http]
-              }
-              if (ports[Inbound.Socks]) {
-                config.value['socks-port'] = ports[Inbound.Socks]
-              }
-              logsStore.recordKernelLog(`[KernelApi] Ports reassigned: ${JSON.stringify(ports)}`)
-              message.warn('kernel.errors.portResetting')
-              continue
-            } else {
-              logsStore.recordKernelLog('[KernelApi] Port reassignment returned no changes')
+          try {
+            await generateConfigFile(profileToUse, (config) =>
+              pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
+            )
+
+            const pid = await runCoreProcess(isAlpha)
+            if (pid) {
+              await onCoreStarted(pid)
             }
-          }
+            lastError = null
+            logsStore.recordKernelLog(`[KernelApi] Core started successfully on attempt ${attempt}`)
+            break
+          } catch (error) {
+            lastError = error
+            const messageText = String(error ?? '').toLowerCase()
+            logsStore.recordKernelLog(
+              `[KernelApi] startCore attempt ${attempt}/${maxAttempts} failed: ${String(error ?? '')}`,
+            )
 
-          const missingCloudSubscriptionFile =
-            messageText.includes('no such file or directory') &&
-            messageText.includes('data/subscribes/cloud-')
-
-          if (missingCloudSubscriptionFile && attempt < maxAttempts) {
-            const result = await pruneMissingCloudSubscriptions(profileToUse)
-            if (result.changed) {
-              missingCloudSubscriptionsPruned = true
-              logsStore.recordKernelLog(
-                `[KernelApi] Removed missing cloud subscriptions: ${result.removed.join(', ')}`,
-              )
+            const cacheError =
+              messageText.includes('initialize cache-file') || messageText.includes('cache-file')
+            if (cacheError && attempt < maxAttempts) {
+              await RemoveFile(CoreCacheFilePath).catch(() => undefined)
+              message.warn('kernel.errors.cacheResetting')
+              logsStore.recordKernelLog('[KernelApi] Cache file removed, retrying...')
               continue
             }
-          }
 
-          // 如果是最后一次尝试，或者不是可重试的错误，抛出异常
-          if (attempt === maxAttempts) {
-            logsStore.recordKernelLog(`[KernelApi] All ${maxAttempts} attempts failed, giving up`)
+            const portConflict =
+              messageText.includes('address already in use') ||
+              messageText.includes('bind: address already in use')
+            if (portConflict && attempt < maxAttempts) {
+              logsStore.recordKernelLog('[KernelApi] Port conflict detected, reassigning ports...')
+              const result = await reassignProfilePorts(profileToUse)
+              if (result.changed) {
+                portsAdjusted = true
+                const ports = result.ports
+                if (ports[Inbound.Mixed]) {
+                  config.value['mixed-port'] = ports[Inbound.Mixed]
+                }
+                if (ports[Inbound.Http]) {
+                  config.value['port'] = ports[Inbound.Http]
+                }
+                if (ports[Inbound.Socks]) {
+                  config.value['socks-port'] = ports[Inbound.Socks]
+                }
+                logsStore.recordKernelLog(`[KernelApi] Ports reassigned: ${JSON.stringify(ports)}`)
+                message.warn('kernel.errors.portResetting')
+                continue
+              } else {
+                logsStore.recordKernelLog('[KernelApi] Port reassignment returned no changes')
+              }
+            }
+
+            const missingCloudSubscriptionFile =
+              messageText.includes('no such file or directory') &&
+              messageText.includes('data/subscribes/cloud-')
+
+            if (missingCloudSubscriptionFile && attempt < maxAttempts) {
+              const result = await pruneMissingCloudSubscriptions(profileToUse)
+              if (result.changed) {
+                missingCloudSubscriptionsPruned = true
+                logsStore.recordKernelLog(
+                  `[KernelApi] Removed missing cloud subscriptions: ${result.removed.join(', ')}`,
+                )
+                continue
+              }
+            }
+
+            // 如果是最后一次尝试，或者不是可重试的错误，抛出异常
+            if (attempt === maxAttempts) {
+              logsStore.recordKernelLog(`[KernelApi] All ${maxAttempts} attempts failed, giving up`)
+            }
+            throw error
           }
-          throw error
         }
+      } finally {
+        starting.value = false
       }
+
+      if (lastError) {
+        throw lastError
+      }
+
+      if ((portsAdjusted || missingCloudSubscriptionsPruned) && profileToUse.id) {
+        await profilesStore.editProfile(profileToUse.id, deepClone(profileToUse))
+      }
+    })()
+
+    startCoreTask = startTask
+    try {
+      await startTask
     } finally {
-      starting.value = false
-    }
-
-    if (lastError) {
-      throw lastError
-    }
-
-    if ((portsAdjusted || missingCloudSubscriptionsPruned) && profileToUse.id) {
-      await profilesStore.editProfile(profileToUse.id, deepClone(profileToUse))
+      if (startCoreTask === startTask) {
+        startCoreTask = null
+      }
     }
   }
 
@@ -845,13 +863,31 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
   }
 
   const restartCore = async (cleanupTask?: () => Promise<any>, keepRuntimeProfile = true) => {
-    restarting.value = true
+    if (restartCoreTask) {
+      logsStore.recordKernelLog('[KernelApi] restartCore joined existing restart attempt')
+      return restartCoreTask
+    }
+
+    const restartTask = (async () => {
+      restarting.value = true
+      try {
+        if (running.value) {
+          await stopCore()
+        }
+        await cleanupTask?.()
+        await startCore(keepRuntimeProfile ? runtimeProfile : undefined)
+      } finally {
+        restarting.value = false
+      }
+    })()
+
+    restartCoreTask = restartTask
     try {
-      await stopCore()
-      await cleanupTask?.()
-      await startCore(keepRuntimeProfile ? runtimeProfile : undefined)
+      await restartTask
     } finally {
-      restarting.value = false
+      if (restartCoreTask === restartTask) {
+        restartCoreTask = null
+      }
     }
   }
 
