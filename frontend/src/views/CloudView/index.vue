@@ -1,26 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
-import { confirm, formatDate, formatRelativeTime, message, debounce } from '@/utils'
-import { logError, logInfo } from '@/utils/logger'
-import { getRecommendedNodes } from '@/utils/recommendation'
+import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
 import { createBackup, parseBackup, downloadBackup } from '@/utils/backup'
 import { checkAllNodesHealth, scheduleHealthChecks, getHealthSummary } from '@/utils/healthCheck'
+import { logError, logInfo } from '@/utils/logger'
 import { isOnline, initOfflineMode } from '@/utils/offline'
+import { getRecommendedNodes } from '@/utils/recommendation'
 import { generateMockConnectivityHistory, type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
 
-import { useModal } from '@/components/Modal'
 import ConnectivityChart from '@/components/ConnectivityChart.vue'
 import LatencyChart from '@/components/LatencyChart.vue'
+import { useModal } from '@/components/Modal'
 
 import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
-import SSHConfigForm from './components/SSHConfigForm.vue'
 import MultiDeployModal from './components/MultiDeployModal.vue'
+import SSHConfigForm from './components/SSHConfigForm.vue'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
@@ -156,16 +156,6 @@ const getRiskIcon = (risk: 'low' | 'medium' | 'high' | 'critical'): string => {
     critical: '🔴'
   }
   return iconMap[risk]
-}
-
-const getRiskLabel = (risk: 'low' | 'medium' | 'high' | 'critical'): string => {
-  const keyMap = {
-    low: 'cloud.reachabilityRisk.low',
-    medium: 'cloud.reachabilityRisk.medium',
-    high: 'cloud.reachabilityRisk.high',
-    critical: 'cloud.reachabilityRisk.critical'
-  }
-  return t(keyMap[risk])
 }
 
 function formatRegion(region: CloudRegion) {
@@ -1473,16 +1463,6 @@ const toggleNodeSelection = (nodeId: string) => {
   selectedNodeIds.value = new Set(selectedNodeIds.value)
 }
 
-const toggleSelectAll = () => {
-  if (selectedNodeIds.value.size === tableData.value.length) {
-    selectedNodeIds.value.clear()
-  } else {
-    tableData.value.forEach(node => selectedNodeIds.value.add(node.instanceId))
-  }
-  // Trigger reactivity
-  selectedNodeIds.value = new Set(selectedNodeIds.value)
-}
-
 const clearSelection = () => {
   selectedNodeIds.value.clear()
   selectedNodeIds.value = new Set(selectedNodeIds.value)
@@ -1593,17 +1573,6 @@ const handleBatchDestroy = async () => {
 }
 
 // Search and filter handlers
-const handleSort = (column: string) => {
-  if (sortBy.value === column) {
-    // Toggle sort order
-    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    // New column, default to ascending
-    sortBy.value = column
-    sortOrder.value = 'asc'
-  }
-}
-
 const clearFilters = () => {
   searchQuery.value = ''
   filterConnectivity.value = 'all'

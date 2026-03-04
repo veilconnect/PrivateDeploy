@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
+import { ref, onMounted, onUnmounted } from 'vue'
+
 import { useCloudStore } from '@/stores'
-import { logInfo, logError } from '@/utils/logger'
+import { logError } from '@/utils/logger'
 
 const props = defineProps<{
   config: Record<string, any>
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   (event: 'done'): void
   (event: 'back'): void
 }>()

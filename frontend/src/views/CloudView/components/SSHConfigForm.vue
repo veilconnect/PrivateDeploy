@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { reactive, ref, computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 
 import { TestSSHConnection } from '@/bridge'
 import { logError } from '@/utils/logger'
@@ -10,8 +9,6 @@ import type { SSHServerInfo } from '@/types/cloud'
 const emit = defineEmits<{
   (event: 'deploy', config: Record<string, string>): void
 }>()
-
-const { t } = useI18n()
 
 const form = reactive({
   host: '',

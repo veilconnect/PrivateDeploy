@@ -48,12 +48,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+
+import { formatRelativeTime } from '@/utils'
 import {
   type ConnectivityDataPoint,
   getConnectivityStatusColor,
   calculateUptime,
 } from '@/utils/visualization'
-import { formatRelativeTime } from '@/utils'
 
 interface Props {
   title?: string

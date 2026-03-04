@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const emit = defineEmits<{
+defineEmits<{
   (event: 'select', method: 'ssh' | 'cloud' | 'manual'): void
 }>()
 </script>

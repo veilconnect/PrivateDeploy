@@ -1,5 +1,6 @@
-import type { ManagedCloudNode } from '@/stores/cloud'
 import { logInfo } from './logger'
+
+import type { ManagedCloudNode } from '@/stores/cloud'
 
 export interface HealthCheckResult {
   nodeId: string

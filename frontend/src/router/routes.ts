@@ -2,11 +2,11 @@ import { type RouteRecordRaw } from 'vue-router'
 
 import CloudView from '@/views/CloudView/index.vue'
 import HomeView from '@/views/HomeView/index.vue'
-import WizardView from '@/views/WizardView/index.vue'
 import ProfilesView from '@/views/ProfilesView/index.vue'
 import RulesetsView from '@/views/RulesetsView/index.vue'
 import ScheduledTasksView from '@/views/ScheduledTasksView/index.vue'
 import SettingsView from '@/views/SettingsView/index.vue'
+import WizardView from '@/views/WizardView/index.vue'
 
 const routes: RouteRecordRaw[] = [
   {

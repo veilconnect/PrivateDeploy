@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+
 import { CreateMultipleCloudInstances } from '@/bridge'
 import { useCloudStore } from '@/stores'
-import { logError, logInfo } from '@/utils/logger'
+import { logError } from '@/utils/logger'
 
 import type { CloudRegion, DeployProgress, DeployProgressStatus, MultiDeployResult } from '@/types/cloud'
 
@@ -19,7 +18,6 @@ const emit = defineEmits<{
   (event: 'done', results: MultiDeployResult[]): void
 }>()
 
-const { t } = useI18n()
 const cloudStore = useCloudStore()
 
 const selectedRegions = ref<Set<string>>(new Set())

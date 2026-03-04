@@ -1053,6 +1053,13 @@ def run_regression(base_url: str, artifacts_dir: Path, headed: bool) -> Regressi
         steps.append("import_protocol_links")
         close_active_modal_if_any(page)
 
+        file_map_after_import = page.evaluate("""() => {
+          const data = window.__cloudE2E?.files || {};
+          return JSON.parse(JSON.stringify(data));
+        }""")
+
+        assertions = collect_subscription_assertions(file_map_after_import, labels)
+
         # Delete one imported node with confirmation
         import_row = page.locator("tbody tr", has_text=labels["import_trojan"]).first
         delete_btn = import_row.locator(".gui-button", has_text="删除")
@@ -1061,16 +1068,19 @@ def run_regression(base_url: str, artifacts_dir: Path, headed: bool) -> Regressi
         delete_btn.first.click(timeout=10000)
         click_first_button_by_names(page, ["确定", "确认", "Confirm", "common.confirm"], timeout_ms=10000)
         page.wait_for_selector(f"tbody tr:has-text('{labels['import_trojan']}')", state="detached", timeout=15000)
+        trojan_rows_after_delete = page.locator("tbody tr", has_text=labels["import_trojan"]).count()
         steps.append("delete_imported_node")
 
+        assertions.append(
+            AssertionResult(
+                name="import_trojan_row_deleted",
+                passed=trojan_rows_after_delete == 0,
+                actual=trojan_rows_after_delete,
+                expected=0,
+            )
+        )
+
         page.screenshot(path=str(screenshot_path), full_page=True)
-
-        file_map = page.evaluate("""() => {
-          const data = window.__cloudE2E?.files || {};
-          return JSON.parse(JSON.stringify(data));
-        }""")
-
-        assertions = collect_subscription_assertions(file_map, labels)
 
         # Include console-error-free assertion in report.
         assertions.append(

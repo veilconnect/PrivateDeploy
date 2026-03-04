@@ -79,8 +79,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { type LatencyDataPoint, getLatencyColor } from '@/utils/visualization'
+
 import { formatRelativeTime } from '@/utils'
+import { type LatencyDataPoint, getLatencyColor } from '@/utils/visualization'
 
 interface Props {
   title?: string

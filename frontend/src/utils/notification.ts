@@ -1,5 +1,6 @@
-import { message } from '@/utils'
 import { reactive } from 'vue'
+
+import { message } from '@/utils'
 
 export type NotificationType = 'success' | 'error' | 'warning' | 'info'
 export type NotificationCategory =

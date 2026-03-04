@@ -2,9 +2,9 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import StepMethod from './components/StepMethod.vue'
 import StepCredentials from './components/StepCredentials.vue'
 import StepDeploy from './components/StepDeploy.vue'
+import StepMethod from './components/StepMethod.vue'
 
 const router = useRouter()
 
