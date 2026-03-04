@@ -166,6 +166,20 @@ const onThemeClick = (e: MouseEvent) => {
   document.documentElement.style.setProperty('--y', e.clientY + 'px')
 }
 
+const restorePreviousSystemProxy = async () => {
+  try {
+    const restored = await envStore.restorePreviousSystemProxy(true)
+    if (restored) {
+      message.success('settings.systemProxy.restoreSuccess')
+    } else {
+      message.info('settings.systemProxy.restoreUnavailable')
+    }
+  } catch (error) {
+    console.error(error)
+    message.error('settings.systemProxy.restoreFailed')
+  }
+}
+
 if (envStore.env.os === 'windows') {
   checkSchtask()
 
@@ -239,7 +253,18 @@ if (envStore.env.os === 'windows') {
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.autoSetSystemProxy') }}
       </div>
-      <Switch v-model="appSettings.app.autoSetSystemProxy" />
+      <div class="flex items-center">
+        <Switch v-model="appSettings.app.autoSetSystemProxy" />
+        <Button
+          v-if="appSettings.app.systemProxyBackup || appSettings.app.systemProxyManaged"
+          @click="restorePreviousSystemProxy"
+          type="text"
+          icon="reset"
+          class="ml-8"
+        >
+          {{ t('settings.systemProxy.restorePrevious') }}
+        </Button>
+      </div>
     </div>
     <div class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">

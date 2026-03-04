@@ -60,7 +60,10 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     height: 0,
     exitOnClose: true,
     closeKernelOnExit: true,
-    autoSetSystemProxy: true,
+    autoSetSystemProxy: false,
+    systemProxyPolicyInitialized: false,
+    systemProxyBackup: '',
+    systemProxyManaged: false,
     autoStartKernel: true,
     userAgent: APP_TITLE + '/' + APP_VERSION,
     startupDelay: 30,
@@ -144,6 +147,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
 
   const setupAppSettings = async () => {
     const data = await ignoredError(ReadFile, UserFilePath)
+    const hasPersistedSettings = !!data
     if (data) {
       const settings = parse(data)
       latestUserSettings = stringify(settings)
@@ -162,6 +166,15 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     }
     if (app.value.kernel.controllerSensitivity === undefined) {
       app.value.kernel.controllerSensitivity = DefaultControllerSensitivity
+    }
+    if (app.value.systemProxyPolicyInitialized === undefined) {
+      app.value.systemProxyPolicyInitialized = hasPersistedSettings
+    }
+    if (app.value.systemProxyBackup === undefined) {
+      app.value.systemProxyBackup = ''
+    }
+    if (app.value.systemProxyManaged === undefined) {
+      app.value.systemProxyManaged = false
     }
     if (app.value.addGroupToMenu === undefined) {
       app.value.addGroupToMenu = false

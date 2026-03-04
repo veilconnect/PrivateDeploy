@@ -375,7 +375,10 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       await Promise.all([refreshConfig(), refreshProviderProxies()])
       await envStore.updateSystemProxyStatus()
     } else if (appSettingsStore.app.autoStartKernel) {
+      await envStore.restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
       await startCore()
+    } else {
+      await envStore.restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
     }
   }
 
@@ -412,7 +415,14 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     await Promise.all([refreshConfig(), refreshProviderProxies()])
 
     if (appSettingsStore.app.autoSetSystemProxy) {
-      await envStore.setSystemProxy().catch((err) => message.error(err))
+      try {
+        const applied = await envStore.setSystemProxyIfSafe()
+        if (!applied) {
+          message.warn('settings.systemProxy.autoSkippedExisting')
+        }
+      } catch (err) {
+        message.error(err as string)
+      }
     }
     await pluginsStore.onCoreStartedTrigger()
 
@@ -427,7 +437,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     running.value = false
 
     if (appSettingsStore.app.autoSetSystemProxy) {
-      await envStore.clearSystemProxy()
+      await envStore.restorePreviousSystemProxy(true).catch(() => undefined)
     }
     await pluginsStore.onCoreStoppedTrigger()
 

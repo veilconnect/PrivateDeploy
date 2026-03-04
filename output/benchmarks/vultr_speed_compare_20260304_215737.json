@@ -1,0 +1,58 @@
+[
+  {
+    "region": "nrt",
+    "city": "Tokyo",
+    "instance_id": "8d3aa534-99a4-4119-ba23-a5b474cf7360",
+    "ip": "198.13.46.144",
+    "status": "ok",
+    "success_rounds": 3,
+    "median_connect_s": 0.000233,
+    "median_ttfb_s": 1.186906,
+    "median_total_s": 1.186968,
+    "median_speed_mbps": 15.17,
+    "proxy_ip": "198.13.46.144",
+    "notes": ""
+  },
+  {
+    "region": "sgp",
+    "city": "Singapore",
+    "instance_id": "805fc4d9-1071-4e71-aaad-eeedb0b262a7",
+    "ip": "45.32.120.19",
+    "status": "ok",
+    "success_rounds": 3,
+    "median_connect_s": 0.000251,
+    "median_ttfb_s": 1.529876,
+    "median_total_s": 1.529935,
+    "median_speed_mbps": 11.11,
+    "proxy_ip": "45.32.120.19",
+    "notes": ""
+  },
+  {
+    "region": "fra",
+    "city": "Frankfurt",
+    "instance_id": "9a4fb36f-b8de-47b6-a07e-7f4e64ed167a",
+    "ip": "199.247.3.62",
+    "status": "ok",
+    "success_rounds": 3,
+    "median_connect_s": 0.000261,
+    "median_ttfb_s": 1.748485,
+    "median_total_s": 1.748546,
+    "median_speed_mbps": 12.65,
+    "proxy_ip": "199.247.3.62",
+    "notes": ""
+  },
+  {
+    "region": "lax",
+    "city": "Los Angeles",
+    "instance_id": "7bd5ed1f-e9c4-4a70-99cc-640c04aba7f0",
+    "ip": "45.76.71.70",
+    "status": "ok",
+    "success_rounds": 3,
+    "median_connect_s": 0.000241,
+    "median_ttfb_s": 0.675095,
+    "median_total_s": 0.675154,
+    "median_speed_mbps": 15.52,
+    "proxy_ip": "45.76.71.70",
+    "notes": ""
+  }
+]

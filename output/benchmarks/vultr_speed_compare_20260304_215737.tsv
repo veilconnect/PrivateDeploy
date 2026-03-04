@@ -1,0 +1,5 @@
+region	city	instance_id	ip	status	success_rounds	median_connect_s	median_ttfb_s	median_total_s	median_speed_mbps	proxy_ip	notes
+nrt	Tokyo	8d3aa534-99a4-4119-ba23-a5b474cf7360	198.13.46.144	ok	3	0.000233	1.186906	1.186968	15.17	198.13.46.144	
+sgp	Singapore	805fc4d9-1071-4e71-aaad-eeedb0b262a7	45.32.120.19	ok	3	0.000251	1.529876	1.529935	11.11	45.32.120.19	
+fra	Frankfurt	9a4fb36f-b8de-47b6-a07e-7f4e64ed167a	199.247.3.62	ok	3	0.000261	1.748485	1.748546	12.65	199.247.3.62	
+lax	Los Angeles	7bd5ed1f-e9c4-4a70-99cc-640c04aba7f0	45.76.71.70	ok	3	0.000241	0.675095	0.675154	15.52	45.76.71.70	

@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { EventsOn, WindowHide, IsStartup } from '@/bridge'
 import { NavigationBar, TitleBar } from '@/components'
 import * as Stores from '@/stores'
-import { exitApp, sampleID, sleep, message } from '@/utils'
+import { confirm, exitApp, sampleID, sleep, message } from '@/utils'
 import AboutView from '@/views/AboutView.vue'
 import CommandView from '@/views/CommandView.vue'
 import SplashView from '@/views/SplashView.vue'
@@ -75,6 +75,28 @@ envStore.setupEnv().then(async () => {
     pluginsStore.setupPlugins(),
     scheduledTasksStore.setupScheduledTasks(),
   ])
+
+  if (!appSettings.app.systemProxyPolicyInitialized) {
+    const enableAutoProxy = await confirm(
+      'settings.systemProxy.firstLaunchTitle',
+      'settings.systemProxy.firstLaunchMessage',
+      {
+        type: 'text',
+        okText: 'common.enable',
+        cancelText: 'common.disable',
+      },
+    )
+      .then(() => true)
+      .catch(() => false)
+
+    appSettings.app.autoSetSystemProxy = enableAutoProxy
+    appSettings.app.systemProxyPolicyInitialized = true
+    message.info(
+      enableAutoProxy
+        ? 'settings.systemProxy.firstLaunchEnabled'
+        : 'settings.systemProxy.firstLaunchDisabled',
+    )
+  }
 
   const startTime = performance.now()
   percent.value = 20

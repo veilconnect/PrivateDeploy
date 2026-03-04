@@ -55,6 +55,9 @@ export interface AppSettings {
   exitOnClose: boolean
   closeKernelOnExit: boolean
   autoSetSystemProxy: boolean
+  systemProxyPolicyInitialized: boolean
+  systemProxyBackup: string
+  systemProxyManaged: boolean
   autoStartKernel: boolean
   userAgent: string
   startupDelay: number

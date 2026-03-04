@@ -872,6 +872,19 @@ export default {
     exitOnClose: 'Exit APP On Window Close',
     closeKernelOnExit: 'Close Kernel When APP Exits',
     autoSetSystemProxy: 'Auto Set / Clear System Proxy',
+    systemProxy: {
+      firstLaunchTitle: 'System Proxy Control',
+      firstLaunchMessage:
+        'Allow PrivateDeploy to automatically set and restore system proxy when the kernel starts and stops?',
+      firstLaunchEnabled: 'Auto system proxy management enabled.',
+      firstLaunchDisabled: 'Auto system proxy management disabled.',
+      autoSkippedExisting:
+        'Detected an existing system proxy. PrivateDeploy skipped automatic takeover.',
+      restorePrevious: 'Restore previous proxy',
+      restoreSuccess: 'Previous system proxy restored.',
+      restoreUnavailable: 'No previous proxy backup available.',
+      restoreFailed: 'Failed to restore previous system proxy.',
+    },
     autoStartKernel: 'Auto Start Kernel',
     admin: 'Run As Admin',
     addPluginToMenu: 'Add Plugin To Tray Menu',
