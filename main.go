@@ -4,9 +4,11 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,6 +161,14 @@ func validateLinuxDisplay() error {
 		return nil
 	}
 
+	if socketPath := x11SocketPath(display); socketPath != "" {
+		conn, err := net.DialTimeout("unix", socketPath, 1200*time.Millisecond)
+		if err != nil {
+			return fmt.Errorf("X11 socket %q is not accessible for DISPLAY=%q: %v", socketPath, display, err)
+		}
+		_ = conn.Close()
+	}
+
 	if _, err := exec.LookPath("xdpyinfo"); err != nil {
 		return nil
 	}
@@ -179,13 +189,30 @@ func validateLinuxDisplay() error {
 	return nil
 }
 
+func x11SocketPath(display string) string {
+	trimmed := strings.TrimSpace(display)
+	if !strings.HasPrefix(trimmed, ":") {
+		return ""
+	}
+
+	remainder := strings.TrimPrefix(trimmed, ":")
+	screen := strings.SplitN(remainder, ".", 2)[0]
+	if screen == "" {
+		return ""
+	}
+	if _, err := strconv.Atoi(screen); err != nil {
+		return ""
+	}
+	return "/tmp/.X11-unix/X" + screen
+}
+
 func formatStartupError(err error) string {
 	if bridge.Env.OS != "linux" {
 		return "Error: " + err.Error()
 	}
 
 	message := err.Error()
-	if strings.Contains(message, "failed to init GTK") || strings.Contains(message, "X11 display") || strings.Contains(message, "desktop runtime panic") || strings.Contains(message, "no GUI display detected") || strings.Contains(message, "WAYLAND_DISPLAY") {
+	if strings.Contains(message, "failed to init GTK") || strings.Contains(message, "X11 display") || strings.Contains(message, "X11 socket") || strings.Contains(message, "desktop runtime panic") || strings.Contains(message, "no GUI display detected") || strings.Contains(message, "WAYLAND_DISPLAY") {
 		return fmt.Sprintf(
 			"Error: %s\nLinux GUI startup check failed. Current DISPLAY=%q WAYLAND_DISPLAY=%q.\nPlease launch from a desktop terminal with a valid display session.",
 			err.Error(),
