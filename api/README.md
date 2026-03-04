@@ -32,7 +32,10 @@ go run main.go
 |------|--------|------|
 | `API_HOST` | `0.0.0.0` | 服务器监听地址 |
 | `API_PORT` | `8443` | 服务器端口 |
-| `JWT_SECRET` | `privatedeploy-secret-change-me` | JWT 签名密钥 |
+| `JWT_SECRET` | `privatedeploy-secret-change-me` | JWT 签名密钥（若未设置或使用默认值，服务启动时会生成进程内随机密钥） |
+| `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |
+| `INITIAL_ADMIN_USERNAME` | `admin` | 首次初始化管理员用户名 |
+| `INITIAL_ADMIN_PASSWORD` | _空_ | 首次初始化管理员密码（未设置时将生成一次性随机密码并打印日志） |
 | `DB_PATH` | `data/privatedeploy.db` | SQLite 数据库路径 |
 | `GIN_MODE` | `release` | Gin 模式 (debug/release) |
 
@@ -43,12 +46,13 @@ go build -o privatedeploy-api
 ./privatedeploy-api
 ```
 
-## 🔐 默认凭据
+## 🔐 初始化凭据
 
-- **用户名:** `admin`
-- **密码:** `admin`
+- 首次启动且数据库没有用户时，服务会创建 bootstrap 管理员账号。
+- 用户名默认 `admin`，可通过 `INITIAL_ADMIN_USERNAME` 覆盖。
+- 密码建议通过 `INITIAL_ADMIN_PASSWORD` 显式设置；未设置时服务会生成一次性随机密码并写入启动日志。
 
-⚠️ **请在首次登录后立即更改默认密码！**
+⚠️ **请在首次登录后立即更改密码。**
 
 ## 📖 API 文档
 

@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"privatedeploy/api/config"
@@ -14,17 +18,22 @@ import (
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/providers/digitalocean"
 	"privatedeploy/bridge/cloud/providers/vultr"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+const insecureJWTSecret = "privatedeploy-secret-change-me"
+
 func main() {
 	log.Println("🚀 Starting PrivateDeploy API Server...")
 
 	// Load configuration
 	cfg := config.Load()
+	ensureJWTSecret(cfg)
 	log.Printf("📋 Configuration loaded (Port: %s)", cfg.Server.Port)
 
 	// Setup database
@@ -40,7 +49,7 @@ func main() {
 	}
 
 	// Setup WebSocket hub
-	wsHub := handlers.NewWSHub()
+	wsHub := handlers.NewWSHub(cfg.JWT.Secret)
 	log.Println("✅ WebSocket hub initialized")
 
 	// Setup Cloud Manager
@@ -61,13 +70,18 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("🌐 API Server listening on %s", addr)
 	log.Println("📖 API Documentation: /api/v1/health")
-	log.Println("---")
-	log.Println("Default credentials:")
-	log.Println("  Username: admin")
-	log.Println("  Password: admin")
-	log.Println("---")
+	log.Printf("🔐 CORS allowed origins: %s", strings.Join(cfg.CORS.AllowedOrigins, ","))
 
-	if err := router.Run(addr); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("❌ Failed to start server: %v", err)
 	}
 }
@@ -107,14 +121,25 @@ func initializeDefaultUser(db *gorm.DB) error {
 		return nil
 	}
 
-	// Create default admin user
-	hashedPassword, err := utils.HashPassword("admin")
+	username := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_USERNAME"))
+	if username == "" {
+		username = "admin"
+	}
+
+	password := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD"))
+	if password == "" {
+		password = generateSecureToken(20)
+		log.Printf("⚠️  INITIAL_ADMIN_PASSWORD not set, generated one-time password for %q: %s", username, password)
+		log.Println("⚠️  Set INITIAL_ADMIN_PASSWORD in environment to avoid random bootstrap credentials.")
+	}
+
+	hashedPassword, err := utils.HashPassword(password)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	user := models.User{
-		Username: "admin",
+		Username: username,
 		Password: hashedPassword,
 	}
 
@@ -122,10 +147,39 @@ func initializeDefaultUser(db *gorm.DB) error {
 		return fmt.Errorf("failed to create default user: %w", err)
 	}
 
-	log.Println("✅ Default admin user created (username: admin, password: admin)")
-	log.Println("⚠️  Please change the default password after first login!")
+	log.Printf("✅ Bootstrap user created: %s", username)
+	log.Println("⚠️  Change this password immediately after first login.")
 
 	return nil
+}
+
+func ensureJWTSecret(cfg *config.Config) {
+	secret := strings.TrimSpace(cfg.JWT.Secret)
+	if secret != "" && secret != insecureJWTSecret {
+		return
+	}
+
+	cfg.JWT.Secret = generateSecureToken(48)
+	log.Println("⚠️  JWT_SECRET is missing or insecure. Generated an in-memory secret for this process.")
+	log.Println("⚠️  Set JWT_SECRET in environment for stable tokens across restarts.")
+}
+
+func generateSecureToken(length int) string {
+	if length <= 0 {
+		return ""
+	}
+
+	// RawURLEncoding expands 3 bytes into 4 chars. Allocate enough entropy for requested output length.
+	raw := make([]byte, (length*3)/4+4)
+	if _, err := rand.Read(raw); err != nil {
+		panic(fmt.Errorf("failed to generate secure random token: %w", err))
+	}
+
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	if len(token) < length {
+		return token
+	}
+	return token[:length]
 }
 
 // initializeCloudManager sets up the cloud provider manager

@@ -13,7 +13,7 @@ import (
 // SetupRoutes configures all API routes
 func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *handlers.WSHub, cloudManager *cloud.Manager) {
 	// Middleware
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg))
 
 	// Handlers
 	authHandler := handlers.NewAuthHandler(db, cfg)
@@ -37,7 +37,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 			auth.POST("/login", authHandler.Login)
 		}
 
-		// WebSocket (requires token in query param)
+		// WebSocket (requires valid token)
 		public.GET("/ws", wsHub.HandleWS)
 	}
 

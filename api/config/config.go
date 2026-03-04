@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -10,6 +11,7 @@ type Config struct {
 	Server   ServerConfig
 	JWT      JWTConfig
 	Database DatabaseConfig
+	CORS     CORSConfig
 }
 
 // ServerConfig holds server-related configuration
@@ -31,6 +33,11 @@ type DatabaseConfig struct {
 	Path string
 }
 
+// CORSConfig holds cross-origin settings
+type CORSConfig struct {
+	AllowedOrigins []string
+}
+
 // Load loads configuration from environment variables with defaults
 func Load() *Config {
 	return &Config{
@@ -47,6 +54,12 @@ func Load() *Config {
 		Database: DatabaseConfig{
 			Path: getEnv("DB_PATH", "data/privatedeploy.db"),
 		},
+		CORS: CORSConfig{
+			AllowedOrigins: parseCSV(getEnv(
+				"CORS_ALLOW_ORIGINS",
+				"http://localhost:5173,http://127.0.0.1:5173",
+			)),
+		},
 	}
 }
 
@@ -56,4 +69,17 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func parseCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, item := range parts {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
 }
