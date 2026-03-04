@@ -15,7 +15,8 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in development
+		// Origin filtering is enforced in HandleWS before upgrade.
+		return true
 	},
 }
 
@@ -32,17 +33,19 @@ type WSHub struct {
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	jwtSecret  string
+	origins    []string
 	mu         sync.RWMutex
 }
 
 // NewWSHub creates a new WebSocket hub
-func NewWSHub(jwtSecret string) *WSHub {
+func NewWSHub(jwtSecret string, allowedOrigins []string) *WSHub {
 	hub := &WSHub{
 		clients:    make(map[*websocket.Conn]bool),
 		broadcast:  make(chan WSMessage, 256),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
 		jwtSecret:  jwtSecret,
+		origins:    allowedOrigins,
 	}
 
 	go hub.run()
@@ -96,6 +99,15 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 
 // HandleWS handles WebSocket connections
 func (h *WSHub) HandleWS(c *gin.Context) {
+	origin := strings.TrimSpace(c.GetHeader("Origin"))
+	if !isWebSocketOriginAllowed(origin, h.origins) {
+		c.JSON(http.StatusForbidden, models.ErrorResponse(
+			models.ErrUnauthorized,
+			"Origin is not allowed",
+		))
+		return
+	}
+
 	token := extractWebSocketToken(c)
 	if token == "" {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse(
@@ -172,6 +184,28 @@ func extractWebSocketToken(c *gin.Context) string {
 	}
 
 	return strings.TrimSpace(parts[1])
+}
+
+func isWebSocketOriginAllowed(origin string, allowedOrigins []string) bool {
+	// Non-browser websocket clients may not send Origin.
+	if origin == "" {
+		return true
+	}
+
+	if len(allowedOrigins) == 0 {
+		return false
+	}
+
+	for _, allowed := range allowedOrigins {
+		trimmed := strings.TrimSpace(allowed)
+		if trimmed == "*" {
+			return true
+		}
+		if strings.EqualFold(trimmed, origin) {
+			return true
+		}
+	}
+	return false
 }
 
 // BroadcastVPNStatus broadcasts VPN status change

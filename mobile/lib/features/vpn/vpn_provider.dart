@@ -22,6 +22,17 @@ class VpnProvider with ChangeNotifier {
 
   VpnProvider(this.apiClient);
 
+  String _extractError(Map<String, dynamic> response, String fallback) {
+    final message = response['message'];
+    if (message is String && message.isNotEmpty) return message;
+    final error = response['error'];
+    if (error is Map<String, dynamic>) {
+      final errMsg = error['message'];
+      if (errMsg is String && errMsg.isNotEmpty) return errMsg;
+    }
+    return fallback;
+  }
+
   /// 初始化 - 加载当前状态
   Future<void> initialize() async {
     await loadStatus();
@@ -83,7 +94,7 @@ class VpnProvider with ChangeNotifier {
           return false;
         }
       } else {
-        _error = response['message'] ?? 'Failed to start VPN';
+        _error = _extractError(response, 'Failed to start VPN');
         _status = VpnStatus.disconnected;
         AppLogger.error('[VpnProvider] Start failed: $_error');
         return false;
@@ -123,7 +134,7 @@ class VpnProvider with ChangeNotifier {
         AppLogger.info('[VpnProvider] VPN disconnected successfully');
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to stop VPN';
+        _error = _extractError(response, 'Failed to stop VPN');
         AppLogger.error('[VpnProvider] Stop failed: $_error');
         return false;
       }
@@ -162,7 +173,7 @@ class VpnProvider with ChangeNotifier {
           return false;
         }
       } else {
-        _error = response['message'] ?? 'Failed to restart VPN';
+        _error = _extractError(response, 'Failed to restart VPN');
         AppLogger.error('[VpnProvider] Restart failed: $_error');
         return false;
       }
@@ -202,7 +213,7 @@ class VpnProvider with ChangeNotifier {
         notifyListeners();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to reset stats';
+        _error = _extractError(response, 'Failed to reset stats');
         AppLogger.error('[VpnProvider] Reset stats failed: $_error');
         return false;
       }

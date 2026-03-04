@@ -18,6 +18,35 @@ class ProfileProvider with ChangeNotifier {
 
   ProfileProvider(this.apiClient);
 
+  String _extractError(Map<String, dynamic> response, String fallback) {
+    final message = response['message'];
+    if (message is String && message.isNotEmpty) return message;
+    final error = response['error'];
+    if (error is Map<String, dynamic>) {
+      final errMsg = error['message'];
+      if (errMsg is String && errMsg.isNotEmpty) return errMsg;
+    }
+    return fallback;
+  }
+
+  List<dynamic> _extractProfiles(dynamic data) {
+    if (data is List) return data;
+    if (data is Map<String, dynamic>) {
+      final profiles = data['profiles'];
+      if (profiles is List) return profiles;
+    }
+    return const [];
+  }
+
+  Profile? _findActiveFromList() {
+    for (final profile in _profiles) {
+      if (profile.isActive) {
+        return profile;
+      }
+    }
+    return null;
+  }
+
   /// 加载所有配置文件
   Future<void> loadProfiles() async {
     _isLoading = true;
@@ -29,11 +58,12 @@ class ProfileProvider with ChangeNotifier {
       final response = await apiClient.getProfiles();
 
       if (response['success'] == true) {
-        final profilesData = response['data'] as List;
+        final profilesData = _extractProfiles(response['data']);
         _profiles = profilesData.map((p) => Profile.fromJson(p)).toList();
+        _activeProfile = _findActiveFromList();
         AppLogger.info('[ProfileProvider] Loaded ${_profiles.length} profiles');
       } else {
-        _error = response['message'] ?? 'Failed to load profiles';
+        _error = _extractError(response, 'Failed to load profiles');
         AppLogger.error('[ProfileProvider] Load failed: $_error');
       }
     } catch (e) {
@@ -52,9 +82,14 @@ class ProfileProvider with ChangeNotifier {
       final response = await apiClient.getActiveProfile();
 
       if (response['success'] == true && response['data'] != null) {
-        _activeProfile = Profile.fromJson(response['data']);
+        final data = response['data'];
+        if (data is Map<String, dynamic>) {
+          _activeProfile = Profile.fromJson(data);
+        }
         AppLogger.info('[ProfileProvider] Active profile: ${_activeProfile?.name}');
         notifyListeners();
+      } else {
+        _activeProfile = _findActiveFromList();
       }
     } catch (e) {
       AppLogger.error('[ProfileProvider] Failed to load active profile', e);
@@ -82,7 +117,7 @@ class ProfileProvider with ChangeNotifier {
         await loadProfiles();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to create profile';
+        _error = _extractError(response, 'Failed to create profile');
         AppLogger.error('[ProfileProvider] Create failed: $_error');
         return false;
       }
@@ -121,7 +156,7 @@ class ProfileProvider with ChangeNotifier {
         await loadProfiles();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to update profile';
+        _error = _extractError(response, 'Failed to update profile');
         AppLogger.error('[ProfileProvider] Update failed: $_error');
         return false;
       }
@@ -154,7 +189,7 @@ class ProfileProvider with ChangeNotifier {
         notifyListeners();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to delete profile';
+        _error = _extractError(response, 'Failed to delete profile');
         AppLogger.error('[ProfileProvider] Delete failed: $_error');
         return false;
       }
@@ -180,11 +215,18 @@ class ProfileProvider with ChangeNotifier {
 
       if (response['success'] == true) {
         AppLogger.info('[ProfileProvider] Profile activated successfully');
-        _activeProfile = _profiles.firstWhere((p) => p.id == id);
+        for (final profile in _profiles) {
+          if (profile.id == id) {
+            _activeProfile = profile.copyWith(isActive: true);
+          }
+        }
+        _profiles = _profiles
+            .map((p) => p.copyWith(isActive: p.id == id))
+            .toList();
         notifyListeners();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to activate profile';
+        _error = _extractError(response, 'Failed to activate profile');
         AppLogger.error('[ProfileProvider] Activate failed: $_error');
         return false;
       }
@@ -213,7 +255,7 @@ class ProfileProvider with ChangeNotifier {
         await loadProfiles();
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to update subscription';
+        _error = _extractError(response, 'Failed to update subscription');
         AppLogger.error('[ProfileProvider] Update subscription failed: $_error');
         return false;
       }
@@ -234,9 +276,15 @@ class ProfileProvider with ChangeNotifier {
       final response = await apiClient.getProfileContent(id);
 
       if (response['success'] == true) {
-        return response['data'] as String?;
+        final data = response['data'];
+        if (data is String) return data;
+        if (data is Map<String, dynamic>) {
+          final content = data['content'];
+          if (content is String) return content;
+        }
+        return null;
       } else {
-        _error = response['message'] ?? 'Failed to get profile content';
+        _error = _extractError(response, 'Failed to get profile content');
         AppLogger.error('[ProfileProvider] Get content failed: $_error');
         notifyListeners();
         return null;
@@ -263,7 +311,7 @@ class ProfileProvider with ChangeNotifier {
         AppLogger.info('[ProfileProvider] Profile content saved successfully');
         return true;
       } else {
-        _error = response['message'] ?? 'Failed to save profile content';
+        _error = _extractError(response, 'Failed to save profile content');
         AppLogger.error('[ProfileProvider] Save content failed: $_error');
         return false;
       }
@@ -298,21 +346,47 @@ class Profile {
     this.lastUpdated,
   });
 
-  factory Profile.fromJson(Map<String, dynamic> json) {
+  Profile copyWith({
+    String? id,
+    String? name,
+    String? subscriptionUrl,
+    bool? isActive,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    DateTime? lastUpdated,
+  }) {
     return Profile(
-      id: json['id'] ?? '',
+      id: id ?? this.id,
+      name: name ?? this.name,
+      subscriptionUrl: subscriptionUrl ?? this.subscriptionUrl,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+    );
+  }
+
+  factory Profile.fromJson(Map<String, dynamic> json) {
+    DateTime? parseDate(dynamic value) {
+      if (value == null) return null;
+      if (value is String && value.isNotEmpty) {
+        return DateTime.tryParse(value);
+      }
+      return null;
+    }
+
+    return Profile(
+      id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
-      subscriptionUrl: json['subscription_url'],
-      isActive: json['is_active'] ?? false,
-      createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'])
-          : DateTime.now(),
-      updatedAt: json['updated_at'] != null
-          ? DateTime.parse(json['updated_at'])
-          : DateTime.now(),
-      lastUpdated: json['last_updated'] != null
-          ? DateTime.parse(json['last_updated'])
-          : null,
+      subscriptionUrl: json['subscription_url'] ?? json['subscriptionUrl'],
+      isActive: (json['is_active'] ?? json['active'] ?? false) == true,
+      createdAt: parseDate(json['created_at']) ??
+          parseDate(json['createdAt']) ??
+          DateTime.now(),
+      updatedAt: parseDate(json['updated_at']) ??
+          parseDate(json['updatedAt']) ??
+          DateTime.now(),
+      lastUpdated: parseDate(json['last_updated']) ?? parseDate(json['lastUpdated']),
     );
   }
 

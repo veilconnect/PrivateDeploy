@@ -19,6 +19,17 @@ class DashboardProvider with ChangeNotifier {
 
   DashboardProvider(this.apiClient);
 
+  String _extractError(Map<String, dynamic> response, String fallback) {
+    final message = response['message'];
+    if (message is String && message.isNotEmpty) return message;
+    final error = response['error'];
+    if (error is Map<String, dynamic>) {
+      final errMsg = error['message'];
+      if (errMsg is String && errMsg.isNotEmpty) return errMsg;
+    }
+    return fallback;
+  }
+
   /// 初始化
   Future<void> initialize() async {
     await loadSystemInfo();
@@ -39,7 +50,7 @@ class DashboardProvider with ChangeNotifier {
         _systemInfo = SystemInfo.fromJson(response['data']);
         AppLogger.info('[DashboardProvider] System info loaded');
       } else {
-        _error = response['message'] ?? 'Failed to load system info';
+        _error = _extractError(response, 'Failed to load system info');
         AppLogger.error('[DashboardProvider] Load failed: $_error');
       }
     } catch (e) {
@@ -125,10 +136,22 @@ class SystemInfo {
   });
 
   factory SystemInfo.fromJson(Map<String, dynamic> json) {
+    double toDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    int toInt(dynamic value) {
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
     return SystemInfo(
       version: json['version'] ?? 'Unknown',
-      platform: json['platform'] ?? 'Unknown',
-      uptime: json['uptime'] ?? 0,
+      platform: json['platform'] ?? json['os'] ?? 'Unknown',
+      uptime: toInt(json['uptime']),
       memory: MemoryInfo.fromJson(json['memory'] ?? {}),
       cpu: CpuInfo.fromJson(json['cpu'] ?? {}),
     );
@@ -163,10 +186,16 @@ class MemoryInfo {
   });
 
   factory MemoryInfo.fromJson(Map<String, dynamic> json) {
+    int toInt(dynamic value) {
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
     return MemoryInfo(
-      total: json['total'] ?? 0,
-      used: json['used'] ?? 0,
-      free: json['free'] ?? 0,
+      total: toInt(json['total']),
+      used: toInt(json['used']),
+      free: toInt(json['free']),
     );
   }
 
@@ -198,9 +227,21 @@ class CpuInfo {
   });
 
   factory CpuInfo.fromJson(Map<String, dynamic> json) {
+    double toDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    int toInt(dynamic value) {
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
     return CpuInfo(
-      cores: json['cores'] ?? 0,
-      usage: (json['usage'] ?? 0).toDouble(),
+      cores: toInt(json['cores']),
+      usage: toDouble(json['usage']),
     );
   }
 

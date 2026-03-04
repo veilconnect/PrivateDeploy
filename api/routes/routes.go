@@ -21,9 +21,9 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
 	// Note: These require actual implementations, using nil for now
-	// In production, you would inject real VPNManager instances
 	profileHandler := handlers.NewProfileHandler(db)
 	subscriptionHandler := handlers.NewSubscriptionHandler(db)
+	vpnHandler := handlers.NewVPNHandler(handlers.NewInMemoryVPNManager())
 
 	// Public routes
 	public := router.Group("/api/v1")
@@ -60,10 +60,15 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		// Profiles
 		profiles := protected.Group("/profiles")
 		{
+			profiles.GET("/active", profileHandler.GetActive)
 			profiles.GET("", profileHandler.List)
 			profiles.GET("/:id", profileHandler.Get)
+			profiles.GET("/:id/content", profileHandler.GetContent)
 			profiles.POST("", profileHandler.Create)
 			profiles.PUT("/:id", profileHandler.Update)
+			profiles.PUT("/:id/active", profileHandler.SetActive)
+			profiles.PUT("/:id/content", profileHandler.UpdateContent)
+			profiles.PUT("/:id/subscription", profileHandler.UpdateSubscription)
 			profiles.DELETE("/:id", profileHandler.Delete)
 		}
 
@@ -94,13 +99,15 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 			cloudGroup.GET("/availability", cloudHandler.ListAvailability)
 		}
 
-		// VPN (commented out until VPNManager is properly integrated)
-		// vpn := protected.Group("/vpn")
-		// {
-		//     vpn.POST("/start", vpnHandler.Start)
-		//     vpn.POST("/stop", vpnHandler.Stop)
-		//     vpn.GET("/status", vpnHandler.GetStatus)
-		//     vpn.GET("/stats", vpnHandler.GetStats)
-		// }
+		// VPN
+		vpn := protected.Group("/vpn")
+		{
+			vpn.POST("/start", vpnHandler.Start)
+			vpn.POST("/stop", vpnHandler.Stop)
+			vpn.POST("/restart", vpnHandler.Restart)
+			vpn.POST("/stats/reset", vpnHandler.ResetStats)
+			vpn.GET("/status", vpnHandler.GetStatus)
+			vpn.GET("/stats", vpnHandler.GetStats)
+		}
 	}
 }

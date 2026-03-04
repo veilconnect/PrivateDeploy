@@ -49,7 +49,7 @@ func main() {
 	}
 
 	// Setup WebSocket hub
-	wsHub := handlers.NewWSHub(cfg.JWT.Secret)
+	wsHub := handlers.NewWSHub(cfg.JWT.Secret, cfg.CORS.AllowedOrigins)
 	log.Println("✅ WebSocket hub initialized")
 
 	// Setup Cloud Manager

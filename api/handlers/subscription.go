@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -237,10 +242,17 @@ func (h *SubscriptionHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement actual subscription refresh logic
-	// This would involve fetching the subscription URL and parsing nodes
+	nodeCount, err := fetchSubscriptionNodeCount(subscription.URL)
+	if err != nil {
+		log.Printf("[SubscriptionHandler] ERROR: Failed to refresh subscription content: %v", err)
+		c.JSON(http.StatusBadGateway, models.ErrorResponse(
+			models.ErrProviderError,
+			"Failed to fetch subscription content",
+		))
+		return
+	}
 
-	// For now, just update the timestamp
+	subscription.NodeCount = nodeCount
 	subscription.UpdatedAt = time.Now()
 	if err := h.db.Save(&subscription).Error; err != nil {
 		log.Printf("[SubscriptionHandler] ERROR: Failed to update subscription: %v", err)
@@ -257,4 +269,55 @@ func (h *SubscriptionHandler) Refresh(c *gin.Context) {
 		"subscription": subscription,
 		"message":      "Subscription refreshed successfully",
 	}))
+}
+
+func fetchSubscriptionNodeCount(url string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("subscription fetch failed with status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	content := strings.TrimSpace(string(body))
+	if content == "" {
+		return 0, nil
+	}
+
+	if decoded, err := base64.StdEncoding.DecodeString(content); err == nil {
+		content = strings.TrimSpace(string(decoded))
+	}
+
+	return countSubscriptionNodes(content), nil
+}
+
+func countSubscriptionNodes(content string) int {
+	lines := strings.Split(content, "\n")
+	count := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "://") {
+			count++
+		}
+	}
+	return count
 }

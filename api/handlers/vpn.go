@@ -9,55 +9,58 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// VPNHandler handles VPN-related requests
+// VPNHandler handles VPN-related requests.
 type VPNHandler struct {
 	vpnManager VPNManager
 }
 
-// VPNManager interface for VPN operations
+// VPNManager interface for VPN operations.
 type VPNManager interface {
 	Start(profileID string) error
 	Stop() error
+	Restart() error
+	ResetStats() error
 	GetStatus() (*VPNStatus, error)
 	GetStats() (*VPNStats, error)
 }
 
-// VPNStatus represents VPN connection status
+// VPNStatus represents VPN connection status.
 type VPNStatus struct {
-	Status      string    `json:"status"` // connected, disconnected, connecting
-	ProfileID   string    `json:"profileId,omitempty"`
-	ConnectedAt time.Time `json:"connectedAt,omitempty"`
-	UploadSpeed int64     `json:"uploadSpeed"`
-	DownSpeed   int64     `json:"downloadSpeed"`
+	Status         string    `json:"status"` // connected, disconnected, connecting
+	ProfileID      string    `json:"profileId,omitempty"`
+	ActiveProfile  string    `json:"active_profile,omitempty"`
+	ConnectedAt    time.Time `json:"connectedAt,omitempty"`
+	UploadBytes    int64     `json:"upload_bytes"`
+	DownloadBytes  int64     `json:"download_bytes"`
+	UploadSpeed    int64     `json:"upload_speed"`
+	DownloadSpeed  int64     `json:"download_speed"`
+	ConnectionTime int64     `json:"connection_time"`
 }
 
-// VPNStats represents VPN traffic statistics
+// VPNStats represents VPN traffic statistics.
 type VPNStats struct {
-	Upload        int64 `json:"upload"`
-	Download      int64 `json:"download"`
-	UploadSpeed   int64 `json:"uploadSpeed"`
-	DownloadSpeed int64 `json:"downloadSpeed"`
+	UploadBytes    int64 `json:"upload_bytes"`
+	DownloadBytes  int64 `json:"download_bytes"`
+	UploadSpeed    int64 `json:"upload_speed"`
+	DownloadSpeed  int64 `json:"download_speed"`
+	ConnectionTime int64 `json:"connection_time"`
 }
 
-// NewVPNHandler creates a new VPNHandler
+// NewVPNHandler creates a new VPNHandler.
 func NewVPNHandler(vpnManager VPNManager) *VPNHandler {
 	return &VPNHandler{
 		vpnManager: vpnManager,
 	}
 }
 
-// Start starts the VPN connection
+// Start starts the VPN connection.
 func (h *VPNHandler) Start(c *gin.Context) {
 	var req struct {
-		ProfileID string `json:"profileId" binding:"required"`
+		ProfileID string `json:"profileId"`
 	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(
-			models.ErrValidationError,
-			"Invalid request body",
-		))
-		return
+	_ = c.ShouldBindJSON(&req)
+	if req.ProfileID == "" {
+		req.ProfileID = "default"
 	}
 
 	log.Printf("[VPNHandler] Starting VPN with profile: %s", req.ProfileID)
@@ -71,14 +74,15 @@ func (h *VPNHandler) Start(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[VPNHandler] VPN started successfully")
-
+	status, _ := h.vpnManager.GetStatus()
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"status": "connected",
+		"status":  "connected",
+		"profile": req.ProfileID,
+		"vpn":     status,
 	}))
 }
 
-// Stop stops the VPN connection
+// Stop stops the VPN connection.
 func (h *VPNHandler) Stop(c *gin.Context) {
 	log.Printf("[VPNHandler] Stopping VPN")
 
@@ -91,17 +95,51 @@ func (h *VPNHandler) Stop(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[VPNHandler] VPN stopped successfully")
-
+	status, _ := h.vpnManager.GetStatus()
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"status": "disconnected",
+		"vpn":    status,
 	}))
 }
 
-// GetStatus returns the current VPN status
-func (h *VPNHandler) GetStatus(c *gin.Context) {
-	log.Printf("[VPNHandler] GetStatus called")
+// Restart restarts the VPN connection.
+func (h *VPNHandler) Restart(c *gin.Context) {
+	log.Printf("[VPNHandler] Restarting VPN")
 
+	if err := h.vpnManager.Restart(); err != nil {
+		log.Printf("[VPNHandler] ERROR: Failed to restart VPN: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
+			models.ErrVPNError,
+			err.Error(),
+		))
+		return
+	}
+
+	status, _ := h.vpnManager.GetStatus()
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"status": "connected",
+		"vpn":    status,
+	}))
+}
+
+// ResetStats resets VPN traffic stats.
+func (h *VPNHandler) ResetStats(c *gin.Context) {
+	if err := h.vpnManager.ResetStats(); err != nil {
+		log.Printf("[VPNHandler] ERROR: Failed to reset stats: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
+			models.ErrVPNError,
+			err.Error(),
+		))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message": "stats reset",
+	}))
+}
+
+// GetStatus returns the current VPN status.
+func (h *VPNHandler) GetStatus(c *gin.Context) {
 	status, err := h.vpnManager.GetStatus()
 	if err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to get status: %v", err)
@@ -112,13 +150,18 @@ func (h *VPNHandler) GetStatus(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(status))
+	stats, _ := h.vpnManager.GetStats()
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"status":         status.Status,
+		"profileId":      status.ProfileID,
+		"active_profile": status.ActiveProfile,
+		"connectedAt":    status.ConnectedAt,
+		"stats":          stats,
+	}))
 }
 
-// GetStats returns VPN traffic statistics
+// GetStats returns VPN traffic statistics.
 func (h *VPNHandler) GetStats(c *gin.Context) {
-	log.Printf("[VPNHandler] GetStats called")
-
 	stats, err := h.vpnManager.GetStats()
 	if err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to get stats: %v", err)
