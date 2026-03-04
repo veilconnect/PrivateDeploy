@@ -471,6 +471,25 @@ const decodeBase64 = (value: string): string => {
   }
 }
 
+const parseBooleanLike = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'number') {
+    if (value === 1) return true
+    if (value === 0) return false
+    return undefined
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return undefined
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return undefined
+}
+
 const normalizeHost = (host: string) => host.replace(/^\[/, '').replace(/\]$/, '')
 
 const assignIpFields = (host: string): Pick<ManualNodeInput, 'ipv4' | 'ipv6'> => {
@@ -530,6 +549,8 @@ const parseTrojanUrl = (text: string): ManualNodeInput | null => {
     }
     const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
     const password = url.username
+    const serverName = url.searchParams.get('sni') || url.searchParams.get('peer') || undefined
+    const insecure = parseBooleanLike(url.searchParams.get('allowInsecure') ?? url.searchParams.get('insecure'))
     if (!password) {
       return null
     }
@@ -539,6 +560,8 @@ const parseTrojanUrl = (text: string): ManualNodeInput | null => {
       ...ipFields,
       trojanPort: port,
       trojanPassword: decodeURIComponent(password),
+      trojanServerName: serverName || undefined,
+      trojanInsecure: insecure,
     }
   } catch {
     return null
@@ -581,6 +604,8 @@ const parseHysteriaUrl = (text: string): ManualNodeInput | null => {
     }
     const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
     const password = url.username || url.searchParams.get('auth') || url.searchParams.get('password') || ''
+    const serverName = url.searchParams.get('sni') || undefined
+    const insecure = parseBooleanLike(url.searchParams.get('insecure') ?? url.searchParams.get('allowInsecure'))
     if (!password) {
       return null
     }
@@ -590,6 +615,8 @@ const parseHysteriaUrl = (text: string): ManualNodeInput | null => {
       ...ipFields,
       hysteriaPort: port,
       hysteriaPassword: decodeURIComponent(password),
+      hysteriaServerName: serverName || undefined,
+      hysteriaInsecure: insecure,
     }
   } catch {
     return null
@@ -657,6 +684,13 @@ const parseImportedNodes = (raw: string): ManualNodeInput[] => {
           typeof record.hysteriaPassword === 'string' && record.hysteriaPassword.trim()
             ? record.hysteriaPassword.trim()
             : undefined,
+        hysteriaServerName:
+          typeof record.hysteriaServerName === 'string' && record.hysteriaServerName.trim()
+            ? record.hysteriaServerName.trim()
+            : typeof record.hysteriaSni === 'string' && record.hysteriaSni.trim()
+              ? record.hysteriaSni.trim()
+              : undefined,
+        hysteriaInsecure: parseBooleanLike(record.hysteriaInsecure),
         vlessPort: toOptionalNumber(String(record.vlessPort ?? '')) ?? undefined,
         vlessUUID: typeof record.vlessUUID === 'string' && record.vlessUUID.trim() ? record.vlessUUID.trim() : undefined,
         vlessPublicKey:
@@ -672,6 +706,13 @@ const parseImportedNodes = (raw: string): ManualNodeInput[] => {
           typeof record.trojanPassword === 'string' && record.trojanPassword.trim()
             ? record.trojanPassword.trim()
             : undefined,
+        trojanServerName:
+          typeof record.trojanServerName === 'string' && record.trojanServerName.trim()
+            ? record.trojanServerName.trim()
+            : typeof record.trojanSni === 'string' && record.trojanSni.trim()
+              ? record.trojanSni.trim()
+              : undefined,
+        trojanInsecure: parseBooleanLike(record.trojanInsecure),
       }
       inputs.push(input)
     }
@@ -1706,8 +1747,23 @@ const copyValue = async (value: string) => {
 }
 
 type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
+const DefaultHysteriaServerName = 'www.bing.com'
+const DefaultTrojanServerName = 'www.microsoft.com'
 
 const ensureNode = (node: CloudNode | Record<string, any>): DisplayCloudNode => node as DisplayCloudNode
+
+const resolveServerName = (value: string | undefined, fallback: string) => {
+  const trimmed = value?.trim()
+  return trimmed || fallback
+}
+
+const resolveTLSInsecure = (node: DisplayCloudNode, protocol: 'hysteria' | 'trojan') => {
+  const flag = protocol === 'hysteria' ? node.hysteriaInsecure : node.trojanInsecure
+  if (typeof flag === 'boolean') {
+    return flag
+  }
+  return !isManualNode(node)
+}
 
 const getPreferredAddress = (node: CloudNode | Record<string, any>): string | undefined => {
   const target = ensureNode(node)
@@ -1736,7 +1792,12 @@ const buildHysteriaLink = (node: CloudNode | Record<string, any>): string | null
   if (!target.hysteriaPort || !target.hysteriaPassword) return null
   const host = getPreferredAddress(target)
   if (!host) return null
-  const query = new URLSearchParams({ sni: 'www.bing.com', insecure: '1' })
+  const query = new URLSearchParams({
+    sni: resolveServerName(target.hysteriaServerName, DefaultHysteriaServerName),
+  })
+  if (resolveTLSInsecure(target, 'hysteria')) {
+    query.set('insecure', '1')
+  }
   return `hysteria2://${encodeURIComponent(target.hysteriaPassword)}@${wrapHostForUri(host)}:${target.hysteriaPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 
@@ -1762,7 +1823,14 @@ const buildTrojanLink = (node: CloudNode | Record<string, any>): string | null =
   if (!target.trojanPort || !target.trojanPassword) return null
   const host = getPreferredAddress(target)
   if (!host) return null
-  const query = new URLSearchParams({ security: 'tls', sni: 'www.microsoft.com', allowInsecure: '1' })
+  const query = new URLSearchParams({
+    security: 'tls',
+    sni: resolveServerName(target.trojanServerName, DefaultTrojanServerName),
+  })
+  if (resolveTLSInsecure(target, 'trojan')) {
+    query.set('allowInsecure', '1')
+    query.set('insecure', '1')
+  }
   return `trojan://${encodeURIComponent(target.trojanPassword)}@${wrapHostForUri(host)}:${target.trojanPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 

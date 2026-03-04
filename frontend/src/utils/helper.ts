@@ -1,6 +1,6 @@
 import { deleteConnection, getConnections, useProxy } from '@/api/kernel'
 import { AbsolutePath, Exec, ExitApp, ReadFile, WriteFile } from '@/bridge'
-import { CoreWorkingDirectory } from '@/constant/kernel'
+import { CoreWorkingDirectory, DeprecatedKernelEnvKeys } from '@/constant/kernel'
 import i18n from '@/lang'
 import {
   type ProxyType,
@@ -11,6 +11,8 @@ import {
   usePluginsStore,
 } from '@/stores'
 import { ignoredError, message, confirm } from '@/utils'
+
+const DeprecatedKernelEnvKeySet = new Set<string>(DeprecatedKernelEnvKeys)
 
 // Permissions Helper
 export const SwitchPermissions = async (enable: boolean) => {
@@ -546,6 +548,12 @@ export const getKernelRuntimeEnv = (isAlpha = false) => {
   const appSettings = useAppSettingsStore()
   const { env } = isAlpha ? appSettings.app.kernel.alpha : appSettings.app.kernel.main
   return Object.entries(env).reduce((p, [key, value]) => {
+    if (DeprecatedKernelEnvKeySet.has(key)) {
+      return p
+    }
+    if (typeof value !== 'string') {
+      return p
+    }
     p[key] = processMagicVariables(value)
     return p
   }, {} as Recordable)

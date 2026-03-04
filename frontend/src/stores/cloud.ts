@@ -69,6 +69,24 @@ const subscriptionId = (instanceId: string) => {
 const subscriptionPath = (instanceId: string) => `data/subscribes/${subscriptionId(instanceId)}.json`
 
 const manualNodesPath = 'data/cloud/manual-nodes.json'
+const DefaultHysteriaServerName = 'www.bing.com'
+const DefaultTrojanServerName = 'www.microsoft.com'
+
+const normalizeServerName = (value: unknown, fallback: string) => {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
+}
+
+const resolveTLSInsecure = (node: CloudNode, protocol: 'hysteria' | 'trojan') => {
+  const insecureFlag = protocol === 'hysteria' ? node.hysteriaInsecure : node.trojanInsecure
+  if (typeof insecureFlag === 'boolean') {
+    return insecureFlag
+  }
+  // Managed cloud nodes currently use self-signed certs in deployment templates.
+  // Keep compatibility there while defaulting manual nodes to strict TLS verification.
+  return node.provider !== 'manual'
+}
 
 type ManualNodeInput = {
   instanceId?: string
@@ -81,12 +99,16 @@ type ManualNodeInput = {
   ssPassword?: string
   hysteriaPort?: number
   hysteriaPassword?: string
+  hysteriaServerName?: string
+  hysteriaInsecure?: boolean
   vlessPort?: number
   vlessUUID?: string
   vlessPublicKey?: string
   vlessShortId?: string
   trojanPort?: number
   trojanPassword?: string
+  trojanServerName?: string
+  trojanInsecure?: boolean
   createdAt?: string
 }
 
@@ -364,6 +386,11 @@ export const useCloudStore = defineStore('cloud', () => {
     return
   }
 
+    const hysteriaServerName = normalizeServerName(node.hysteriaServerName, DefaultHysteriaServerName)
+    const hysteriaInsecure = resolveTLSInsecure(node, 'hysteria')
+    const trojanServerName = normalizeServerName(node.trojanServerName, DefaultTrojanServerName)
+    const trojanInsecure = resolveTLSInsecure(node, 'trojan')
+
     // 1. Shadowsocks (always available - legacy compatibility)
     if (node.ssPort && node.ssPassword) {
       ipVersions.forEach(({ ip, suffix }) => {
@@ -391,8 +418,8 @@ export const useCloudStore = defineStore('cloud', () => {
           password: node.hysteriaPassword,
           tls: {
             enabled: true,
-            insecure: true,
-            server_name: 'www.bing.com',
+            insecure: hysteriaInsecure,
+            server_name: hysteriaServerName,
           },
         })
       })
@@ -440,8 +467,8 @@ export const useCloudStore = defineStore('cloud', () => {
           password: node.trojanPassword,
           tls: {
             enabled: true,
-            insecure: true,
-            server_name: 'www.microsoft.com',
+            insecure: trojanInsecure,
+            server_name: trojanServerName,
           },
         })
       })
@@ -656,12 +683,16 @@ export const useCloudStore = defineStore('cloud', () => {
       ssPassword: input.ssPassword?.trim() || undefined,
       hysteriaPort: sanitizePort(input.hysteriaPort),
       hysteriaPassword: input.hysteriaPassword?.trim() || undefined,
+      hysteriaServerName: input.hysteriaServerName?.trim() || undefined,
+      hysteriaInsecure: typeof input.hysteriaInsecure === 'boolean' ? input.hysteriaInsecure : undefined,
       vlessPort: sanitizePort(input.vlessPort),
       vlessUUID: input.vlessUUID?.trim() || undefined,
       vlessPublicKey: input.vlessPublicKey?.trim() || undefined,
       vlessShortId: input.vlessShortId?.trim() || undefined,
       trojanPort: sanitizePort(input.trojanPort),
       trojanPassword: input.trojanPassword?.trim() || undefined,
+      trojanServerName: input.trojanServerName?.trim() || undefined,
+      trojanInsecure: typeof input.trojanInsecure === 'boolean' ? input.trojanInsecure : undefined,
     }
     const hasProtocol =
       (node.ssPort && node.ssPassword) ||

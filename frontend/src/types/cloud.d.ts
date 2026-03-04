@@ -51,12 +51,16 @@ export interface CloudNode {
   ssPassword?: string
   hysteriaPort?: number
   hysteriaPassword?: string
+  hysteriaServerName?: string
+  hysteriaInsecure?: boolean
   vlessPort?: number
   vlessUUID?: string
   vlessPublicKey?: string
   vlessShortId?: string
   trojanPort?: number
   trojanPassword?: string
+  trojanServerName?: string
+  trojanInsecure?: boolean
 }
 
 // Legacy types for backward compatibility

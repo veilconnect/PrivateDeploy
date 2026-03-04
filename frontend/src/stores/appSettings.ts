@@ -20,7 +20,12 @@ import {
   UserFilePath,
   LocalesFilePath,
 } from '@/constant/app'
-import { CorePidFilePath, DefaultConnections, DefaultCoreConfig } from '@/constant/kernel'
+import {
+  CorePidFilePath,
+  DefaultConnections,
+  DefaultCoreConfig,
+  DeprecatedKernelEnvKeys,
+} from '@/constant/kernel'
 import {
   Theme,
   WindowStartState,
@@ -118,6 +123,24 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
   }
 
   let latestUserSettings: string
+  const removeDeprecatedKernelEnvKeys = (env: Recordable | undefined) => {
+    if (!env || typeof env !== 'object') return false
+    let changed = false
+    for (const key of DeprecatedKernelEnvKeys) {
+      if (key in env) {
+        delete env[key]
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  const cleanupDeprecatedKernelEnv = () => {
+    const { kernel } = app.value
+    return (
+      removeDeprecatedKernelEnvKeys(kernel.main?.env) || removeDeprecatedKernelEnvKeys(kernel.alpha?.env)
+    )
+  }
 
   const setupAppSettings = async () => {
     const data = await ignoredError(ReadFile, UserFilePath)
@@ -132,7 +155,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     await loadLocales()
 
     if ((app.value.kernel.branch as any) === 'latest') {
-      app.value.kernel.branch = Branch.Alpha
+      app.value.kernel.branch = Branch.Main
     }
     if (app.value.kernel.controllerCloseMode === undefined) {
       app.value.kernel.controllerCloseMode = ControllerCloseMode.All
@@ -167,6 +190,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
       app.value.kernel.main = DefaultCoreConfig()
       app.value.kernel.alpha = DefaultCoreConfig()
     }
+    cleanupDeprecatedKernelEnv()
 
     if (!app.value.kernel.cardColumns) {
       app.value.kernel.cardColumns = DefaultCardColumns

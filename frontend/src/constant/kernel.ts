@@ -19,6 +19,10 @@ export const CoreWorkingDirectory = 'data/sing-box'
 export const CorePidFilePath = CoreWorkingDirectory + '/pid.txt'
 export const CoreConfigFilePath = CoreWorkingDirectory + '/config.json'
 export const CoreCacheFilePath = CoreWorkingDirectory + '/cache.db'
+export const DeprecatedKernelEnvKeys = [
+  'ENABLE_DEPRECATED_LEGACY_DNS_SERVERS',
+  'ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER',
+] as const
 
 export const ModeOptions = [
   {
