@@ -6,10 +6,20 @@ import {
   ProcessInfo,
   KillProcess,
   ExecBackground,
+  Exec,
   ReadFile,
   WriteFile,
   RemoveFile,
   FileExists,
+  CopyFile,
+  AbsolutePath,
+  MakeDir,
+  MoveFile,
+  UnzipZIPFile,
+  UnzipTarGZFile,
+  Download,
+  HttpGet,
+  HttpCancel,
 } from '@/bridge'
 import { GetAvailablePort } from '@/bridge/app'
 import {
@@ -45,6 +55,8 @@ import {
   message,
   getKernelRuntimeArgs,
   getKernelRuntimeEnv,
+  getKernelAssetFileName,
+  getGitHubApiAuthorization,
 } from '@/utils'
 
 import type {
@@ -57,6 +69,9 @@ import type {
 } from '@/types/kernel'
 
 export type ProxyType = 'mixed' | 'http' | 'socks'
+
+const StableReleaseURL = 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'
+const AlphaReleaseURL = 'https://api.github.com/repos/SagerNet/sing-box/releases?per_page=2'
 
 export const useKernelApiStore = defineStore('kernelApi', () => {
   const envStore = useEnvStore()
@@ -419,8 +434,97 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     destroyCoreWebsockets()
   }
 
+  const ensureCoreExecutable = async (isAlpha: boolean, corePath: string) => {
+    const exists = await FileExists(corePath).catch(() => false)
+    if (exists) return true
+
+    const fallbackPath = `${CoreWorkingDirectory}/${getKernelFileName(!isAlpha)}`
+    const fallbackExists = await FileExists(fallbackPath).catch(() => false)
+    if (fallbackExists) {
+      logsStore.recordKernelLog(
+        `[KernelApi] Missing core "${corePath}", trying fallback "${fallbackPath}"`,
+      )
+      await CopyFile(fallbackPath, corePath)
+      if (!corePath.endsWith('.exe')) {
+        await Exec('chmod', ['+x', await AbsolutePath(corePath)]).catch(() => undefined)
+      }
+
+      const restored = await FileExists(corePath).catch(() => false)
+      if (restored) {
+        logsStore.recordKernelLog(`[KernelApi] Restored core executable from fallback`)
+        return true
+      }
+    }
+
+    logsStore.recordKernelLog(`[KernelApi] Missing core "${corePath}", auto downloading...`)
+
+    const releaseUrl = isAlpha ? AlphaReleaseURL : StableReleaseURL
+    const { body } = await HttpGet<Record<string, any>>(releaseUrl, {
+      Authorization: getGitHubApiAuthorization(),
+    })
+    if (body.message) throw body.message
+
+    const release = isAlpha ? body.find((v: any) => v?.prerelease === true) : body
+    if (!release) throw 'Release not found'
+
+    const version = String(release.name || release.tag_name || '').replace(/^v/, '')
+    if (!version) throw 'Release version not found'
+
+    const assetName = getKernelAssetFileName(version)
+    const asset = release.assets?.find((v: any) => v?.name === assetName)
+    if (!asset) throw 'Asset Not Found:' + assetName
+
+    const cacheDir = 'data/.cache'
+    const cacheFile = `${cacheDir}/${assetName}`
+    const cancelId = `kernel-auto-download-${Date.now()}`
+    const toast = message.info('common.downloading', 10 * 60 * 1_000, () => {
+      HttpCancel(cancelId)
+    })
+
+    try {
+      await MakeDir(CoreWorkingDirectory).catch(() => undefined)
+      await MakeDir(cacheDir).catch(() => undefined)
+      await Download(asset.browser_download_url, cacheFile, undefined, undefined, {
+        CancelId: cancelId,
+      })
+    } finally {
+      toast.destroy()
+    }
+
+    const extractedCoreFileName = getKernelFileName()
+    await RemoveFile(corePath).catch(() => undefined)
+
+    if (assetName.endsWith('.zip')) {
+      await UnzipZIPFile(cacheFile, cacheDir)
+      const extractedDir = `${cacheDir}/${assetName.replace('.zip', '')}`
+      await MoveFile(`${extractedDir}/${extractedCoreFileName}`, corePath)
+      await RemoveFile(extractedDir).catch(() => undefined)
+    } else if (assetName.endsWith('.tar.gz')) {
+      await UnzipTarGZFile(cacheFile, cacheDir)
+      const extractedDir = `${cacheDir}/${assetName.replace('.tar.gz', '')}`
+      await MoveFile(`${extractedDir}/${extractedCoreFileName}`, corePath)
+      await RemoveFile(extractedDir).catch(() => undefined)
+    } else {
+      throw `Unsupported asset format: ${assetName}`
+    }
+
+    await RemoveFile(cacheFile).catch(() => undefined)
+
+    if (!corePath.endsWith('.exe')) {
+      await Exec('chmod', ['+x', await AbsolutePath(corePath)]).catch(() => undefined)
+    }
+
+    return await FileExists(corePath).catch(() => false)
+  }
+
   const startCore = async (_profile?: IProfile) => {
     if (running.value) throw 'The core is already running'
+    if (starting.value) {
+      logsStore.recordKernelLog(
+        '[KernelApi] startCore ignored because another start attempt is in progress',
+      )
+      return
+    }
 
     logsStore.clearKernelLog()
 
@@ -434,8 +538,13 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
 
     const isAlpha = branch === Branch.Alpha
     const corePath = `${CoreWorkingDirectory}/${getKernelFileName(isAlpha)}`
-    const coreExists = await FileExists(corePath).catch(() => false)
-    if (!coreExists) {
+    const coreReady = await ensureCoreExecutable(isAlpha, corePath).catch((error) => {
+      logsStore.recordKernelLog(
+        `[KernelApi] Failed to prepare core executable: ${String(error ?? '')}`,
+      )
+      return false
+    })
+    if (!coreReady) {
       message.error('kernel.errors.coreMissing')
       return
     }
@@ -444,6 +553,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     let lastError: any = null
     const profileToUse = deepClone(profile)
     let portsAdjusted = false
+    let missingCloudSubscriptionsPruned = false
 
     const reassignProfilePorts = async (target: IProfile) => {
       const usedPorts = new Set<number>()
@@ -559,6 +669,66 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       return { changed: Object.keys(changes).length > 0, ports: changes }
     }
 
+    const pruneMissingCloudSubscriptions = async (target: IProfile) => {
+      const cloudSubscriptionIDs = new Set<string>()
+      const addCloudID = (id?: string) => {
+        if (typeof id === 'string' && id.startsWith('cloud-')) {
+          cloudSubscriptionIDs.add(id)
+        }
+      }
+
+      target.outbounds?.forEach((outbound: any) => {
+        addCloudID(outbound?.id)
+        if (Array.isArray(outbound?.outbounds)) {
+          outbound.outbounds.forEach((item: any) => addCloudID(item?.id))
+        }
+      })
+
+      if (!cloudSubscriptionIDs.size) {
+        return { changed: false, removed: [] as string[] }
+      }
+
+      const removed: string[] = []
+      for (const id of cloudSubscriptionIDs) {
+        const exists = await FileExists(`data/subscribes/${id}.json`).catch(() => false)
+        if (!exists) {
+          removed.push(id)
+        }
+      }
+
+      if (!removed.length) {
+        return { changed: false, removed }
+      }
+
+      const removedSet = new Set(removed)
+      let changed = false
+
+      const nextOutbounds = (target.outbounds || []).filter((outbound: any) => {
+        if (typeof outbound?.id === 'string' && removedSet.has(outbound.id)) {
+          changed = true
+          return false
+        }
+        return true
+      })
+
+      nextOutbounds.forEach((outbound: any) => {
+        if (!Array.isArray(outbound?.outbounds)) return
+        const before = outbound.outbounds.length
+        outbound.outbounds = outbound.outbounds.filter(
+          (item: any) => !(typeof item?.id === 'string' && removedSet.has(item.id)),
+        )
+        if (before !== outbound.outbounds.length) {
+          changed = true
+        }
+      })
+
+      if (changed) {
+        target.outbounds = nextOutbounds
+      }
+
+      return { changed, removed }
+    }
+
     try {
       const maxAttempts = 5  // 增加到5次
       const backoffDelays = [0, 500, 1000, 2000, 3000]  // 退避延迟（毫秒）
@@ -572,11 +742,11 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
           await new Promise(resolve => setTimeout(resolve, backoffDelays[attempt - 1]))
         }
 
-        await generateConfigFile(profileToUse, (config) =>
-          pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
-        )
-
         try {
+          await generateConfigFile(profileToUse, (config) =>
+            pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
+          )
+
           const pid = await runCoreProcess(isAlpha)
           if (pid) {
             await onCoreStarted(pid)
@@ -626,6 +796,21 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
             }
           }
 
+          const missingCloudSubscriptionFile =
+            messageText.includes('no such file or directory') &&
+            messageText.includes('data/subscribes/cloud-')
+
+          if (missingCloudSubscriptionFile && attempt < maxAttempts) {
+            const result = await pruneMissingCloudSubscriptions(profileToUse)
+            if (result.changed) {
+              missingCloudSubscriptionsPruned = true
+              logsStore.recordKernelLog(
+                `[KernelApi] Removed missing cloud subscriptions: ${result.removed.join(', ')}`,
+              )
+              continue
+            }
+          }
+
           // 如果是最后一次尝试，或者不是可重试的错误，抛出异常
           if (attempt === maxAttempts) {
             logsStore.recordKernelLog(`[KernelApi] All ${maxAttempts} attempts failed, giving up`)
@@ -641,7 +826,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       throw lastError
     }
 
-    if (portsAdjusted && profileToUse.id) {
+    if ((portsAdjusted || missingCloudSubscriptionsPruned) && profileToUse.id) {
       await profilesStore.editProfile(profileToUse.id, deepClone(profileToUse))
     }
   }
