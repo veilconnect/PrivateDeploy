@@ -69,7 +69,7 @@ curl http://localhost:8443/api/v1/health
 ```bash
 curl -X POST http://localhost:8443/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
+  -d '{"username":"YOUR_ADMIN_USERNAME","password":"YOUR_ADMIN_PASSWORD"}'
 ```
 
 ### 获取系统信息
