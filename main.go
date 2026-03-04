@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"privatedeploy/bridge"
@@ -28,6 +32,11 @@ var icon []byte
 var linuxTrayIcon []byte
 
 func main() {
+	if err := validateLinuxDisplay(); err != nil {
+		fmt.Fprintln(os.Stderr, formatStartupError(err))
+		os.Exit(1)
+	}
+
 	appIcon := icon
 	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
 		// GTK-based Linux desktop stacks decode PNG icons reliably.
@@ -41,7 +50,7 @@ func main() {
 	}
 
 	// Create application with options
-	err := wails.Run(&options.App{
+	err := runWailsWithRecovery(&options.App{
 		MinWidth:         600,
 		MinHeight:        400,
 		DisableResize:    false,
@@ -110,6 +119,80 @@ func main() {
 	})
 
 	if err != nil {
-		println("Error:", err.Error())
+		fmt.Fprintln(os.Stderr, formatStartupError(err))
+		os.Exit(1)
 	}
+}
+
+func runWailsWithRecovery(appOptions *options.App) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("desktop runtime panic: %v", recovered)
+		}
+	}()
+
+	return wails.Run(appOptions)
+}
+
+func validateLinuxDisplay() error {
+	if bridge.Env.OS != "linux" || os.Getenv("PRIVATEDEPLOY_SKIP_DISPLAY_CHECK") == "1" {
+		return nil
+	}
+
+	display := strings.TrimSpace(os.Getenv("DISPLAY"))
+	waylandDisplay := strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY"))
+
+	if display == "" && waylandDisplay == "" {
+		return fmt.Errorf("no GUI display detected (DISPLAY/WAYLAND_DISPLAY are both empty)")
+	}
+
+	if waylandDisplay != "" {
+		if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+			waylandSocket := filepath.Join(runtimeDir, waylandDisplay)
+			if _, err := os.Stat(waylandSocket); err != nil {
+				return fmt.Errorf("WAYLAND_DISPLAY=%q is not reachable at %s", waylandDisplay, waylandSocket)
+			}
+		}
+	}
+
+	if display == "" {
+		return nil
+	}
+
+	if _, err := exec.LookPath("xdpyinfo"); err != nil {
+		return nil
+	}
+
+	cmd := exec.Command("xdpyinfo")
+	cmd.Env = append(os.Environ(), "DISPLAY="+display)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		if len(detail) > 160 {
+			detail = detail[:160] + "..."
+		}
+		return fmt.Errorf("X11 display %q is not accessible: %s", display, detail)
+	}
+
+	return nil
+}
+
+func formatStartupError(err error) string {
+	if bridge.Env.OS != "linux" {
+		return "Error: " + err.Error()
+	}
+
+	message := err.Error()
+	if strings.Contains(message, "failed to init GTK") || strings.Contains(message, "X11 display") || strings.Contains(message, "desktop runtime panic") || strings.Contains(message, "no GUI display detected") || strings.Contains(message, "WAYLAND_DISPLAY") {
+		return fmt.Sprintf(
+			"Error: %s\nLinux GUI startup check failed. Current DISPLAY=%q WAYLAND_DISPLAY=%q.\nPlease launch from a desktop terminal with a valid display session.",
+			err.Error(),
+			os.Getenv("DISPLAY"),
+			os.Getenv("WAYLAND_DISPLAY"),
+		)
+	}
+
+	return "Error: " + err.Error()
 }
