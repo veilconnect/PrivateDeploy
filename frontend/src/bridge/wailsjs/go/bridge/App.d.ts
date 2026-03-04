@@ -4,6 +4,8 @@ import {bridge} from '../models';
 
 export function AbsolutePath(arg1:string):Promise<bridge.FlagResult>;
 
+export function CleanInvalidCloudNodes():Promise<bridge.FlagResult>;
+
 export function CloseMMDB(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;

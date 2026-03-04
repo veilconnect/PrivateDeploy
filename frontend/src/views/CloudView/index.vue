@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { EventsOn, EventsOff } from '@wails/runtime/runtime'
 import { useI18n } from 'vue-i18n'
 
 import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
@@ -18,6 +19,8 @@ import LatencyChart from '@/components/LatencyChart.vue'
 
 import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
+import SSHConfigForm from './components/SSHConfigForm.vue'
+import MultiDeployModal from './components/MultiDeployModal.vue'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
@@ -83,6 +86,27 @@ const sortOrder = ref<'asc' | 'desc'>('asc')
 
 // Keyboard shortcuts help
 const showKeyboardHelp = ref(false)
+
+// SSH deploy state
+const isSSHProvider = computed(() => cloudStore.currentProvider === 'ssh')
+const sshDeployProgress = ref<Array<{ id: string; stage: string; message: string }>>([])
+const showMultiDeployModal = ref(false)
+
+const handleSSHDeploy = async (extra: Record<string, string>) => {
+  try {
+    sshDeployProgress.value = []
+    await cloudStore.createSSHInstance(extra)
+    message.success('SSH 节点部署完成')
+  } catch (err: any) {
+    message.error('SSH 部署失败: ' + (err.message || String(err)))
+  }
+}
+
+const handleMultiDeployDone = async () => {
+  showMultiDeployModal.value = false
+  await cloudStore.refreshInstances(true)
+  message.success('批量部署完成')
+}
 
 // Reachability Risk Rating for regions
 // Low: Generally stable, less likely to be blocked
@@ -2028,10 +2052,39 @@ onMounted(() => {
 
   const stopHealthChecks = scheduleHealthChecks(performHealthCheck, 5 * 60 * 1000)
 
+  // Listen for backend health monitor events
+  EventsOn('cloud:health:changed', (nodeId: string, healthy: boolean, failures: number) => {
+    const node = cloudStore.instances.find(n => n.instanceId === nodeId)
+    if (node) {
+      node.connectivityStatus = healthy ? 'reachable' : 'blocked'
+      if (!healthy) {
+        logInfo(`[CloudView] Health changed: ${nodeId} unhealthy (${failures} failures)`)
+      }
+    }
+  })
+
+  EventsOn('cloud:health:alert', (nodeId: string, failures: number) => {
+    const node = cloudStore.instances.find(n => n.instanceId === nodeId)
+    const label = node?.label || nodeId
+    message.error(`节点 ${label} 连续 ${failures} 次健康检查失败`)
+  })
+
+  // Listen for SSH deploy progress
+  EventsOn('cloud:ssh:progress', (instanceId: string, stage: string, msg: string) => {
+    logInfo(`[SSH Deploy] ${instanceId}: [${stage}] ${msg}`)
+    sshDeployProgress.value = [
+      ...sshDeployProgress.value.filter(p => p.id !== instanceId),
+      { id: instanceId, stage, message: msg },
+    ]
+  })
+
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
     stopHealthChecks()
     cleanupOfflineMode()
+    EventsOff('cloud:health:changed')
+    EventsOff('cloud:health:alert')
+    EventsOff('cloud:ssh:progress')
   })
 })
 </script>
@@ -2058,52 +2111,56 @@ onMounted(() => {
             auto-size
             aria-labelledby="cloud-provider-label"
           />
-          <Input
-            v-model="cloudStore.config.apiKey"
-            type="password"
-            :show-password="true"
-            :auto-size="true"
-            :placeholder="t('cloud.credentials.placeholder')"
-            class="flex-1 min-w-240"
-            aria-label="API Key"
-          />
-          <Button
-            @click="handleSaveConfig"
-            type="primary"
-            :loading="cloudStore.savingConfig"
-            :disabled="!hasApiKey"
-          >
-            {{ t('cloud.credentials.save') }}
-          </Button>
-          <Button
-            @click="fetchMeta"
-            :loading="loadingMeta"
-            :disabled="!hasApiKey"
-            type="link"
-          >
-            {{ t('cloud.credentials.syncMeta') }}
-          </Button>
-          <Button
-            @click="handleBackupConfig"
-            type="link"
-            :disabled="!hasApiKey"
-          >
-            {{ t('cloud.backup.export') }}
-          </Button>
-          <Button
-            @click="handleRestoreConfig"
-            type="link"
-          >
-            {{ t('cloud.backup.import') }}
-          </Button>
+          <template v-if="!isSSHProvider">
+            <Input
+              v-model="cloudStore.config.apiKey"
+              type="password"
+              :show-password="true"
+              :auto-size="true"
+              :placeholder="t('cloud.credentials.placeholder')"
+              class="flex-1 min-w-240"
+              aria-label="API Key"
+            />
+            <Button
+              @click="handleSaveConfig"
+              type="primary"
+              :loading="cloudStore.savingConfig"
+              :disabled="!hasApiKey"
+            >
+              {{ t('cloud.credentials.save') }}
+            </Button>
+            <Button
+              @click="fetchMeta"
+              :loading="loadingMeta"
+              :disabled="!hasApiKey"
+              type="link"
+            >
+              {{ t('cloud.credentials.syncMeta') }}
+            </Button>
+            <Button
+              @click="handleBackupConfig"
+              type="link"
+              :disabled="!hasApiKey"
+            >
+              {{ t('cloud.backup.export') }}
+            </Button>
+            <Button
+              @click="handleRestoreConfig"
+              type="link"
+            >
+              {{ t('cloud.backup.import') }}
+            </Button>
+          </template>
         </div>
-        <div class="text-12 text-secondary">
+        <!-- SSH Config Form (replaces API key for SSH provider) -->
+        <SSHConfigForm v-if="isSSHProvider" @deploy="handleSSHDeploy" />
+        <div v-else class="text-12 text-secondary">
           {{ t('cloud.credentials.hint') }}
         </div>
       </div>
     </Card>
 
-    <Card :title="t('cloud.create.title')">
+    <Card v-if="!isSSHProvider" :title="t('cloud.create.title')">
       <div class="flex flex-col gap-12 py-8">
         <div class="flex flex-wrap items-center gap-8">
           <Select
@@ -2135,6 +2192,13 @@ onMounted(() => {
             :disabled="disableDeploy"
           >
             {{ t('cloud.create.deploy') }}
+          </Button>
+          <Button
+            @click="() => { showMultiDeployModal = true }"
+            type="normal"
+            :disabled="!hasApiKey || !cloudStore.regions.length"
+          >
+            批量部署
           </Button>
           <Button
             @click="handleTestLatency"
@@ -2178,6 +2242,8 @@ onMounted(() => {
         </div>
       </div>
     </Card>
+
+    <!-- Multi-Deploy section handled in modal below -->
 
     <Card :title="t('cloud.nodes.title')">
       <div class="flex flex-col gap-12 py-8">
@@ -2489,6 +2555,17 @@ onMounted(() => {
   </div>
 
   <Modal />
+
+  <!-- Multi-Deploy Modal -->
+  <Modal v-if="showMultiDeployModal" @close="showMultiDeployModal = false">
+    <template #title>批量部署节点</template>
+    <MultiDeployModal
+      :regions="cloudStore.regions"
+      :latency-results="cloudStore.latencyTestResults"
+      @close="showMultiDeployModal = false"
+      @done="handleMultiDeployDone"
+    />
+  </Modal>
 
   <!-- Charts Modal -->
   <Modal v-if="showChartsModal" @close="closeChartsModal">

@@ -79,6 +79,7 @@ const [showMore, toggleMore] = useBool(false)
           clearable
         />
       </div>
+      <!-- Removed: access_control_allow options deprecated in sing-box 1.12+
       <div class="form-item">
         {{ t('kernel.clash_api.access_control_allow_private_network') }}
         <Switch v-model="model.experimental.clash_api.access_control_allow_private_network" />
@@ -92,6 +93,7 @@ const [showMore, toggleMore] = useBool(false)
         {{ t('kernel.clash_api.access_control_allow_origin') }}
         <InputList v-model="model.experimental.clash_api.access_control_allow_origin" />
       </div>
+      -->
       <div class="form-item">
         {{ t('kernel.cache_file.enabled') }}
         <Switch v-model="model.experimental.cache_file.enabled" />

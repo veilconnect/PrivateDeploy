@@ -57,6 +57,20 @@ export const GetFastestCloudRegion = App.GetFastestCloudRegion
 
 export const GetAvailablePort = App.GetAvailablePort
 
+export const CleanInvalidCloudNodes = App.CleanInvalidCloudNodes
+
+export const TestSSHConnection = App.TestSSHConnection
+
+export const CreateMultipleCloudInstances = App.CreateMultipleCloudInstances
+
+export const ScoreCloudRegions = App.ScoreCloudRegions
+
+export const StartHealthMonitor = App.StartHealthMonitor
+
+export const StopHealthMonitor = App.StopHealthMonitor
+
+export const GetHealthStatus = App.GetHealthStatus
+
 export const TestConnectivity = async (ip: string, ports: number[]): Promise<import('@/types/cloud').ConnectivityResult> => {
   const portsJSON = JSON.stringify(ports)
   const { flag, data } = await App.TestConnectivity(ip, portsJSON)

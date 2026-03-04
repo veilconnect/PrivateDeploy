@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync"
 
 	"privatedeploy/bridge/cloud"
+	sshprovider "privatedeploy/bridge/cloud/providers/ssh"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // CloudProviderInfo represents basic information about a cloud provider
@@ -438,4 +442,247 @@ func (a *App) GetFastestCloudRegion() FlagResult {
 
 	log.Printf("[CloudBridge] Fastest region: %s", string(data))
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// CleanInvalidCloudNodes removes node records with incomplete proxy configuration
+func (a *App) CleanInvalidCloudNodes() FlagResult {
+	log.Printf("[CloudBridge] CleanInvalidCloudNodes called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	// Check if provider supports node cleaning
+	type NodeCleaner interface {
+		CleanInvalidNodes(ctx context.Context) (int, error)
+	}
+
+	cleaner, ok := provider.(NodeCleaner)
+	if !ok {
+		errMsg := "node cleaning not supported for this provider"
+		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
+		return FlagResult{Flag: false, Data: errMsg}
+	}
+
+	ctx := context.Background()
+	removed, err := cleaner.CleanInvalidNodes(ctx)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to clean invalid nodes: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	result := map[string]interface{}{
+		"provider": provider.Name(),
+		"removed":  removed,
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal result: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Cleaned %d invalid nodes for provider %s", removed, provider.Name())
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// TestSSHConnection tests SSH connectivity with the given configuration
+func (a *App) TestSSHConnection(configJSON string) FlagResult {
+	log.Printf("[CloudBridge] TestSSHConnection called")
+
+	var extra map[string]string
+	if err := json.Unmarshal([]byte(configJSON), &extra); err != nil {
+		return FlagResult{Flag: false, Data: "invalid config JSON: " + err.Error()}
+	}
+
+	provider, err := a.CloudManager.GetProvider("ssh")
+	if err != nil {
+		return FlagResult{Flag: false, Data: "SSH provider not registered: " + err.Error()}
+	}
+
+	sshProvider, ok := provider.(*sshprovider.Provider)
+	if !ok {
+		return FlagResult{Flag: false, Data: "failed to get SSH provider instance"}
+	}
+
+	info, err := sshProvider.TestConnection(extra)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(info)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] SSH connection test success: %s", string(data))
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// SetupSSHEventEmitter configures the SSH provider to emit Wails events.
+// Called from OnStartup when the context is available.
+func (a *App) SetupSSHEventEmitter() {
+	provider, err := a.CloudManager.GetProvider("ssh")
+	if err != nil {
+		return
+	}
+	sshProvider, ok := provider.(*sshprovider.Provider)
+	if !ok {
+		return
+	}
+	sshProvider.SetEventEmitter(func(eventName string, data ...interface{}) {
+		runtime.EventsEmit(a.Ctx, eventName, data...)
+	})
+}
+
+// MultiDeployResult holds the result of a batch deployment.
+type MultiDeployResult struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// CreateMultipleCloudInstances deploys multiple instances in parallel (max 3 concurrent).
+func (a *App) CreateMultipleCloudInstances(optionsJSON string) FlagResult {
+	log.Printf("[CloudBridge] CreateMultipleCloudInstances called")
+
+	var optsList []cloud.CreateInstanceOptions
+	if err := json.Unmarshal([]byte(optionsJSON), &optsList); err != nil {
+		return FlagResult{Flag: false, Data: "invalid options JSON: " + err.Error()}
+	}
+
+	if len(optsList) == 0 {
+		return FlagResult{Flag: false, Data: "no instances to create"}
+	}
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	results := make([]MultiDeployResult, len(optsList))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3) // max 3 concurrent deploys
+
+	for i, opts := range optsList {
+		wg.Add(1)
+		go func(idx int, o cloud.CreateInstanceOptions) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
+
+			runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "deploying", o.Label)
+
+			ctx := context.Background()
+			instance, err := provider.CreateInstance(ctx, &o)
+			if err != nil {
+				results[idx] = MultiDeployResult{Success: false, Error: err.Error()}
+				runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "failed", err.Error())
+				return
+			}
+
+			results[idx] = MultiDeployResult{ID: instance.ID, Success: true}
+			runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "ready", instance.ID)
+		}(i, opts)
+	}
+
+	wg.Wait()
+
+	data, err := json.Marshal(results)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Multi-deploy complete: %d instances", len(optsList))
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// ScoreCloudRegions scores and ranks regions for deployment suitability.
+func (a *App) ScoreCloudRegions(latenciesJSON string) FlagResult {
+	log.Printf("[CloudBridge] ScoreCloudRegions called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	ctx := context.Background()
+	regions, err := provider.ListRegions(ctx)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	var latencies map[string]float64
+	if latenciesJSON != "" {
+		if err := json.Unmarshal([]byte(latenciesJSON), &latencies); err != nil {
+			latencies = make(map[string]float64)
+		}
+	} else {
+		latencies = make(map[string]float64)
+	}
+
+	scores := cloud.ScoreRegions(regions, latencies)
+
+	data, err := json.Marshal(scores)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Scored %d regions", len(scores))
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// StartHealthMonitor starts periodic health checking for the active provider's nodes.
+func (a *App) StartHealthMonitor() FlagResult {
+	log.Printf("[CloudBridge] StartHealthMonitor called")
+
+	if a.HealthMonitor == nil {
+		return FlagResult{Flag: false, Data: "health monitor not initialized"}
+	}
+
+	if a.HealthMonitor.IsRunning() {
+		return FlagResult{Flag: true, Data: "already running"}
+	}
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	a.HealthMonitor.SetEventEmitter(func(event string, data ...interface{}) {
+		runtime.EventsEmit(a.Ctx, event, data...)
+	})
+
+	a.HealthMonitor.Start(provider)
+	return FlagResult{Flag: true, Data: "started"}
+}
+
+// StopHealthMonitor stops the health check loop.
+func (a *App) StopHealthMonitor() FlagResult {
+	log.Printf("[CloudBridge] StopHealthMonitor called")
+
+	if a.HealthMonitor == nil {
+		return FlagResult{Flag: false, Data: "health monitor not initialized"}
+	}
+
+	a.HealthMonitor.Stop()
+	return FlagResult{Flag: true, Data: "stopped"}
+}
+
+// GetHealthStatus returns the latest health check results.
+func (a *App) GetHealthStatus() FlagResult {
+	log.Printf("[CloudBridge] GetHealthStatus called")
+
+	if a.HealthMonitor == nil {
+		return FlagResult{Flag: false, Data: "health monitor not initialized"}
+	}
+
+	jsonStr, err := a.HealthMonitor.GetResultsJSON()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	return FlagResult{Flag: true, Data: jsonStr}
 }

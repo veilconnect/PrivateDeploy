@@ -6,6 +6,10 @@ export function AbsolutePath(arg1) {
   return window['go']['bridge']['App']['AbsolutePath'](arg1);
 }
 
+export function CleanInvalidCloudNodes() {
+  return window['go']['bridge']['App']['CleanInvalidCloudNodes']();
+}
+
 export function CloseMMDB(arg1, arg2) {
   return window['go']['bridge']['App']['CloseMMDB'](arg1, arg2);
 }

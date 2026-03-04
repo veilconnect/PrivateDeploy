@@ -1,5 +1,5 @@
 // Cloud Provider Types
-export type CloudProvider = 'vultr' | 'digitalocean' | 'linode' | 'aws' | 'hetzner' | 'manual'
+export type CloudProvider = 'vultr' | 'digitalocean' | 'ssh' | 'linode' | 'aws' | 'hetzner' | 'manual'
 
 // Generic Cloud Configuration
 export interface CloudConfig {
@@ -89,3 +89,60 @@ export interface ConnectivityResult {
 }
 
 export type ConnectivityStatus = 'reachable' | 'icmp_blocked' | 'blocked' | 'testing' | 'unknown'
+
+// SSH Provider Types
+export interface SSHConfig {
+  host: string
+  port?: number
+  username?: string
+  authMethod: 'password' | 'key'
+  password?: string
+  privateKey?: string
+}
+
+export interface SSHServerInfo {
+  os: string
+  arch: string
+  memoryMB: number
+}
+
+export interface SSHDeployProgress {
+  instanceId: string
+  stage: 'connecting' | 'detecting' | 'generating' | 'deploying' | 'verifying' | 'ready' | 'failed'
+  message: string
+}
+
+// Multi-Deploy Types
+export interface MultiDeployResult {
+  id: string
+  success: boolean
+  error?: string
+}
+
+export type DeployProgressStatus = 'pending' | 'deploying' | 'ready' | 'failed'
+export interface DeployProgress {
+  index: number
+  status: DeployProgressStatus
+  label: string
+  message: string
+}
+
+// Region Recommendation Types
+export interface RegionScore {
+  region: CloudRegion
+  latencyMs: number
+  reachabilityRisk: string
+  aiAccess: boolean
+  score: number
+  reasons: string[]
+}
+
+// Health Monitoring Types
+export interface HealthResult {
+  nodeId: string
+  healthy: boolean
+  latencyMs: number
+  portsOpen: Record<number, boolean>
+  lastCheck: string
+  consecutiveFailures: number
+}

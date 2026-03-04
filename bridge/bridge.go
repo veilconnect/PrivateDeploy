@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"time"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,7 +16,9 @@ import (
 	sysruntime "runtime"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/health"
 	"privatedeploy/bridge/cloud/providers/digitalocean"
+	sshprovider "privatedeploy/bridge/cloud/providers/ssh"
 	"privatedeploy/bridge/cloud/providers/vultr"
 	filesystem "privatedeploy/bridge/services/filesystem"
 
@@ -69,11 +72,14 @@ func CreateApp(fs embed.FS) *App {
 	registry := cloud.NewRegistry()
 	vultrProvider := vultr.New(nil)
 	digitaloceanProvider := digitalocean.New(nil)
+	sshProvider := sshprovider.New(nil)
 
 	registry.Register("vultr", vultrProvider)
 	registry.Register("digitalocean", digitaloceanProvider)
+	registry.Register("ssh", sshProvider)
 
 	app.CloudManager = cloud.NewManager(context.Background(), registry)
+	app.HealthMonitor = health.NewMonitor(5 * time.Minute)
 
 	// Set Vultr as the default active provider
 	if err := app.CloudManager.SetActiveProvider("vultr"); err != nil {

@@ -9,6 +9,7 @@ import {
   SetCloudProvider,
   ListCloudInstances,
   CreateCloudInstance,
+  CreateMultipleCloudInstances,
   DestroyCloudInstance,
   ListCloudRegions,
   ListCloudPlans,
@@ -1325,6 +1326,89 @@ export const useCloudStore = defineStore('cloud', () => {
     logInfo('[CloudStore] Completed connectivity tests for all nodes')
   }
 
+  /**
+   * End-to-end verification after deployment:
+   * 1. Wait for sing-box kernel to be running
+   * 2. Test connectivity through proxy (generate_204)
+   * 3. Mark node as connected or try fallback
+   * 4. Desktop notification with result
+   */
+  const verifyNodeConnectivity = async (node: ManagedCloudNode) => {
+    logInfo('[CloudStore] Verifying end-to-end connectivity for:', node.label)
+
+    // 1. Wait for kernel to be running (up to 30 seconds)
+    let kernelReady = false
+    for (let i = 0; i < 15; i++) {
+      if (kernelApiStore.running) {
+        kernelReady = true
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000))
+    }
+
+    if (!kernelReady) {
+      logError('[CloudStore] Kernel not running, skipping proxy verification')
+      node.statusText = 'pending'
+      notifications.error('连接验证失败', `${node.label}: sing-box 内核未运行`)
+      return false
+    }
+
+    // 2. Test connectivity through proxy
+    try {
+      const testIP = node.ipv4 || node.ipv6
+      if (!testIP) {
+        logError('[CloudStore] No IP for verification:', node.label)
+        return false
+      }
+
+      const ports: number[] = []
+      if (node.ssPort) ports.push(node.ssPort)
+      if (node.hysteriaPort) ports.push(node.hysteriaPort)
+      if (node.vlessPort) ports.push(node.vlessPort)
+      if (node.trojanPort) ports.push(node.trojanPort)
+
+      const result = await TestConnectivity(testIP, ports)
+
+      if (result.status === 'reachable') {
+        node.statusText = 'connected'
+        node.connectivityStatus = 'reachable'
+        logInfo('[CloudStore] Node verified reachable:', node.label)
+        notifications.connectivityRestored(node.label)
+        return true
+      }
+
+      // Check which ports are open for partial success
+      const openPorts = Object.entries(result.portsOpen)
+        .filter(([, open]) => open)
+        .map(([port]) => port)
+
+      if (openPorts.length > 0) {
+        node.statusText = 'connected'
+        node.connectivityStatus = 'icmp_blocked'
+        logInfo('[CloudStore] Node partially reachable, open ports:', openPorts)
+        notifications.connectivityRestored(node.label)
+        return true
+      }
+
+      // All ports blocked
+      node.statusText = 'error'
+      node.connectivityStatus = 'blocked'
+      logError('[CloudStore] Node blocked:', node.label)
+      notifications.connectivityBlocked(node.label)
+      return false
+    } catch (error) {
+      logError('[CloudStore] Verification failed for:', node.label, error)
+      node.connectivityStatus = 'unknown'
+      return false
+    } finally {
+      // Update instances list with new status
+      instances.value = instances.value.map((n) =>
+        n.instanceId === node.instanceId ? { ...node } : n
+      )
+      instancesUpdatedAt.value = Date.now()
+    }
+  }
+
   function scheduleAutoApply(instanceId: string) {
     if (autoApplyTimers.has(instanceId)) {
       return
@@ -1510,6 +1594,68 @@ export const useCloudStore = defineStore('cloud', () => {
       return node
     } finally {
       creatingInstance.value = false
+    }
+  }
+
+  // SSH deploy: creates an instance via SSH provider with extra connection params
+  const createSSHInstance = async (extra: Record<string, string>, label?: string) => {
+    creatingInstance.value = true
+    try {
+      const options = {
+        label: label || `ssh-${extra.host || 'node'}`,
+        region: '',
+        plan: '',
+        extra,
+      }
+      const res = await CreateCloudInstance(JSON.stringify(options))
+      ensureFlag(res.flag, res.data)
+      const rawNode = parseJSON<Record<string, any>>(res.data, {})
+      const node = normalizeCloudNode(rawNode, 'ssh')
+
+      if (node.instanceId) {
+        const cloudNode: ManagedCloudNode = { ...node, statusText: 'connected' }
+        instances.value = [cloudNode, ...instances.value.filter((n) => n.instanceId !== node.instanceId)]
+        instancesUpdatedAt.value = Date.now()
+        syncManualNodesIntoInstances()
+
+        await ensureSubscriptionForNode(cloudNode)
+
+        try {
+          await applyNodeToProfile(cloudNode)
+          cloudNode.statusText = 'connected'
+          notifications.deploymentComplete(cloudNode.label)
+        } catch (error) {
+          logError('[CloudStore] Auto-apply failed for SSH node:', cloudNode.label, error)
+          cloudNode.statusText = 'pending'
+        }
+
+        instances.value = instances.value.map((n) =>
+          n.instanceId === cloudNode.instanceId ? cloudNode : n
+        )
+        instancesUpdatedAt.value = Date.now()
+      }
+
+      return node
+    } finally {
+      creatingInstance.value = false
+    }
+  }
+
+  // Multi-deploy progress tracking
+  const multiDeployProgress = ref<Map<string, import('@/types/cloud').DeployProgress>>(new Map())
+
+  const createMultipleInstances = async (configs: Array<{ label: string; region: string; plan: string; extra?: Record<string, string> }>) => {
+    multiDeployProgress.value = new Map()
+    try {
+      const res = await CreateMultipleCloudInstances(JSON.stringify(configs))
+      ensureFlag(res.flag, res.data)
+      const results = parseJSON<import('@/types/cloud').MultiDeployResult[]>(res.data, [])
+      // Refresh instances after batch deploy
+      await refreshInstances(true)
+      return results
+    } catch (error) {
+      logError('[CloudStore] Multi-deploy failed:', error)
+      throw error
     }
   }
 
@@ -1862,7 +2008,11 @@ export const useCloudStore = defineStore('cloud', () => {
       config.defaultPlan = ''
       console.log('[CloudStore] Cleared defaults, defaultRegion:', config.defaultRegion, 'defaultPlan:', config.defaultPlan)
 
-      if (config.apiKey) {
+      if (provider === 'ssh') {
+        // SSH provider doesn't use API keys or regions/plans
+        // Just load existing SSH node records
+        await refreshInstances(true)
+      } else if (config.apiKey) {
         // Refresh regions, plans, and instances for the new provider
         await Promise.all([fetchRegions(), fetchPlans()])
         console.log('[CloudStore] After fetching, regions count:', regions.value.length, 'plans count:', plans.value.length)
@@ -1930,6 +2080,9 @@ export const useCloudStore = defineStore('cloud', () => {
     latencyTestResults,
     latencyUpdatedAt,
     createInstance,
+    createSSHInstance,
+    createMultipleInstances,
+    multiDeployProgress,
     destroyInstance,
     rotateIP,
     applyNodeToProfile,
@@ -1939,6 +2092,7 @@ export const useCloudStore = defineStore('cloud', () => {
     clearAllTimers,  // 新增：清理所有定时器
     testNodeConnectivity,
     testAllNodesConnectivity,
+    verifyNodeConnectivity,
     addManualNode,
     addManualNodes,
     updateManualNode,

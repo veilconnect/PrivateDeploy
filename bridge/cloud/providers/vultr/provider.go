@@ -1246,3 +1246,48 @@ func (p *Provider) attachFirewallToInstance(ctx context.Context, instanceID, fir
 
 	return nil
 }
+
+// ValidateNodeRecord checks if a node record has complete proxy configuration
+func validateNodeRecord(record nodeRecord) bool {
+	// A valid record must have at least Shadowsocks configuration
+	if record.SSPort == 0 || record.SSPassword == "" {
+		return false
+	}
+	// If port is set (for backward compatibility), it should match SSPort
+	if record.Port != 0 && record.Port != record.SSPort {
+		return false
+	}
+	return true
+}
+
+// CleanInvalidNodes removes node records that lack proxy configuration
+// Returns the number of records removed
+func (p *Provider) CleanInvalidNodes(ctx context.Context) (int, error) {
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return 0, fmt.Errorf("failed to load node records: %w", err)
+	}
+
+	removed := 0
+	validRecords := make(map[string]nodeRecord)
+
+	for id, record := range records {
+		if validateNodeRecord(record) {
+			validRecords[id] = record
+		} else {
+			fmt.Printf("[CleanInvalidNodes] Removing invalid node: %s (label=%s, ssPort=%d, ssPassword=%s)\n",
+				id, record.Label, record.SSPort, record.SSPassword)
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		fmt.Printf("[CleanInvalidNodes] Saving %d valid records (removed %d invalid)\n", len(validRecords), removed)
+		if err := p.saveNodeRecords(validRecords); err != nil {
+			return 0, fmt.Errorf("failed to save cleaned records: %w", err)
+		}
+		fmt.Printf("[CleanInvalidNodes] Successfully saved cleaned records to %s\n", p.nodesPath)
+	}
+
+	return removed, nil
+}

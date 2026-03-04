@@ -2,6 +2,7 @@ import { type RouteRecordRaw } from 'vue-router'
 
 import CloudView from '@/views/CloudView/index.vue'
 import HomeView from '@/views/HomeView/index.vue'
+import WizardView from '@/views/WizardView/index.vue'
 import ProfilesView from '@/views/ProfilesView/index.vue'
 import RulesetsView from '@/views/RulesetsView/index.vue'
 import ScheduledTasksView from '@/views/ScheduledTasksView/index.vue'
@@ -51,6 +52,16 @@ const routes: RouteRecordRaw[] = [
     meta: {
       name: 'router.scheduledtasks',
       icon: 'scheduledTasks',
+    },
+  },
+  {
+    path: '/wizard',
+    name: 'Wizard',
+    component: WizardView,
+    meta: {
+      name: 'router.wizard',
+      icon: 'sparkle',
+      hidden: true,
     },
   },
   {

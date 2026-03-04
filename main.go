@@ -82,6 +82,7 @@ func main() {
 		OnStartup: func(ctx context.Context) {
 			app.Ctx = ctx
 			trayStart()
+			app.SetupSSHEventEmitter()
 		},
 		OnBeforeClose: func(ctx context.Context) (prevent bool) {
 			runtime.EventsEmit(ctx, "onBeforeExitApp")

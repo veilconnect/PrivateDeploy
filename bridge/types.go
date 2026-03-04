@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/health"
 	filesystem "privatedeploy/bridge/services/filesystem"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -12,10 +13,11 @@ import (
 
 // App struct
 type App struct {
-	Ctx          context.Context
-	AppMenu      *menu.Menu
-	CloudManager *cloud.Manager
-	FileService  *filesystem.Service
+	Ctx            context.Context
+	AppMenu        *menu.Menu
+	CloudManager   *cloud.Manager
+	HealthMonitor  *health.Monitor
+	FileService    *filesystem.Service
 }
 
 type EnvResult struct {

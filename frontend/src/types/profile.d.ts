@@ -14,8 +14,8 @@ interface IExperimental {
     external_ui_download_detour: string
     secret: string
     default_mode: string
-    access_control_allow_origin: string[]
-    access_control_allow_private_network: boolean
+    access_control_allow_origin?: string[]  // Optional: deprecated in sing-box 1.12+
+    access_control_allow_private_network?: boolean  // Optional: deprecated in sing-box 1.12+
   }
   cache_file: {
     enabled: boolean

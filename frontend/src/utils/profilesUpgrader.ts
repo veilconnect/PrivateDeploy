@@ -95,8 +95,9 @@ export const transformProfileV189To190 = (config: Recordable) => {
         external_ui_download_detour: '',
         secret: config.advancedConfig['secret'],
         default_mode: config.generalConfig.mode,
-        access_control_allow_origin: ['*'],
-        access_control_allow_private_network: false,
+        // Removed: deprecated fields in sing-box 1.12+
+        // access_control_allow_origin: ['*'],
+        // access_control_allow_private_network: false,
       },
       cache_file: {
         enabled: config.advancedConfig.profile['store-cache'],

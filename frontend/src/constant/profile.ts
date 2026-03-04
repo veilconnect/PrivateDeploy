@@ -54,8 +54,8 @@ export const DefaultExperimental = (): IExperimental => ({
     external_ui_download_detour: DefaultOutboundIds.Direct,
     secret: generateSecureKey(),
     default_mode: ClashMode.Rule,
-    access_control_allow_origin: ['*'],
-    access_control_allow_private_network: false,
+    // access_control_allow_origin: ['*'],  // Removed: not supported in sing-box 1.12+
+    // access_control_allow_private_network: false,  // Removed: not supported in sing-box 1.12+
   },
   cache_file: {
     enabled: true,

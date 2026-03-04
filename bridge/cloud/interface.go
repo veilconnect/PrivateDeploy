@@ -35,7 +35,7 @@ type CloudProvider interface {
 // ProviderConfig holds provider-specific configuration
 type ProviderConfig struct {
 	Provider      string            `json:"provider"`       // "vultr", "digitalocean", etc.
-	APIKey        string            `json:"apiKey"`         // API authentication key
+	APIKey        string            `json:"apiKey,omitempty"` // API authentication key
 	DefaultRegion string            `json:"defaultRegion"`  // Default region for deployments
 	DefaultPlan   string            `json:"defaultPlan"`    // Default instance plan
 	Extra         map[string]string `json:"extra,omitempty"` // Provider-specific options
@@ -93,11 +93,13 @@ type Instance struct {
 
 // CreateInstanceOptions contains options for creating a new instance
 type CreateInstanceOptions struct {
-	Label    string `json:"label"`    // Instance label
-	Region   string `json:"region"`   // Deployment region
-	Plan     string `json:"plan"`     // Instance plan
-	OSID     int    `json:"osId"`     // Operating system ID (optional)
-	SSHKeyID string `json:"sshKeyId"` // SSH key ID (optional)
+	Label    string            `json:"label"`              // Instance label
+	Region   string            `json:"region"`             // Deployment region
+	Plan     string            `json:"plan"`               // Instance plan
+	OSID     int               `json:"osId"`               // Operating system ID (optional)
+	SSHKeyID string            `json:"sshKeyId"`           // SSH key ID (optional)
+	Host     string            `json:"host,omitempty"`     // Target host for SSH deployment
+	Extra    map[string]string `json:"extra,omitempty"`    // Provider-specific options (SSH auth, etc.)
 }
 
 // InstanceRecord stores instance metadata for persistence
