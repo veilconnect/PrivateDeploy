@@ -297,7 +297,7 @@ class _CloudScreenState extends State<CloudScreen> {
                 ),
                 SizedBox(height: 16.h),
                 DropdownButtonFormField<String>(
-                  value: selectedRegion,
+                  initialValue: selectedRegion,
                   decoration: const InputDecoration(labelText: 'Region'),
                   items: const [
                     DropdownMenuItem(value: 'ewr', child: Text('New York')),
@@ -311,7 +311,7 @@ class _CloudScreenState extends State<CloudScreen> {
                 ),
                 SizedBox(height: 16.h),
                 DropdownButtonFormField<String>(
-                  value: selectedPlan,
+                  initialValue: selectedPlan,
                   decoration: const InputDecoration(labelText: 'Plan'),
                   items: const [
                     DropdownMenuItem(

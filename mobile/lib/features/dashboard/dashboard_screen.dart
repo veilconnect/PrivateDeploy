@@ -198,7 +198,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 borderRadius: BorderRadius.circular(4.r),
                 child: LinearProgressIndicator(
                   value: progress,
-                  backgroundColor: color.withOpacity(0.2),
+                  backgroundColor: color.withValues(alpha: 0.2),
                   valueColor: AlwaysStoppedAnimation<Color>(color),
                   minHeight: 6.h,
                 ),
@@ -243,7 +243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     horizontalInterval: maxY / 5,
                     getDrawingHorizontalLine: (value) {
                       return FlLine(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withValues(alpha: 0.2),
                         strokeWidth: 1,
                       );
                     },
@@ -317,7 +317,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       dotData: const FlDotData(show: false),
                       belowBarData: BarAreaData(
                         show: true,
-                        color: Colors.blue.withOpacity(0.1),
+                        color: Colors.blue.withValues(alpha: 0.1),
                       ),
                     ),
                     // Download line
@@ -335,7 +335,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       dotData: const FlDotData(show: false),
                       belowBarData: BarAreaData(
                         show: true,
-                        color: Colors.green.withOpacity(0.1),
+                        color: Colors.green.withValues(alpha: 0.1),
                       ),
                     ),
                   ],

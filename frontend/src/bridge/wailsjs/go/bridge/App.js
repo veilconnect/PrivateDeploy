@@ -22,6 +22,10 @@ export function CreateCloudInstance(arg1) {
   return window['go']['bridge']['App']['CreateCloudInstance'](arg1);
 }
 
+export function CreateMultipleCloudInstances(arg1) {
+  return window['go']['bridge']['App']['CreateMultipleCloudInstances'](arg1);
+}
+
 export function DestroyCloudInstance(arg1) {
   return window['go']['bridge']['App']['DestroyCloudInstance'](arg1);
 }
@@ -64,6 +68,10 @@ export function GetEnv() {
 
 export function GetFastestCloudRegion() {
   return window['go']['bridge']['App']['GetFastestCloudRegion']();
+}
+
+export function GetHealthStatus() {
+  return window['go']['bridge']['App']['GetHealthStatus']();
 }
 
 export function GetInterfaces() {
@@ -150,6 +158,10 @@ export function SaveCloudConfig(arg1) {
   return window['go']['bridge']['App']['SaveCloudConfig'](arg1);
 }
 
+export function ScoreCloudRegions(arg1) {
+  return window['go']['bridge']['App']['ScoreCloudRegions'](arg1);
+}
+
 export function SetCloudProvider(arg1) {
   return window['go']['bridge']['App']['SetCloudProvider'](arg1);
 }
@@ -162,8 +174,16 @@ export function StartServer(arg1, arg2, arg3) {
   return window['go']['bridge']['App']['StartServer'](arg1, arg2, arg3);
 }
 
+export function StartHealthMonitor() {
+  return window['go']['bridge']['App']['StartHealthMonitor']();
+}
+
 export function StopServer(arg1) {
   return window['go']['bridge']['App']['StopServer'](arg1);
+}
+
+export function StopHealthMonitor() {
+  return window['go']['bridge']['App']['StopHealthMonitor']();
 }
 
 export function TestAllCloudRegions() {
@@ -172,6 +192,10 @@ export function TestAllCloudRegions() {
 
 export function TestCloudRegionLatency(arg1) {
   return window['go']['bridge']['App']['TestCloudRegionLatency'](arg1);
+}
+
+export function TestSSHConnection(arg1) {
+  return window['go']['bridge']['App']['TestSSHConnection'](arg1);
 }
 
 export function TestConnectivity(arg1, arg2) {

@@ -12,6 +12,8 @@ export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CreateCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 
+export function CreateMultipleCloudInstances(arg1:string):Promise<bridge.FlagResult>;
+
 export function DestroyCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 
 export function Download(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>,arg5:string,arg6:bridge.RequestOptions):Promise<bridge.HTTPResult>;
@@ -33,6 +35,8 @@ export function GetCloudProvider():Promise<bridge.FlagResult>;
 export function GetEnv():Promise<bridge.EnvResult>;
 
 export function GetFastestCloudRegion():Promise<bridge.FlagResult>;
+
+export function GetHealthStatus():Promise<bridge.FlagResult>;
 
 export function GetInterfaces():Promise<bridge.FlagResult>;
 
@@ -82,13 +86,21 @@ export function ShowMainWindow():Promise<void>;
 
 export function StartServer(arg1:string,arg2:string,arg3:bridge.ServerOptions):Promise<bridge.FlagResult>;
 
+export function StartHealthMonitor():Promise<bridge.FlagResult>;
+
 export function StopServer(arg1:string):Promise<bridge.FlagResult>;
+
+export function StopHealthMonitor():Promise<bridge.FlagResult>;
 
 export function TestAllCloudRegions():Promise<bridge.FlagResult>;
 
 export function TestCloudRegionLatency(arg1:string):Promise<bridge.FlagResult>;
 
+export function TestSSHConnection(arg1:string):Promise<bridge.FlagResult>;
+
 export function TestConnectivity(arg1:string,arg2:string):Promise<bridge.FlagResult>;
+
+export function ScoreCloudRegions(arg1:string):Promise<bridge.FlagResult>;
 
 export function UnzipGZFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 

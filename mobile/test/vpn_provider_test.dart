@@ -29,6 +29,22 @@ void main() {
       when(mockApiClient.startVpn()).thenAnswer(
         (_) async => {'success': true, 'data': {'status': 'connected'}},
       );
+      when(mockApiClient.getVpnStatus()).thenAnswer(
+        (_) async => {
+          'success': true,
+          'data': {
+            'status': 'connected',
+            'active_profile': 'default',
+            'stats': {
+              'upload_bytes': 0,
+              'download_bytes': 0,
+              'upload_speed': 0,
+              'download_speed': 0,
+              'connection_time': 0,
+            },
+          },
+        },
+      );
 
       // Act
       final result = await vpnProvider.connect();
@@ -109,6 +125,22 @@ void main() {
       // Arrange
       when(mockApiClient.restartVpn()).thenAnswer(
         (_) async => {'success': true, 'data': {'status': 'connected'}},
+      );
+      when(mockApiClient.getVpnStatus()).thenAnswer(
+        (_) async => {
+          'success': true,
+          'data': {
+            'status': 'connected',
+            'active_profile': 'default',
+            'stats': {
+              'upload_bytes': 0,
+              'download_bytes': 0,
+              'upload_speed': 0,
+              'download_speed': 0,
+              'connection_time': 0,
+            },
+          },
+        },
       );
 
       // Act

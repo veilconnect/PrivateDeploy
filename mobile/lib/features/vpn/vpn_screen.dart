@@ -79,7 +79,7 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
                       margin: EdgeInsets.only(top: 16.h),
                       padding: EdgeInsets.all(12.w),
                       decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
+                        color: Colors.red.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8.r),
                         border: Border.all(color: Colors.red),
                       ),
@@ -157,7 +157,7 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
                         height: 120.w + (_pulseController.value * 20.w),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: statusColor.withOpacity(0.2 - (_pulseController.value * 0.2)),
+                          color: statusColor.withValues(alpha: 0.2 - (_pulseController.value * 0.2)),
                         ),
                       );
                     },
@@ -170,7 +170,7 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
                     color: statusColor,
                     boxShadow: [
                       BoxShadow(
-                        color: statusColor.withOpacity(0.3),
+                        color: statusColor.withValues(alpha: 0.3),
                         blurRadius: 20.r,
                         spreadRadius: 5.r,
                       ),
@@ -390,7 +390,7 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
     return Container(
       padding: EdgeInsets.all(12.w),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8.r),
       ),
       child: Column(

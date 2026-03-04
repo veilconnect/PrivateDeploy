@@ -36,7 +36,7 @@ class PrivateDeployApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => CloudProvider(apiClient)),
+        ChangeNotifierProvider(create: (_) => CloudProvider()),
         ChangeNotifierProvider(create: (_) => ProfileProvider(apiClient)),
         ChangeNotifierProvider(create: (_) => VpnProvider(apiClient)),
         ChangeNotifierProvider(create: (_) => DashboardProvider(apiClient)),

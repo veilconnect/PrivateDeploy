@@ -3,13 +3,17 @@ import '../../core/network/api_client.dart';
 import '../../core/storage/storage_service.dart';
 
 class AuthProvider with ChangeNotifier {
+  static const String _usernameStorageKey = 'auth_username';
+
   bool _isAuthenticated = false;
   String? _token;
+  String? _username;
   bool _isLoading = false;
   String? _error;
 
   bool get isAuthenticated => _isAuthenticated;
   String? get token => _token;
+  String? get username => _username;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -19,6 +23,8 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> _checkAuthStatus() async {
     _token = StorageService.getToken();
+    final storedUsername = StorageService.getString(_usernameStorageKey);
+    _username = (storedUsername == null || storedUsername.isEmpty) ? null : storedUsername;
     _isAuthenticated = _token != null;
     notifyListeners();
   }
@@ -39,7 +45,9 @@ class AuthProvider with ChangeNotifier {
 
       if (response['success'] == true) {
         _token = response['data']['token'];
+        _username = username;
         await StorageService.saveToken(_token!);
+        await StorageService.saveString(_usernameStorageKey, username);
         _isAuthenticated = true;
         _isLoading = false;
         notifyListeners();
@@ -60,7 +68,9 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> logout() async {
     await StorageService.clearToken();
+    await StorageService.remove(_usernameStorageKey);
     _token = null;
+    _username = null;
     _isAuthenticated = false;
     notifyListeners();
   }
