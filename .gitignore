@@ -1,5 +1,6 @@
 build/bin
 frontend/dist
+.pnpm-store/
 
 .DS_Store
 
@@ -11,3 +12,10 @@ api/privatedeploy-api
 
 # Temporary/backup sources
 *.backup
+
+# Flutter local build artifacts
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/android/local.properties
