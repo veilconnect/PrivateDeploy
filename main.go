@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"os"
 	"time"
 
 	"privatedeploy/bridge"
@@ -23,10 +24,21 @@ var assets embed.FS
 //go:embed frontend/dist/favicon.ico
 var icon []byte
 
-func main() {
-	app := bridge.CreateApp(assets)
+//go:embed frontend/dist/imgs/tray_normal_dark.png
+var linuxTrayIcon []byte
 
-	trayStart, _ := bridge.CreateTray(app, icon)
+func main() {
+	appIcon := icon
+	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
+		// GTK-based Linux desktop stacks decode PNG icons reliably.
+		appIcon = linuxTrayIcon
+	}
+
+	app := bridge.CreateApp(assets)
+	trayStart := func() {}
+	if os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
+		trayStart, _ = bridge.CreateTray(app, appIcon)
+	}
 
 	// Create application with options
 	err := wails.Run(&options.App{
@@ -58,7 +70,7 @@ func main() {
 			},
 		},
 		Linux: &linux.Options{
-			Icon:                icon,
+			Icon:                appIcon,
 			WindowIsTranslucent: false,
 			ProgramName:         bridge.Env.AppName,
 			WebviewGpuPolicy:    linux.WebviewGpuPolicy(bridge.Config.WebviewGpuPolicy),
@@ -93,7 +105,7 @@ func main() {
 		},
 		LogLevel: logger.INFO,
 		Debug: options.Debug{
-			OpenInspectorOnStartup: true,
+			OpenInspectorOnStartup: false,
 		},
 	})
 
