@@ -36,7 +36,16 @@ import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
 
 import type { Subscription } from '@/types/app'
-import type { CloudProvider, CloudConfig, CloudNode, CloudPlan, CloudRegion, ConnectivityStatus } from '@/types/cloud'
+import type {
+  CloudProvider,
+  CloudConfig,
+  CloudNode,
+  CloudPlan,
+  CloudRegion,
+  ConnectivityProbeRequest,
+  ConnectivityResult,
+  ConnectivityStatus,
+} from '@/types/cloud'
 
 
 type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
@@ -44,6 +53,7 @@ export type ManagedCloudNode = CloudNode & {
   statusText?: CloudNodeStatus
   connectivityStatus?: ConnectivityStatus
   connectivityTesting?: boolean
+  lastConnectivityResult?: ConnectivityResult
 }
 const parseJSON = <T>(data: string | undefined | null, fallback: T): T => {
   if (!data) return fallback
@@ -86,6 +96,61 @@ const resolveTLSInsecure = (node: CloudNode, protocol: 'hysteria' | 'trojan') =>
   // Managed cloud nodes currently use self-signed certs in deployment templates.
   // Keep compatibility there while defaulting manual nodes to strict TLS verification.
   return node.provider !== 'manual'
+}
+
+const addUniquePort = (target: number[], port?: number) => {
+  if (!port || port <= 0) return
+  if (!target.includes(port)) {
+    target.push(port)
+  }
+}
+
+const buildConnectivityProbe = (node: CloudNode): ConnectivityProbeRequest => {
+  const tcpPorts: number[] = []
+  const udpPorts: number[] = []
+  const targets: ConnectivityProbeRequest['targets'] = []
+
+  if (node.ssPort) {
+    addUniquePort(tcpPorts, node.ssPort)
+    addUniquePort(udpPorts, node.ssPort)
+    targets?.push({ name: 'shadowsocks-tcp', port: node.ssPort, network: 'tcp' })
+    targets?.push({ name: 'shadowsocks-udp', port: node.ssPort, network: 'udp' })
+  }
+  if (node.hysteriaPort) {
+    addUniquePort(udpPorts, node.hysteriaPort)
+    targets?.push({ name: 'hysteria2', port: node.hysteriaPort, network: 'udp' })
+  }
+  if (node.vlessPort) {
+    addUniquePort(tcpPorts, node.vlessPort)
+    targets?.push({ name: 'vless-reality', port: node.vlessPort, network: 'tcp' })
+  }
+  if (node.trojanPort) {
+    addUniquePort(tcpPorts, node.trojanPort)
+    targets?.push({ name: 'trojan', port: node.trojanPort, network: 'tcp' })
+  }
+
+  return {
+    tcpPorts,
+    udpPorts,
+    targets,
+    probeICMP: true,
+    tcpTimeoutMs: 3000,
+    udpTimeoutMs: 1800,
+  }
+}
+
+const getReachableEndpoints = (result: ConnectivityResult): string[] => {
+  const targetStatus = result.targetStatus || {}
+  const reachableTargets = Object.entries(targetStatus)
+    .filter(([, status]) => status === 'open' || status === 'open_or_filtered')
+    .map(([name]) => name)
+  if (reachableTargets.length > 0) {
+    return reachableTargets
+  }
+
+  return Object.entries(result.portsOpen || {})
+    .filter(([, open]) => open)
+    .map(([port]) => `port:${port}`)
 }
 
 type ManualNodeInput = {
@@ -1344,21 +1409,16 @@ export const useCloudStore = defineStore('cloud', () => {
       return
     }
 
-    // Collect all configured ports for this node
-    const ports: number[] = []
-    if (node.ssPort) ports.push(node.ssPort)
-    if (node.hysteriaPort) ports.push(node.hysteriaPort)
-    if (node.vlessPort) ports.push(node.vlessPort)
-    if (node.trojanPort) ports.push(node.trojanPort)
+    const probe = buildConnectivityProbe(node)
 
     // Mark as testing
     node.connectivityTesting = true
     node.connectivityStatus = 'testing'
-    logInfo(`[CloudStore] Testing connectivity to ${testIP} ports:`, ports)
+    logInfo(`[CloudStore] Testing connectivity to ${testIP}:`, probe)
 
     try {
       const result = await retryWithBackoff(
-        () => TestConnectivity(testIP, ports),
+        () => TestConnectivity(testIP, probe),
         'TestConnectivity',
         { maxAttempts: 2, baseDelay: 1000 }
       )
@@ -1366,6 +1426,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
       // Update connectivity status based on result
       node.connectivityStatus = result.status
+      node.lastConnectivityResult = result
       node.connectivityTesting = false
 
       // Notify based on connectivity result
@@ -1432,13 +1493,9 @@ export const useCloudStore = defineStore('cloud', () => {
         return false
       }
 
-      const ports: number[] = []
-      if (node.ssPort) ports.push(node.ssPort)
-      if (node.hysteriaPort) ports.push(node.hysteriaPort)
-      if (node.vlessPort) ports.push(node.vlessPort)
-      if (node.trojanPort) ports.push(node.trojanPort)
-
-      const result = await TestConnectivity(testIP, ports)
+      const probe = buildConnectivityProbe(node)
+      const result = await TestConnectivity(testIP, probe)
+      node.lastConnectivityResult = result
 
       if (result.status === 'reachable') {
         node.statusText = 'connected'
@@ -1449,14 +1506,12 @@ export const useCloudStore = defineStore('cloud', () => {
       }
 
       // Check which ports are open for partial success
-      const openPorts = Object.entries(result.portsOpen)
-        .filter(([, open]) => open)
-        .map(([port]) => port)
+      const reachableEndpoints = getReachableEndpoints(result)
 
-      if (openPorts.length > 0) {
+      if (reachableEndpoints.length > 0) {
         node.statusText = 'connected'
         node.connectivityStatus = 'icmp_blocked'
-        logInfo('[CloudStore] Node partially reachable, open ports:', openPorts)
+        logInfo('[CloudStore] Node partially reachable:', reachableEndpoints)
         notifications.connectivityRestored(node.label)
         return true
       }

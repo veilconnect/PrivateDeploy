@@ -71,8 +71,11 @@ export const StopHealthMonitor = App.StopHealthMonitor
 
 export const GetHealthStatus = App.GetHealthStatus
 
-export const TestConnectivity = async (ip: string, ports: number[]): Promise<import('@/types/cloud').ConnectivityResult> => {
-  const portsJSON = JSON.stringify(ports)
+export const TestConnectivity = async (
+  ip: string,
+  probe: number[] | import('@/types/cloud').ConnectivityProbeRequest
+): Promise<import('@/types/cloud').ConnectivityResult> => {
+  const portsJSON = JSON.stringify(probe)
   const { flag, data } = await App.TestConnectivity(ip, portsJSON)
   if (!flag) {
     throw new Error(data)

@@ -4,6 +4,7 @@ export interface NodeScore {
   node: ManagedCloudNode
   score: number
   reasons: string[]
+  antiBlockingScore?: number
 }
 
 export interface RecommendationCriteria {
@@ -36,6 +37,72 @@ const riskScoreMap = {
   critical: 25,
 }
 
+const countProtocols = (node: ManagedCloudNode) => {
+  let count = 0
+  if (node.ssPort && node.ssPassword) count++
+  if (node.hysteriaPort && node.hysteriaPassword) count++
+  if (node.vlessPort && node.vlessUUID && node.vlessPublicKey && node.vlessShortId) count++
+  if (node.trojanPort && node.trojanPassword) count++
+  return count
+}
+
+const calculateAntiBlockingScore = (node: ManagedCloudNode): { score: number; reasons: string[] } => {
+  const reasons: string[] = []
+  const riskLevel = reachabilityRiskLevels[node.region || ''] || 'medium'
+  let score = riskScoreMap[riskLevel] * 0.35
+
+  const protocolCount = countProtocols(node)
+  score += Math.min(100, protocolCount * 25) * 0.30
+  if (protocolCount >= 3) {
+    reasons.push('Protocol diversity is strong')
+  } else if (protocolCount <= 1) {
+    reasons.push('Protocol diversity is weak')
+  }
+
+  // UDP-capable protocols generally improve censorship resilience in unstable networks.
+  let transportBonus = 0
+  if (node.hysteriaPort && node.hysteriaPassword) {
+    transportBonus += 20
+    reasons.push('Hysteria2 (UDP/QUIC) available')
+  }
+  if (node.vlessPort && node.vlessUUID && node.vlessPublicKey && node.vlessShortId) {
+    transportBonus += 15
+    reasons.push('VLESS-Reality available')
+  }
+  score += Math.min(100, transportBonus) * 0.20
+
+  let connectivityScore = 40
+  if (node.connectivityStatus === 'reachable') {
+    connectivityScore = 100
+    reasons.push('Latest connectivity test is reachable')
+  } else if (node.connectivityStatus === 'icmp_blocked') {
+    connectivityScore = 75
+    reasons.push('Ports reachable even when ICMP is blocked')
+  } else if (node.connectivityStatus === 'blocked') {
+    connectivityScore = 0
+    reasons.push('Latest connectivity test is blocked')
+  }
+  score += connectivityScore * 0.15
+
+  // Favor nodes that survived initial warm-up and have not been too old for long-term bans.
+  if (node.createdAt) {
+    const ageMs = Date.now() - new Date(node.createdAt).getTime()
+    const ageDays = ageMs / (1000 * 60 * 60 * 24)
+    if (ageDays >= 2 && ageDays <= 45) {
+      score += 6
+      reasons.push('Node age is in stable window')
+    } else if (ageDays > 120) {
+      score -= 6
+      reasons.push('Node is relatively old')
+    }
+  }
+
+  return {
+    score: Math.max(0, Math.min(100, Math.round(score))),
+    reasons,
+  }
+}
+
 /**
  * Calculate node recommendation score
  */
@@ -46,11 +113,12 @@ export function calculateNodeScore(
 ): NodeScore {
   let score = 0
   const reasons: string[] = []
+  const antiBlocking = calculateAntiBlockingScore(node)
   const weights = {
-    latency: criteria.preferLowLatency ? 0.3 : 0.2,
-    risk: criteria.preferLowRisk ? 0.3 : 0.25,
-    connectivity: criteria.preferReachable ? 0.3 : 0.25,
-    recency: criteria.preferRecent ? 0.2 : 0.1,
+    latency: criteria.preferLowLatency ? 0.28 : 0.20,
+    antiBlocking: criteria.preferLowRisk ? 0.42 : 0.35,
+    connectivity: criteria.preferReachable ? 0.20 : 0.15,
+    recency: criteria.preferRecent ? 0.10 : 0.05,
   }
 
   // Normalize weights to sum to 1
@@ -72,16 +140,9 @@ export function calculateNodeScore(
     reasons.push('Acceptable latency (<200ms)')
   }
 
-  // 2. reachability risk score (lower risk is better)
-  const riskLevel = reachabilityRiskLevels[node.region || ''] || 'medium'
-  const riskScore = riskScoreMap[riskLevel]
-  score += riskScore * weights.risk
-
-  if (riskLevel === 'low') {
-    reasons.push('Low regional reachability blocking risk')
-  } else if (riskLevel === 'high') {
-    reasons.push('High blocking risk region')
-  }
+  // 2. Dynamic reachability score
+  score += antiBlocking.score * weights.antiBlocking
+  reasons.push(...antiBlocking.reasons.slice(0, 3))
 
   // 3. Connectivity score
   let connectivityScore = 50 // default
@@ -121,6 +182,7 @@ export function calculateNodeScore(
     node,
     score: Math.round(score),
     reasons,
+    antiBlockingScore: antiBlocking.score,
   }
 }
 

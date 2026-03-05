@@ -13,7 +13,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,67 +247,292 @@ func TestTCPPort(ip string, port int, timeout int) bool {
 	return true
 }
 
+type connectivityProbeTarget struct {
+	Name    string `json:"name"`
+	Port    int    `json:"port"`
+	Network string `json:"network"`
+}
+
+type connectivityProbeRequest struct {
+	Ports      []int                     `json:"ports,omitempty"` // backward-compatible alias for tcpPorts
+	TCPPorts   []int                     `json:"tcpPorts,omitempty"`
+	UDPPorts   []int                     `json:"udpPorts,omitempty"`
+	Targets    []connectivityProbeTarget `json:"targets,omitempty"`
+	ProbeICMP  *bool                     `json:"probeICMP,omitempty"`
+	TCPTimeout int                       `json:"tcpTimeoutMs,omitempty"`
+	UDPTimeout int                       `json:"udpTimeoutMs,omitempty"`
+}
+
+func normalizePorts(raw []int) []int {
+	if len(raw) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(raw))
+	out := make([]int, 0, len(raw))
+	for _, port := range raw {
+		if port <= 0 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		out = append(out, port)
+	}
+	sort.Ints(out)
+	return out
+}
+
+func parseConnectivityProbeRequest(raw string) connectivityProbeRequest {
+	req := connectivityProbeRequest{
+		TCPTimeout: 2500,
+		UDPTimeout: 1800,
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return req
+	}
+
+	var ports []int
+	if err := json.Unmarshal([]byte(raw), &ports); err == nil {
+		req.TCPPorts = normalizePorts(ports)
+		return req
+	}
+
+	var parsed connectivityProbeRequest
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		parsed.TCPPorts = normalizePorts(append(parsed.TCPPorts, parsed.Ports...))
+		parsed.UDPPorts = normalizePorts(parsed.UDPPorts)
+		if parsed.TCPTimeout <= 0 {
+			parsed.TCPTimeout = req.TCPTimeout
+		}
+		if parsed.UDPTimeout <= 0 {
+			parsed.UDPTimeout = req.UDPTimeout
+		}
+		targets := make([]connectivityProbeTarget, 0, len(parsed.Targets))
+		for _, target := range parsed.Targets {
+			network := strings.ToLower(strings.TrimSpace(target.Network))
+			if network != "tcp" && network != "udp" {
+				continue
+			}
+			if target.Port <= 0 || target.Port > 65535 {
+				continue
+			}
+			name := strings.TrimSpace(target.Name)
+			if name == "" {
+				name = fmt.Sprintf("%s:%d", network, target.Port)
+			}
+			targets = append(targets, connectivityProbeTarget{
+				Name:    name,
+				Port:    target.Port,
+				Network: network,
+			})
+			if network == "tcp" {
+				parsed.TCPPorts = append(parsed.TCPPorts, target.Port)
+			} else {
+				parsed.UDPPorts = append(parsed.UDPPorts, target.Port)
+			}
+		}
+		parsed.Targets = targets
+		parsed.TCPPorts = normalizePorts(parsed.TCPPorts)
+		parsed.UDPPorts = normalizePorts(parsed.UDPPorts)
+		return parsed
+	}
+
+	legacy := strings.Trim(raw, "[]")
+	if legacy == "" {
+		return req
+	}
+	for _, part := range strings.Split(legacy, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		var port int
+		if _, err := fmt.Sscanf(part, "%d", &port); err == nil {
+			req.TCPPorts = append(req.TCPPorts, port)
+		}
+	}
+	req.TCPPorts = normalizePorts(req.TCPPorts)
+	return req
+}
+
+func testICMPReachability(ip string, timeout time.Duration) (bool, string) {
+	if net.ParseIP(ip) == nil {
+		return false, "invalid_ip"
+	}
+
+	var args []string
+	switch goruntime.GOOS {
+	case "windows":
+		timeoutMs := int(timeout.Milliseconds())
+		if timeoutMs <= 0 {
+			timeoutMs = 2000
+		}
+		args = []string{"-n", "1", "-w", fmt.Sprintf("%d", timeoutMs), ip}
+	default:
+		timeoutSec := int(timeout.Seconds())
+		if timeoutSec <= 0 {
+			timeoutSec = 2
+		}
+		args = []string{"-c", "1", "-W", fmt.Sprintf("%d", timeoutSec), ip}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+1500*time.Millisecond)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ping", args...)
+	if err := cmd.Run(); err != nil {
+		var notFound *exec.Error
+		if errors.As(err, &notFound) {
+			return false, "ping_unavailable"
+		}
+		return false, "ping"
+	}
+
+	return true, "ping"
+}
+
+func testTCPBaselineReachability(ip string, timeout time.Duration) bool {
+	for _, port := range []int{80, 443} {
+		address := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+		conn, err := net.DialTimeout("tcp", address, timeout)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+	}
+	return false
+}
+
+func probeUDPPort(ip string, port int, timeout time.Duration) string {
+	address := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+	udpAddr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return "error"
+	}
+
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return "closed"
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	if _, err := conn.Write([]byte{0x00}); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "refused") {
+			return "closed"
+		}
+		return "error"
+	}
+
+	buf := make([]byte, 8)
+	_, err = conn.Read(buf)
+	if err == nil {
+		return "open"
+	}
+
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		// UDP services often don't answer unknown payloads.
+		return "open_or_filtered"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "refused") {
+		return "closed"
+	}
+	return "unknown"
+}
+
 // TestConnectivity tests the connectivity to a given IP and ports
 // Returns a JSON string with the test results
 func (a *App) TestConnectivity(ip string, portsJSON string) FlagResult {
 	log.Printf("TestConnectivity: %s ports=%s", ip, portsJSON)
+	req := parseConnectivityProbeRequest(portsJSON)
 
-	// Parse ports from JSON array string like "[22, 80, 443]"
-	ports := []int{}
-	portsJSON = strings.TrimSpace(portsJSON)
-	if portsJSON != "" && portsJSON != "[]" {
-		// Simple JSON array parsing
-		portsJSON = strings.Trim(portsJSON, "[]")
-		portStrs := strings.Split(portsJSON, ",")
-		for _, portStr := range portStrs {
-			portStr = strings.TrimSpace(portStr)
-			var port int
-			if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil && port > 0 {
-				ports = append(ports, port)
+	probeICMP := true
+	if req.ProbeICMP != nil {
+		probeICMP = *req.ProbeICMP
+	}
+
+	icmpReachable := false
+	icmpMethod := "skipped"
+	if probeICMP {
+		icmpReachable, icmpMethod = testICMPReachability(ip, 2*time.Second)
+	}
+	baselineReachable := testTCPBaselineReachability(ip, 1500*time.Millisecond)
+
+	tcpPortsOpen := make(map[string]bool, len(req.TCPPorts))
+	udpPortsStatus := make(map[string]string, len(req.UDPPorts))
+	portsOpen := make(map[string]bool, len(req.TCPPorts)+len(req.UDPPorts))
+	targetStatus := make(map[string]string, len(req.Targets))
+
+	anyTransportReachable := false
+	for _, port := range req.TCPPorts {
+		portStr := fmt.Sprintf("%d", port)
+		isOpen := TestTCPPort(ip, port, req.TCPTimeout)
+		tcpPortsOpen[portStr] = isOpen
+		portsOpen[portStr] = isOpen
+		if isOpen {
+			anyTransportReachable = true
+		}
+	}
+
+	for _, port := range req.UDPPorts {
+		portStr := fmt.Sprintf("%d", port)
+		status := probeUDPPort(ip, port, time.Duration(req.UDPTimeout)*time.Millisecond)
+		udpPortsStatus[portStr] = status
+		openLike := status == "open" || status == "open_or_filtered"
+		portsOpen[portStr] = openLike
+		if openLike {
+			anyTransportReachable = true
+		}
+	}
+
+	for _, target := range req.Targets {
+		portKey := fmt.Sprintf("%d", target.Port)
+		switch target.Network {
+		case "tcp":
+			if open, ok := tcpPortsOpen[portKey]; ok && open {
+				targetStatus[target.Name] = "open"
+			} else {
+				targetStatus[target.Name] = "closed"
+			}
+		case "udp":
+			if status, ok := udpPortsStatus[portKey]; ok {
+				targetStatus[target.Name] = status
+			} else {
+				targetStatus[target.Name] = "unknown"
 			}
 		}
 	}
 
-	result := map[string]interface{}{
-		"ip":             ip,
-		"icmpReachable":  false,
-		"portsOpen":      map[string]bool{},
-		"status":         "unknown",
+	icmpSignal := icmpReachable
+	if icmpMethod != "ping" {
+		icmpSignal = baselineReachable
 	}
 
-	// Test ICMP (ping) - using TCP connection to port 80 as fallback
-	// Note: ICMP requires root privileges, so we use TCP as a connectivity check
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	// Try to resolve the IP first
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "80"))
-	if err == nil {
-		conn.Close()
-		result["icmpReachable"] = true
-	}
-
-	// Test each port
-	portsOpen := make(map[string]bool)
-	anyPortOpen := false
-	for _, port := range ports {
-		portStr := fmt.Sprintf("%d", port)
-		isOpen := TestTCPPort(ip, port, 5000) // 5 second timeout
-		portsOpen[portStr] = isOpen
-		if isOpen {
-			anyPortOpen = true
+	status := "blocked"
+	if anyTransportReachable {
+		if icmpSignal {
+			status = "reachable"
+		} else {
+			status = "icmp_blocked"
 		}
+	} else if len(req.TCPPorts) == 0 && len(req.UDPPorts) == 0 && icmpSignal {
+		status = "reachable"
 	}
-	result["portsOpen"] = portsOpen
 
-	// Determine overall status
-	if result["icmpReachable"].(bool) && (len(ports) == 0 || anyPortOpen) {
-		result["status"] = "reachable"
-	} else if !result["icmpReachable"].(bool) && anyPortOpen {
-		result["status"] = "icmp_blocked"
-	} else {
-		result["status"] = "blocked"
+	result := map[string]interface{}{
+		"ip":                ip,
+		"icmpReachable":     icmpReachable,
+		"icmpMethod":        icmpMethod,
+		"baselineReachable": baselineReachable,
+		"portsOpen":         portsOpen,
+		"tcpPortsOpen":      tcpPortsOpen,
+		"udpPortsStatus":    udpPortsStatus,
+		"targetStatus":      targetStatus,
+		"status":            status,
 	}
 
 	// Convert result to JSON

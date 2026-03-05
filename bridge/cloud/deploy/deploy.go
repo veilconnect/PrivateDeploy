@@ -93,6 +93,7 @@ func GenerateMultiProtocolScript(p MultiProtocolParams) string {
 # Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+umask 077
 
 LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1
@@ -113,16 +114,29 @@ sleep 3
 # Generate self-signed certificates
 echo "[3/8] Generating TLS certificates..."
 mkdir -p /etc/privatedeploy/{hysteria,trojan,vless}
+chmod 700 /etc/privatedeploy /etc/privatedeploy/hysteria /etc/privatedeploy/trojan /etc/privatedeploy/vless
 
-openssl req -x509 -nodes -newkey rsa:2048 \
-  -keyout /etc/privatedeploy/hysteria/key.pem \
-  -out /etc/privatedeploy/hysteria/cert.pem \
-  -days 365 -subj "/CN=www.bing.com" 2>/dev/null
+generate_cert() {
+  local cert_path="$1"
+  local key_path="$2"
+  local common_name="$3"
+  if ! openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout "$key_path" \
+    -out "$cert_path" \
+    -days 30 \
+    -subj "/CN=${common_name}" \
+    -addext "subjectAltName=DNS:${common_name}" >/dev/null 2>&1; then
+    openssl req -x509 -nodes -newkey rsa:2048 \
+      -keyout "$key_path" \
+      -out "$cert_path" \
+      -days 30 \
+      -subj "/CN=${common_name}" >/dev/null 2>&1
+  fi
+  chmod 600 "$key_path" "$cert_path"
+}
 
-openssl req -x509 -nodes -newkey rsa:2048 \
-  -keyout /etc/privatedeploy/trojan/key.pem \
-  -out /etc/privatedeploy/trojan/cert.pem \
-  -days 365 -subj "/CN=www.microsoft.com" 2>/dev/null
+generate_cert /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem www.bing.com
+generate_cert /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem www.microsoft.com
 
 # Configure UFW firewall
 echo "[4/8] Configuring UFW firewall..."
@@ -176,6 +190,7 @@ quic:
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
 HYSTEOF
+chmod 600 /etc/privatedeploy/hysteria/config.yaml
 
 docker rm -f hysteria-server >/dev/null 2>&1 || true
 docker pull --quiet tobyxdd/hysteria:latest || true
@@ -247,6 +262,7 @@ if [ "${SKIP_SINGBOX:-0}" -ne 1 ]; then
   }]
 }
 VLESSEOF
+  chmod 600 /etc/privatedeploy/vless/config.json
 
   cat > /etc/privatedeploy/vless/reality.txt <<REALITYINFO
 PublicKey: %[11]s
@@ -264,6 +280,9 @@ Type=simple
 ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/config.json
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 StandardOutput=journal
 StandardError=journal
 
@@ -306,6 +325,7 @@ SERVICEEOF
   }]
 }
 TROJANEOF
+  chmod 600 /etc/privatedeploy/trojan/config.json
 
   cat > /etc/systemd/system/trojan-server.service <<'TROJANSERVICE'
 [Unit]
@@ -317,6 +337,9 @@ Type=simple
 ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/trojan/config.json
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 StandardOutput=journal
 StandardError=journal
 
@@ -334,6 +357,82 @@ TROJANSERVICE
 else
   echo "[WARN] sing-box installation skipped; VLESS and Trojan services were not provisioned." >&2
 fi
+
+# Configure certificate rotation timer (daily check, rotate every 14 days)
+cat > /usr/local/bin/privatedeploy-rotate-certs.sh <<'ROTATEEOF'
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+generate_cert() {
+  local cert_path="$1"
+  local key_path="$2"
+  local common_name="$3"
+  if ! openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout "$key_path" \
+    -out "$cert_path" \
+    -days 30 \
+    -subj "/CN=${common_name}" \
+    -addext "subjectAltName=DNS:${common_name}" >/dev/null 2>&1; then
+    openssl req -x509 -nodes -newkey rsa:2048 \
+      -keyout "$key_path" \
+      -out "$cert_path" \
+      -days 30 \
+      -subj "/CN=${common_name}" >/dev/null 2>&1
+  fi
+  chmod 600 "$key_path" "$cert_path"
+}
+
+renew_if_due() {
+  local cert_path="$1"
+  local key_path="$2"
+  local common_name="$3"
+  if [ ! -f "$cert_path" ] || ! openssl x509 -checkend $((14*24*3600)) -noout -in "$cert_path" >/dev/null 2>&1; then
+    generate_cert "$cert_path" "$key_path" "$common_name"
+    return 0
+  fi
+  return 1
+}
+
+changed=0
+if renew_if_due /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem www.bing.com; then
+  changed=1
+fi
+if renew_if_due /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem www.microsoft.com; then
+  changed=1
+fi
+
+if [ "$changed" -eq 1 ]; then
+  docker restart hysteria-server >/dev/null 2>&1 || true
+  systemctl restart trojan-server >/dev/null 2>&1 || true
+fi
+ROTATEEOF
+chmod 700 /usr/local/bin/privatedeploy-rotate-certs.sh
+
+cat > /etc/systemd/system/privatedeploy-cert-rotate.service <<'CERTSERVICE'
+[Unit]
+Description=PrivateDeploy certificate rotation
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/privatedeploy-rotate-certs.sh
+CERTSERVICE
+
+cat > /etc/systemd/system/privatedeploy-cert-rotate.timer <<'CERTTIMER'
+[Unit]
+Description=Run PrivateDeploy certificate rotation daily
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+CERTTIMER
+
+systemctl daemon-reload
+systemctl enable --now privatedeploy-cert-rotate.timer >/dev/null 2>&1 || true
 
 # Cleanup temp files
 rm -rf /tmp/privatedeploy
@@ -384,6 +483,7 @@ func GenerateLightweightScript(ssPort int, ssPassword string) string {
 	return fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+umask 077
 
 LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1

@@ -88,11 +88,31 @@ export interface RegionLatency {
 export interface ConnectivityResult {
   ip: string
   icmpReachable: boolean
-  portsOpen: Record<string, boolean>  // port number -> is open
+  icmpMethod?: string
+  baselineReachable?: boolean
+  portsOpen: Record<string, boolean>  // merged tcp/udp reachability
+  tcpPortsOpen?: Record<string, boolean>
+  udpPortsStatus?: Record<string, 'open' | 'closed' | 'open_or_filtered' | 'unknown' | 'error'>
+  targetStatus?: Record<string, 'open' | 'closed' | 'open_or_filtered' | 'unknown' | 'error'>
   status: 'reachable' | 'icmp_blocked' | 'blocked' | 'unknown'
 }
 
 export type ConnectivityStatus = 'reachable' | 'icmp_blocked' | 'blocked' | 'testing' | 'unknown'
+
+export interface ConnectivityProbeTarget {
+  name: string
+  port: number
+  network: 'tcp' | 'udp'
+}
+
+export interface ConnectivityProbeRequest {
+  tcpPorts?: number[]
+  udpPorts?: number[]
+  targets?: ConnectivityProbeTarget[]
+  probeICMP?: boolean
+  tcpTimeoutMs?: number
+  udpTimeoutMs?: number
+}
 
 // SSH Provider Types
 export interface SSHConfig {

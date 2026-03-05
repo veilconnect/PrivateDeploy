@@ -1440,10 +1440,10 @@ const handleShowRecommendations = () => {
   }
 
   const recommendationText = topNodes.map((result, index) => {
-    const { node, score, reasons } = result
+    const { node, score, reasons, antiBlockingScore } = result
     const ipv4 = node.ipv4 || 'N/A'
     const region = node.region ? formatNodeRegion(node.region) : 'N/A'
-    return `${index + 1}. ${node.label} (${region})\n   Score: ${score}/100\n   IP: ${ipv4}\n   ${reasons.join(', ')}`
+    return `${index + 1}. ${node.label} (${region})\n   Score: ${score}/100\n   Reachability: ${antiBlockingScore ?? 'N/A'}/100\n   IP: ${ipv4}\n   ${reasons.join(', ')}`
   }).join('\n\n')
 
   // Show recommendations using console log since there's no modal API

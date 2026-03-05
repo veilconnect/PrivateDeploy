@@ -10,6 +10,7 @@
 | `build-windows-installer.sh` | Windows | 生成 Windows NSIS 安装程序 | `.exe` 安装程序 |
 | `build-linux-packages.sh` | Linux | 生成 DEB 和 RPM 软件包 | `.deb` 和 `.rpm` |
 | `build-macos-dmg.sh` | macOS | 生成 macOS DMG 安装镜像 | `.dmg` 镜像 |
+| `protocol_speed_compare.py` | Linux/macOS | 按协议测速（SS/HY2/VLESS/Trojan，基于 sing-box + curl） | `output/benchmarks/protocol_speed_compare_*.{json,tsv}` |
 
 ## 快速使用
 
@@ -34,6 +35,9 @@
 
 # macOS DMG 镜像
 ./scripts/build-macos-dmg.sh 1.0.0
+
+# 协议测速（默认读取 data/cloud/vultr-nodes.json）
+python3 scripts/protocol_speed_compare.py --rounds 3
 ```
 
 ## 前置要求
