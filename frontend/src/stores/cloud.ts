@@ -23,7 +23,7 @@ import { DefaultSubscribeScript } from '@/constant/app'
 import { DefaultExcludeProtocols } from '@/constant/kernel'
 import * as ProfileDefaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
-import { Outbound } from '@/enums/kernel'
+import { Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
 import { sampleID, deepClone, ignoredError } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
@@ -82,6 +82,25 @@ const manualNodesPath = 'data/cloud/manual-nodes.json'
 const DefaultHysteriaServerName = 'www.bing.com'
 const DefaultVlessServerName = 'www.microsoft.com'
 const DefaultTrojanServerName = 'www.microsoft.com'
+const CloudSubscriptionPrefix = 'cloud-'
+const CloudSmartOutboundIds = {
+  Auto: 'outbound-smart-auto',
+  UdpAuto: 'outbound-smart-udp-auto',
+  HysteriaAuto: 'outbound-smart-hysteria-auto',
+}
+const CloudSmartRuleIds = {
+  UdpRoute: 'rule-smart-udp-route',
+}
+const CloudSmartLegacyIds = {
+  Outbounds: ['cloud-smart-tcp-auto', 'cloud-smart-udp-auto', 'cloud-smart-hysteria-auto'],
+  Rules: ['cloud-smart-udp-route'],
+}
+const CloudTagSuffixPattern = '(?:-(?:v4|v6|ipv4|ipv6))?$'
+const SmartProtocolInclude = {
+  Auto: `(?:-(?:trojan|vless|ss|shadowsocks|hysteria2?|hy2)${CloudTagSuffixPattern}|-(?:v4|v6|ipv4|ipv6)$)`,
+  Udp: `(?:-(?:ss|shadowsocks|hysteria2?|hy2)${CloudTagSuffixPattern}|-(?:v4|v6|ipv4|ipv6)$)`,
+  Hysteria: `-(?:hysteria2?|hy2)${CloudTagSuffixPattern}`,
+}
 
 const normalizeServerName = (value: unknown, fallback: string) => {
   if (typeof value !== 'string') return fallback
@@ -101,6 +120,192 @@ const addUniquePort = (target: number[], port?: number) => {
   if (!port || port <= 0) return
   if (!target.includes(port)) {
     target.push(port)
+  }
+}
+
+const collectSubscriptionEntries = (profile: IProfile): IProxy[] => {
+  const smartOutboundIds = new Set(Object.values(CloudSmartOutboundIds))
+  const dedup = new Map<string, IProxy>()
+  profile.outbounds.forEach((outbound) => {
+    if (smartOutboundIds.has(outbound.id)) {
+      return
+    }
+    if (![Outbound.Selector, Outbound.Urltest].includes(outbound.type as any)) {
+      return
+    }
+    const children = Array.isArray(outbound.outbounds) ? outbound.outbounds : []
+    children.forEach((child) => {
+      if (!child || child.type !== 'Subscription' || !child.id || !child.id.startsWith(CloudSubscriptionPrefix)) {
+        return
+      }
+      dedup.set(child.id, {
+        id: child.id,
+        type: 'Subscription',
+        tag: child.tag || child.id,
+      })
+    })
+  })
+  return Array.from(dedup.values())
+}
+
+const ensureOutbound = (
+  profile: IProfile,
+  id: string,
+  tag: string,
+  type: Outbound,
+): IOutbound => {
+  let outbound = profile.outbounds.find((item) => item.id === id)
+  if (!outbound) {
+    outbound = ProfileDefaults.DefaultOutbound()
+    outbound.id = id
+    profile.outbounds.push(outbound)
+  }
+
+  outbound.id = id
+  outbound.tag = tag
+  outbound.type = type
+  outbound.interrupt_exist_connections = true
+  if (!Array.isArray(outbound.outbounds)) {
+    outbound.outbounds = []
+  }
+  return outbound
+}
+
+const syncSubscriptionEntries = (outbound: IOutbound, entries: IProxy[]) => {
+  const preserved = Array.isArray(outbound.outbounds)
+    ? outbound.outbounds.filter((item) => item.type !== 'Subscription')
+    : []
+  outbound.outbounds = [...preserved, ...entries.map((entry) => ({ ...entry }))]
+}
+
+const findOutboundTag = (profile: IProfile, id: string) => {
+  return profile.outbounds.find((item) => item.id === id)?.tag || id
+}
+
+const upsertBuiltInChild = (outbound: IOutbound, child: IProxy, index?: number) => {
+  const current = Array.isArray(outbound.outbounds) ? [...outbound.outbounds] : []
+  const existingIndex = current.findIndex((item) => item.id === child.id && item.type === 'Built-in')
+  if (existingIndex >= 0) {
+    current.splice(existingIndex, 1)
+  }
+  if (typeof index === 'number' && index >= 0 && index <= current.length) {
+    current.splice(index, 0, { ...child })
+  } else {
+    current.push({ ...child })
+  }
+  outbound.outbounds = current
+}
+
+const ensureSmartAutoRouting = (profile: IProfile) => {
+  const legacyOutboundIdSet = new Set(CloudSmartLegacyIds.Outbounds)
+  const legacyRuleIdSet = new Set(CloudSmartLegacyIds.Rules)
+
+  profile.outbounds = profile.outbounds.filter((outbound) => !legacyOutboundIdSet.has(outbound.id))
+  profile.outbounds.forEach((outbound) => {
+    if (!Array.isArray(outbound.outbounds)) return
+    outbound.outbounds = outbound.outbounds.filter((child) => !legacyOutboundIdSet.has(child.id))
+  })
+  profile.route.rules = profile.route.rules.filter(
+    (rule) => !legacyRuleIdSet.has(rule.id) && !legacyOutboundIdSet.has(rule.outbound),
+  )
+
+  const subscriptions = collectSubscriptionEntries(profile)
+  if (subscriptions.length === 0) return
+
+  const auto = ensureOutbound(profile, CloudSmartOutboundIds.Auto, 'Cloud Smart Auto', Outbound.Urltest)
+  syncSubscriptionEntries(auto, subscriptions)
+  auto.include = SmartProtocolInclude.Auto
+  auto.exclude = ''
+  auto.interval = auto.interval || '2m'
+  auto.tolerance = Math.max(80, Number(auto.tolerance || 0))
+
+  const udpAuto = ensureOutbound(profile, CloudSmartOutboundIds.UdpAuto, 'Cloud Smart UDP Auto', Outbound.Urltest)
+  syncSubscriptionEntries(udpAuto, subscriptions)
+  udpAuto.include = SmartProtocolInclude.Udp
+  udpAuto.exclude = ''
+  udpAuto.interval = udpAuto.interval || '2m'
+  udpAuto.tolerance = Math.max(100, Number(udpAuto.tolerance || 0))
+
+  const hysteriaAuto = ensureOutbound(
+    profile,
+    CloudSmartOutboundIds.HysteriaAuto,
+    'Cloud Smart Hysteria Auto',
+    Outbound.Urltest,
+  )
+  syncSubscriptionEntries(hysteriaAuto, subscriptions)
+  hysteriaAuto.include = SmartProtocolInclude.Hysteria
+  hysteriaAuto.exclude = ''
+  hysteriaAuto.interval = hysteriaAuto.interval || '2m'
+  hysteriaAuto.tolerance = Math.max(120, Number(hysteriaAuto.tolerance || 0))
+
+  const defaultFallbackId = ProfileDefaults.DefaultRoute().final
+  const udpRuleTemplate: IRule = {
+    id: CloudSmartRuleIds.UdpRoute,
+    type: RuleType.Network,
+    payload: 'udp',
+    invert: false,
+    action: RuleAction.Route,
+    outbound: CloudSmartOutboundIds.UdpAuto,
+    sniffer: [],
+    strategy: Strategy.Default,
+    server: '',
+  }
+
+  const existingUdpRuleIndex = profile.route.rules.findIndex((rule) => rule.id === CloudSmartRuleIds.UdpRoute)
+  if (existingUdpRuleIndex >= 0) {
+    profile.route.rules[existingUdpRuleIndex] = { ...udpRuleTemplate }
+  } else {
+    const firstIcmpRule = profile.route.rules.findIndex(
+      (rule) => rule.type === RuleType.Network && String(rule.payload) === 'icmp',
+    )
+    if (firstIcmpRule >= 0) {
+      profile.route.rules.splice(firstIcmpRule, 0, { ...udpRuleTemplate })
+    } else {
+      profile.route.rules.push({ ...udpRuleTemplate })
+    }
+  }
+
+  const autoManagedFinalIds = new Set([
+    '',
+    defaultFallbackId,
+    'outbound-urlte',
+    'outbound-select',
+    CloudSmartOutboundIds.Auto,
+    ...CloudSmartLegacyIds.Outbounds,
+  ])
+  if (autoManagedFinalIds.has(String(profile.route.final || ''))) {
+    profile.route.final = CloudSmartOutboundIds.Auto
+  }
+
+  const fallbackOutbound = profile.outbounds.find((item) => item.id === defaultFallbackId)
+  if (fallbackOutbound && fallbackOutbound.type === Outbound.Selector) {
+    upsertBuiltInChild(
+      fallbackOutbound,
+      {
+        id: CloudSmartOutboundIds.Auto,
+        type: 'Built-in',
+        tag: findOutboundTag(profile, CloudSmartOutboundIds.Auto),
+      },
+      0,
+    )
+    upsertBuiltInChild(
+      fallbackOutbound,
+      {
+        id: CloudSmartOutboundIds.UdpAuto,
+        type: 'Built-in',
+        tag: findOutboundTag(profile, CloudSmartOutboundIds.UdpAuto),
+      },
+      1,
+    )
+    upsertBuiltInChild(
+      fallbackOutbound,
+      {
+        id: CloudSmartOutboundIds.HysteriaAuto,
+        type: 'Built-in',
+        tag: findOutboundTag(profile, CloudSmartOutboundIds.HysteriaAuto),
+      },
+      2,
+    )
   }
 }
 
@@ -2022,6 +2227,7 @@ export const useCloudStore = defineStore('cloud', () => {
     }
 
     profile.route.final = profile.route.final || ProfileDefaults.DefaultRoute().final
+    ensureSmartAutoRouting(profile)
 
     if (created) {
       await profilesStore.addProfile(profile)
