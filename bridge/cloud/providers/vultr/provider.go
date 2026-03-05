@@ -351,34 +351,40 @@ func toCloudInstance(inst vultrInstance, record nodeRecord) cloud.Instance {
 	created := parseTime(firstNonEmpty(inst.CreatedAt, record.CreatedAt))
 
 	return cloud.Instance{
-		ID:               inst.ID,
-		Provider:         "vultr",
-		Label:            firstNonEmpty(inst.Label, record.Label),
-		Status:           inst.Status,
-		Region:           firstNonEmpty(inst.Region, record.Region),
-		Plan:             record.Plan,
-		OSID:             record.OSID,
-		IPv4:             firstNonEmpty(inst.MainIP, record.IPv4),
-		IPv6:             firstNonEmpty(inst.V6MainIP, record.IPv6),
-		Port:             record.Port,
-		Password:         record.Password,
-		CreatedAt:        created,
-		SSPort:           record.SSPort,
-		SSPassword:       record.SSPassword,
-		HysteriaPort:     record.HysteriaPort,
-		HysteriaPassword: record.HysteriaPassword,
-		VLESSPort:        record.VLESSPort,
-		VLESSUUID:        record.VLESSUUID,
-		VLESSPublicKey:   record.VLESSPublicKey,
-		VLESSShortID:     record.VLESSShortID,
-		TrojanPort:       record.TrojanPort,
-		TrojanPassword:   record.TrojanPassword,
+		ID:                 inst.ID,
+		Provider:           "vultr",
+		Label:              firstNonEmpty(inst.Label, record.Label),
+		Status:             inst.Status,
+		Region:             firstNonEmpty(inst.Region, record.Region),
+		Plan:               record.Plan,
+		OSID:               record.OSID,
+		IPv4:               firstNonEmpty(inst.MainIP, record.IPv4),
+		IPv6:               firstNonEmpty(inst.V6MainIP, record.IPv6),
+		Port:               record.Port,
+		Password:           record.Password,
+		CreatedAt:          created,
+		SSPort:             record.SSPort,
+		SSPassword:         record.SSPassword,
+		HysteriaPort:       record.HysteriaPort,
+		HysteriaPassword:   record.HysteriaPassword,
+		HysteriaServerName: record.HysteriaServerName,
+		HysteriaInsecure:   record.HysteriaInsecure,
+		VLESSPort:          record.VLESSPort,
+		VLESSUUID:          record.VLESSUUID,
+		VLESSPublicKey:     record.VLESSPublicKey,
+		VLESSShortID:       record.VLESSShortID,
+		VLESSServerName:    record.VLESSServerName,
+		TrojanPort:         record.TrojanPort,
+		TrojanPassword:     record.TrojanPassword,
+		TrojanServerName:   record.TrojanServerName,
+		TrojanInsecure:     record.TrojanInsecure,
 	}
 }
 
 func recordsToInstances(records map[string]nodeRecord) []cloud.Instance {
 	instances := make([]cloud.Instance, 0, len(records))
 	for id, record := range records {
+		_ = ensureManagedTLSDefaults(&record.InstanceRecord)
 		inst := vultrInstance{
 			ID:        id,
 			Label:     firstNonEmpty(record.Label, id),
@@ -597,6 +603,9 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			record.InstanceID = inst.ID
 			dirty = true
 		}
+		if ensureManagedTLSDefaults(&record.InstanceRecord) {
+			dirty = true
+		}
 
 		records[inst.ID] = record
 		seen[inst.ID] = struct{}{}
@@ -637,9 +646,13 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("label, region and plan are required")
 	}
 
-	if _, err := p.ensureConfig(); err != nil {
+	cfg, err := p.ensureConfig()
+	if err != nil {
 		return nil, err
 	}
+
+	extra := mergeExtra(cfg.Extra, opts.Extra)
+	tuning := deploy.ResolveDeploymentTuning(extra)
 
 	planRAM, err := p.getPlanRAM(ctx, opts.Plan)
 	if err != nil {
@@ -654,11 +667,11 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("failed to determine vultr os ids: no compatible images found")
 	}
 
-	basePort := randomPort()
-	ssPort := basePort
-	hysteriaPort := basePort + 1
-	vlessPort := basePort + 2
-	trojanPort := basePort + 3
+	ports := deploy.AllocatePorts(tuning.PortProfile)
+	ssPort := ports.SSPort
+	hysteriaPort := ports.HysteriaPort
+	vlessPort := ports.VLESSPort
+	trojanPort := ports.TrojanPort
 
 	ssPassword := deploy.GenerateRandomPassword(22)
 	hysteriaPassword := deploy.GenerateRandomPassword(22)
@@ -684,13 +697,19 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 			SSPassword:       ssPassword,
 			HysteriaPort:     hysteriaPort,
 			HysteriaPassword: hysteriaPassword,
+			HysteriaServer:   tuning.HysteriaServerName,
+			HysteriaMasqURL:  tuning.HysteriaMasqueradeURL,
 			VLESSPort:        vlessPort,
 			VLESSUUID:        vlessUUID,
 			VLESSPrivateKey:  realityPrivateKey,
 			VLESSPublicKey:   realityPublicKey,
 			VLESSShortID:     realityShortID,
+			VLESSServer:      tuning.VLESSServerName,
 			TrojanPort:       trojanPort,
 			TrojanPassword:   trojanPassword,
+			TrojanServer:     tuning.TrojanServerName,
+			SingBoxVersion:   tuning.SingBoxVersion,
+			SingBoxFallback:  tuning.SingBoxFallbackVersion,
 		})
 	}
 
@@ -760,12 +779,17 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	if planRAM > 600 {
 		record.HysteriaPort = hysteriaPort
 		record.HysteriaPassword = hysteriaPassword
+		record.HysteriaServerName = tuning.HysteriaServerName
+		record.HysteriaInsecure = deploy.BoolPtr(tuning.HysteriaInsecure)
 		record.VLESSPort = vlessPort
 		record.VLESSUUID = vlessUUID
 		record.VLESSPublicKey = realityPublicKey
 		record.VLESSShortID = realityShortID
+		record.VLESSServerName = tuning.VLESSServerName
 		record.TrojanPort = trojanPort
 		record.TrojanPassword = trojanPassword
+		record.TrojanServerName = tuning.TrojanServerName
+		record.TrojanInsecure = deploy.BoolPtr(tuning.TrojanInsecure)
 	}
 
 	records, err := p.loadNodeRecords()
@@ -874,6 +898,10 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		records = map[string]nodeRecord{}
 	}
 	record := records[instanceID]
+	if ensureManagedTLSDefaults(&record.InstanceRecord) {
+		records[instanceID] = record
+		_ = p.saveNodeRecords(records)
+	}
 
 	instance := toCloudInstance(payload.Instance, record)
 	instance.Region = payload.Instance.Region
@@ -881,8 +909,62 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 	return &instance, nil
 }
 
-func randomPort() int {
-	return 20000 + mathrand.Intn(30000)
+func mergeExtra(base, override map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		if strings.TrimSpace(k) != "" {
+			merged[k] = v
+		}
+	}
+	for k, v := range override {
+		if strings.TrimSpace(k) != "" {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {
+	if record == nil {
+		return false
+	}
+
+	changed := false
+
+	if record.HysteriaPort != 0 && record.HysteriaPassword != "" {
+		if strings.TrimSpace(record.HysteriaServerName) == "" {
+			record.HysteriaServerName = deploy.DefaultHysteriaServerName
+			changed = true
+		}
+		if record.HysteriaInsecure == nil {
+			record.HysteriaInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.TrojanPort != 0 && record.TrojanPassword != "" {
+		if strings.TrimSpace(record.TrojanServerName) == "" {
+			record.TrojanServerName = deploy.DefaultTrojanServerName
+			changed = true
+		}
+		if record.TrojanInsecure == nil {
+			record.TrojanInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.VLESSPort != 0 && record.VLESSUUID != "" {
+		if strings.TrimSpace(record.VLESSServerName) == "" {
+			if strings.TrimSpace(record.TrojanServerName) != "" {
+				record.VLESSServerName = record.TrojanServerName
+			} else {
+				record.VLESSServerName = deploy.DefaultVLESSServerName
+			}
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 func (p *Provider) getPlanRAM(ctx context.Context, planID string) (int, error) {

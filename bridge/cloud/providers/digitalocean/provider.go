@@ -441,6 +441,9 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			record.Plan = d.Size.Slug
 			dirty = true
 		}
+		if ensureManagedTLSDefaults(&record) {
+			dirty = true
+		}
 
 		createdAtStr := d.CreatedAt.Format(time.RFC3339)
 		if record.CreatedAt != createdAtStr {
@@ -460,6 +463,12 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		if record.HysteriaPassword != "" {
 			instance.HysteriaPassword = record.HysteriaPassword
 		}
+		if record.HysteriaServerName != "" {
+			instance.HysteriaServerName = record.HysteriaServerName
+		}
+		if record.HysteriaInsecure != nil {
+			instance.HysteriaInsecure = record.HysteriaInsecure
+		}
 		if record.VLESSPort != 0 {
 			instance.VLESSPort = record.VLESSPort
 		}
@@ -472,11 +481,20 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		if record.VLESSShortID != "" {
 			instance.VLESSShortID = record.VLESSShortID
 		}
+		if record.VLESSServerName != "" {
+			instance.VLESSServerName = record.VLESSServerName
+		}
 		if record.TrojanPort != 0 {
 			instance.TrojanPort = record.TrojanPort
 		}
 		if record.TrojanPassword != "" {
 			instance.TrojanPassword = record.TrojanPassword
+		}
+		if record.TrojanServerName != "" {
+			instance.TrojanServerName = record.TrojanServerName
+		}
+		if record.TrojanInsecure != nil {
+			instance.TrojanInsecure = record.TrojanInsecure
 		}
 
 		records[instanceID] = record
@@ -509,14 +527,29 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("create options cannot be nil")
 	}
 
+	extra := mergeExtra(nil, opts.Extra)
+	if p.config != nil {
+		extra = mergeExtra(p.config.Extra, opts.Extra)
+	}
+	tuning := deploy.ResolveDeploymentTuning(extra)
+	ports := deploy.AllocatePorts(tuning.PortProfile)
+	if tuning.PortProfile == deploy.DefaultPortProfile {
+		ports = deploy.PortAssignment{
+			SSPort:       23650,
+			HysteriaPort: 23651,
+			VLESSPort:    23652,
+			TrojanPort:   23653,
+		}
+	}
+
 	// Generate credentials for all protocols
-	ssPort := 23650
+	ssPort := ports.SSPort
 	ssPassword := deploy.GenerateRandomPassword(16)
-	hysteriaPort := 23651
+	hysteriaPort := ports.HysteriaPort
 	hysteriaPassword := deploy.GenerateRandomPassword(22)
-	vlessPort := 23652
+	vlessPort := ports.VLESSPort
 	vlessUUID := deploy.GenerateUUID()
-	trojanPort := 23653
+	trojanPort := ports.TrojanPort
 	trojanPassword := deploy.GenerateRandomPassword(22)
 
 	// Generate Reality keypair
@@ -534,13 +567,19 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		SSPassword:       ssPassword,
 		HysteriaPort:     hysteriaPort,
 		HysteriaPassword: hysteriaPassword,
+		HysteriaServer:   tuning.HysteriaServerName,
+		HysteriaMasqURL:  tuning.HysteriaMasqueradeURL,
 		VLESSPort:        vlessPort,
 		VLESSUUID:        vlessUUID,
 		VLESSPrivateKey:  realityPrivateKey,
 		VLESSPublicKey:   realityPublicKey,
 		VLESSShortID:     realityShortID,
+		VLESSServer:      tuning.VLESSServerName,
 		TrojanPort:       trojanPort,
 		TrojanPassword:   trojanPassword,
+		TrojanServer:     tuning.TrojanServerName,
+		SingBoxVersion:   tuning.SingBoxVersion,
+		SingBoxFallback:  tuning.SingBoxFallbackVersion,
 	})
 	if userData == "" {
 		return nil, fmt.Errorf("failed to render deployment script")
@@ -613,23 +652,28 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	instanceID := fmt.Sprintf("cloud-do-%d", result.Droplet.ID)
 
 	instance := &cloud.Instance{
-		ID:               instanceID,
-		Provider:         "digitalocean",
-		Label:            result.Droplet.Name,
-		Status:           result.Droplet.Status,
-		Region:           result.Droplet.Region.Slug,
-		Plan:             result.Droplet.Size.Slug,
-		CreatedAt:        result.Droplet.CreatedAt,
-		SSPort:           ssPort,
-		SSPassword:       ssPassword,
-		HysteriaPort:     hysteriaPort,
-		HysteriaPassword: hysteriaPassword,
-		VLESSPort:        vlessPort,
-		VLESSUUID:        vlessUUID,
-		VLESSPublicKey:   realityPublicKey,
-		VLESSShortID:     realityShortID,
-		TrojanPort:       trojanPort,
-		TrojanPassword:   trojanPassword,
+		ID:                 instanceID,
+		Provider:           "digitalocean",
+		Label:              result.Droplet.Name,
+		Status:             result.Droplet.Status,
+		Region:             result.Droplet.Region.Slug,
+		Plan:               result.Droplet.Size.Slug,
+		CreatedAt:          result.Droplet.CreatedAt,
+		SSPort:             ssPort,
+		SSPassword:         ssPassword,
+		HysteriaPort:       hysteriaPort,
+		HysteriaPassword:   hysteriaPassword,
+		HysteriaServerName: tuning.HysteriaServerName,
+		HysteriaInsecure:   deploy.BoolPtr(tuning.HysteriaInsecure),
+		VLESSPort:          vlessPort,
+		VLESSUUID:          vlessUUID,
+		VLESSPublicKey:     realityPublicKey,
+		VLESSShortID:       realityShortID,
+		VLESSServerName:    tuning.VLESSServerName,
+		TrojanPort:         trojanPort,
+		TrojanPassword:     trojanPassword,
+		TrojanServerName:   tuning.TrojanServerName,
+		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
 	}
 
 	records, err := p.loadNodeRecords()
@@ -638,18 +682,23 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	record := cloud.InstanceRecord{
-		Plan:             opts.Plan,
-		CreatedAt:        result.Droplet.CreatedAt.Format(time.RFC3339),
-		SSPort:           ssPort,
-		SSPassword:       ssPassword,
-		HysteriaPort:     hysteriaPort,
-		HysteriaPassword: hysteriaPassword,
-		VLESSPort:        vlessPort,
-		VLESSUUID:        vlessUUID,
-		VLESSPublicKey:   realityPublicKey,
-		VLESSShortID:     realityShortID,
-		TrojanPort:       trojanPort,
-		TrojanPassword:   trojanPassword,
+		Plan:               opts.Plan,
+		CreatedAt:          result.Droplet.CreatedAt.Format(time.RFC3339),
+		SSPort:             ssPort,
+		SSPassword:         ssPassword,
+		HysteriaPort:       hysteriaPort,
+		HysteriaPassword:   hysteriaPassword,
+		HysteriaServerName: tuning.HysteriaServerName,
+		HysteriaInsecure:   deploy.BoolPtr(tuning.HysteriaInsecure),
+		VLESSPort:          vlessPort,
+		VLESSUUID:          vlessUUID,
+		VLESSPublicKey:     realityPublicKey,
+		VLESSShortID:       realityShortID,
+		VLESSServerName:    tuning.VLESSServerName,
+		TrojanPort:         trojanPort,
+		TrojanPassword:     trojanPassword,
+		TrojanServerName:   tuning.TrojanServerName,
+		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
 	}
 
 	if instance.IPv4 != "" {
@@ -667,7 +716,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	// Ensure firewall exists and associate it with the new droplet
-	firewallID, err := p.ensurePrivateDeployFirewall(ctx)
+	firewallID, err := p.ensurePrivateDeployFirewall(ctx, ports)
 	if err != nil {
 		// Log error but don't fail the instance creation
 		// The instance was created successfully, just without firewall
@@ -835,6 +884,9 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 			record.CreatedAt = createdAtStr
 			updated = true
 		}
+		if ensureManagedTLSDefaults(&record) {
+			updated = true
+		}
 
 		if record.SSPort != 0 {
 			instance.SSPort = record.SSPort
@@ -848,6 +900,12 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		if record.HysteriaPassword != "" {
 			instance.HysteriaPassword = record.HysteriaPassword
 		}
+		if record.HysteriaServerName != "" {
+			instance.HysteriaServerName = record.HysteriaServerName
+		}
+		if record.HysteriaInsecure != nil {
+			instance.HysteriaInsecure = record.HysteriaInsecure
+		}
 		if record.VLESSPort != 0 {
 			instance.VLESSPort = record.VLESSPort
 		}
@@ -860,11 +918,20 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		if record.VLESSShortID != "" {
 			instance.VLESSShortID = record.VLESSShortID
 		}
+		if record.VLESSServerName != "" {
+			instance.VLESSServerName = record.VLESSServerName
+		}
 		if record.TrojanPort != 0 {
 			instance.TrojanPort = record.TrojanPort
 		}
 		if record.TrojanPassword != "" {
 			instance.TrojanPassword = record.TrojanPassword
+		}
+		if record.TrojanServerName != "" {
+			instance.TrojanServerName = record.TrojanServerName
+		}
+		if record.TrojanInsecure != nil {
+			instance.TrojanInsecure = record.TrojanInsecure
 		}
 
 		records[instance.ID] = record
@@ -877,6 +944,64 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 }
 
 // Helper functions
+
+func mergeExtra(base, override map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		if strings.TrimSpace(k) != "" {
+			merged[k] = v
+		}
+	}
+	for k, v := range override {
+		if strings.TrimSpace(k) != "" {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {
+	if record == nil {
+		return false
+	}
+
+	changed := false
+
+	if record.HysteriaPort != 0 && record.HysteriaPassword != "" {
+		if strings.TrimSpace(record.HysteriaServerName) == "" {
+			record.HysteriaServerName = deploy.DefaultHysteriaServerName
+			changed = true
+		}
+		if record.HysteriaInsecure == nil {
+			record.HysteriaInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.TrojanPort != 0 && record.TrojanPassword != "" {
+		if strings.TrimSpace(record.TrojanServerName) == "" {
+			record.TrojanServerName = deploy.DefaultTrojanServerName
+			changed = true
+		}
+		if record.TrojanInsecure == nil {
+			record.TrojanInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.VLESSPort != 0 && record.VLESSUUID != "" {
+		if strings.TrimSpace(record.VLESSServerName) == "" {
+			if strings.TrimSpace(record.TrojanServerName) != "" {
+				record.VLESSServerName = record.TrojanServerName
+			} else {
+				record.VLESSServerName = deploy.DefaultVLESSServerName
+			}
+			changed = true
+		}
+	}
+
+	return changed
+}
 
 func parseRegionName(name string) (city, country string) {
 	// Map DigitalOcean region names to bilingual display with Chinese translation
@@ -922,9 +1047,11 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// ensurePrivateDeployFirewall ensures a PrivateDeploy firewall exists and returns its ID
-func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context) (string, error) {
-	// First, check if PrivateDeploy firewall already exists
+// ensurePrivateDeployFirewall ensures a protocol-specific PrivateDeploy firewall exists and returns its ID.
+func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy.PortAssignment) (string, error) {
+	firewallName := fmt.Sprintf("privatedeploy-%d-%d-%d-%d", ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort)
+
+	// First, check if this firewall already exists
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/firewalls", nil)
 	if err != nil {
 		return "", err
@@ -954,16 +1081,16 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context) (string, err
 		return "", err
 	}
 
-	// Check if PrivateDeploy firewall exists
+	// Check if matching firewall already exists
 	for _, fw := range listResult.Firewalls {
-		if fw.Name == "privatedeploy-multi-protocol" {
+		if fw.Name == firewallName {
 			return fw.ID, nil
 		}
 	}
 
 	// Create new firewall
 	firewallReq := map[string]interface{}{
-		"name": "privatedeploy-multi-protocol",
+		"name": firewallName,
 		"inbound_rules": []map[string]interface{}{
 			{
 				"protocol": "tcp",
@@ -974,35 +1101,35 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context) (string, err
 			},
 			{
 				"protocol": "tcp",
-				"ports":    "23650",
+				"ports":    fmt.Sprintf("%d", ports.SSPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
 				"protocol": "udp",
-				"ports":    "23650",
+				"ports":    fmt.Sprintf("%d", ports.SSPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
 				"protocol": "udp",
-				"ports":    "23651",
+				"ports":    fmt.Sprintf("%d", ports.HysteriaPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
 				"protocol": "tcp",
-				"ports":    "23652",
+				"ports":    fmt.Sprintf("%d", ports.VLESSPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},
 			},
 			{
 				"protocol": "tcp",
-				"ports":    "23653",
+				"ports":    fmt.Sprintf("%d", ports.TrojanPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},

@@ -17,13 +17,19 @@ type MultiProtocolParams struct {
 	SSPassword       string
 	HysteriaPort     int
 	HysteriaPassword string
+	HysteriaServer   string
+	HysteriaMasqURL  string
 	VLESSPort        int
 	VLESSUUID        string
 	VLESSPrivateKey  string
 	VLESSPublicKey   string
 	VLESSShortID     string
+	VLESSServer      string
 	TrojanPort       int
 	TrojanPassword   string
+	TrojanServer     string
+	SingBoxVersion   string
+	SingBoxFallback  string
 }
 
 // GenerateUUID returns RFC-4122 UUID v4.
@@ -88,6 +94,19 @@ func shellEscape(s string) string {
 
 // GenerateMultiProtocolScript renders the multi-protocol deployment bash script.
 func GenerateMultiProtocolScript(p MultiProtocolParams) string {
+	hysteriaServer := normalizeHostname(p.HysteriaServer, DefaultHysteriaServerName)
+	trojanServer := normalizeHostname(p.TrojanServer, DefaultTrojanServerName)
+	vlessServer := normalizeHostname(p.VLESSServer, trojanServer)
+	if vlessServer == "" {
+		vlessServer = DefaultVLESSServerName
+	}
+	hysteriaMasqueradeURL := normalizeMasqueradeURL(p.HysteriaMasqURL, hysteriaServer)
+	singBoxVersion := normalizeVersion(p.SingBoxVersion, DefaultSingBoxVersion)
+	singBoxFallback := normalizeVersion(p.SingBoxFallback, singBoxVersion)
+	if singBoxFallback == "" {
+		singBoxFallback = singBoxVersion
+	}
+
 	return fmt.Sprintf(`#!/bin/bash
 # PrivateDeploy Multi-Protocol Deployment Script
 # Protocols: Shadowsocks, Hysteria2, VLESS-Reality, Trojan
@@ -135,8 +154,8 @@ generate_cert() {
   chmod 600 "$key_path" "$cert_path"
 }
 
-generate_cert /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem www.bing.com
-generate_cert /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem www.microsoft.com
+generate_cert /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem %[12]s
+generate_cert /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem %[13]s
 
 # Configure UFW firewall
 echo "[4/8] Configuring UFW firewall..."
@@ -182,7 +201,7 @@ auth:
 masquerade:
   type: proxy
   proxy:
-    url: https://www.bing.com
+    url: %[14]s
     rewriteHost: true
 quic:
   initStreamReceiveWindow: 8388608
@@ -207,18 +226,24 @@ docker logs hysteria-server 2>&1 | tail -n 10 || true
 # Deploy VLESS-Reality with sing-box
 echo "[8/8] Deploying VLESS-Reality server (port %[3]d)..."
 
-SINGBOX_VERSION=$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K[^"]+' || echo "1.10.0")
+SINGBOX_VERSION="%[15]s"
+SINGBOX_FALLBACK_VERSION="%[16]s"
 SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
-FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v1.10.0/sing-box-1.10.0-linux-amd64.tar.gz"
+FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz"
 
 mkdir -p /tmp/privatedeploy
 if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
-  echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback..." >&2
-  if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
-    echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan deployment." >&2
-    SKIP_SINGBOX=1
+  if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
+    echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
+    if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
+      echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan deployment." >&2
+      SKIP_SINGBOX=1
+    else
+      SINGBOX_VERSION="$SINGBOX_FALLBACK_VERSION"
+    fi
   else
-    SINGBOX_VERSION="1.10.0"
+    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured. Skipping VLESS/Trojan deployment." >&2
+    SKIP_SINGBOX=1
   fi
 fi
 
@@ -244,11 +269,11 @@ if [ "${SKIP_SINGBOX:-0}" -ne 1 ]; then
     }],
     "tls": {
       "enabled": true,
-      "server_name": "www.microsoft.com",
+      "server_name": "%[17]s",
       "reality": {
         "enabled": true,
         "handshake": {
-          "server": "www.microsoft.com",
+          "server": "%[17]s",
           "server_port": 443
         },
         "private_key": "%[9]s",
@@ -314,7 +339,7 @@ SERVICEEOF
     }],
     "tls": {
       "enabled": true,
-      "server_name": "www.microsoft.com",
+      "server_name": "%[13]s",
       "key_path": "/etc/privatedeploy/trojan/key.pem",
       "certificate_path": "/etc/privatedeploy/trojan/cert.pem"
     }
@@ -395,10 +420,10 @@ renew_if_due() {
 }
 
 changed=0
-if renew_if_due /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem www.bing.com; then
+if renew_if_due /etc/privatedeploy/hysteria/cert.pem /etc/privatedeploy/hysteria/key.pem %[12]s; then
   changed=1
 fi
-if renew_if_due /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem www.microsoft.com; then
+if renew_if_due /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.pem %[13]s; then
   changed=1
 fi
 
@@ -475,6 +500,12 @@ echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
 		p.VLESSPrivateKey,
 		p.VLESSShortID,
 		p.VLESSPublicKey,
+		hysteriaServer,
+		trojanServer,
+		hysteriaMasqueradeURL,
+		singBoxVersion,
+		singBoxFallback,
+		vlessServer,
 	)
 }
 

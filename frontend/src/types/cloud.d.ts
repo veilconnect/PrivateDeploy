@@ -57,6 +57,7 @@ export interface CloudNode {
   vlessUUID?: string
   vlessPublicKey?: string
   vlessShortId?: string
+  vlessServerName?: string
   trojanPort?: number
   trojanPassword?: string
   trojanServerName?: string

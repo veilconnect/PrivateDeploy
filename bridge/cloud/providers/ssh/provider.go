@@ -164,28 +164,42 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		return nil, err
 	}
 
+	dirty := false
 	instances := make([]cloud.Instance, 0, len(records))
-	for _, rec := range records {
+	for id, rec := range records {
+		if ensureManagedTLSDefaults(&rec.InstanceRecord) {
+			records[id] = rec
+			dirty = true
+		}
 		instances = append(instances, cloud.Instance{
-			ID:               rec.InstanceID,
-			Provider:         "ssh",
-			Label:            rec.Label,
-			Status:           "active",
-			IPv4:             rec.IPv4,
-			IPv6:             rec.IPv6,
-			Port:             rec.Port,
-			CreatedAt:        parseTime(rec.CreatedAt),
-			SSPort:           rec.SSPort,
-			SSPassword:       rec.SSPassword,
-			HysteriaPort:     rec.HysteriaPort,
-			HysteriaPassword: rec.HysteriaPassword,
-			VLESSPort:        rec.VLESSPort,
-			VLESSUUID:        rec.VLESSUUID,
-			VLESSPublicKey:   rec.VLESSPublicKey,
-			VLESSShortID:     rec.VLESSShortID,
-			TrojanPort:       rec.TrojanPort,
-			TrojanPassword:   rec.TrojanPassword,
+			ID:                 rec.InstanceID,
+			Provider:           "ssh",
+			Label:              rec.Label,
+			Status:             "active",
+			IPv4:               rec.IPv4,
+			IPv6:               rec.IPv6,
+			Port:               rec.Port,
+			CreatedAt:          parseTime(rec.CreatedAt),
+			SSPort:             rec.SSPort,
+			SSPassword:         rec.SSPassword,
+			HysteriaPort:       rec.HysteriaPort,
+			HysteriaPassword:   rec.HysteriaPassword,
+			HysteriaServerName: rec.HysteriaServerName,
+			HysteriaInsecure:   rec.HysteriaInsecure,
+			VLESSPort:          rec.VLESSPort,
+			VLESSUUID:          rec.VLESSUUID,
+			VLESSPublicKey:     rec.VLESSPublicKey,
+			VLESSShortID:       rec.VLESSShortID,
+			VLESSServerName:    rec.VLESSServerName,
+			TrojanPort:         rec.TrojanPort,
+			TrojanPassword:     rec.TrojanPassword,
+			TrojanServerName:   rec.TrojanServerName,
+			TrojanInsecure:     rec.TrojanInsecure,
 		})
+	}
+
+	if dirty {
+		_ = p.saveNodeRecords(records)
 	}
 
 	return instances, nil
@@ -202,6 +216,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 
 	// Merge SSH connection params: opts.Extra overrides config.Extra
 	extra := mergeExtra(p.config.Extra, opts.Extra)
+	tuning := deploy.ResolveDeploymentTuning(extra)
 
 	host := extra["host"]
 	if host == "" {
@@ -250,11 +265,11 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	// 3. Generate credentials
 	p.emit("cloud:ssh:progress", instanceID, "generating", "正在生成部署参数...")
 
-	basePort := 20000 + mathrand.Intn(30000)
-	ssPort := basePort
-	hysteriaPort := basePort + 1
-	vlessPort := basePort + 2
-	trojanPort := basePort + 3
+	ports := deploy.AllocatePorts(tuning.PortProfile)
+	ssPort := ports.SSPort
+	hysteriaPort := ports.HysteriaPort
+	vlessPort := ports.VLESSPort
+	trojanPort := ports.TrojanPort
 
 	ssPassword := deploy.GenerateRandomPassword(16)
 	hysteriaPassword := deploy.GenerateRandomPassword(22)
@@ -281,13 +296,19 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 			SSPassword:       ssPassword,
 			HysteriaPort:     hysteriaPort,
 			HysteriaPassword: hysteriaPassword,
+			HysteriaServer:   tuning.HysteriaServerName,
+			HysteriaMasqURL:  tuning.HysteriaMasqueradeURL,
 			VLESSPort:        vlessPort,
 			VLESSUUID:        vlessUUID,
 			VLESSPrivateKey:  realityPrivateKey,
 			VLESSPublicKey:   realityPublicKey,
 			VLESSShortID:     realityShortID,
+			VLESSServer:      tuning.VLESSServerName,
 			TrojanPort:       trojanPort,
 			TrojanPassword:   trojanPassword,
+			TrojanServer:     tuning.TrojanServerName,
+			SingBoxVersion:   tuning.SingBoxVersion,
+			SingBoxFallback:  tuning.SingBoxFallbackVersion,
 		})
 	}
 
@@ -350,12 +371,17 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	if isMulti {
 		instance.HysteriaPort = hysteriaPort
 		instance.HysteriaPassword = hysteriaPassword
+		instance.HysteriaServerName = tuning.HysteriaServerName
+		instance.HysteriaInsecure = deploy.BoolPtr(tuning.HysteriaInsecure)
 		instance.VLESSPort = vlessPort
 		instance.VLESSUUID = vlessUUID
 		instance.VLESSPublicKey = realityPublicKey
 		instance.VLESSShortID = realityShortID
+		instance.VLESSServerName = tuning.VLESSServerName
 		instance.TrojanPort = trojanPort
 		instance.TrojanPassword = trojanPassword
+		instance.TrojanServerName = tuning.TrojanServerName
+		instance.TrojanInsecure = deploy.BoolPtr(tuning.TrojanInsecure)
 	}
 
 	// Persist node record
@@ -369,20 +395,25 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		Label:      label,
 		Host:       host,
 		InstanceRecord: cloud.InstanceRecord{
-			Plan:             "ssh-deploy",
-			IPv4:             host,
-			Port:             sshPort,
-			CreatedAt:        time.Now().Format(time.RFC3339),
-			SSPort:           ssPort,
-			SSPassword:       ssPassword,
-			HysteriaPort:     instance.HysteriaPort,
-			HysteriaPassword: instance.HysteriaPassword,
-			VLESSPort:        instance.VLESSPort,
-			VLESSUUID:        instance.VLESSUUID,
-			VLESSPublicKey:   instance.VLESSPublicKey,
-			VLESSShortID:     instance.VLESSShortID,
-			TrojanPort:       instance.TrojanPort,
-			TrojanPassword:   instance.TrojanPassword,
+			Plan:               "ssh-deploy",
+			IPv4:               host,
+			Port:               sshPort,
+			CreatedAt:          time.Now().Format(time.RFC3339),
+			SSPort:             ssPort,
+			SSPassword:         ssPassword,
+			HysteriaPort:       instance.HysteriaPort,
+			HysteriaPassword:   instance.HysteriaPassword,
+			HysteriaServerName: instance.HysteriaServerName,
+			HysteriaInsecure:   instance.HysteriaInsecure,
+			VLESSPort:          instance.VLESSPort,
+			VLESSUUID:          instance.VLESSUUID,
+			VLESSPublicKey:     instance.VLESSPublicKey,
+			VLESSShortID:       instance.VLESSShortID,
+			VLESSServerName:    instance.VLESSServerName,
+			TrojanPort:         instance.TrojanPort,
+			TrojanPassword:     instance.TrojanPassword,
+			TrojanServerName:   instance.TrojanServerName,
+			TrojanInsecure:     instance.TrojanInsecure,
 		},
 	}
 
@@ -456,25 +487,34 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 	if !ok {
 		return nil, cloud.ErrInstanceNotFound
 	}
+	if ensureManagedTLSDefaults(&rec.InstanceRecord) {
+		records[instanceID] = rec
+		_ = p.saveNodeRecords(records)
+	}
 
 	return &cloud.Instance{
-		ID:               rec.InstanceID,
-		Provider:         "ssh",
-		Label:            rec.Label,
-		Status:           "active",
-		IPv4:             rec.IPv4,
-		Port:             rec.Port,
-		CreatedAt:        parseTime(rec.CreatedAt),
-		SSPort:           rec.SSPort,
-		SSPassword:       rec.SSPassword,
-		HysteriaPort:     rec.HysteriaPort,
-		HysteriaPassword: rec.HysteriaPassword,
-		VLESSPort:        rec.VLESSPort,
-		VLESSUUID:        rec.VLESSUUID,
-		VLESSPublicKey:   rec.VLESSPublicKey,
-		VLESSShortID:     rec.VLESSShortID,
-		TrojanPort:       rec.TrojanPort,
-		TrojanPassword:   rec.TrojanPassword,
+		ID:                 rec.InstanceID,
+		Provider:           "ssh",
+		Label:              rec.Label,
+		Status:             "active",
+		IPv4:               rec.IPv4,
+		Port:               rec.Port,
+		CreatedAt:          parseTime(rec.CreatedAt),
+		SSPort:             rec.SSPort,
+		SSPassword:         rec.SSPassword,
+		HysteriaPort:       rec.HysteriaPort,
+		HysteriaPassword:   rec.HysteriaPassword,
+		HysteriaServerName: rec.HysteriaServerName,
+		HysteriaInsecure:   rec.HysteriaInsecure,
+		VLESSPort:          rec.VLESSPort,
+		VLESSUUID:          rec.VLESSUUID,
+		VLESSPublicKey:     rec.VLESSPublicKey,
+		VLESSShortID:       rec.VLESSShortID,
+		VLESSServerName:    rec.VLESSServerName,
+		TrojanPort:         rec.TrojanPort,
+		TrojanPassword:     rec.TrojanPassword,
+		TrojanServerName:   rec.TrojanServerName,
+		TrojanInsecure:     rec.TrojanInsecure,
 	}, nil
 }
 
@@ -564,6 +604,49 @@ func mergeExtra(base, override map[string]string) map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {
+	if record == nil {
+		return false
+	}
+
+	changed := false
+
+	if record.HysteriaPort != 0 && record.HysteriaPassword != "" {
+		if strings.TrimSpace(record.HysteriaServerName) == "" {
+			record.HysteriaServerName = deploy.DefaultHysteriaServerName
+			changed = true
+		}
+		if record.HysteriaInsecure == nil {
+			record.HysteriaInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.TrojanPort != 0 && record.TrojanPassword != "" {
+		if strings.TrimSpace(record.TrojanServerName) == "" {
+			record.TrojanServerName = deploy.DefaultTrojanServerName
+			changed = true
+		}
+		if record.TrojanInsecure == nil {
+			record.TrojanInsecure = deploy.BoolPtr(true)
+			changed = true
+		}
+	}
+
+	if record.VLESSPort != 0 && record.VLESSUUID != "" {
+		if strings.TrimSpace(record.VLESSServerName) == "" {
+			if strings.TrimSpace(record.TrojanServerName) != "" {
+				record.VLESSServerName = record.TrojanServerName
+			} else {
+				record.VLESSServerName = deploy.DefaultVLESSServerName
+			}
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 func resolveAuth(extra map[string]string) (gossh.AuthMethod, error) {

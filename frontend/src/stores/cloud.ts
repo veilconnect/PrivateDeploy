@@ -80,6 +80,7 @@ const subscriptionPath = (instanceId: string) => `data/subscribes/${subscription
 
 const manualNodesPath = 'data/cloud/manual-nodes.json'
 const DefaultHysteriaServerName = 'www.bing.com'
+const DefaultVlessServerName = 'www.microsoft.com'
 const DefaultTrojanServerName = 'www.microsoft.com'
 
 const normalizeServerName = (value: unknown, fallback: string) => {
@@ -93,9 +94,7 @@ const resolveTLSInsecure = (node: CloudNode, protocol: 'hysteria' | 'trojan') =>
   if (typeof insecureFlag === 'boolean') {
     return insecureFlag
   }
-  // Managed cloud nodes currently use self-signed certs in deployment templates.
-  // Keep compatibility there while defaulting manual nodes to strict TLS verification.
-  return node.provider !== 'manual'
+  return false
 }
 
 const addUniquePort = (target: number[], port?: number) => {
@@ -170,6 +169,7 @@ type ManualNodeInput = {
   vlessUUID?: string
   vlessPublicKey?: string
   vlessShortId?: string
+  vlessServerName?: string
   trojanPort?: number
   trojanPassword?: string
   trojanServerName?: string
@@ -453,6 +453,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
     const hysteriaServerName = normalizeServerName(node.hysteriaServerName, DefaultHysteriaServerName)
     const hysteriaInsecure = resolveTLSInsecure(node, 'hysteria')
+    const vlessServerName = normalizeServerName(node.vlessServerName, DefaultVlessServerName)
     const trojanServerName = normalizeServerName(node.trojanServerName, DefaultTrojanServerName)
     const trojanInsecure = resolveTLSInsecure(node, 'trojan')
 
@@ -506,7 +507,7 @@ export const useCloudStore = defineStore('cloud', () => {
           flow: 'xtls-rprx-vision',
           tls: {
             enabled: true,
-            server_name: 'www.microsoft.com',
+            server_name: vlessServerName,
             utls: {
               enabled: true,
               fingerprint: 'chrome',
@@ -754,6 +755,7 @@ export const useCloudStore = defineStore('cloud', () => {
       vlessUUID: input.vlessUUID?.trim() || undefined,
       vlessPublicKey: input.vlessPublicKey?.trim() || undefined,
       vlessShortId: input.vlessShortId?.trim() || undefined,
+      vlessServerName: input.vlessServerName?.trim() || undefined,
       trojanPort: sanitizePort(input.trojanPort),
       trojanPassword: input.trojanPassword?.trim() || undefined,
       trojanServerName: input.trojanServerName?.trim() || undefined,

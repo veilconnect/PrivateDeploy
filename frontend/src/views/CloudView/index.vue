@@ -570,6 +570,7 @@ const parseVlessUrl = (text: string): ManualNodeInput | null => {
     const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
     const publicKey = url.searchParams.get('reality-public-key') || url.searchParams.get('pbk') || undefined
     const shortId = url.searchParams.get('reality-short-id') || url.searchParams.get('sid') || undefined
+    const serverName = url.searchParams.get('sni') || undefined
     const ipFields = assignIpFields(host)
     return {
       label,
@@ -578,6 +579,7 @@ const parseVlessUrl = (text: string): ManualNodeInput | null => {
       vlessUUID: decodeURIComponent(uuid),
       vlessPublicKey: publicKey || undefined,
       vlessShortId: shortId || undefined,
+      vlessServerName: serverName || undefined,
     }
   } catch {
     return null
@@ -691,6 +693,12 @@ const parseImportedNodes = (raw: string): ManualNodeInput[] => {
           typeof record.vlessShortId === 'string' && record.vlessShortId.trim()
             ? record.vlessShortId.trim()
             : undefined,
+        vlessServerName:
+          typeof record.vlessServerName === 'string' && record.vlessServerName.trim()
+            ? record.vlessServerName.trim()
+            : typeof record.vlessSni === 'string' && record.vlessSni.trim()
+              ? record.vlessSni.trim()
+              : undefined,
         trojanPort: toOptionalNumber(String(record.trojanPort ?? '')) ?? undefined,
         trojanPassword:
           typeof record.trojanPassword === 'string' && record.trojanPassword.trim()
@@ -1717,6 +1725,7 @@ const copyValue = async (value: string) => {
 
 type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
 const DefaultHysteriaServerName = 'www.bing.com'
+const DefaultVlessServerName = 'www.microsoft.com'
 const DefaultTrojanServerName = 'www.microsoft.com'
 
 const ensureNode = (node: CloudNode | Record<string, any>): DisplayCloudNode => node as DisplayCloudNode
@@ -1731,7 +1740,7 @@ const resolveTLSInsecure = (node: DisplayCloudNode, protocol: 'hysteria' | 'troj
   if (typeof flag === 'boolean') {
     return flag
   }
-  return !isManualNode(node)
+  return false
 }
 
 const getPreferredAddress = (node: CloudNode | Record<string, any>): string | undefined => {
@@ -1781,7 +1790,7 @@ const buildVlessLink = (node: CloudNode | Record<string, any>): string | null =>
     security: 'reality',
     'reality-public-key': target.vlessPublicKey,
     'reality-short-id': target.vlessShortId,
-    sni: 'www.microsoft.com',
+    sni: resolveServerName(target.vlessServerName, DefaultVlessServerName),
     fp: 'chrome',
   })
   return `vless://${target.vlessUUID}@${wrapHostForUri(host)}:${target.vlessPort}?${query.toString()}#${encodeURIComponent(target.label)}`
