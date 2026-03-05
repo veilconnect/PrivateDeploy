@@ -133,12 +133,14 @@ MOCK_BRIDGE_JS = r"""
           ssPassword: 'seed-ss-pass',
           hysteriaPort: 8443,
           hysteriaPassword: 'seed-hy-pass',
+          hysteriaInsecure: true,
           vlessPort: 443,
           vlessUUID: '11111111-1111-1111-1111-111111111111',
           vlessPublicKey: 'h7gA4mXwIKp2Pz8iQfH6Vav8X4nYV+FJ3G8f4vPQ6zQ=',
           vlessShortId: 'ab12cd34',
           trojanPort: 443,
           trojanPassword: 'seed-trojan-pass',
+          trojanInsecure: true,
           createdAt: nowISO(),
         },
       ],
@@ -156,8 +158,10 @@ MOCK_BRIDGE_JS = r"""
           ssPassword: 'do-ss-pass',
           hysteriaPort: 8443,
           hysteriaPassword: 'do-hy-pass',
+          hysteriaInsecure: true,
           trojanPort: 443,
           trojanPassword: 'do-trojan-pass',
+          trojanInsecure: true,
           createdAt: nowISO(),
         },
       ],
@@ -188,6 +192,7 @@ MOCK_BRIDGE_JS = r"""
       'lang: zh',
       'autoStartKernel: false',
       'autoSetSystemProxy: false',
+      'systemProxyPolicyInitialized: true',
       'pages:',
       '  - Overview',
       '  - Profiles',
@@ -292,12 +297,14 @@ MOCK_BRIDGE_JS = r"""
       ssPassword: `ss-pass-${suffix}`,
       hysteriaPort: 8443,
       hysteriaPassword: `hy-pass-${suffix}`,
+      hysteriaInsecure: true,
       vlessPort: 443,
       vlessUUID: `11111111-1111-1111-1111-${String(suffix).padStart(12, '0')}`.slice(0, 36),
       vlessPublicKey: 'h7gA4mXwIKp2Pz8iQfH6Vav8X4nYV+FJ3G8f4vPQ6zQ=',
       vlessShortId: `${suffix}`,
       trojanPort: 443,
       trojanPassword: `trojan-pass-${suffix}`,
+      trojanInsecure: true,
       createdAt: nowISO(),
     };
   };
@@ -871,6 +878,27 @@ def close_active_modal_if_any(page) -> None:
         pass
 
 
+def ensure_cloud_page_loaded(page, base_url: str) -> None:
+    page.goto(f"{base_url}/#/subscriptions", wait_until="domcontentloaded", timeout=60000)
+
+    # First navigation may be redirected to the onboarding wizard by router guard.
+    wizard_skip = page.locator("button", has_text=re.compile(r"(跳过向导，直接进入|Skip\\s+wizard)", re.IGNORECASE)).first
+    if wizard_skip.count() > 0:
+        try:
+            wizard_skip.click(timeout=8000)
+            page.wait_for_timeout(600)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if "/#/wizard" in page.url:
+        page.goto(f"{base_url}/#/subscriptions", wait_until="domcontentloaded", timeout=60000)
+
+    page.wait_for_selector(
+        "div.cloud-view, button:has-text('创建并部署'), button:has-text('Create & Deploy')",
+        timeout=60000,
+    )
+
+
 def collect_subscription_assertions(file_map: dict[str, str], labels: dict[str, str]) -> list[AssertionResult]:
     parsed_files: dict[str, Any] = {}
     for path, content in file_map.items():
@@ -985,11 +1013,7 @@ def run_regression(base_url: str, artifacts_dir: Path, headed: bool) -> Regressi
 
         page.on("console", on_console)
 
-        page.goto(f"{base_url}/#/subscriptions", wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_selector(
-            "input[placeholder='请输入 API Key'], input[placeholder='Enter your API key']",
-            timeout=60000,
-        )
+        ensure_cloud_page_loaded(page, base_url)
         steps.append("open_subscriptions_page")
 
         # Search/filter interaction
