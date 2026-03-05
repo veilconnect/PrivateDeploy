@@ -129,14 +129,14 @@ func AllocatePorts(profile string) PortAssignment {
 	switch NormalizePortProfile(profile) {
 	case "edge443":
 		return PortAssignment{
-			SSPort:       randomHighPort(),
+			SSPort:       24443,
 			HysteriaPort: 443,
 			VLESSPort:    8443,
 			TrojanPort:   443,
 		}
 	case "edge8443":
 		return PortAssignment{
-			SSPort:       randomHighPort(),
+			SSPort:       28443,
 			HysteriaPort: 8443,
 			VLESSPort:    9443,
 			TrojanPort:   8443,
