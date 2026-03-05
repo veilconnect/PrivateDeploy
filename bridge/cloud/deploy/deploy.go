@@ -188,43 +188,43 @@ sleep 2
 echo "Shadowsocks container status:"
 docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
 
-# Deploy Hysteria2
-echo "[7/8] Deploying Hysteria2 server (port %[2]d)..."
-cat > /etc/privatedeploy/hysteria/config.yaml <<'HYSTEOF'
-listen: :%[2]d
-tls:
-  cert: /etc/privatedeploy/hysteria/cert.pem
-  key: /etc/privatedeploy/hysteria/key.pem
-auth:
-  type: password
-  password: %[6]s
-masquerade:
-  type: proxy
-  proxy:
-    url: %[14]s
-    rewriteHost: true
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
+# Prepare Hysteria2 (sing-box inbound) configuration
+echo "[7/8] Preparing Hysteria2 server config (port %[2]d)..."
+HYSTERIA_PASSWORD=%[6]s
+HYSTERIA_SERVER_NAME=%[12]s
+HYSTERIA_MASQ_URL=%[14]s
+cat > /etc/privatedeploy/hysteria/config.json <<HYSTEOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [{
+    "type": "hysteria2",
+    "tag": "hy2-in",
+    "listen": "0.0.0.0",
+    "listen_port": %[2]d,
+    "users": [{
+      "password": "${HYSTERIA_PASSWORD}"
+    }],
+    "masquerade": "${HYSTERIA_MASQ_URL}",
+    "tls": {
+      "enabled": true,
+      "server_name": "${HYSTERIA_SERVER_NAME}",
+      "certificate_path": "/etc/privatedeploy/hysteria/cert.pem",
+      "key_path": "/etc/privatedeploy/hysteria/key.pem"
+    }
+  }],
+  "outbounds": [{
+    "type": "direct",
+    "tag": "direct"
+  }]
+}
 HYSTEOF
-chmod 600 /etc/privatedeploy/hysteria/config.yaml
+chmod 600 /etc/privatedeploy/hysteria/config.json
 
-docker rm -f hysteria-server >/dev/null 2>&1 || true
-docker pull --quiet tobyxdd/hysteria:latest || true
-docker run -d --name hysteria-server --restart=always \
-  -p %[2]d:%[2]d/udp \
-  -v /etc/privatedeploy/hysteria:/etc/privatedeploy/hysteria \
-  tobyxdd/hysteria:latest server -c /etc/privatedeploy/hysteria/config.yaml
-
-sleep 2
-echo "Hysteria2 container status:"
-docker ps -a --filter "name=hysteria-server" --format "{{.Names}}: {{.Status}}"
-docker logs hysteria-server 2>&1 | tail -n 10 || true
-
-# Deploy VLESS-Reality with sing-box
-echo "[8/8] Deploying VLESS-Reality server (port %[3]d)..."
+# Deploy sing-box based services
+echo "[8/8] Deploying sing-box services (Hysteria2, VLESS-Reality, Trojan)..."
 
 SINGBOX_VERSION="%[15]s"
 SINGBOX_FALLBACK_VERSION="%[16]s"
@@ -251,6 +251,35 @@ if [ "${SKIP_SINGBOX:-0}" -ne 1 ]; then
   tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
   find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
   chmod +x /usr/local/bin/sing-box
+
+  docker rm -f hysteria-server >/dev/null 2>&1 || true
+  cat > /etc/systemd/system/hysteria-server.service <<'HYSTERIASERVICE'
+[Unit]
+Description=Hysteria2 Server (sing-box)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/hysteria/config.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+HYSTERIASERVICE
+
+  systemctl daemon-reload
+  systemctl enable hysteria-server
+  systemctl start hysteria-server
+
+  sleep 3
+  echo "Hysteria2 service status:"
+  systemctl status hysteria-server --no-pager --lines=10 || journalctl -u hysteria-server -n 20 --no-pager
 
   cat > /etc/privatedeploy/vless/config.json <<VLESSEOF
 {
@@ -380,7 +409,7 @@ TROJANSERVICE
   echo "Trojan service status:"
   systemctl status trojan-server --no-pager --lines=10 || journalctl -u trojan-server -n 20 --no-pager
 else
-  echo "[WARN] sing-box installation skipped; VLESS and Trojan services were not provisioned." >&2
+  echo "[WARN] sing-box installation skipped; Hysteria2, VLESS and Trojan services were not provisioned." >&2
 fi
 
 # Configure certificate rotation timer (daily check, rotate every 14 days)
@@ -428,7 +457,7 @@ if renew_if_due /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key
 fi
 
 if [ "$changed" -eq 1 ]; then
-  docker restart hysteria-server >/dev/null 2>&1 || true
+  systemctl restart hysteria-server >/dev/null 2>&1 || true
   systemctl restart trojan-server >/dev/null 2>&1 || true
 fi
 ROTATEEOF
@@ -473,6 +502,7 @@ echo "Docker containers:"
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo ""
 echo "Systemd services:"
+echo "  Hysteria2: $(systemctl is-active hysteria-server 2>/dev/null || echo 'inactive')"
 echo "  VLESS-Reality: $(systemctl is-active vless-server 2>/dev/null || echo 'inactive')"
 echo "  Trojan: $(systemctl is-active trojan-server 2>/dev/null || echo 'inactive')"
 echo ""

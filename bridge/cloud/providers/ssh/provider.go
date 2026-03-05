@@ -462,8 +462,8 @@ func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error
 			// Best-effort cleanup on remote server
 			cleanupScript := `
 docker rm -f ss-server hysteria-server 2>/dev/null || true
-systemctl stop vless-server trojan-server 2>/dev/null || true
-systemctl disable vless-server trojan-server 2>/dev/null || true
+systemctl stop hysteria-server vless-server trojan-server 2>/dev/null || true
+systemctl disable hysteria-server vless-server trojan-server 2>/dev/null || true
 rm -rf /etc/privatedeploy /tmp/privatedeploy 2>/dev/null || true
 echo "PrivateDeploy services removed"
 `

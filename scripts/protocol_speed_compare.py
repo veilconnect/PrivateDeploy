@@ -133,6 +133,7 @@ def build_targets(node: Dict[str, Any], ip: str) -> List[ProtocolTarget]:
     vless_pk = str(node.get("vlessPublicKey") or "")
     vless_sid = str(node.get("vlessShortId") or "")
     if vless_port > 0 and vless_uuid and vless_pk and vless_sid:
+        vless_server_name = str(node.get("vlessServerName") or "www.microsoft.com")
         targets.append(
             ProtocolTarget(
                 protocol="vless-reality",
@@ -145,7 +146,7 @@ def build_targets(node: Dict[str, Any], ip: str) -> List[ProtocolTarget]:
                     "flow": "xtls-rprx-vision",
                     "tls": {
                         "enabled": True,
-                        "server_name": "www.microsoft.com",
+                        "server_name": vless_server_name,
                         "utls": {"enabled": True, "fingerprint": "chrome"},
                         "reality": {
                             "enabled": True,
@@ -441,6 +442,44 @@ def write_outputs(results: List[Dict[str, Any]], output_dir: Path) -> None:
     print(f"[protocol-benchmark] TSV : {tsv_path}")
 
 
+def print_environment_warnings(results: List[Dict[str, Any]]) -> None:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in results:
+        instance_id = str(row.get("instance_id") or "unknown")
+        grouped.setdefault(instance_id, []).append(row)
+
+    for rows in grouped.values():
+        hysteria_rows = [r for r in rows if str(r.get("protocol")) == "hysteria2"]
+        if not hysteria_rows:
+            continue
+
+        if any(str(r.get("status")) == "ok" for r in hysteria_rows):
+            continue
+
+        has_other_success = any(str(r.get("protocol")) != "hysteria2" and str(r.get("status")) == "ok" for r in rows)
+        if not has_other_success:
+            continue
+
+        error_blob = " ".join(" ".join(r.get("errors", [])) for r in hysteria_rows).lower()
+        looks_like_udp_issue = any(
+            token in error_blob
+            for token in (
+                "can't complete socks5 connection",
+                "timeout",
+                "no recent network activity",
+            )
+        )
+        if not looks_like_udp_issue:
+            continue
+
+        label = str(hysteria_rows[0].get("label") or hysteria_rows[0].get("instance_id") or "unknown")
+        print(
+            "[protocol-benchmark][warn] "
+            f"{label}: hysteria2 failed while TCP protocols succeeded; "
+            "this usually indicates client-side UDP egress restrictions on the benchmark host."
+        )
+
+
 def main() -> int:
     args = parse_args()
 
@@ -492,6 +531,7 @@ def main() -> int:
         print("[protocol-benchmark] no benchmarkable protocol records found")
         return 2
 
+    print_environment_warnings(results)
     write_outputs(results, Path(args.output_dir))
     return 0
 

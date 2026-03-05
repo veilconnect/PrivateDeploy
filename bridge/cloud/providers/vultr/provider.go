@@ -720,6 +720,9 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		"enable_ipv6": true,
 		"user_data":   base64.StdEncoding.EncodeToString([]byte(userData)),
 	}
+	if sshKeyID := strings.TrimSpace(opts.SSHKeyID); sshKeyID != "" {
+		requestBody["sshkey_id"] = []string{sshKeyID}
+	}
 
 	var payload struct {
 		Instance vultrInstance `json:"instance"`
