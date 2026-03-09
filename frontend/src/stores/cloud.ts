@@ -19,12 +19,12 @@ import {
   RemoveFile,
   TestConnectivity,
 } from '@/bridge'
-import { DefaultSubscribeScript, DefaultTestURL } from '@/constant/app'
+import { DefaultSubscribeScript } from '@/constant/app'
 import { DefaultExcludeProtocols } from '@/constant/kernel'
 import * as ProfileDefaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
-import { Inbound, Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
-import { sampleID, deepClone, ignoredError } from '@/utils'
+import { Outbound } from '@/enums/kernel'
+import { sampleID, deepClone, ignoredError, debounce } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
 import { notifications } from '@/utils/notification'
@@ -35,6 +35,40 @@ import { useKernelApiStore } from './kernelApi'
 import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
 
+// Refactored submodules
+import {
+  CloudSubscriptionPrefix,
+  DefaultHysteriaServerName,
+  DefaultVlessServerName,
+  DefaultTrojanServerName,
+  manualNodesPath,
+  protocolHealthPath,
+  CACHE_TTL,
+  type ManagedProtocol,
+  type ProtocolHealthState,
+  type ProtocolHealthReason,
+  type ProtocolHealthMap,
+  type CloudNodeStatus,
+} from './cloud/constants'
+
+import {
+  parseJSON,
+  subscriptionId,
+  subscriptionPath,
+  normalizeServerName,
+  resolveTLSInsecure,
+  isReachableTargetStatus,
+  joinRegexAlternatives,
+  deriveManagedExclude,
+  addUniquePort,
+  isPublicIPv4Address,
+  hasUsableAddress,
+  normalizeCloudNode,
+  providerStatusToNodeStatus,
+} from './cloud/helpers'
+
+import { ensureSmartAutoRouting } from './cloud/smartRouting'
+
 import type { Subscription } from '@/types/app'
 import type {
   CloudProvider,
@@ -44,157 +78,21 @@ import type {
   CloudRegion,
   ConnectivityProbeRequest,
   ConnectivityResult,
-  ConnectivityStatus,
 } from '@/types/cloud'
 
+// Re-export types for backward compatibility
+export type { ManagedCloudNode } from './cloud/types'
+export type { ManualNodeSkipEntry } from './cloud/types'
+import type { ManagedCloudNode } from './cloud/types'
+import {
+  ManualNodeError,
+  type ManualNodeInput,
+  type ManualNodeConflict,
+  type ManualNodeConflictType,
+  type ManualNodeSkipEntry,
+} from './cloud/types'
 
-type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
-export type ManagedCloudNode = CloudNode & {
-  statusText?: CloudNodeStatus
-  connectivityStatus?: ConnectivityStatus
-  connectivityTesting?: boolean
-  lastConnectivityResult?: ConnectivityResult
-}
-const parseJSON = <T>(data: string | undefined | null, fallback: T): T => {
-  if (!data) return fallback
-  try {
-    return JSON.parse(data) as T
-  } catch (error) {
-    logError('Failed to parse provider response', error)
-    return fallback
-  }
-}
-
-// Generate subscription ID from instance ID
-// For DigitalOcean, instance IDs already have "cloud-do-" prefix, so use as-is
-// For Vultr (legacy), instance IDs are UUIDs without prefix, so add "cloud-" prefix
-const subscriptionId = (instanceId: string) => {
-  // If ID already has a provider prefix (e.g., "cloud-do-"), use it directly
-  if (instanceId.startsWith('cloud-')) {
-    return instanceId
-  }
-  // Otherwise, add "cloud-" prefix for backward compatibility with Vultr
-  return `cloud-${instanceId}`
-}
-const subscriptionPath = (instanceId: string) => `data/subscribes/${subscriptionId(instanceId)}.json`
-
-const manualNodesPath = 'data/cloud/manual-nodes.json'
-const protocolHealthPath = 'data/cloud/protocol-health.json'
-const DefaultHysteriaServerName = 'www.bing.com'
-const DefaultVlessServerName = 'www.microsoft.com'
-const DefaultTrojanServerName = 'www.microsoft.com'
-const CloudSubscriptionPrefix = 'cloud-'
-const CloudSmartNodeOutboundPrefix = 'outbound-smart-node-'
-const CloudSmartOutboundIds = {
-  Auto: 'outbound-smart-auto',
-  TcpPrimary: 'outbound-smart-tcp-primary',
-  TcpSecondary: 'outbound-smart-tcp-secondary',
-  UdpAuto: 'outbound-smart-udp-auto',
-  HysteriaAuto: 'outbound-smart-hysteria-auto',
-}
-const CloudSmartRuleIds = {
-  Tcp443Route: 'rule-smart-tcp-443-route',
-  TcpWebRoute: 'rule-smart-tcp-web-route',
-  UdpRoute: 'rule-smart-udp-route',
-}
-const CloudSmartLegacyIds = {
-  Outbounds: [
-    'cloud-smart-tcp-auto',
-    'cloud-smart-udp-auto',
-    'cloud-smart-hysteria-auto',
-    'outbound-smart-tcp-primary',
-    'outbound-smart-tcp-secondary',
-  ],
-  Rules: ['cloud-smart-udp-route', 'rule-smart-tcp-443-route', 'rule-smart-tcp-web-route'],
-}
-const CloudTagSuffixPattern = '(?:-(?:v4|v6|ipv4|ipv6))?$'
-const CloudSmartProbeURLPrimary = DefaultTestURL
-const CloudSmartProbeURLSecondary = 'https://www.cloudflare.com/cdn-cgi/trace'
-const ProtocolTagPattern = {
-  shadowsocks: `-(?:ss|shadowsocks)${CloudTagSuffixPattern}`,
-  hysteria2: `-(?:hysteria2?|hy2)${CloudTagSuffixPattern}`,
-  vless: `-(?:vless)${CloudTagSuffixPattern}`,
-  trojan: `-(?:trojan)${CloudTagSuffixPattern}`,
-}
-// Prefer per-node protocol racing for the main TCP paths, and keep UDP routing conservative.
-const SmartProtocolInclude = {
-  NodeBest: `-(?:ss|shadowsocks|hysteria2?|hy2|vless|trojan)${CloudTagSuffixPattern}`,
-  Udp: ProtocolTagPattern.shadowsocks,
-  Hysteria: ProtocolTagPattern.hysteria2,
-}
-const ProtocolExcludePattern: Record<ManagedProtocol, string> = {
-  shadowsocks: ProtocolTagPattern.shadowsocks,
-  hysteria2: ProtocolTagPattern.hysteria2,
-  vless: ProtocolTagPattern.vless,
-  trojan: ProtocolTagPattern.trojan,
-}
-
-type ManagedProtocol = 'shadowsocks' | 'hysteria2' | 'vless' | 'trojan'
-type ProtocolHealthState = 'healthy' | 'degraded'
-type ProtocolHealthReason =
-  | 'connectivity-udp-unreachable'
-  | 'connectivity-tcp-unreachable'
-  | 'manual-override'
-type ProtocolHealthEntry = {
-  state: ProtocolHealthState
-  reason: ProtocolHealthReason
-  updatedAt: number
-}
-type ProtocolHealthMap = Record<string, Partial<Record<ManagedProtocol, ProtocolHealthEntry>>>
-type CloudSubscriptionEntry = IProxy & {
-  instanceId: string
-  managedExclude: string
-}
-
-const normalizeServerName = (value: unknown, fallback: string) => {
-  if (typeof value !== 'string') return fallback
-  const trimmed = value.trim()
-  return trimmed || fallback
-}
-
-const isReachableTargetStatus = (status?: string) => status === 'open' || status === 'open_or_filtered'
-
-const joinRegexAlternatives = (...patterns: Array<string | undefined>) => {
-  return patterns
-    .map((pattern) => pattern?.trim())
-    .filter((pattern): pattern is string => !!pattern)
-    .map((pattern) => `(?:${pattern})`)
-    .join('|')
-}
-
-const deriveManagedExclude = (entry?: Partial<Record<ManagedProtocol, ProtocolHealthEntry>>) => {
-  if (!entry) return ''
-  return joinRegexAlternatives(
-    ...Object.entries(entry)
-      .filter(([, value]) => value?.state === 'degraded')
-      .map(([protocol]) => ProtocolExcludePattern[protocol as ManagedProtocol]),
-  )
-}
-
-const resolveTLSInsecure = (node: CloudNode, protocol: 'hysteria' | 'trojan') => {
-  const insecureFlag = protocol === 'hysteria' ? node.hysteriaInsecure : node.trojanInsecure
-  if (typeof insecureFlag === 'boolean') {
-    return insecureFlag
-  }
-  return false
-}
-
-const addUniquePort = (target: number[], port?: number) => {
-  if (!port || port <= 0) return
-  if (!target.includes(port)) {
-    target.push(port)
-  }
-}
-
-const isManagedCloudOutboundId = (id?: string) => {
-  const normalized = String(id || '')
-  return (
-    Object.values(CloudSmartOutboundIds).includes(normalized as (typeof CloudSmartOutboundIds)[keyof typeof CloudSmartOutboundIds]) ||
-    CloudSmartLegacyIds.Outbounds.includes(normalized) ||
-    normalized.startsWith(CloudSmartNodeOutboundPrefix)
-  )
-}
-
+// Keep this for backward compatibility with cloudInstanceIdFromSubscriptionRef usage below
 const cloudInstanceIdFromSubscriptionRef = (id: string) => {
   if (id.startsWith('cloud-do-')) {
     return id
@@ -203,317 +101,6 @@ const cloudInstanceIdFromSubscriptionRef = (id: string) => {
     return id.slice(CloudSubscriptionPrefix.length)
   }
   return id
-}
-
-const nodeSmartOutboundId = (instanceId: string) =>
-  `${CloudSmartNodeOutboundPrefix}auto-${subscriptionId(instanceId)}`
-
-const collectSubscriptionEntries = (profile: IProfile, healthMap: ProtocolHealthMap): CloudSubscriptionEntry[] => {
-  const dedup = new Map<string, CloudSubscriptionEntry>()
-  profile.outbounds.forEach((outbound) => {
-    if (isManagedCloudOutboundId(outbound.id)) {
-      return
-    }
-    if (![Outbound.Selector, Outbound.Urltest].includes(outbound.type as any)) {
-      return
-    }
-    const children = Array.isArray(outbound.outbounds) ? outbound.outbounds : []
-    children.forEach((child) => {
-      if (!child || child.type !== 'Subscription' || !child.id || !child.id.startsWith(CloudSubscriptionPrefix)) {
-        return
-      }
-      const instanceId = cloudInstanceIdFromSubscriptionRef(child.id)
-      dedup.set(child.id, {
-        id: child.id,
-        type: 'Subscription',
-        tag: child.tag || child.id,
-        instanceId,
-        managedExclude: deriveManagedExclude(healthMap[instanceId]),
-      })
-    })
-  })
-  return Array.from(dedup.values())
-}
-
-const ensureOutbound = (
-  profile: IProfile,
-  id: string,
-  tag: string,
-  type: Outbound,
-): IOutbound => {
-  let outbound = profile.outbounds.find((item) => item.id === id)
-  if (!outbound) {
-    outbound = ProfileDefaults.DefaultOutbound()
-    outbound.id = id
-    profile.outbounds.push(outbound)
-  }
-
-  outbound.id = id
-  outbound.tag = tag
-  outbound.type = type
-  outbound.interrupt_exist_connections = true
-  if (!Array.isArray(outbound.outbounds)) {
-    outbound.outbounds = []
-  }
-  return outbound
-}
-
-const syncSubscriptionEntries = (outbound: IOutbound, entries: IProxy[]) => {
-  const preserved = Array.isArray(outbound.outbounds)
-    ? outbound.outbounds.filter((item) => item.type !== 'Subscription')
-    : []
-  outbound.outbounds = [...preserved, ...entries.map((entry) => ({ ...entry }))]
-}
-
-const syncBuiltInEntries = (
-  outbound: IOutbound,
-  entries: Array<{ id: string; tag: string }>,
-) => {
-  const preserved = Array.isArray(outbound.outbounds)
-    ? outbound.outbounds.filter((item) => item.type !== 'Built-in')
-    : []
-  outbound.outbounds = [
-    ...preserved,
-    ...entries.map((entry) => ({
-      id: entry.id,
-      type: 'Built-in' as const,
-      tag: entry.tag,
-    })),
-  ]
-}
-
-const findOutboundTag = (profile: IProfile, id: string) => {
-  return profile.outbounds.find((item) => item.id === id)?.tag || id
-}
-
-const upsertBuiltInChild = (outbound: IOutbound, child: IProxy, index?: number) => {
-  const current = Array.isArray(outbound.outbounds) ? [...outbound.outbounds] : []
-  const existingIndex = current.findIndex((item) => item.id === child.id && item.type === 'Built-in')
-  if (existingIndex >= 0) {
-    current.splice(existingIndex, 1)
-  }
-  if (typeof index === 'number' && index >= 0 && index <= current.length) {
-    current.splice(index, 0, { ...child })
-  } else {
-    current.push({ ...child })
-  }
-  outbound.outbounds = current
-}
-
-const ensureLinkAggregation = (profile: IProfile, cloudSubscriptionCount: number) => {
-  const enableMultipath = cloudSubscriptionCount >= 2
-
-  profile.inbounds.forEach((inbound) => {
-    if (![Inbound.Mixed, Inbound.Socks, Inbound.Http].includes(inbound.type as any)) {
-      return
-    }
-    const detail = inbound[inbound.type]
-    if (!detail || typeof detail !== 'object' || !('listen' in detail)) return
-    if (!detail.listen) return
-    detail.listen.tcp_multi_path = enableMultipath
-  })
-
-  // Keep interface auto-detection on so multi-path can leverage the current best NIC.
-  profile.route.auto_detect_interface = true
-}
-
-const ensureSmartAutoRouting = (profile: IProfile, healthMap: ProtocolHealthMap = {}) => {
-  const managedRuleIdSet = new Set([...Object.values(CloudSmartRuleIds), ...CloudSmartLegacyIds.Rules])
-
-  profile.outbounds = profile.outbounds.filter((outbound) => !isManagedCloudOutboundId(outbound.id))
-  profile.outbounds.forEach((outbound) => {
-    if (!Array.isArray(outbound.outbounds)) return
-    outbound.outbounds = outbound.outbounds.filter((child) => !isManagedCloudOutboundId(child.id))
-  })
-  profile.route.rules = profile.route.rules.filter(
-    (rule) => !managedRuleIdSet.has(rule.id) && !isManagedCloudOutboundId(rule.outbound),
-  )
-
-  const subscriptions = collectSubscriptionEntries(profile, healthMap)
-  ensureLinkAggregation(profile, subscriptions.length)
-  if (subscriptions.length === 0) return
-
-  const nodeAutoOutbounds = subscriptions.map((entry) => {
-    const outbound = ensureOutbound(
-      profile,
-      nodeSmartOutboundId(entry.instanceId),
-      `Cloud Node ${entry.tag} Best Auto`,
-      Outbound.Urltest,
-    )
-    syncSubscriptionEntries(outbound, [entry])
-    outbound.url = CloudSmartProbeURLPrimary
-    outbound.include = SmartProtocolInclude.NodeBest
-    outbound.exclude = entry.managedExclude
-    outbound.interval = outbound.interval || '75s'
-    outbound.tolerance = Math.max(65, Number(outbound.tolerance || 0))
-    return {
-      id: outbound.id,
-      tag: outbound.tag,
-    }
-  })
-
-  const auto = ensureOutbound(profile, CloudSmartOutboundIds.Auto, 'Cloud Smart Best Auto', Outbound.Urltest)
-  syncBuiltInEntries(auto, nodeAutoOutbounds)
-  auto.url = CloudSmartProbeURLPrimary
-  auto.include = ''
-  auto.exclude = ''
-  auto.interval = auto.interval || '2m'
-  auto.tolerance = Math.max(80, Number(auto.tolerance || 0))
-
-  const tcpPrimary = ensureOutbound(
-    profile,
-    CloudSmartOutboundIds.TcpPrimary,
-    'Cloud Smart Best TCP Auto',
-    Outbound.Urltest,
-  )
-  syncBuiltInEntries(tcpPrimary, nodeAutoOutbounds)
-  tcpPrimary.url = CloudSmartProbeURLPrimary
-  tcpPrimary.include = ''
-  tcpPrimary.exclude = ''
-  tcpPrimary.interval = tcpPrimary.interval || '90s'
-  tcpPrimary.tolerance = Math.max(70, Number(tcpPrimary.tolerance || 0))
-
-  const tcpSecondary = ensureOutbound(
-    profile,
-    CloudSmartOutboundIds.TcpSecondary,
-    'Cloud Smart Best Web Auto',
-    Outbound.Urltest,
-  )
-  syncBuiltInEntries(tcpSecondary, nodeAutoOutbounds)
-  tcpSecondary.url = CloudSmartProbeURLSecondary
-  tcpSecondary.include = ''
-  tcpSecondary.exclude = ''
-  tcpSecondary.interval = tcpSecondary.interval || '90s'
-  tcpSecondary.tolerance = Math.max(85, Number(tcpSecondary.tolerance || 0))
-
-  const udpAuto = ensureOutbound(profile, CloudSmartOutboundIds.UdpAuto, 'Cloud Smart SS UDP Auto', Outbound.Urltest)
-  syncSubscriptionEntries(udpAuto, subscriptions)
-  udpAuto.url = CloudSmartProbeURLSecondary
-  udpAuto.include = SmartProtocolInclude.Udp
-  udpAuto.exclude = ''
-  udpAuto.interval = udpAuto.interval || '2m'
-  udpAuto.tolerance = Math.max(100, Number(udpAuto.tolerance || 0))
-
-  const hysteriaAuto = ensureOutbound(
-    profile,
-    CloudSmartOutboundIds.HysteriaAuto,
-    'Cloud Smart Hysteria Backup',
-    Outbound.Urltest,
-  )
-  syncSubscriptionEntries(hysteriaAuto, subscriptions)
-  hysteriaAuto.url = CloudSmartProbeURLSecondary
-  hysteriaAuto.include = SmartProtocolInclude.Hysteria
-  hysteriaAuto.exclude = ''
-  hysteriaAuto.interval = hysteriaAuto.interval || '2m'
-  hysteriaAuto.tolerance = Math.max(120, Number(hysteriaAuto.tolerance || 0))
-
-  const defaultFallbackId = ProfileDefaults.DefaultRoute().final
-  const udpRuleTemplate: IRule = {
-    id: CloudSmartRuleIds.UdpRoute,
-    type: RuleType.Network,
-    payload: 'udp',
-    invert: false,
-    action: RuleAction.Route,
-    outbound: CloudSmartOutboundIds.UdpAuto,
-    sniffer: [],
-    strategy: Strategy.Default,
-    server: '',
-  }
-
-  const tcp443RuleTemplate: IRule = {
-    id: CloudSmartRuleIds.Tcp443Route,
-    type: RuleType.Port,
-    payload: '443',
-    invert: false,
-    action: RuleAction.Route,
-    outbound: CloudSmartOutboundIds.TcpPrimary,
-    sniffer: [],
-    strategy: Strategy.Default,
-    server: '',
-  }
-
-  const tcpWebRuleTemplate: IRule = {
-    id: CloudSmartRuleIds.TcpWebRoute,
-    type: RuleType.Port,
-    payload: '80,8080',
-    invert: false,
-    action: RuleAction.Route,
-    outbound: CloudSmartOutboundIds.TcpSecondary,
-    sniffer: [],
-    strategy: Strategy.Default,
-    server: '',
-  }
-
-  const managedRules = [{ ...tcp443RuleTemplate }, { ...tcpWebRuleTemplate }, { ...udpRuleTemplate }]
-  const firstIcmpRule = profile.route.rules.findIndex(
-    (rule) => rule.type === RuleType.Network && String(rule.payload) === 'icmp',
-  )
-  if (firstIcmpRule >= 0) {
-    profile.route.rules.splice(firstIcmpRule, 0, ...managedRules)
-  } else {
-    profile.route.rules.push(...managedRules)
-  }
-
-  const autoManagedFinalIds = new Set([
-    '',
-    defaultFallbackId,
-    'outbound-urlte',
-    'outbound-select',
-    CloudSmartOutboundIds.Auto,
-    ...CloudSmartLegacyIds.Outbounds,
-  ])
-  if (autoManagedFinalIds.has(String(profile.route.final || ''))) {
-    profile.route.final = CloudSmartOutboundIds.Auto
-  }
-
-  const fallbackOutbound = profile.outbounds.find((item) => item.id === defaultFallbackId)
-  if (fallbackOutbound && fallbackOutbound.type === Outbound.Selector) {
-    upsertBuiltInChild(
-      fallbackOutbound,
-      {
-        id: CloudSmartOutboundIds.Auto,
-        type: 'Built-in',
-        tag: findOutboundTag(profile, CloudSmartOutboundIds.Auto),
-      },
-      0,
-    )
-    upsertBuiltInChild(
-      fallbackOutbound,
-      {
-        id: CloudSmartOutboundIds.TcpPrimary,
-        type: 'Built-in',
-        tag: findOutboundTag(profile, CloudSmartOutboundIds.TcpPrimary),
-      },
-      1,
-    )
-    upsertBuiltInChild(
-      fallbackOutbound,
-      {
-        id: CloudSmartOutboundIds.TcpSecondary,
-        type: 'Built-in',
-        tag: findOutboundTag(profile, CloudSmartOutboundIds.TcpSecondary),
-      },
-      2,
-    )
-    upsertBuiltInChild(
-      fallbackOutbound,
-      {
-        id: CloudSmartOutboundIds.UdpAuto,
-        type: 'Built-in',
-        tag: findOutboundTag(profile, CloudSmartOutboundIds.UdpAuto),
-      },
-      3,
-    )
-    upsertBuiltInChild(
-      fallbackOutbound,
-      {
-        id: CloudSmartOutboundIds.HysteriaAuto,
-        type: 'Built-in',
-        tag: findOutboundTag(profile, CloudSmartOutboundIds.HysteriaAuto),
-      },
-      4,
-    )
-  }
 }
 
 const buildConnectivityProbe = (node: CloudNode): ConnectivityProbeRequest => {
@@ -564,90 +151,6 @@ const getReachableEndpoints = (result: ConnectivityResult): string[] => {
     .map(([port]) => `port:${port}`)
 }
 
-type ManualNodeInput = {
-  instanceId?: string
-  label: string
-  ipv4?: string
-  ipv6?: string
-  region?: string
-  plan?: string
-  ssPort?: number
-  ssPassword?: string
-  hysteriaPort?: number
-  hysteriaPassword?: string
-  hysteriaServerName?: string
-  hysteriaInsecure?: boolean
-  vlessPort?: number
-  vlessUUID?: string
-  vlessPublicKey?: string
-  vlessShortId?: string
-  vlessServerName?: string
-  trojanPort?: number
-  trojanPassword?: string
-  trojanServerName?: string
-  trojanInsecure?: boolean
-  createdAt?: string
-}
-
-type ManualNodeConflictType = 'label' | 'ipv4' | 'ipv6'
-type ManualNodeConflict = {
-  type: ManualNodeConflictType
-  value: string
-  existing: ManagedCloudNode
-}
-
-export type ManualNodeSkipEntry = {
-  identifier: string
-  reason: ManualNodeConflictType
-  existingLabel?: string
-  existingProvider?: CloudProvider
-}
-
-class ManualNodeError extends Error {
-  code: string
-  meta?: Record<string, any>
-
-  constructor(code: string, meta?: Record<string, any>) {
-    super(code)
-    this.code = code
-    this.meta = meta
-    this.name = 'ManualNodeError'
-  }
-}
-
-const normalizeCloudNode = (rawNode: Record<string, any>, providerFallback: CloudProvider): ManagedCloudNode => {
-  const node = { ...rawNode } as Record<string, any>
-
-  node.instanceId = node.instanceId || node.InstanceID || node.id || node.ID || ''
-  node.label = node.label || node.name || node.Label || node.instanceId
-  node.provider = node.provider || providerFallback
-
-  if (node.createdAt && typeof node.createdAt !== 'string') {
-    const date = new Date(node.createdAt)
-    node.createdAt = Number.isNaN(date.getTime()) ? String(node.createdAt) : date.toISOString()
-  }
-
-  return node as ManagedCloudNode
-}
-
-const providerStatusToNodeStatus = (status?: string): CloudNodeStatus => {
-  if (!status) return 'unknown'
-  const normalized = status.toLowerCase()
-  if (['active', 'running', 'ok', 'online', 'started'].includes(normalized)) {
-    return 'connected'
-  }
-  if (['pending', 'installing', 'starting', 'booting', 'provisioning'].includes(normalized)) {
-    return 'pending'
-  }
-  if (['applying', 'deploying', 'configuring'].includes(normalized)) {
-    return 'applying'
-  }
-  if (['failed', 'error', 'stopped', 'poweroff', 'locked', 'blocked'].includes(normalized)) {
-    return 'error'
-  }
-  return 'unknown'
-}
-
 export const useCloudStore = defineStore('cloud', () => {
   // Multi-cloud provider management
   const availableProviders = ref<Array<{ name: string; displayName: string }>>([])
@@ -680,13 +183,6 @@ export const useCloudStore = defineStore('cloud', () => {
   const plansUpdatedAt = ref<number | null>(null)
   const latencyUpdatedAt = ref<number | null>(null)
   const latencyTestResults = ref<Record<string, number>>({}) // region code -> latency in ms
-  const CACHE_TTL = {
-    regions: 30 * 60 * 1000,      // 30 minutes - regions rarely change
-    plans: 30 * 60 * 1000,        // 30 minutes - plans rarely change
-    instances: 2 * 60 * 1000,     // 2 minutes - instances change more frequently
-    instancesBackground: 5 * 60 * 1000,  // 5 minutes for background refresh
-    latency: 24 * 60 * 60 * 1000, // 24 hours - latency tests are expensive
-  }
   const creatingInstance = ref(false)
   const destroyingInstance = ref<string>('')
   const manualNodesLoaded = ref(false)
@@ -775,9 +271,10 @@ export const useCloudStore = defineStore('cloud', () => {
     return protocolHealth.value
   }
 
-  const saveProtocolHealth = async () => {
+  const saveProtocolHealthImmediate = async () => {
     await WriteFile(protocolHealthPath, JSON.stringify(protocolHealth.value, null, 2))
   }
+  const saveProtocolHealth = debounce(saveProtocolHealthImmediate, 1000)
 
   const getProtocolHealthEntry = (instanceId: string) => protocolHealth.value[instanceId] || {}
 
@@ -1222,9 +719,10 @@ export const useCloudStore = defineStore('cloud', () => {
     return manualNodes.value
   }
 
-  const saveManualNodes = async () => {
+  const saveManualNodesImmediate = async () => {
     await WriteFile(manualNodesPath, JSON.stringify(manualNodes.value, null, 2))
   }
+  const saveManualNodes = debounce(saveManualNodesImmediate, 1000)
 
   const syncManualNodesIntoInstances = () => {
     if (!manualNodes.value.length) {
@@ -2764,26 +2262,3 @@ export const useCloudStore = defineStore('cloud', () => {
     instancesUpdatedAt,
   }
 })
-const isPublicIPv4Address = (ip?: string) => {
-  if (!ip) return false
-  const octets = ip.split('.')
-  if (octets.length !== 4) return false
-
-  const first = parseInt(octets[0], 10)
-  const second = parseInt(octets[1], 10)
-
-  // CGNAT range: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
-  if (first === 100 && second >= 64 && second <= 127) return false
-
-  // Private ranges
-  if (first === 10) return false // 10.0.0.0/8
-  if (first === 192 && second === 168) return false // 192.168.0.0/16
-  if (first === 172 && second >= 16 && second <= 31) return false // 172.16.0.0/12
-
-  if (ip === '0.0.0.0') return false
-
-  return true
-}
-
-const hasUsableAddress = (node: ManagedCloudNode) =>
-  (isPublicIPv4Address(node.ipv4) || (!!node.ipv6 && node.ipv6 !== '::')) && !!node.instanceId

@@ -1,0 +1,61 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`deriveManagedExclude > combines multiple degraded patterns 1`] = `"(?:-(?:hysteria2?|hy2)(?:-(?:v4|v6|ipv4|ipv6))?$)|(?:-(?:vless)(?:-(?:v4|v6|ipv4|ipv6))?$)"`;
+
+exports[`deriveManagedExclude > exclude pattern for degraded protocols 1`] = `"(?:-(?:hysteria2?|hy2)(?:-(?:v4|v6|ipv4|ipv6))?$)"`;
+
+exports[`ensureSmartAutoRouting > applies protocol health exclusions 1`] = `"(?:-(?:hysteria2?|hy2)(?:-(?:v4|v6|ipv4|ipv6))?$)"`;
+
+exports[`ensureSmartAutoRouting > correct outbound IDs for single node 1`] = `
+[
+  "outbound-smart-auto",
+  "outbound-smart-hysteria-auto",
+  "outbound-smart-node-auto-cloud-node-1",
+  "outbound-smart-tcp-primary",
+  "outbound-smart-tcp-secondary",
+  "outbound-smart-udp-auto",
+]
+`;
+
+exports[`ensureSmartAutoRouting > correct rules for single node 1`] = `
+[
+  {
+    "id": "rule-smart-tcp-443-route",
+    "outbound": "outbound-smart-tcp-primary",
+    "payload": "443",
+    "type": "port",
+  },
+  {
+    "id": "rule-smart-tcp-web-route",
+    "outbound": "outbound-smart-tcp-secondary",
+    "payload": "80,8080",
+    "type": "port",
+  },
+  {
+    "id": "rule-smart-udp-route",
+    "outbound": "outbound-smart-udp-auto",
+    "payload": "udp",
+    "type": "network",
+  },
+]
+`;
+
+exports[`ensureSmartAutoRouting > per-node outbounds for multiple nodes 1`] = `
+[
+  {
+    "id": "outbound-smart-node-auto-cloud-node-1",
+    "tag": "Cloud Node Tokyo Best Auto",
+    "type": "urltest",
+  },
+  {
+    "id": "outbound-smart-node-auto-cloud-node-2",
+    "tag": "Cloud Node Frankfurt Best Auto",
+    "type": "urltest",
+  },
+  {
+    "id": "outbound-smart-node-auto-cloud-node-3",
+    "tag": "Cloud Node LA Best Auto",
+    "type": "urltest",
+  },
+]
+`;
