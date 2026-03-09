@@ -476,7 +476,8 @@ def print_environment_warnings(results: List[Dict[str, Any]]) -> None:
         print(
             "[protocol-benchmark][warn] "
             f"{label}: hysteria2 failed while TCP protocols succeeded; "
-            "this usually indicates client-side UDP egress restrictions on the benchmark host."
+            "this points to a UDP path problem between the benchmark host and the node, "
+            "or to a shared hysteria deployment/configuration issue."
         )
 
 

@@ -202,8 +202,10 @@ cat > /etc/privatedeploy/hysteria/config.json <<HYSTEOF
   "inbounds": [{
     "type": "hysteria2",
     "tag": "hy2-in",
-    "listen": "0.0.0.0",
+    "listen": "::",
     "listen_port": %[2]d,
+    "up_mbps": 100,
+    "down_mbps": 100,
     "users": [{
       "password": "${HYSTERIA_PASSWORD}"
     }],

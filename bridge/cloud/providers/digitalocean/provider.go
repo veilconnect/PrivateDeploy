@@ -25,6 +25,10 @@ const (
 	baseURL           = "https://api.digitalocean.com/v2"
 	configFileRelPath = "data/cloud/digitalocean-config.json"
 	nodesFileRelPath  = "data/cloud/digitalocean-nodes.json"
+
+	defaultServiceReadyTimeout = 8 * time.Minute
+	serviceReadyProbeInterval  = 5 * time.Second
+	serviceReadyDialTimeout    = 2 * time.Second
 )
 
 var digitaloceanNodesMu sync.Mutex
@@ -33,6 +37,7 @@ var digitaloceanNodesMu sync.Mutex
 type Provider struct {
 	config     *cloud.ProviderConfig
 	client     *http.Client
+	basePath   string
 	configPath string
 	nodesPath  string
 }
@@ -68,6 +73,7 @@ func New(config *cloud.ProviderConfig) *Provider {
 	return &Provider{
 		config:     config,
 		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		basePath:   basePath,
 		configPath: configPath,
 		nodesPath:  nodesPath,
 	}
@@ -555,7 +561,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	// Generate Reality keypair
 	realityPrivateKey, realityPublicKey, err := deploy.GenerateRealityKeyPair()
 	if err != nil {
-		fmt.Printf("Warning: failed to generate Reality keypair: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to generate Reality keypair: %v\n", err)
 		realityPrivateKey = ""
 		realityPublicKey = ""
 	}
@@ -720,12 +726,30 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	if err != nil {
 		// Log error but don't fail the instance creation
 		// The instance was created successfully, just without firewall
-		fmt.Printf("Warning: failed to create/get firewall: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to create/get firewall: %v\n", err)
 	} else {
 		// Associate firewall with droplet
 		if err := p.associateFirewallWithDroplet(ctx, firewallID, result.Droplet.ID); err != nil {
-			fmt.Printf("Warning: failed to associate firewall with droplet: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to associate firewall with droplet: %v\n", err)
 		}
+	}
+
+	// Wait until the instance is active, has a public IPv4, and core TCP protocol ports are externally reachable.
+	// This reduces false positives where create succeeds but immediate protocol checks fail.
+	readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+	readyPorts := []int{ssPort, vlessPort, trojanPort}
+	if readyInstance, waitErr := p.waitForInstanceAndTCPPorts(ctx, instanceID, readyPorts, readyTimeout); waitErr != nil {
+		fmt.Fprintf(os.Stderr, "[DigitalOceanProvider] Warning: %v\n", waitErr)
+	} else if readyInstance != nil {
+		instance = readyInstance
+	}
+
+	// Protocol-level readiness probe + one-click self-heal (firewall rebind + reboot) on failure.
+	// This catches cases where ports are open but individual protocols are not yet functional.
+	if probedInstance, probeErr := p.ensureProtocolReadinessWithRepair(ctx, instanceID, result.Droplet.ID, ports, extra); probeErr != nil {
+		fmt.Fprintf(os.Stderr, "[DigitalOceanProvider] Warning: protocol readiness check failed: %v\n", probeErr)
+	} else if probedInstance != nil {
+		instance = probedInstance
 	}
 
 	return instance, nil
@@ -958,6 +982,120 @@ func mergeExtra(base, override map[string]string) map[string]string {
 		}
 	}
 	return merged
+}
+
+func parseServiceReadyTimeout(extra map[string]string, fallback time.Duration) time.Duration {
+	if len(extra) == 0 {
+		return fallback
+	}
+	for _, key := range []string{
+		"serviceReadyTimeoutSec",
+		"service_ready_timeout_sec",
+		"proxyReadyTimeoutSec",
+		"proxy_ready_timeout_sec",
+	} {
+		raw := strings.TrimSpace(extra[key])
+		if raw == "" {
+			continue
+		}
+		sec, err := strconv.Atoi(raw)
+		if err != nil || sec <= 0 {
+			continue
+		}
+		return time.Duration(sec) * time.Second
+	}
+	return fallback
+}
+
+func (p *Provider) waitForInstanceAndTCPPorts(ctx context.Context, instanceID string, ports []int, timeout time.Duration) (*cloud.Instance, error) {
+	requiredPorts := uniquePositivePorts(ports)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(serviceReadyProbeInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+
+	for {
+		instance, err := p.GetInstance(waitCtx, instanceID)
+		if err != nil {
+			lastErr = err
+		} else if instance != nil {
+			status := strings.ToLower(strings.TrimSpace(instance.Status))
+			if (status == "active" || status == "running") && strings.TrimSpace(instance.IPv4) != "" {
+				pending := pendingTCPPorts(instance.IPv4, requiredPorts, serviceReadyDialTimeout)
+				if len(pending) == 0 {
+					return instance, nil
+				}
+				lastErr = fmt.Errorf("pending tcp ports on %s: %s", instance.IPv4, portsToCSV(pending))
+			} else {
+				lastErr = fmt.Errorf("instance not ready yet: status=%s ipv4=%s", status, strings.TrimSpace(instance.IPv4))
+			}
+		}
+
+		select {
+		case <-waitCtx.Done():
+			if lastErr != nil {
+				return nil, fmt.Errorf("timeout waiting for digitalocean instance %s readiness: %w", instanceID, lastErr)
+			}
+			return nil, fmt.Errorf("timeout waiting for digitalocean instance %s readiness", instanceID)
+		case <-ticker.C:
+		}
+	}
+}
+
+func uniquePositivePorts(ports []int) []int {
+	if len(ports) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(ports))
+	unique := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port <= 0 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		unique = append(unique, port)
+	}
+	return unique
+}
+
+func pendingTCPPorts(ip string, ports []int, timeout time.Duration) []int {
+	if strings.TrimSpace(ip) == "" || len(ports) == 0 {
+		return ports
+	}
+	pending := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if !isTCPPortReachable(ip, port, timeout) {
+			pending = append(pending, port)
+		}
+	}
+	return pending
+}
+
+func isTCPPortReachable(ip string, port int, timeout time.Duration) bool {
+	address := net.JoinHostPort(ip, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func portsToCSV(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, strconv.Itoa(port))
+	}
+	return strings.Join(parts, ",")
 }
 
 func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {

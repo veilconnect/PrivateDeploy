@@ -10,8 +10,9 @@ import (
 
 const (
 	DefaultPortProfile            = "random"
-	DefaultSingBoxVersion         = "1.10.0"
-	DefaultSingBoxFallbackVersion = "1.10.0"
+	// Hysteria2 inbound uses `masquerade`, which is available starting in sing-box 1.11.0.
+	DefaultSingBoxVersion         = "1.11.0"
+	DefaultSingBoxFallbackVersion = "1.11.0"
 	DefaultHysteriaServerName     = "www.bing.com"
 	DefaultVLESSServerName        = "www.microsoft.com"
 	DefaultTrojanServerName       = "www.microsoft.com"
@@ -30,8 +31,6 @@ var (
 	trojanServerNamePool = []string{
 		"www.microsoft.com",
 		"www.apple.com",
-		"www.amazon.com",
-		"www.github.com",
 		"www.cloudflare.com",
 	}
 )

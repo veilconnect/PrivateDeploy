@@ -19,11 +19,11 @@ import {
   RemoveFile,
   TestConnectivity,
 } from '@/bridge'
-import { DefaultSubscribeScript } from '@/constant/app'
+import { DefaultSubscribeScript, DefaultTestURL } from '@/constant/app'
 import { DefaultExcludeProtocols } from '@/constant/kernel'
 import * as ProfileDefaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
-import { Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
+import { Inbound, Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
 import { sampleID, deepClone, ignoredError } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
@@ -85,20 +85,37 @@ const DefaultTrojanServerName = 'www.microsoft.com'
 const CloudSubscriptionPrefix = 'cloud-'
 const CloudSmartOutboundIds = {
   Auto: 'outbound-smart-auto',
+  TcpPrimary: 'outbound-smart-tcp-primary',
+  TcpSecondary: 'outbound-smart-tcp-secondary',
   UdpAuto: 'outbound-smart-udp-auto',
   HysteriaAuto: 'outbound-smart-hysteria-auto',
 }
 const CloudSmartRuleIds = {
+  Tcp443Route: 'rule-smart-tcp-443-route',
+  TcpWebRoute: 'rule-smart-tcp-web-route',
   UdpRoute: 'rule-smart-udp-route',
 }
 const CloudSmartLegacyIds = {
-  Outbounds: ['cloud-smart-tcp-auto', 'cloud-smart-udp-auto', 'cloud-smart-hysteria-auto'],
-  Rules: ['cloud-smart-udp-route'],
+  Outbounds: [
+    'cloud-smart-tcp-auto',
+    'cloud-smart-udp-auto',
+    'cloud-smart-hysteria-auto',
+    'outbound-smart-tcp-primary',
+    'outbound-smart-tcp-secondary',
+  ],
+  Rules: ['cloud-smart-udp-route', 'rule-smart-tcp-443-route', 'rule-smart-tcp-web-route'],
 }
 const CloudTagSuffixPattern = '(?:-(?:v4|v6|ipv4|ipv6))?$'
+const CloudSmartProbeURLPrimary = DefaultTestURL
+const CloudSmartProbeURLSecondary = 'https://www.cloudflare.com/cdn-cgi/trace'
+// Prefer managed cloud protocols in a stable order: SS > VLESS > Trojan > Hysteria2.
+// Hysteria2 remains available as an explicit backup group because UDP reachability is
+// the least predictable path in the environments we currently test from.
 const SmartProtocolInclude = {
-  Auto: `(?:-(?:trojan|vless|ss|shadowsocks|hysteria2?|hy2)${CloudTagSuffixPattern}|-(?:v4|v6|ipv4|ipv6)$)`,
-  Udp: `(?:-(?:ss|shadowsocks|hysteria2?|hy2)${CloudTagSuffixPattern}|-(?:v4|v6|ipv4|ipv6)$)`,
+  Auto: `-(?:ss|shadowsocks)${CloudTagSuffixPattern}`,
+  TcpPrimary: `-(?:vless)${CloudTagSuffixPattern}`,
+  TcpSecondary: `-(?:trojan)${CloudTagSuffixPattern}`,
+  Udp: `-(?:ss|shadowsocks)${CloudTagSuffixPattern}`,
   Hysteria: `-(?:hysteria2?|hy2)${CloudTagSuffixPattern}`,
 }
 
@@ -196,31 +213,77 @@ const upsertBuiltInChild = (outbound: IOutbound, child: IProxy, index?: number) 
   outbound.outbounds = current
 }
 
-const ensureSmartAutoRouting = (profile: IProfile) => {
-  const legacyOutboundIdSet = new Set(CloudSmartLegacyIds.Outbounds)
-  const legacyRuleIdSet = new Set(CloudSmartLegacyIds.Rules)
+const ensureLinkAggregation = (profile: IProfile, cloudSubscriptionCount: number) => {
+  const enableMultipath = cloudSubscriptionCount >= 2
 
-  profile.outbounds = profile.outbounds.filter((outbound) => !legacyOutboundIdSet.has(outbound.id))
+  profile.inbounds.forEach((inbound) => {
+    if (![Inbound.Mixed, Inbound.Socks, Inbound.Http].includes(inbound.type as any)) {
+      return
+    }
+    const detail = inbound[inbound.type]
+    if (!detail || typeof detail !== 'object' || !('listen' in detail)) return
+    if (!detail.listen) return
+    detail.listen.tcp_multi_path = enableMultipath
+  })
+
+  // Keep interface auto-detection on so multi-path can leverage the current best NIC.
+  profile.route.auto_detect_interface = true
+}
+
+const ensureSmartAutoRouting = (profile: IProfile) => {
+  const managedOutboundIdSet = new Set([...Object.values(CloudSmartOutboundIds), ...CloudSmartLegacyIds.Outbounds])
+  const managedRuleIdSet = new Set([...Object.values(CloudSmartRuleIds), ...CloudSmartLegacyIds.Rules])
+
+  profile.outbounds = profile.outbounds.filter((outbound) => !managedOutboundIdSet.has(outbound.id))
   profile.outbounds.forEach((outbound) => {
     if (!Array.isArray(outbound.outbounds)) return
-    outbound.outbounds = outbound.outbounds.filter((child) => !legacyOutboundIdSet.has(child.id))
+    outbound.outbounds = outbound.outbounds.filter((child) => !managedOutboundIdSet.has(child.id))
   })
   profile.route.rules = profile.route.rules.filter(
-    (rule) => !legacyRuleIdSet.has(rule.id) && !legacyOutboundIdSet.has(rule.outbound),
+    (rule) => !managedRuleIdSet.has(rule.id) && !managedOutboundIdSet.has(rule.outbound),
   )
 
   const subscriptions = collectSubscriptionEntries(profile)
+  ensureLinkAggregation(profile, subscriptions.length)
   if (subscriptions.length === 0) return
 
-  const auto = ensureOutbound(profile, CloudSmartOutboundIds.Auto, 'Cloud Smart Auto', Outbound.Urltest)
+  const auto = ensureOutbound(profile, CloudSmartOutboundIds.Auto, 'Cloud Smart SS Auto', Outbound.Urltest)
   syncSubscriptionEntries(auto, subscriptions)
+  auto.url = CloudSmartProbeURLPrimary
   auto.include = SmartProtocolInclude.Auto
   auto.exclude = ''
   auto.interval = auto.interval || '2m'
   auto.tolerance = Math.max(80, Number(auto.tolerance || 0))
 
-  const udpAuto = ensureOutbound(profile, CloudSmartOutboundIds.UdpAuto, 'Cloud Smart UDP Auto', Outbound.Urltest)
+  const tcpPrimary = ensureOutbound(
+    profile,
+    CloudSmartOutboundIds.TcpPrimary,
+    'Cloud Smart VLESS Auto',
+    Outbound.Urltest,
+  )
+  syncSubscriptionEntries(tcpPrimary, subscriptions)
+  tcpPrimary.url = CloudSmartProbeURLPrimary
+  tcpPrimary.include = SmartProtocolInclude.TcpPrimary
+  tcpPrimary.exclude = ''
+  tcpPrimary.interval = tcpPrimary.interval || '90s'
+  tcpPrimary.tolerance = Math.max(70, Number(tcpPrimary.tolerance || 0))
+
+  const tcpSecondary = ensureOutbound(
+    profile,
+    CloudSmartOutboundIds.TcpSecondary,
+    'Cloud Smart Trojan Auto',
+    Outbound.Urltest,
+  )
+  syncSubscriptionEntries(tcpSecondary, subscriptions)
+  tcpSecondary.url = CloudSmartProbeURLSecondary
+  tcpSecondary.include = SmartProtocolInclude.TcpSecondary
+  tcpSecondary.exclude = ''
+  tcpSecondary.interval = tcpSecondary.interval || '90s'
+  tcpSecondary.tolerance = Math.max(85, Number(tcpSecondary.tolerance || 0))
+
+  const udpAuto = ensureOutbound(profile, CloudSmartOutboundIds.UdpAuto, 'Cloud Smart SS UDP Auto', Outbound.Urltest)
   syncSubscriptionEntries(udpAuto, subscriptions)
+  udpAuto.url = CloudSmartProbeURLSecondary
   udpAuto.include = SmartProtocolInclude.Udp
   udpAuto.exclude = ''
   udpAuto.interval = udpAuto.interval || '2m'
@@ -229,10 +292,11 @@ const ensureSmartAutoRouting = (profile: IProfile) => {
   const hysteriaAuto = ensureOutbound(
     profile,
     CloudSmartOutboundIds.HysteriaAuto,
-    'Cloud Smart Hysteria Auto',
+    'Cloud Smart Hysteria Backup',
     Outbound.Urltest,
   )
   syncSubscriptionEntries(hysteriaAuto, subscriptions)
+  hysteriaAuto.url = CloudSmartProbeURLSecondary
   hysteriaAuto.include = SmartProtocolInclude.Hysteria
   hysteriaAuto.exclude = ''
   hysteriaAuto.interval = hysteriaAuto.interval || '2m'
@@ -251,18 +315,38 @@ const ensureSmartAutoRouting = (profile: IProfile) => {
     server: '',
   }
 
-  const existingUdpRuleIndex = profile.route.rules.findIndex((rule) => rule.id === CloudSmartRuleIds.UdpRoute)
-  if (existingUdpRuleIndex >= 0) {
-    profile.route.rules[existingUdpRuleIndex] = { ...udpRuleTemplate }
+  const tcp443RuleTemplate: IRule = {
+    id: CloudSmartRuleIds.Tcp443Route,
+    type: RuleType.Port,
+    payload: '443',
+    invert: false,
+    action: RuleAction.Route,
+    outbound: CloudSmartOutboundIds.TcpPrimary,
+    sniffer: [],
+    strategy: Strategy.Default,
+    server: '',
+  }
+
+  const tcpWebRuleTemplate: IRule = {
+    id: CloudSmartRuleIds.TcpWebRoute,
+    type: RuleType.Port,
+    payload: '80,8080',
+    invert: false,
+    action: RuleAction.Route,
+    outbound: CloudSmartOutboundIds.TcpSecondary,
+    sniffer: [],
+    strategy: Strategy.Default,
+    server: '',
+  }
+
+  const managedRules = [{ ...tcp443RuleTemplate }, { ...tcpWebRuleTemplate }, { ...udpRuleTemplate }]
+  const firstIcmpRule = profile.route.rules.findIndex(
+    (rule) => rule.type === RuleType.Network && String(rule.payload) === 'icmp',
+  )
+  if (firstIcmpRule >= 0) {
+    profile.route.rules.splice(firstIcmpRule, 0, ...managedRules)
   } else {
-    const firstIcmpRule = profile.route.rules.findIndex(
-      (rule) => rule.type === RuleType.Network && String(rule.payload) === 'icmp',
-    )
-    if (firstIcmpRule >= 0) {
-      profile.route.rules.splice(firstIcmpRule, 0, { ...udpRuleTemplate })
-    } else {
-      profile.route.rules.push({ ...udpRuleTemplate })
-    }
+    profile.route.rules.push(...managedRules)
   }
 
   const autoManagedFinalIds = new Set([
@@ -291,11 +375,29 @@ const ensureSmartAutoRouting = (profile: IProfile) => {
     upsertBuiltInChild(
       fallbackOutbound,
       {
+        id: CloudSmartOutboundIds.TcpPrimary,
+        type: 'Built-in',
+        tag: findOutboundTag(profile, CloudSmartOutboundIds.TcpPrimary),
+      },
+      1,
+    )
+    upsertBuiltInChild(
+      fallbackOutbound,
+      {
+        id: CloudSmartOutboundIds.TcpSecondary,
+        type: 'Built-in',
+        tag: findOutboundTag(profile, CloudSmartOutboundIds.TcpSecondary),
+      },
+      2,
+    )
+    upsertBuiltInChild(
+      fallbackOutbound,
+      {
         id: CloudSmartOutboundIds.UdpAuto,
         type: 'Built-in',
         tag: findOutboundTag(profile, CloudSmartOutboundIds.UdpAuto),
       },
-      1,
+      3,
     )
     upsertBuiltInChild(
       fallbackOutbound,
@@ -304,7 +406,7 @@ const ensureSmartAutoRouting = (profile: IProfile) => {
         type: 'Built-in',
         tag: findOutboundTag(profile, CloudSmartOutboundIds.HysteriaAuto),
       },
-      2,
+      4,
     )
   }
 }
@@ -676,7 +778,7 @@ export const useCloudStore = defineStore('cloud', () => {
       })
     }
 
-    // 2. Hysteria2 (UDP-based, better for congested networks)
+    // 2. Hysteria2 (kept as an explicit backup because UDP reachability varies by environment)
     if (node.hysteriaPort && node.hysteriaPassword) {
       ipVersions.forEach(({ ip, suffix }) => {
         outbounds.push({
@@ -1127,6 +1229,7 @@ export const useCloudStore = defineStore('cloud', () => {
       }
 
       if (changed) {
+        ensureSmartAutoRouting(updated)
         toPrune.push(profilesStore.editProfile(profile.id, updated))
       }
     }
