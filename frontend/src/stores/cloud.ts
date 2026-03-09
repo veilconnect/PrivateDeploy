@@ -79,6 +79,7 @@ const subscriptionId = (instanceId: string) => {
 const subscriptionPath = (instanceId: string) => `data/subscribes/${subscriptionId(instanceId)}.json`
 
 const manualNodesPath = 'data/cloud/manual-nodes.json'
+const protocolHealthPath = 'data/cloud/protocol-health.json'
 const DefaultHysteriaServerName = 'www.bing.com'
 const DefaultVlessServerName = 'www.microsoft.com'
 const DefaultTrojanServerName = 'www.microsoft.com'
@@ -118,11 +119,49 @@ const SmartProtocolInclude = {
   Udp: `-(?:ss|shadowsocks)${CloudTagSuffixPattern}`,
   Hysteria: `-(?:hysteria2?|hy2)${CloudTagSuffixPattern}`,
 }
+const ProtocolExcludePattern: Record<ManagedProtocol, string> = {
+  shadowsocks: SmartProtocolInclude.Auto,
+  hysteria2: SmartProtocolInclude.Hysteria,
+  vless: SmartProtocolInclude.TcpPrimary,
+  trojan: SmartProtocolInclude.TcpSecondary,
+}
+
+type ManagedProtocol = 'shadowsocks' | 'hysteria2' | 'vless' | 'trojan'
+type ProtocolHealthState = 'healthy' | 'degraded'
+type ProtocolHealthReason =
+  | 'connectivity-udp-unreachable'
+  | 'connectivity-tcp-unreachable'
+  | 'manual-override'
+type ProtocolHealthEntry = {
+  state: ProtocolHealthState
+  reason: ProtocolHealthReason
+  updatedAt: number
+}
+type ProtocolHealthMap = Record<string, Partial<Record<ManagedProtocol, ProtocolHealthEntry>>>
 
 const normalizeServerName = (value: unknown, fallback: string) => {
   if (typeof value !== 'string') return fallback
   const trimmed = value.trim()
   return trimmed || fallback
+}
+
+const isReachableTargetStatus = (status?: string) => status === 'open' || status === 'open_or_filtered'
+
+const joinRegexAlternatives = (...patterns: Array<string | undefined>) => {
+  return patterns
+    .map((pattern) => pattern?.trim())
+    .filter((pattern): pattern is string => !!pattern)
+    .map((pattern) => `(?:${pattern})`)
+    .join('|')
+}
+
+const deriveManagedExclude = (entry?: Partial<Record<ManagedProtocol, ProtocolHealthEntry>>) => {
+  if (!entry) return ''
+  return joinRegexAlternatives(
+    ...Object.entries(entry)
+      .filter(([, value]) => value?.state === 'degraded')
+      .map(([protocol]) => ProtocolExcludePattern[protocol as ManagedProtocol]),
+  )
 }
 
 const resolveTLSInsecure = (node: CloudNode, protocol: 'hysteria' | 'trojan') => {
@@ -586,6 +625,8 @@ export const useCloudStore = defineStore('cloud', () => {
   const destroyingInstance = ref<string>('')
   const manualNodesLoaded = ref(false)
   const manualNodes = shallowRef<ManagedCloudNode[]>([])
+  const protocolHealthLoaded = ref(false)
+  const protocolHealth = shallowRef<ProtocolHealthMap>({})
   let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
   const autoApplyTimers = new Map<string, ReturnType<typeof setInterval>>()
   let refreshingInstances = false
@@ -658,6 +699,136 @@ export const useCloudStore = defineStore('cloud', () => {
     if (!flag) throw new Error(data)
   }
 
+  const loadProtocolHealth = async () => {
+    if (protocolHealthLoaded.value) {
+      return protocolHealth.value
+    }
+    protocolHealthLoaded.value = true
+    const content = await ignoredError(ReadFile, protocolHealthPath)
+    protocolHealth.value = content ? parseJSON<ProtocolHealthMap>(content, {}) : {}
+    return protocolHealth.value
+  }
+
+  const saveProtocolHealth = async () => {
+    await WriteFile(protocolHealthPath, JSON.stringify(protocolHealth.value, null, 2))
+  }
+
+  const getProtocolHealthEntry = (instanceId: string) => protocolHealth.value[instanceId] || {}
+
+  const applyManagedExcludeToSubscription = (subscription: Subscription, instanceId: string) => {
+    const managedExclude = deriveManagedExclude(getProtocolHealthEntry(instanceId))
+    subscription.header = subscription.header || { request: {}, response: {} }
+    subscription.header.request = subscription.header.request || {}
+    subscription.header.response = subscription.header.response || {}
+
+    const userExcludeKey = 'x-privatedeploy-user-exclude'
+    const managedExcludeKey = 'x-privatedeploy-managed-exclude'
+    const existingManaged = subscription.header.response[managedExcludeKey]
+    const preservedUserExclude =
+      existingManaged !== undefined
+        ? subscription.header.response[userExcludeKey] || ''
+        : subscription.exclude || ''
+
+    subscription.header.response[userExcludeKey] = preservedUserExclude
+    subscription.header.response[managedExcludeKey] = managedExclude
+    subscription.exclude = joinRegexAlternatives(preservedUserExclude, managedExclude)
+  }
+
+  const setProtocolHealthEntry = async (
+    instanceId: string,
+    protocol: ManagedProtocol,
+    nextState: ProtocolHealthState,
+    reason: ProtocolHealthReason,
+  ) => {
+    await loadProtocolHealth()
+    const current = { ...(protocolHealth.value[instanceId] || {}) }
+    const existing = current[protocol]
+    if (existing?.state === nextState && existing.reason === reason) {
+      return false
+    }
+    current[protocol] = {
+      state: nextState,
+      reason,
+      updatedAt: Date.now(),
+    }
+    protocolHealth.value = {
+      ...protocolHealth.value,
+      [instanceId]: current,
+    }
+    await saveProtocolHealth()
+    return true
+  }
+
+  const applyProtocolHealthToNode = async (node: CloudNode) => {
+    await loadProtocolHealth()
+    const existing = subscribesStore.getSubscribeById(subscriptionId(node.instanceId))
+    if (!existing) {
+      return
+    }
+    await ensureSubscriptionForNode(node)
+    if (kernelApiStore.running) {
+      await kernelApiStore.refreshProviderProxies().catch((error) =>
+        logError('[CloudStore] Failed to refresh provider proxies after protocol health update:', error),
+      )
+    }
+  }
+
+  const updateProtocolHealthFromConnectivity = async (node: CloudNode, result: ConnectivityResult) => {
+    await loadProtocolHealth()
+    const targetStatus = result.targetStatus || {}
+    const tcpOpen = {
+      shadowsocks: isReachableTargetStatus(targetStatus['shadowsocks-tcp']),
+      vless: isReachableTargetStatus(targetStatus['vless-reality']),
+      trojan: isReachableTargetStatus(targetStatus['trojan']),
+    }
+    const anyTCPReachable = Object.values(tcpOpen).some(Boolean)
+    const next: Array<[ManagedProtocol, ProtocolHealthState, ProtocolHealthReason]> = []
+
+    if (node.hysteriaPort) {
+      next.push([
+        'hysteria2',
+        anyTCPReachable && !isReachableTargetStatus(targetStatus['hysteria2']) ? 'degraded' : 'healthy',
+        'connectivity-udp-unreachable',
+      ])
+    }
+    if (node.ssPort) {
+      next.push([
+        'shadowsocks',
+        Object.values({ vless: tcpOpen.vless, trojan: tcpOpen.trojan }).some(Boolean) && !tcpOpen.shadowsocks
+          ? 'degraded'
+          : 'healthy',
+        'connectivity-tcp-unreachable',
+      ])
+    }
+    if (node.vlessPort) {
+      next.push([
+        'vless',
+        Object.values({ shadowsocks: tcpOpen.shadowsocks, trojan: tcpOpen.trojan }).some(Boolean) && !tcpOpen.vless
+          ? 'degraded'
+          : 'healthy',
+        'connectivity-tcp-unreachable',
+      ])
+    }
+    if (node.trojanPort) {
+      next.push([
+        'trojan',
+        Object.values({ shadowsocks: tcpOpen.shadowsocks, vless: tcpOpen.vless }).some(Boolean) && !tcpOpen.trojan
+          ? 'degraded'
+          : 'healthy',
+        'connectivity-tcp-unreachable',
+      ])
+    }
+
+    let changed = false
+    for (const [protocol, state, reason] of next) {
+      changed = (await setProtocolHealthEntry(node.instanceId, protocol, state, reason)) || changed
+    }
+
+    if (changed) {
+      await applyProtocolHealthToNode(node)
+    }
+  }
+
   /**
    * Check if cache is still valid
    */
@@ -723,6 +894,7 @@ export const useCloudStore = defineStore('cloud', () => {
   }
 
   const ensureSubscriptionForNode = async (node: CloudNode) => {
+    await loadProtocolHealth()
     // Check if we have at least one IP address
   if (!hasUsableAddress(node)) {
     await removeSubscriptionForNode(node.instanceId)
@@ -923,13 +1095,13 @@ export const useCloudStore = defineStore('cloud', () => {
     subscription.requestMethod ||= RequestMethod.Get
     subscription.excludeProtocol ||= DefaultExcludeProtocols
     subscription.include = subscription.include || ''
-    subscription.exclude = subscription.exclude || ''
     subscription.includeProtocol = subscription.includeProtocol || ''
     subscription.proxyPrefix = subscription.proxyPrefix || ''
     subscription.header = subscription.header || { request: {}, response: {} }
     subscription.header.request = subscription.header.request || {}
     subscription.header.response = subscription.header.response || {}
     subscription.proxies = subscription.proxies || []
+    applyManagedExcludeToSubscription(subscription, node.instanceId)
 
     if (existing) {
       await subscribesStore.editSubscribe(id, subscription)
@@ -1738,6 +1910,7 @@ export const useCloudStore = defineStore('cloud', () => {
       node.connectivityStatus = result.status
       node.lastConnectivityResult = result
       node.connectivityTesting = false
+      await updateProtocolHealthFromConnectivity(node, result)
 
       // Notify based on connectivity result
       if (result.status === 'blocked') {
@@ -1806,6 +1979,7 @@ export const useCloudStore = defineStore('cloud', () => {
       const probe = buildConnectivityProbe(node)
       const result = await TestConnectivity(testIP, probe)
       node.lastConnectivityResult = result
+      await updateProtocolHealthFromConnectivity(node, result)
 
       if (result.status === 'reachable') {
         node.statusText = 'connected'
