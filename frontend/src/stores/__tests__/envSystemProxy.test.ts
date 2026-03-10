@@ -111,6 +111,37 @@ describe('env system proxy lifecycle', () => {
     expect(envStore.systemProxyServer).toBe('socks=10.0.0.2:1080')
   })
 
+  it('restores the previous proxy on a normal stop', async () => {
+    mocks.appSettingsStore.app.systemProxyManaged = true
+    mocks.appSettingsStore.app.systemProxyBackup = 'http://corp.proxy.local:8080'
+    mocks.getSystemProxy.mockResolvedValue('http://corp.proxy.local:8080')
+
+    const envStore = await setupEnvStore()
+    const restored = await envStore.restorePreviousSystemProxy(true)
+
+    expect(restored).toBe(true)
+    expect(mocks.setSystemProxy).toHaveBeenCalledWith(true, 'corp.proxy.local:8080', 'http')
+    expect(mocks.appSettingsStore.app.systemProxyManaged).toBe(false)
+    expect(mocks.appSettingsStore.app.systemProxyBackup).toBe('')
+    expect(envStore.systemProxyState).toBe('external')
+    expect(envStore.systemProxyServer).toBe('http://corp.proxy.local:8080')
+  })
+
+  it('clears the app-managed proxy on a normal stop when no backup exists', async () => {
+    mocks.appSettingsStore.app.systemProxyManaged = true
+    mocks.getSystemProxy.mockResolvedValue('')
+
+    const envStore = await setupEnvStore()
+    const restored = await envStore.restorePreviousSystemProxy(true)
+
+    expect(restored).toBe(true)
+    expect(mocks.setSystemProxy).toHaveBeenCalledWith(false, '')
+    expect(mocks.appSettingsStore.app.systemProxyManaged).toBe(false)
+    expect(mocks.appSettingsStore.app.systemProxyBackup).toBe('')
+    expect(envStore.systemProxyState).toBe('disabled')
+    expect(envStore.systemProxyServer).toBe('')
+  })
+
   it('clears stale managed state when the system proxy is already external', async () => {
     mocks.appSettingsStore.app.systemProxyManaged = true
     mocks.appSettingsStore.app.systemProxyBackup = 'http://corp.proxy.local:8080'
