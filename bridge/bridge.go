@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
-	"time"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	sysruntime "runtime"
 
@@ -31,14 +31,21 @@ import (
 
 var Config = &AppConfig{}
 
+const (
+	webviewGpuPolicyAlways   = 0
+	webviewGpuPolicyOnDemand = 1
+	webviewGpuPolicyNever    = 2
+)
+
 var Env = &EnvResult{
-	IsStartup:   true,
-	FromTaskSch: false,
-	AppName:     "",
-	AppVersion:  "v1.10.0",
-	BasePath:    "",
-	OS:          sysruntime.GOOS,
-	ARCH:        sysruntime.GOARCH,
+	IsStartup:    true,
+	FromTaskSch:  false,
+	AppName:      "",
+	AppVersion:   "v1.10.0",
+	BasePath:     "",
+	OS:           sysruntime.GOOS,
+	ARCH:         sysruntime.GOARCH,
+	Capabilities: buildPlatformCapabilities(sysruntime.GOOS),
 }
 
 // NewApp creates a new App application struct
@@ -77,6 +84,14 @@ func CreateApp(fs embed.FS) *App {
 	registry.Register("vultr", vultrProvider)
 	registry.Register("digitalocean", digitaloceanProvider)
 	registry.Register("ssh", sshProvider)
+	// Extra catalog providers remain in-tree but are intentionally disabled
+	// until their live validation coverage is restored.
+	// registry.Register("hetzner", catalog.NewHetzner(nil))
+	// registry.Register("linode", catalog.NewLinode(nil))
+	// registry.Register("scaleway", catalog.NewScaleway(nil))
+	// registry.Register("upcloud", catalog.NewUpCloud(nil))
+	// registry.Register("contabo", catalog.NewContabo(nil))
+	// registry.Register("oracle", catalog.NewOracle(nil))
 
 	app.CloudManager = cloud.NewManager(context.Background(), registry)
 	app.HealthMonitor = health.NewMonitor(5 * time.Minute)
@@ -123,11 +138,12 @@ func (a *App) RestartApp() FlagResult {
 
 func (a *App) GetEnv() EnvResult {
 	return EnvResult{
-		AppName:    Env.AppName,
-		AppVersion: Env.AppVersion,
-		BasePath:   Env.BasePath,
-		OS:         Env.OS,
-		ARCH:       Env.ARCH,
+		AppName:      Env.AppName,
+		AppVersion:   Env.AppVersion,
+		BasePath:     Env.BasePath,
+		OS:           Env.OS,
+		ARCH:         Env.ARCH,
+		Capabilities: buildPlatformCapabilities(Env.OS),
 	}
 }
 
@@ -158,6 +174,39 @@ func createMacOSSymlink() {
 	appPath := "/Users/" + user.Username + "/Library/Application Support/" + Env.AppName
 	os.MkdirAll(appPath, os.ModePerm)
 	os.Symlink(appPath, linkPath)
+}
+
+func buildPlatformCapabilities(osName string) PlatformCapabilities {
+	capabilities := PlatformCapabilities{
+		TraySupported:                  true,
+		ShowMainWindowFromTray:         true,
+		SystemProxySupported:           true,
+		StartupLaunchSupported:         false,
+		StartupDelaySupported:          false,
+		AdminElevationSupported:        false,
+		ConfigurableWebviewGpuPolicy:   false,
+		KernelGrantPermissionSupported: true,
+	}
+
+	switch osName {
+	case "windows":
+		capabilities.ShowMainWindowFromTray = false
+		capabilities.StartupLaunchSupported = true
+		capabilities.StartupDelaySupported = true
+		capabilities.AdminElevationSupported = true
+		capabilities.KernelGrantPermissionSupported = false
+	case "linux":
+		capabilities.ConfigurableWebviewGpuPolicy = true
+	case "darwin":
+		// macOS keeps the standard tray and kernel grant flows.
+	default:
+		capabilities.TraySupported = false
+		capabilities.ShowMainWindowFromTray = false
+		capabilities.SystemProxySupported = false
+		capabilities.KernelGrantPermissionSupported = false
+	}
+
+	return capabilities
 }
 
 func createMacOSMenus(app *App) {
@@ -211,6 +260,8 @@ func loadConfig() {
 		yaml.Unmarshal(b, &Config)
 	}
 
+	Config.WebviewGpuPolicy = resolveWebviewGpuPolicy(Env.OS, b, Config.WebviewGpuPolicy)
+
 	if Config.Width == 0 {
 		Config.Width = 800
 	}
@@ -228,4 +279,38 @@ func loadConfig() {
 	if !Env.FromTaskSch {
 		Config.WindowStartState = int(options.Normal)
 	}
+}
+
+func resolveWebviewGpuPolicy(osName string, rawConfig []byte, configuredPolicy int) int {
+	if osName != "linux" {
+		return configuredPolicy
+	}
+
+	if !hasUserConfigKey(rawConfig, "webviewGpuPolicy") {
+		return webviewGpuPolicyNever
+	}
+
+	switch configuredPolicy {
+	case webviewGpuPolicyAlways, webviewGpuPolicyNever:
+		return configuredPolicy
+	case webviewGpuPolicyOnDemand:
+		log.Printf("Linux webviewGpuPolicy=OnDemand detected; forcing Never to avoid blank WebKit windows")
+		return webviewGpuPolicyNever
+	default:
+		return webviewGpuPolicyNever
+	}
+}
+
+func hasUserConfigKey(rawConfig []byte, key string) bool {
+	if len(rawConfig) == 0 {
+		return false
+	}
+
+	var settings map[string]any
+	if err := yaml.Unmarshal(rawConfig, &settings); err != nil {
+		return false
+	}
+
+	_, ok := settings[key]
+	return ok
 }

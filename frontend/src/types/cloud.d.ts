@@ -1,5 +1,17 @@
 // Cloud Provider Types
-export type CloudProvider = 'vultr' | 'digitalocean' | 'ssh' | 'linode' | 'aws' | 'hetzner' | 'manual'
+export type CloudProvider =
+  | 'vultr'
+  | 'digitalocean'
+  | 'ssh'
+  | 'aws'
+  // Extra cloud providers are kept disabled until live validation resumes.
+  // | 'hetzner'
+  // | 'linode'
+  // | 'scaleway'
+  // | 'upcloud'
+  // | 'contabo'
+  // | 'oracle'
+  | 'manual'
 
 // Generic Cloud Configuration
 export interface CloudConfig {

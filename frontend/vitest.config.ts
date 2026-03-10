@@ -1,6 +1,9 @@
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import { defineConfig } from 'vite'
+
+import type { UserConfig } from 'vite'
+import type { InlineConfig } from 'vitest/node'
 
 // Polyfill localStorage before any module loads (needed for @vue/devtools-kit)
 if (typeof globalThis.localStorage === 'undefined') {
@@ -15,7 +18,7 @@ if (typeof globalThis.localStorage === 'undefined') {
   }
 }
 
-export default defineConfig({
+const config: UserConfig & { test: InlineConfig } = {
   plugins: [vue()],
   resolve: {
     alias: {
@@ -38,4 +41,6 @@ export default defineConfig({
       },
     },
   },
-})
+}
+
+export default defineConfig(config)

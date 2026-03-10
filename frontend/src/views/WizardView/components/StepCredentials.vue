@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 
 import { TestSSHConnection, SaveCloudConfig, SetCloudProvider } from '@/bridge'
 import { useCloudStore } from '@/stores'
 import { logError } from '@/utils/logger'
+
+import type { CloudProvider } from '@/types/cloud'
 
 const props = defineProps<{
   method: 'ssh' | 'cloud' | 'manual'
@@ -29,10 +31,25 @@ const sshTesting = ref(false)
 const sshTestResult = ref<{ success: boolean; error?: string } | null>(null)
 
 // Cloud form
-const cloudProvider = ref<'vultr' | 'digitalocean'>('vultr')
+const cloudProvider = ref<CloudProvider>('vultr')
 const apiKey = ref('')
 const cloudValidating = ref(false)
 const cloudValid = ref(false)
+
+const fallbackCloudProviderOptions: Array<{ label: string; value: CloudProvider }> = [
+  { label: 'Vultr', value: 'vultr' },
+  { label: 'DigitalOcean', value: 'digitalocean' },
+]
+
+const cloudProviderOptions = computed<Array<{ label: string; value: CloudProvider }>>(() => {
+  const options = cloudStore.availableProviders
+    .filter((provider) => provider.name !== 'ssh')
+    .map((provider) => ({
+      label: provider.displayName,
+      value: provider.name as CloudProvider,
+    }))
+  return options.length > 0 ? options : fallbackCloudProviderOptions
+})
 
 // Manual form
 const manualImportText = ref('')
@@ -48,6 +65,19 @@ const canProceed = computed(() => {
     return manualImportText.value.trim().length > 0
   }
   return false
+})
+
+onMounted(async () => {
+  if (props.method !== 'cloud') return
+  try {
+    await cloudStore.loadProviders()
+    const candidates = cloudProviderOptions.value
+    if (!candidates.some((item) => item.value === cloudProvider.value) && candidates.length > 0) {
+      cloudProvider.value = candidates[0].value
+    }
+  } catch (err) {
+    logError('[Wizard] loadProviders failed:', err)
+  }
 })
 
 const handleSSHTest = async () => {
@@ -169,12 +199,19 @@ const handleNext = () => {
       <div class="flex flex-col gap-4">
         <div class="form-field">
           <label class="form-label text-sm">云厂商</label>
-          <div class="flex gap-4">
-            <label class="flex items-center gap-1.5 cursor-pointer text-sm">
-              <input v-model="cloudProvider" type="radio" value="vultr" class="accent-primary" /> Vultr
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer text-sm">
-              <input v-model="cloudProvider" type="radio" value="digitalocean" class="accent-primary" /> DigitalOcean
+          <div class="grid grid-cols-2 gap-2">
+            <label
+              v-for="option in cloudProviderOptions"
+              :key="option.value"
+              class="flex items-center gap-1.5 cursor-pointer text-sm"
+            >
+              <input
+                v-model="cloudProvider"
+                type="radio"
+                :value="option.value"
+                class="accent-primary"
+              />
+              {{ option.label }}
             </label>
           </div>
         </div>

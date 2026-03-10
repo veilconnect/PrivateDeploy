@@ -1,4 +1,31 @@
 export namespace bridge {
+
+	export class PlatformCapabilities {
+	    traySupported: boolean;
+	    showMainWindowFromTray: boolean;
+	    systemProxySupported: boolean;
+	    startupLaunchSupported: boolean;
+	    startupDelaySupported: boolean;
+	    adminElevationSupported: boolean;
+	    configurableWebviewGpuPolicy: boolean;
+	    kernelGrantPermissionSupported: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlatformCapabilities(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.traySupported = source["traySupported"];
+	        this.showMainWindowFromTray = source["showMainWindowFromTray"];
+	        this.systemProxySupported = source["systemProxySupported"];
+	        this.startupLaunchSupported = source["startupLaunchSupported"];
+	        this.startupDelaySupported = source["startupDelaySupported"];
+	        this.adminElevationSupported = source["adminElevationSupported"];
+	        this.configurableWebviewGpuPolicy = source["configurableWebviewGpuPolicy"];
+	        this.kernelGrantPermissionSupported = source["kernelGrantPermissionSupported"];
+	    }
+	}
 	
 	export class EnvResult {
 	    appName: string;
@@ -6,6 +33,7 @@ export namespace bridge {
 	    basePath: string;
 	    os: string;
 	    arch: string;
+	    capabilities: PlatformCapabilities;
 	
 	    static createFrom(source: any = {}) {
 	        return new EnvResult(source);
@@ -18,7 +46,26 @@ export namespace bridge {
 	        this.basePath = source["basePath"];
 	        this.os = source["os"];
 	        this.arch = source["arch"];
+	        this.capabilities = this.convertValues(source["capabilities"], PlatformCapabilities);
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ExecOptions {
 	    StopOutputKeyword: string;
@@ -200,4 +247,3 @@ export namespace bridge {
 	}
 
 }
-

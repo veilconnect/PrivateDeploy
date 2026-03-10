@@ -64,7 +64,9 @@ export const useCoreBranch = (isAlpha = false) => {
     () => remoteVersion.value && localVersion.value !== remoteVersion.value,
   )
 
-  const grantable = computed(() => localVersion.value && envStore.env.os !== 'windows')
+  const grantable = computed(
+    () => localVersion.value && envStore.capabilities.kernelGrantPermissionSupported,
+  )
 
   const CoreFilePath = `${CoreWorkingDirectory}/${getKernelFileName(isAlpha)}`
   const CoreBakFilePath = `${CoreFilePath}.bak`

@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { parse, stringify } from 'yaml'
 
 import {
+  GetEnv,
   ReadDir,
   ReadFile,
   WriteFile,
@@ -55,7 +56,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     pluginsView: View.Grid,
     scheduledtasksView: View.Grid,
     windowStartState: WindowStartState.Normal,
-    webviewGpuPolicy: WebviewGpuPolicy.OnDemand,
+    webviewGpuPolicy: WebviewGpuPolicy.Never,
     width: 0,
     height: 0,
     exitOnClose: true,
@@ -147,6 +148,8 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
 
   const setupAppSettings = async () => {
     const data = await ignoredError(ReadFile, UserFilePath)
+    const env = await ignoredError(GetEnv)
+    const isLinux = env?.os === 'linux'
     const hasPersistedSettings = !!data
     if (data) {
       const settings = parse(data)
@@ -181,6 +184,12 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     }
     if (app.value.kernel.concurrencyLimit === undefined) {
       app.value.kernel.concurrencyLimit = DefaultConcurrencyLimit
+    }
+    if (app.value.webviewGpuPolicy === undefined) {
+      app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
+    }
+    if (isLinux && app.value.webviewGpuPolicy === WebviewGpuPolicy.OnDemand) {
+      app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
     }
     // @ts-expect-error(Deprecated)
     if (app.value['font-family'] !== undefined) {

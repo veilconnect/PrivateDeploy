@@ -1,22 +1,45 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { GetEnv } from '@/bridge'
 import { useAppSettingsStore, useKernelApiStore } from '@/stores'
 import { updateTrayMenus, SetSystemProxy, GetSystemProxy } from '@/utils'
 
 import type { ProxyType } from './kernelApi'
+import type { PlatformCapabilities, RuntimeEnv } from '@/types/env'
+
+export type SystemProxyState = 'unsupported' | 'disabled' | 'managed' | 'external'
+
+const defaultCapabilities = (): PlatformCapabilities => ({
+  traySupported: true,
+  showMainWindowFromTray: true,
+  systemProxySupported: true,
+  startupLaunchSupported: false,
+  startupDelaySupported: false,
+  adminElevationSupported: false,
+  configurableWebviewGpuPolicy: false,
+  kernelGrantPermissionSupported: true,
+})
+
+const defaultEnv = (): RuntimeEnv => ({
+  appName: '',
+  appVersion: '',
+  basePath: '',
+  os: '',
+  arch: '',
+  capabilities: defaultCapabilities(),
+})
 
 export const useEnvStore = defineStore('env', () => {
-  const env = ref({
-    appName: '',
-    appVersion: '',
-    basePath: '',
-    os: '',
-    arch: '',
-  })
+  const env = ref<RuntimeEnv>(defaultEnv())
+  const capabilities = computed<PlatformCapabilities>(() => env.value.capabilities || defaultCapabilities())
+  const isWindows = computed(() => env.value.os === 'windows')
+  const isLinux = computed(() => env.value.os === 'linux')
+  const isDarwin = computed(() => env.value.os === 'darwin')
 
   const systemProxy = ref(false)
+  const systemProxyState = ref<SystemProxyState>('disabled')
+  const systemProxyServer = ref('')
 
   const getAppProxyServerList = () => {
     const kernelApiStore = useKernelApiStore()
@@ -82,6 +105,7 @@ export const useEnvStore = defineStore('env', () => {
   }
 
   const setSystemProxyInternal = async (allowOverrideExistingProxy: boolean) => {
+    if (!capabilities.value.systemProxySupported) throw 'settings.systemProxy.restoreUnavailable'
     const appSettingsStore = useAppSettingsStore()
     const proxyPort = useKernelApiStore().getProxyPort()
     if (!proxyPort) throw 'home.overview.needPort'
@@ -101,21 +125,42 @@ export const useEnvStore = defineStore('env', () => {
 
     appSettingsStore.app.systemProxyManaged = true
     systemProxy.value = true
+    systemProxyState.value = 'managed'
+    systemProxyServer.value =
+      proxyPort.proxyType === 'socks'
+        ? `socks=127.0.0.1:${proxyPort.port}`
+        : `http://127.0.0.1:${proxyPort.port}`
     return true
   }
 
   const setupEnv = async () => {
     const _env = await GetEnv()
-    env.value = _env
+    env.value = {
+      ...defaultEnv(),
+      ..._env,
+      capabilities: {
+        ...defaultCapabilities(),
+        ...(_env.capabilities || {}),
+      },
+    }
   }
 
   const updateSystemProxyStatus = async () => {
+    if (!capabilities.value.systemProxySupported) {
+      systemProxy.value = false
+      systemProxyState.value = 'unsupported'
+      systemProxyServer.value = ''
+      return false
+    }
     const proxyServer = await GetSystemProxy()
+    systemProxyServer.value = proxyServer
 
     if (!proxyServer) {
       systemProxy.value = false
+      systemProxyState.value = 'disabled'
     } else {
       systemProxy.value = isAppManagedProxy(proxyServer)
+      systemProxyState.value = systemProxy.value ? 'managed' : 'external'
     }
 
     return systemProxy.value
@@ -130,13 +175,17 @@ export const useEnvStore = defineStore('env', () => {
   }
 
   const clearSystemProxy = async () => {
+    if (!capabilities.value.systemProxySupported) return
     const appSettingsStore = useAppSettingsStore()
     await SetSystemProxy(false, '')
     appSettingsStore.app.systemProxyManaged = false
     systemProxy.value = false
+    systemProxyState.value = 'disabled'
+    systemProxyServer.value = ''
   }
 
   const restorePreviousSystemProxy = async (clearBackup = true) => {
+    if (!capabilities.value.systemProxySupported) return false
     const appSettingsStore = useAppSettingsStore()
     const backup = appSettingsStore.app.systemProxyBackup.trim()
 
@@ -149,6 +198,8 @@ export const useEnvStore = defineStore('env', () => {
         appSettingsStore.app.systemProxyBackup = ''
       }
       systemProxy.value = false
+      systemProxyState.value = 'disabled'
+      systemProxyServer.value = ''
       return true
     }
 
@@ -166,6 +217,7 @@ export const useEnvStore = defineStore('env', () => {
   }
 
   const restoreSystemProxyAfterUnexpectedExit = async () => {
+    if (!capabilities.value.systemProxySupported) return false
     const appSettingsStore = useAppSettingsStore()
     if (!appSettingsStore.app.systemProxyManaged) return false
 
@@ -189,8 +241,14 @@ export const useEnvStore = defineStore('env', () => {
 
   return {
     env,
+    capabilities,
+    isWindows,
+    isLinux,
+    isDarwin,
     setupEnv,
     systemProxy,
+    systemProxyState,
+    systemProxyServer,
     setSystemProxy,
     setSystemProxyIfSafe,
     clearSystemProxy,

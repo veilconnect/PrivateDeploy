@@ -76,7 +76,7 @@ envStore.setupEnv().then(async () => {
     scheduledTasksStore.setupScheduledTasks(),
   ])
 
-  if (!appSettings.app.systemProxyPolicyInitialized) {
+  if (envStore.capabilities.systemProxySupported && !appSettings.app.systemProxyPolicyInitialized) {
     const enableAutoProxy = await confirm(
       'settings.systemProxy.firstLaunchTitle',
       'settings.systemProxy.firstLaunchMessage',

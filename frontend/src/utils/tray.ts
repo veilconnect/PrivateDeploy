@@ -28,8 +28,8 @@ const getTrayIcons = () => {
   const kernelApiStore = useKernelApiStore()
 
   const themeMode = appSettings.themeMode
-  const ext = envStore.env.os === 'linux' ? '.png' : '.ico'
-  const folder = envStore.env.os === 'linux' ? 'imgs' : 'icons'
+  const ext = envStore.isLinux ? '.png' : '.ico'
+  const folder = envStore.isLinux ? 'imgs' : 'icons'
   let icon = `data/.cache/${folder}/tray_normal_${themeMode}${ext}`
 
   if (kernelApiStore.running) {
@@ -161,12 +161,12 @@ const getTrayMenus = () => {
     {
       type: 'item',
       text: 'tray.showMainWindow',
-      hidden: envStore.env.os === 'windows',
+      hidden: !envStore.capabilities.showMainWindowFromTray,
       event: ShowMainWindow,
     },
     {
       type: 'separator',
-      hidden: envStore.env.os === 'windows',
+      hidden: !envStore.capabilities.showMainWindowFromTray,
     },
     {
       type: 'item',
@@ -230,7 +230,7 @@ const getTrayMenus = () => {
     {
       type: 'item',
       text: 'tray.proxy',
-      hidden: !kernelApiStore.running,
+      hidden: !kernelApiStore.running || !envStore.capabilities.systemProxySupported,
       children: [
         {
           type: 'item',
@@ -380,10 +380,13 @@ const getTrayMenus = () => {
 }
 
 export const updateTrayMenus = debounce(async () => {
+  const envStore = useEnvStore()
+  if (!envStore.capabilities.traySupported) return
+
   const trayMenus = getTrayMenus()
   const trayIcons = getTrayIcons()
 
-  const isDarwin = useEnvStore().env.os === 'darwin'
+  const isDarwin = envStore.isDarwin
   const title = isDarwin ? '' : APP_TITLE
 
   await UpdateTray({ icon: trayIcons, title, tooltip: APP_TITLE + ' ' + APP_VERSION })

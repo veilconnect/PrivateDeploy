@@ -13,21 +13,33 @@ import (
 
 // App struct
 type App struct {
-	Ctx            context.Context
-	AppMenu        *menu.Menu
-	CloudManager   *cloud.Manager
-	HealthMonitor  *health.Monitor
-	FileService    *filesystem.Service
+	Ctx           context.Context
+	AppMenu       *menu.Menu
+	CloudManager  *cloud.Manager
+	HealthMonitor *health.Monitor
+	FileService   *filesystem.Service
 }
 
 type EnvResult struct {
-	IsStartup   bool   `json:"-"`
-	FromTaskSch bool   `json:"-"`
-	AppName     string `json:"appName"`
-	AppVersion  string `json:"appVersion"`
-	BasePath    string `json:"basePath"`
-	OS          string `json:"os"`
-	ARCH        string `json:"arch"`
+	IsStartup    bool                 `json:"-"`
+	FromTaskSch  bool                 `json:"-"`
+	AppName      string               `json:"appName"`
+	AppVersion   string               `json:"appVersion"`
+	BasePath     string               `json:"basePath"`
+	OS           string               `json:"os"`
+	ARCH         string               `json:"arch"`
+	Capabilities PlatformCapabilities `json:"capabilities"`
+}
+
+type PlatformCapabilities struct {
+	TraySupported                  bool `json:"traySupported"`
+	ShowMainWindowFromTray         bool `json:"showMainWindowFromTray"`
+	SystemProxySupported           bool `json:"systemProxySupported"`
+	StartupLaunchSupported         bool `json:"startupLaunchSupported"`
+	StartupDelaySupported          bool `json:"startupDelaySupported"`
+	AdminElevationSupported        bool `json:"adminElevationSupported"`
+	ConfigurableWebviewGpuPolicy   bool `json:"configurableWebviewGpuPolicy"`
+	KernelGrantPermissionSupported bool `json:"kernelGrantPermissionSupported"`
 }
 
 type RequestOptions struct {

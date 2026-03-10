@@ -373,13 +373,14 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       initCoreWebsockets()
       longLivedWS.setup?.()
       await Promise.all([refreshConfig(), refreshProviderProxies()])
-      await envStore.updateSystemProxyStatus()
     } else if (appSettingsStore.app.autoStartKernel) {
       await envStore.restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
       await startCore()
     } else {
       await envStore.restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
     }
+
+    await envStore.updateSystemProxyStatus().catch(() => undefined)
   }
 
   const runCoreProcess = (isAlpha: boolean) => {

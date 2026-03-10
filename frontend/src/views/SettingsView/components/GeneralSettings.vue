@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { BrowserOpenURL, WriteFile, RemoveFile, AbsolutePath, MakeDir } from '@/bridge'
@@ -26,6 +26,15 @@ const isTaskScheduled = ref(false)
 const { t } = useI18n()
 const appSettings = useAppSettingsStore()
 const envStore = useEnvStore()
+const capabilities = computed(() => envStore.capabilities)
+const supportsSystemProxy = computed(() => capabilities.value.systemProxySupported)
+const supportsAdminElevation = computed(() => capabilities.value.adminElevationSupported)
+const supportsWebviewGpuPolicy = computed(() => capabilities.value.configurableWebviewGpuPolicy)
+const supportsStartupLaunch = computed(() => capabilities.value.startupLaunchSupported)
+const supportsStartupDelay = computed(() => capabilities.value.startupDelaySupported)
+const systemProxyStateLabel = computed(() => {
+  return t(`settings.systemProxy.status.${envStore.systemProxyState}`)
+})
 
 const themes = [
   {
@@ -88,7 +97,6 @@ const windowStates = [
 
 const webviewGpuPolicy = [
   { label: 'settings.webviewGpuPolicy.always', value: WebviewGpuPolicy.Always },
-  { label: 'settings.webviewGpuPolicy.onDemand', value: WebviewGpuPolicy.OnDemand },
   { label: 'settings.webviewGpuPolicy.never', value: WebviewGpuPolicy.Never },
 ]
 
@@ -180,13 +188,33 @@ const restorePreviousSystemProxy = async () => {
   }
 }
 
-if (envStore.env.os === 'windows') {
-  checkSchtask()
+const syncPlatformSettings = async () => {
+  await envStore.updateSystemProxyStatus()
 
-  CheckPermissions().then((admin) => {
-    isAdmin.value = admin
-  })
+  if (supportsStartupLaunch.value) {
+    await checkSchtask()
+  } else {
+    isTaskScheduled.value = false
+  }
+
+  if (supportsAdminElevation.value) {
+    isAdmin.value = await CheckPermissions()
+  } else {
+    isAdmin.value = false
+  }
 }
+
+onMounted(() => {
+  syncPlatformSettings().catch((error) => {
+    console.error(error)
+  })
+})
+
+watch([supportsStartupLaunch, supportsAdminElevation], () => {
+  syncPlatformSettings().catch((error) => {
+    console.error(error)
+  })
+})
 </script>
 
 <template>
@@ -249,7 +277,7 @@ if (envStore.env.os === 'windows') {
       </div>
       <Switch v-model="appSettings.app.closeKernelOnExit" />
     </div>
-    <div class="px-16 py-8">
+    <div v-if="supportsSystemProxy" class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.autoSetSystemProxy') }}
       </div>
@@ -265,6 +293,10 @@ if (envStore.env.os === 'windows') {
           {{ t('settings.systemProxy.restorePrevious') }}
         </Button>
       </div>
+      <div class="mt-8 text-12 text-secondary">
+        {{ t('settings.systemProxy.current') }}: {{ systemProxyStateLabel }}
+        <span v-if="envStore.systemProxyServer">({{ envStore.systemProxyServer }})</span>
+      </div>
     </div>
     <div class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
@@ -272,28 +304,30 @@ if (envStore.env.os === 'windows') {
       </div>
       <Switch v-model="appSettings.app.autoStartKernel" />
     </div>
-    <div v-if="envStore.env.os === 'windows'" class="px-16 py-8">
+    <div v-if="supportsAdminElevation" class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.admin') }}
         <span class="font-normal text-12">({{ t('settings.needRestart') }})</span>
       </div>
       <Switch v-model="isAdmin" @change="onPermChange" />
     </div>
-    <div v-if="envStore.env.os === 'linux'" class="px-16 py-8">
+    <div v-if="supportsWebviewGpuPolicy" class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.webviewGpuPolicy.name') }}
         <span class="font-normal text-12">({{ t('settings.needRestart') }})</span>
       </div>
       <Radio v-model="appSettings.app.webviewGpuPolicy" :options="webviewGpuPolicy" />
     </div>
-    <div v-if="envStore.env.os === 'windows'" class="px-16 py-8">
+    <div v-if="supportsStartupLaunch" class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.startup.name') }}
-        <span class="font-normal text-12">({{ t('settings.needAdmin') }})</span>
+        <span v-if="supportsAdminElevation" class="font-normal text-12">
+          ({{ t('settings.needAdmin') }})
+        </span>
       </div>
       <div class="flex items-center">
         <Switch v-model="isTaskScheduled" @change="onTaskSchChange" class="mr-16" />
-        <template v-if="isTaskScheduled">
+        <template v-if="isTaskScheduled && supportsStartupDelay">
           <Radio v-model="appSettings.app.windowStartState" :options="windowStates" type="number" />
           <Input
             v-model="appSettings.app.startupDelay"

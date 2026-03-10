@@ -884,6 +884,13 @@ export default {
       restoreSuccess: 'Previous system proxy restored.',
       restoreUnavailable: 'No previous proxy backup available.',
       restoreFailed: 'Failed to restore previous system proxy.',
+      current: 'Current system proxy state',
+      status: {
+        unsupported: 'Unsupported on this platform',
+        disabled: 'Disabled',
+        managed: 'Managed by PrivateDeploy',
+        external: 'An external proxy is active',
+      },
     },
     autoStartKernel: 'Auto Start Kernel',
     admin: 'Run As Admin',

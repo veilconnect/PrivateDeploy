@@ -974,6 +974,13 @@ export default {
       restoreSuccess: '已恢复之前的系统代理。',
       restoreUnavailable: '没有可恢复的系统代理备份。',
       restoreFailed: '恢复之前的系统代理失败。',
+      current: '当前系统代理状态',
+      status: {
+        unsupported: '当前平台不支持',
+        disabled: '未启用',
+        managed: '由 PrivateDeploy 管理',
+        external: '外部代理已生效',
+      },
     },
     autoStartKernel: '自动启动内核程序',
     admin: '以管理员身份运行',
