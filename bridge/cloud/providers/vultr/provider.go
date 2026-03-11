@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	mathrand "math/rand"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,12 @@ var (
 	osCache         []vultrOS
 	osCacheTime     time.Time
 	osCacheMu       sync.Mutex
+)
+
+const (
+	defaultServiceReadyTimeout = 8 * time.Minute
+	serviceReadyProbeInterval  = 5 * time.Second
+	serviceReadyDialTimeout    = 2 * time.Second
 )
 
 // Provider implements cloud.CloudProvider for Vultr
@@ -835,6 +843,16 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 				_ = p.attachFirewallToInstance(ctx, instanceID, firewallID)
 			}
 		}
+
+		// Wait until externally reachable protocol ports are ready to reduce false "create succeeded but unusable" states.
+		readyPorts := []int{ssPort}
+		if planRAM > 600 {
+			readyPorts = append(readyPorts, vlessPort, trojanPort)
+		}
+		readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+		if readyErr := p.waitForTCPPorts(ctx, instance.MainIP, readyPorts, readyTimeout); readyErr != nil {
+			fmt.Printf("[VultrProvider] Warning: %v\n", readyErr)
+		}
 	} else {
 		instance = payload.Instance
 	}
@@ -1084,6 +1102,91 @@ func appendUniqueInt(list *[]int, candidate int) {
 		}
 	}
 	*list = append(*list, candidate)
+}
+
+func parseServiceReadyTimeout(extra map[string]string, fallback time.Duration) time.Duration {
+	if len(extra) == 0 {
+		return fallback
+	}
+	for _, key := range []string{
+		"serviceReadyTimeoutSec",
+		"service_ready_timeout_sec",
+		"proxyReadyTimeoutSec",
+		"proxy_ready_timeout_sec",
+	} {
+		raw := strings.TrimSpace(extra[key])
+		if raw == "" {
+			continue
+		}
+		sec, err := strconv.Atoi(raw)
+		if err != nil || sec <= 0 {
+			continue
+		}
+		return time.Duration(sec) * time.Second
+	}
+	return fallback
+}
+
+func (p *Provider) waitForTCPPorts(ctx context.Context, ip string, ports []int, timeout time.Duration) error {
+	if strings.TrimSpace(ip) == "" {
+		return nil
+	}
+
+	required := make([]int, 0, len(ports))
+	seen := make(map[int]struct{}, len(ports))
+	for _, port := range ports {
+		if port <= 0 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		required = append(required, port)
+	}
+	if len(required) == 0 {
+		return nil
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(serviceReadyProbeInterval)
+	defer ticker.Stop()
+
+	// Probe immediately, then on each tick.
+	for {
+		pending := make([]string, 0, len(required))
+		allReady := true
+
+		for _, port := range required {
+			if isTCPPortReachable(ip, port, serviceReadyDialTimeout) {
+				continue
+			}
+			allReady = false
+			pending = append(pending, strconv.Itoa(port))
+		}
+
+		if allReady {
+			return nil
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("timeout waiting for service ports on %s, pending tcp ports: %s", ip, strings.Join(pending, ","))
+		case <-ticker.C:
+		}
+	}
+}
+
+func isTCPPortReachable(ip string, port int, timeout time.Duration) bool {
+	address := net.JoinHostPort(ip, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func (p *Provider) waitForInstance(ctx context.Context, instanceID string, timeout time.Duration) (vultrInstance, error) {

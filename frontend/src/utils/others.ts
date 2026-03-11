@@ -1,7 +1,8 @@
 import { stringify } from 'yaml'
 
 import { useAppSettingsStore, useEnvStore } from '@/stores'
-import { APP_TITLE, APP_VERSION } from '@/utils'
+
+import { APP_TITLE, APP_VERSION } from './env'
 
 export const deepClone = <T>(json: T): T => JSON.parse(JSON.stringify(json))
 

@@ -12,13 +12,13 @@ import {
   DnsServer,
 } from '@/enums/kernel'
 import i18n from '@/lang'
-import { generateSecureKey, sampleID } from '@/utils'
+import { generateSecureKey, sampleID } from '@/utils/identity'
 
 import { DefaultTestURL } from './app'
 
-const { t } = i18n.global
+const translate = (key: string) => i18n.global.t(key)
 
-const DefaultOutboundIds = {
+export const DefaultOutboundIds = {
   Select: 'outbound-select',
   Urltest: 'outbound-urlte',
   Direct: 'outbound-direct',
@@ -26,12 +26,12 @@ const DefaultOutboundIds = {
   Global: 'outbound-global',
 }
 
-const DefaultInboundIds = {
+export const DefaultInboundIds = {
   MixedIn: 'mixed-in',
   Tun: 'tun-in',
 }
 
-const DefaultDnsServersIds = {
+export const DefaultDnsServersIds = {
   LocalDns: 'Local-DNS',
   RemoteDns: 'Remote-DNS',
   FakeIP: 'Fake-IP',
@@ -145,9 +145,9 @@ export const DefaultOutbound = (): IOutbound => ({
 export const DefaultOutbounds = (): IOutbound[] => [
   {
     id: DefaultOutboundIds.Select,
-    tag: t('outbound.select'),
+    tag: translate('outbound.select'),
     type: Outbound.Selector,
-    outbounds: [{ id: DefaultOutboundIds.Urltest, type: 'Built-in', tag: t('outbound.urltest') }],
+    outbounds: [{ id: DefaultOutboundIds.Urltest, type: 'Built-in', tag: translate('outbound.urltest') }],
     interrupt_exist_connections: true,
     url: '',
     interval: '3m',
@@ -157,7 +157,7 @@ export const DefaultOutbounds = (): IOutbound[] => [
   },
   {
     id: DefaultOutboundIds.Urltest,
-    tag: t('outbound.urltest'),
+    tag: translate('outbound.urltest'),
     type: Outbound.Urltest,
     outbounds: [],
     interrupt_exist_connections: true,
@@ -169,7 +169,7 @@ export const DefaultOutbounds = (): IOutbound[] => [
   },
   {
     id: DefaultOutboundIds.Direct,
-    tag: t('outbound.direct'),
+    tag: translate('outbound.direct'),
     type: Outbound.Direct,
     outbounds: [],
     interrupt_exist_connections: true,
@@ -181,11 +181,11 @@ export const DefaultOutbounds = (): IOutbound[] => [
   },
   {
     id: DefaultOutboundIds.Fallback,
-    tag: t('outbound.fallback'),
+    tag: translate('outbound.fallback'),
     type: Outbound.Selector,
     outbounds: [
-      { id: DefaultOutboundIds.Select, type: 'Built-in', tag: t('outbound.select') },
-      { id: DefaultOutboundIds.Direct, type: 'Built-in', tag: t('outbound.direct') },
+      { id: DefaultOutboundIds.Select, type: 'Built-in', tag: translate('outbound.select') },
+      { id: DefaultOutboundIds.Direct, type: 'Built-in', tag: translate('outbound.direct') },
     ],
     interrupt_exist_connections: true,
     url: '',
@@ -199,10 +199,10 @@ export const DefaultOutbounds = (): IOutbound[] => [
     tag: 'GLOBAL',
     type: Outbound.Selector,
     outbounds: [
-      { id: DefaultOutboundIds.Select, type: 'Built-in', tag: t('outbound.select') },
-      { id: DefaultOutboundIds.Urltest, type: 'Built-in', tag: t('outbound.urltest') },
-      { id: DefaultOutboundIds.Direct, type: 'Built-in', tag: t('outbound.direct') },
-      { id: DefaultOutboundIds.Fallback, type: 'Built-in', tag: t('outbound.fallback') },
+      { id: DefaultOutboundIds.Select, type: 'Built-in', tag: translate('outbound.select') },
+      { id: DefaultOutboundIds.Urltest, type: 'Built-in', tag: translate('outbound.urltest') },
+      { id: DefaultOutboundIds.Direct, type: 'Built-in', tag: translate('outbound.direct') },
+      { id: DefaultOutboundIds.Fallback, type: 'Built-in', tag: translate('outbound.fallback') },
     ],
     interrupt_exist_connections: true,
     url: '',

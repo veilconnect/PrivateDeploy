@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n'
 import { BrowserOpenURL, WriteFile, RemoveFile, AbsolutePath, MakeDir } from '@/bridge'
 import { DefaultFontFamily, LocalesFilePath } from '@/constant/app'
 import { Theme, WindowStartState, Color, WebviewGpuPolicy } from '@/enums/app'
-import routes from '@/router/routes'
 import { useAppSettingsStore, useEnvStore } from '@/stores'
 import {
   APP_TITLE,
@@ -81,14 +80,6 @@ const colors = [
     value: Color.Purple,
   },
 ]
-
-const pages = routes.flatMap((route) => {
-  if (route.meta?.hidden !== undefined) return []
-  return {
-    label: route.meta!.name,
-    value: route.name as string,
-  }
-})
 
 const windowStates = [
   { label: 'settings.windowState.normal', value: WindowStartState.Normal },
@@ -254,10 +245,6 @@ watch([supportsStartupLaunch, supportsAdminElevation], () => {
         <Button @click="resetFontFamily" v-tips="'settings.resetFont'" type="text" icon="reset" />
         <Input v-model="appSettings.app.fontFamily" editable class="ml-8" />
       </div>
-    </div>
-    <div class="px-16 py-8">
-      <div class="text-18 font-bold pt-8 pb-16">{{ t('settings.pages.name') }}</div>
-      <CheckBox v-model="appSettings.app.pages" :options="pages" />
     </div>
     <div class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">{{ t('settings.appFolder.name') }}</div>

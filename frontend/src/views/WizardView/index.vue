@@ -23,7 +23,7 @@ const handleCredentialsNext = (config: Record<string, any>) => {
 }
 
 const handleDone = () => {
-  router.push('/subscriptions')
+  router.push('/')
 }
 
 const handleBack = () => {

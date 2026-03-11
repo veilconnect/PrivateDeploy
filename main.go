@@ -39,6 +39,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	linuxMinimalShell := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_LINUX_MINIMAL_SHELL") == "1"
+
 	appIcon := icon
 	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
 		// GTK-based Linux desktop stacks decode PNG icons reliably.
@@ -47,8 +49,35 @@ func main() {
 
 	app := bridge.CreateApp(assets)
 	trayStart := func() {}
-	if os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
+	if !linuxMinimalShell && os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
 		trayStart, _ = bridge.CreateTray(app, appIcon)
+	}
+
+	appMenu := app.AppMenu
+	windowWidth := bridge.Config.Width
+	windowHeight := bridge.Config.Height
+	startHidden := bridge.Config.StartHidden
+	windowStartState := options.WindowStartState(bridge.Config.WindowStartState)
+	singleInstanceLock := &options.SingleInstanceLock{
+		UniqueId: func() string {
+			if bridge.Config.MultipleInstance {
+				return time.Now().String()
+			}
+			return bridge.Env.AppName
+		}(),
+		OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+			runtime.Show(app.Ctx)
+			runtime.EventsEmit(app.Ctx, "onLaunchApp", data.Args)
+		},
+	}
+
+	if linuxMinimalShell {
+		appMenu = nil
+		windowWidth = 1280
+		windowHeight = 840
+		startHidden = false
+		windowStartState = options.Normal
+		singleInstanceLock = nil
 	}
 
 	// Create application with options
@@ -56,13 +85,13 @@ func main() {
 		MinWidth:         600,
 		MinHeight:        400,
 		DisableResize:    false,
-		Menu:             app.AppMenu,
+		Menu:             appMenu,
 		Title:            bridge.Env.AppName,
 		Frameless:        bridge.Env.OS == "windows",
-		Width:            bridge.Config.Width,
-		Height:           bridge.Config.Height,
-		StartHidden:      bridge.Config.StartHidden,
-		WindowStartState: options.WindowStartState(bridge.Config.WindowStartState),
+		Width:            windowWidth,
+		Height:           windowHeight,
+		StartHidden:      startHidden,
+		WindowStartState: windowStartState,
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
 		Windows: &windows.Options{
 			WebviewIsTransparent: true,
@@ -90,22 +119,29 @@ func main() {
 			Assets:     assets,
 			Middleware: bridge.RollingRelease,
 		},
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: func() string {
-				if bridge.Config.MultipleInstance {
-					return time.Now().String()
-				}
-				return bridge.Env.AppName
-			}(),
-			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-				runtime.Show(app.Ctx)
-				runtime.EventsEmit(app.Ctx, "onLaunchApp", data.Args)
-			},
-		},
+		SingleInstanceLock: singleInstanceLock,
 		OnStartup: func(ctx context.Context) {
 			app.Ctx = ctx
-			trayStart()
+			if !linuxMinimalShell {
+				trayStart()
+			}
 			app.SetupSSHEventEmitter()
+		},
+		OnDomReady: func(ctx context.Context) {
+			if bridge.Env.OS != "linux" || linuxMinimalShell {
+				return
+			}
+
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				runtime.Show(ctx)
+				runtime.WindowShow(ctx)
+				runtime.WindowUnminimise(ctx)
+				time.Sleep(250 * time.Millisecond)
+				runtime.Show(ctx)
+				runtime.WindowShow(ctx)
+				runtime.WindowUnminimise(ctx)
+			}()
 		},
 		OnBeforeClose: func(ctx context.Context) (prevent bool) {
 			runtime.EventsEmit(ctx, "onBeforeExitApp")

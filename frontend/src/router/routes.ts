@@ -1,57 +1,27 @@
 import { type RouteRecordRaw } from 'vue-router'
 
-import CloudView from '@/views/CloudView/index.vue'
-import HomeView from '@/views/HomeView/index.vue'
-import ProfilesView from '@/views/ProfilesView/index.vue'
-import RulesetsView from '@/views/RulesetsView/index.vue'
-import ScheduledTasksView from '@/views/ScheduledTasksView/index.vue'
 import SettingsView from '@/views/SettingsView/index.vue'
 import WizardView from '@/views/WizardView/index.vue'
+import WorkbenchView from '@/views/WorkbenchView/index.vue'
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'Overview',
-    component: HomeView,
+    name: 'Workbench',
+    component: WorkbenchView,
     meta: {
-      name: 'router.overview',
+      name: 'router.workbench',
       icon: 'overview',
     },
   },
   {
-    path: '/profiles',
-    name: 'Profiles',
-    component: ProfilesView,
+    path: '/settings',
+    name: 'Settings',
+    component: SettingsView,
     meta: {
-      name: 'router.profiles',
-      icon: 'profiles',
-    },
-  },
-  {
-    path: '/subscriptions',
-    name: 'Deploy',
-    component: CloudView,
-    meta: {
-      name: 'router.subscriptions',
-      icon: 'sparkle',
-    },
-  },
-  {
-    path: '/rulesets',
-    name: 'Rulesets',
-    component: RulesetsView,
-    meta: {
-      name: 'router.rulesets',
-      icon: 'rulesets',
-    },
-  },
-  {
-    path: '/scheduledtasks',
-    name: 'ScheduledTasks',
-    component: ScheduledTasksView,
-    meta: {
-      name: 'router.scheduledtasks',
-      icon: 'scheduledTasks',
+      name: 'router.settings',
+      icon: 'settings2',
+      hidden: false,
     },
   },
   {
@@ -65,14 +35,20 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
-    path: '/settings',
-    name: 'Settings',
-    component: SettingsView,
-    meta: {
-      name: 'router.settings',
-      icon: 'settings2',
-      hidden: false,
-    },
+    path: '/profiles',
+    redirect: () => ({ name: 'Settings', query: { tab: 'profiles' } }),
+  },
+  {
+    path: '/subscriptions',
+    redirect: () => ({ name: 'Settings', query: { tab: 'cloud' } }),
+  },
+  {
+    path: '/rulesets',
+    redirect: () => ({ name: 'Settings', query: { tab: 'rulesets' } }),
+  },
+  {
+    path: '/scheduledtasks',
+    redirect: () => ({ name: 'Settings' }),
   },
 ]
 

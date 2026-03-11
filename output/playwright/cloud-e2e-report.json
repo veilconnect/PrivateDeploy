@@ -2,7 +2,7 @@
   "status": "passed",
   "base_url": "http://127.0.0.1:4174",
   "port": 4174,
-  "timestamp": "2026-03-04T21:20:52.442145",
+  "timestamp": "2026-03-10T10:16:11.730081",
   "steps": [
     "open_subscriptions_page",
     "search_nodes",
@@ -68,10 +68,10 @@
     "[PrivateDeploy] [CloudStore] Node not found for connectivity test: cloud-vultr-2"
   ],
   "created_labels": {
-    "deploy": "auto-e2e-9220",
-    "manual": "manual-e2e-4880",
-    "import_hy2": "import-e2e-hy2-4826",
-    "import_trojan": "import-e2e-trojan-2472"
+    "deploy": "auto-e2e-4353",
+    "manual": "manual-e2e-5956",
+    "import_hy2": "import-e2e-hy2-1348",
+    "import_trojan": "import-e2e-trojan-1939"
   },
   "artifacts": {
     "screenshot": "/mnt/data/PrivateDeploy/output/playwright/cloud-e2e-final.png"

@@ -4,6 +4,7 @@ import { parse, stringify } from 'yaml'
 
 import { ReadFile, WriteFile, ReadDir, MoveFile } from '@/bridge'
 import { ProfilesFilePath } from '@/constant/app'
+import { RulesetType, RuleType } from '@/enums/kernel'
 import {
   debounce,
   ignoredError,
@@ -12,8 +13,60 @@ import {
   alert,
 } from '@/utils'
 
+import { useRulesetsStore } from './rulesets'
+
 export const useProfilesStore = defineStore('profiles', () => {
   const profiles = ref<IProfile[]>([])
+
+  const pruneInvalidRulesetRefs = (profile: IProfile) => {
+    const rulesets = useRulesetsStore().rulesets
+    const canValidateLocalRulesets = rulesets.length > 0
+    const validLocalRulesets = new Set(rulesets.map((item) => item.id))
+    let changed = false
+
+    profile.route.rule_set = profile.route.rule_set.filter((ruleset) => {
+      if (ruleset.type !== RulesetType.Local) {
+        changed = true
+        return false
+      }
+      if (canValidateLocalRulesets && !validLocalRulesets.has(ruleset.path)) {
+        changed = true
+        return false
+      }
+      return true
+    })
+
+    const validProfileRulesets = new Set(profile.route.rule_set.map((ruleset) => ruleset.id))
+    const normalizeRulesetPayload = <TRule extends { type: string; payload: string }>(rules: TRule[]) =>
+      rules.flatMap((rule) => {
+        if (rule.type !== RuleType.RuleSet || !canValidateLocalRulesets) {
+          return [rule]
+        }
+
+        const payload = rule.payload
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .filter((item) => validProfileRulesets.has(item))
+
+        if (payload.length === 0) {
+          changed = true
+          return []
+        }
+
+        if (payload.join(',') !== rule.payload) {
+          changed = true
+          return [{ ...rule, payload: payload.join(',') }]
+        }
+
+        return [rule]
+      })
+
+    profile.route.rules = normalizeRulesetPayload(profile.route.rules)
+    profile.dns.rules = normalizeRulesetPayload(profile.dns.rules)
+
+    return changed
+  }
 
   const setupProfiles = async () => {
     const data = await ignoredError(ReadFile, ProfilesFilePath)
@@ -74,19 +127,7 @@ export const useProfilesStore = defineStore('profiles', () => {
         }
       })
 
-      // Remove deprecated remote ruleset references to avoid boot failures when offline
-      const routeRuleCount = profile.route.rules.length
-      profile.route.rules = profile.route.rules.filter((rule) => rule.type !== 'rule_set')
-      if (profile.route.rules.length !== routeRuleCount) {
-        needsDiskSync = true
-      }
-      if (profile.route.rule_set?.length) {
-        profile.route.rule_set = []
-        needsDiskSync = true
-      }
-      const dnsRuleCount = profile.dns.rules.length
-      profile.dns.rules = profile.dns.rules.filter((rule) => rule.type !== 'rule_set')
-      if (profile.dns.rules.length !== dnsRuleCount) {
+      if (pruneInvalidRulesetRefs(profile)) {
         needsDiskSync = true
       }
     })

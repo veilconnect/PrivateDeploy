@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
-import { EventsOn, WindowHide, IsStartup } from '@/bridge'
-import { NavigationBar, TitleBar } from '@/components'
+import { EventsOn, WindowHide, WindowShow, WindowUnminimise, IsStartup } from '@/bridge'
+import { TitleBar, WorkspaceHeader } from '@/components'
 import * as Stores from '@/stores'
 import { confirm, exitApp, sampleID, sleep, message } from '@/utils'
+import { ensureBuiltinPresets } from '@/utils/builtinPresets'
 import AboutView from '@/views/AboutView.vue'
 import CommandView from '@/views/CommandView.vue'
 import SplashView from '@/views/SplashView.vue'
@@ -12,6 +14,7 @@ import SplashView from '@/views/SplashView.vue'
 const loading = ref(true)
 const percent = ref(0)
 const hasError = ref(false)
+const route = useRoute()
 
 const envStore = Stores.useEnvStore()
 const appStore = Stores.useAppStore()
@@ -21,8 +24,17 @@ const rulesetsStore = Stores.useRulesetsStore()
 const appSettings = Stores.useAppSettingsStore()
 const kernelApiStore = Stores.useKernelApiStore()
 const subscribesStore = Stores.useSubscribesStore()
-const scheduledTasksStore = Stores.useScheduledTasksStore()
 const cloudStore = Stores.useCloudStore()
+const showWorkspaceHeader = computed(() => route.name !== 'Wizard')
+
+const revealMainWindow = async () => {
+  await sleep(50)
+  WindowShow()
+  WindowUnminimise()
+  await sleep(150)
+  WindowShow()
+  WindowUnminimise()
+}
 
 EventsOn('onLaunchApp', async (args: string[]) => {
   const url = new URL(args[0])
@@ -67,14 +79,12 @@ envStore.setupEnv().then(async () => {
     message.error(err)
   }
 
-  await Promise.all([
-    appSettings.setupAppSettings(),
-    profilesStore.setupProfiles(),
-    subscribesStore.setupSubscribes(),
-    rulesetsStore.setupRulesets(),
-    pluginsStore.setupPlugins(),
-    scheduledTasksStore.setupScheduledTasks(),
-  ])
+  await appSettings.setupAppSettings()
+  await subscribesStore.setupSubscribes()
+  await rulesetsStore.setupRulesets()
+  await profilesStore.setupProfiles()
+  await ensureBuiltinPresets()
+  await pluginsStore.setupPlugins()
 
   if (envStore.capabilities.systemProxySupported && !appSettings.app.systemProxyPolicyInitialized) {
     const enableAutoProxy = await confirm(
@@ -132,6 +142,7 @@ envStore.setupEnv().then(async () => {
   await sleep(Math.max(0, 1000 - duration))
 
   loading.value = false
+  await revealMainWindow()
   await kernelApiStore.updateCoreState()
 
   percent.value = 100
@@ -156,9 +167,9 @@ envStore.setupEnv().then(async () => {
   </SplashView>
   <template v-else>
     <TitleBar />
-    <div class="flex-1 overflow-y-auto flex flex-col p-8">
-      <NavigationBar />
-      <div class="flex flex-col overflow-y-auto mt-8 px-8 h-full">
+    <div class="flex-1 overflow-y-auto flex flex-col px-8 pb-8 pt-6">
+      <WorkspaceHeader v-if="showWorkspaceHeader" />
+      <div class="flex flex-col overflow-y-auto h-full px-8">
         <RouterView #="{ Component }">
           <KeepAlive>
             <component :is="Component" />

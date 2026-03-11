@@ -2,6 +2,7 @@ import type { Plugin, App, Component } from 'vue'
 
 export { default as TitleBar } from './TitleBar.vue'
 export { default as NavigationBar } from './NavigationBar.vue'
+export { default as WorkspaceHeader } from './WorkspaceHeader.vue'
 
 const Components = import.meta.glob<Component>('./*/index.vue', {
   eager: true,

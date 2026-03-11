@@ -90,9 +90,10 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     addPluginToMenu: false,
     addGroupToMenu: false,
     rollingRelease: true,
+    builtinPresetsVersion: 0,
     debugOutline: false,
     debugNoAnimation: false,
-    pages: ['Overview', 'Profiles', 'Deploy'],
+    pages: ['Workbench'],
   })
 
   const saveAppSettings = debounce((config: string) => {
@@ -185,6 +186,9 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     if (app.value.kernel.concurrencyLimit === undefined) {
       app.value.kernel.concurrencyLimit = DefaultConcurrencyLimit
     }
+    if (app.value.builtinPresetsVersion === undefined) {
+      app.value.builtinPresetsVersion = 0
+    }
     if (app.value.webviewGpuPolicy === undefined) {
       app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
     }
@@ -217,16 +221,8 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     if (!app.value.kernel.cardColumns) {
       app.value.kernel.cardColumns = DefaultCardColumns
     }
-    if (app.value.pages?.includes('Subscriptions')) {
-      app.value.pages = app.value.pages.map((page) => (page === 'Subscriptions' ? 'Deploy' : page))
-    }
     if (Array.isArray(app.value.pages)) {
-      const cleanedPages = app.value.pages.filter((page) => page !== 'Plugins')
-      if (!cleanedPages.includes('Deploy')) {
-        const insertIndex = Math.min(2, cleanedPages.length)
-        cleanedPages.splice(insertIndex, 0, 'Deploy')
-      }
-      app.value.pages = cleanedPages
+      app.value.pages = ['Workbench']
     }
     // @ts-expect-error(Deprecated)
     if (app.value.kernel.running !== undefined) {
