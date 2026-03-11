@@ -269,7 +269,7 @@ curl http://localhost:8443/api/v1/system/info \
 - [移动端开发计划](./MOBILE_DEVELOPMENT_PLAN.md)
 - [API 接口设计](./API_DESIGN.md)
 - [实施路线图](./IMPLEMENTATION_ROADMAP.md)
-- [API README](./api/README.md)
+- [API README](../api/README.md)
 
 ---
 

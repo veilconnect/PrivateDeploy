@@ -17,7 +17,8 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 
 	// Handlers
 	authHandler := handlers.NewAuthHandler(db, cfg)
-	systemHandler := handlers.NewSystemHandler("1.10.1", "/opt/privatedeploy")
+	// Version must match bridge.Env.AppVersion (single source of truth: bridge/bridge.go)
+	systemHandler := handlers.NewSystemHandler("v1.10.1", "/opt/privatedeploy")
 	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
 	// Note: These require actual implementations, using nil for now

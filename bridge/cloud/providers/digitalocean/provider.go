@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"crypto/rand"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -565,7 +565,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		realityPrivateKey = ""
 		realityPublicKey = ""
 	}
-	realityShortID := fmt.Sprintf("%016x", mathrand.Int63())
+	realityShortID := generateShortID()
 
 	// Generate cloud-init user data script
 	userData := deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
@@ -982,6 +982,16 @@ func mergeExtra(base, override map[string]string) map[string]string {
 		}
 	}
 	return merged
+}
+
+// generateShortID returns a cryptographically random 16-character hex string
+// suitable for use as a Reality short ID.
+func generateShortID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
+	return fmt.Sprintf("%016x", b)
 }
 
 func parseServiceReadyTimeout(extra map[string]string, fallback time.Duration) time.Duration {

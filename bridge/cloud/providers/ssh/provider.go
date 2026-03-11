@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"crypto/rand"
 	"fmt"
 	"log"
-	mathrand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,7 +282,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		realityPrivateKey = ""
 		realityPublicKey = ""
 	}
-	realityShortID := fmt.Sprintf("%016x", mathrand.Int63())
+	realityShortID := generateShortID()
 
 	// 4. Generate and execute deployment script
 	var script string
@@ -604,6 +604,16 @@ func mergeExtra(base, override map[string]string) map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// generateShortID returns a cryptographically random 16-character hex string
+// suitable for use as a Reality short ID.
+func generateShortID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
+	return fmt.Sprintf("%016x", b)
 }
 
 func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {

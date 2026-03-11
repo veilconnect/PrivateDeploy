@@ -16,8 +16,7 @@ import (
 	"privatedeploy/api/routes"
 	"privatedeploy/api/utils"
 	"privatedeploy/bridge/cloud"
-	"privatedeploy/bridge/cloud/providers/digitalocean"
-	"privatedeploy/bridge/cloud/providers/vultr"
+	"privatedeploy/bridge/cloud/defaults"
 	"strings"
 	"time"
 
@@ -194,14 +193,8 @@ func generateSecureToken(length int) string {
 
 // initializeCloudManager sets up the cloud provider manager
 func initializeCloudManager() *cloud.Manager {
-	// Create manager with explicit provider registry
-	registry := cloud.NewRegistry()
-	vultrProvider := vultr.New(nil)
-	digitaloceanProvider := digitalocean.New(nil)
-
-	registry.Register("vultr", vultrProvider)
-	registry.Register("digitalocean", digitaloceanProvider)
-
+	// Create manager with shared default provider registry
+	registry := defaults.Registry()
 	manager := cloud.NewManager(context.Background(), registry)
 
 	// Set Vultr as the default active provider
@@ -209,7 +202,7 @@ func initializeCloudManager() *cloud.Manager {
 		log.Printf("⚠️  Warning: Failed to set default provider: %v", err)
 	}
 
-	log.Println("📦 Registered cloud providers: vultr, digitalocean")
+	log.Printf("📦 Registered cloud providers: %v", registry.List())
 	return manager
 }
 

@@ -519,11 +519,11 @@ Mobile - Test and Analyze #2
 - [Wails 文档](https://wails.io/docs/introduction)
 
 ### 项目文档
-- [GitHub Actions 完整指南](mobile/GITHUB_ACTIONS_GUIDE.md)
-- [快速开始指南](mobile/QUICK_START_GITHUB_ACTIONS.md)
-- [故障排除指南](mobile/GITHUB_ACTIONS_FIX.md)
-- [Android 集成指南](mobile/ANDROID_INTEGRATION.md)
-- [iOS 集成指南](mobile/IOS_INTEGRATION.md)
+- [GitHub Actions 完整指南](../mobile/GITHUB_ACTIONS_GUIDE.md)
+- [快速开始指南](../mobile/QUICK_START_GITHUB_ACTIONS.md)
+- [故障排除指南](../mobile/GITHUB_ACTIONS_FIX.md)
+- [Android 集成指南](../mobile/ANDROID_INTEGRATION.md)
+- [iOS 集成指南](../mobile/IOS_INTEGRATION.md)
 
 ---
 

@@ -6,9 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"crypto/rand"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -698,7 +698,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate reality key pair: %w", err)
 		}
-		realityShortID = fmt.Sprintf("%016x", mathrand.Int63())
+		realityShortID = generateShortID()
 
 		userData = deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
 			SSPort:           ssPort,
@@ -1102,6 +1102,16 @@ func appendUniqueInt(list *[]int, candidate int) {
 		}
 	}
 	*list = append(*list, candidate)
+}
+
+// generateShortID returns a cryptographically random 16-character hex string
+// suitable for use as a Reality short ID.
+func generateShortID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
+	return fmt.Sprintf("%016x", b)
 }
 
 func parseServiceReadyTimeout(extra map[string]string, fallback time.Duration) time.Duration {

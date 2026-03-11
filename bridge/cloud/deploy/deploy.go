@@ -126,10 +126,14 @@ systemctl enable docker
 systemctl start docker
 sleep 3
 
+# Create dedicated service user
+useradd --system --no-create-home --shell /usr/sbin/nologin privatedeploy 2>/dev/null || true
+
 # Generate self-signed certificates
 echo "[3/8] Generating TLS certificates..."
 mkdir -p /etc/privatedeploy/{hysteria,trojan,vless}
 chmod 700 /etc/privatedeploy /etc/privatedeploy/hysteria /etc/privatedeploy/trojan /etc/privatedeploy/vless
+chown -R privatedeploy:privatedeploy /etc/privatedeploy
 
 generate_cert() {
   local cert_path="$1"
@@ -261,6 +265,10 @@ Type=simple
 ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/hysteria/config.json
 Restart=always
 RestartSec=5
+User=privatedeploy
+Group=privatedeploy
+ProtectSystem=strict
+ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -332,6 +340,10 @@ Type=simple
 ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/config.json
 Restart=always
 RestartSec=5
+User=privatedeploy
+Group=privatedeploy
+ProtectSystem=strict
+ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -389,6 +401,10 @@ Type=simple
 ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/trojan/config.json
 Restart=always
 RestartSec=5
+User=privatedeploy
+Group=privatedeploy
+ProtectSystem=strict
+ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -455,6 +471,7 @@ if renew_if_due /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key
 fi
 
 if [ "$changed" -eq 1 ]; then
+  chown -R privatedeploy:privatedeploy /etc/privatedeploy
   systemctl restart hysteria-server >/dev/null 2>&1 || true
   systemctl restart trojan-server >/dev/null 2>&1 || true
 fi

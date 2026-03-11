@@ -44,8 +44,8 @@ Reality parameters (public key + short ID) are stored on the VPS under `/etc/pri
 
 ## Additional Documentation
 
-- `MULTI-PROTOCOL-DESIGN.md` – Deep dive into the multi-protocol deployment flow.
-- `DEPLOYMENT-IMPROVEMENTS.md` – Notes on user-data hardening and firewall fixes.
+- `docs/MULTI-PROTOCOL-DESIGN.md` – Deep dive into the multi-protocol deployment flow.
+- `docs/DEPLOYMENT-IMPROVEMENTS.md` – Notes on user-data hardening and firewall fixes.
 - `docs/GO-NO-GO-CHECKLIST.md` – Release decision checklist with rollback template.
 
 ## Quality Gate (Local)

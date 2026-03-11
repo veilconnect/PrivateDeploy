@@ -16,10 +16,8 @@ import (
 	sysruntime "runtime"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/defaults"
 	"privatedeploy/bridge/cloud/health"
-	"privatedeploy/bridge/cloud/providers/digitalocean"
-	sshprovider "privatedeploy/bridge/cloud/providers/ssh"
-	"privatedeploy/bridge/cloud/providers/vultr"
 	filesystem "privatedeploy/bridge/services/filesystem"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -41,7 +39,7 @@ var Env = &EnvResult{
 	IsStartup:    true,
 	FromTaskSch:  false,
 	AppName:      "",
-	AppVersion:   "v1.10.0",
+	AppVersion:   "v1.10.1",
 	BasePath:     "",
 	OS:           sysruntime.GOOS,
 	ARCH:         sysruntime.GOARCH,
@@ -75,24 +73,8 @@ func CreateApp(fs embed.FS) *App {
 	app := NewApp()
 	app.FileService = filesystem.NewService(Env.BasePath)
 
-	// Initialize CloudManager with explicit provider registry
-	registry := cloud.NewRegistry()
-	vultrProvider := vultr.New(nil)
-	digitaloceanProvider := digitalocean.New(nil)
-	sshProvider := sshprovider.New(nil)
-
-	registry.Register("vultr", vultrProvider)
-	registry.Register("digitalocean", digitaloceanProvider)
-	registry.Register("ssh", sshProvider)
-	// Extra catalog providers remain in-tree but are intentionally disabled
-	// until their live validation coverage is restored.
-	// registry.Register("hetzner", catalog.NewHetzner(nil))
-	// registry.Register("linode", catalog.NewLinode(nil))
-	// registry.Register("scaleway", catalog.NewScaleway(nil))
-	// registry.Register("upcloud", catalog.NewUpCloud(nil))
-	// registry.Register("contabo", catalog.NewContabo(nil))
-	// registry.Register("oracle", catalog.NewOracle(nil))
-
+	// Initialize CloudManager with shared default provider registry
+	registry := defaults.Registry()
 	app.CloudManager = cloud.NewManager(context.Background(), registry)
 	app.HealthMonitor = health.NewMonitor(5 * time.Minute)
 
