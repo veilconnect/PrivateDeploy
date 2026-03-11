@@ -1206,12 +1206,9 @@ export const useCloudStore = defineStore('cloud', () => {
       )
       ensureFlag(res.flag, res.data)
       const rawNodes = parseJSON<Record<string, any>[]>(res.data, [])
-      console.log('[CloudStore] Raw nodes from backend:', rawNodes.length, rawNodes)
       const normalizedNodes = rawNodes
         .map((node) => normalizeCloudNode(node, currentProvider.value))
-      console.log('[CloudStore] Normalized nodes:', normalizedNodes.length, normalizedNodes)
       const filteredNodes = normalizedNodes.filter((node) => node.instanceId)
-      console.log('[CloudStore] After filtering by instanceId:', filteredNodes.length, filteredNodes)
       const nodesToProcess = filteredNodes
 
       await Promise.all(

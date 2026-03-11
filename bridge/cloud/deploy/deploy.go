@@ -4,9 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	mathrand "math/rand"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/curve25519"
 )
@@ -36,7 +34,7 @@ type MultiProtocolParams struct {
 func GenerateUUID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		mathrand.Read(b)
+		panic("crypto/rand is unavailable: " + err.Error())
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
@@ -52,7 +50,7 @@ func GenerateRandomPassword(length int) string {
 	}
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
-		mathrand.Read(b)
+		panic("crypto/rand is unavailable: " + err.Error())
 	}
 	return base64.URLEncoding.EncodeToString(b)[:length]
 }
@@ -61,9 +59,7 @@ func GenerateRandomPassword(length int) string {
 func GenerateRealityKeyPair() (privateKey, publicKey string, err error) {
 	priv := make([]byte, 32)
 	if _, err := rand.Read(priv); err != nil {
-		for i := range priv {
-			priv[i] = byte(mathrand.Intn(256))
-		}
+		return "", "", fmt.Errorf("crypto/rand is unavailable: %w", err)
 	}
 
 	priv[0] &= 248
@@ -584,6 +580,3 @@ echo "=== PrivateDeploy Lightweight Init Completed at $(date) ==="
 `, ssPort, shellEscape(ssPassword))
 }
 
-func init() {
-	mathrand.Seed(time.Now().UnixNano())
-}

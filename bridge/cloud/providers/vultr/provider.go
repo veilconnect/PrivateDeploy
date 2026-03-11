@@ -1463,8 +1463,8 @@ func (p *Provider) CleanInvalidNodes(ctx context.Context) (int, error) {
 		if validateNodeRecord(record) {
 			validRecords[id] = record
 		} else {
-			fmt.Printf("[CleanInvalidNodes] Removing invalid node: %s (label=%s, ssPort=%d, ssPassword=%s)\n",
-				id, record.Label, record.SSPort, record.SSPassword)
+			fmt.Printf("[CleanInvalidNodes] Removing invalid node: %s (label=%s, ssPort=%d)\n",
+				id, record.Label, record.SSPort)
 			removed++
 		}
 	}

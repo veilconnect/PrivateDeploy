@@ -195,7 +195,7 @@ func (a *App) ListCloudInstances() FlagResult {
 
 // CreateCloudInstance creates a new instance on the active provider
 func (a *App) CreateCloudInstance(optionsJSON string) FlagResult {
-	log.Printf("[CloudBridge] CreateCloudInstance called with options: %s", optionsJSON)
+	log.Printf("[CloudBridge] CreateCloudInstance called (options redacted for security)")
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {

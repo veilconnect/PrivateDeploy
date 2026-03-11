@@ -60,7 +60,7 @@ func (a *App) StartServer(address string, serverID string, options ServerOptions
 		Handler: mux,
 	}
 
-	var result error
+	errCh := make(chan error, 1)
 
 	go func() {
 		var err error
@@ -69,15 +69,16 @@ func (a *App) StartServer(address string, serverID string, options ServerOptions
 		} else {
 			err = server.ListenAndServe()
 		}
-		if err != nil {
-			result = err
+		if err != nil && err != http.ErrServerClosed {
+			errCh <- err
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
-
-	if result != nil {
-		return FlagResult{false, result.Error()}
+	select {
+	case err := <-errCh:
+		return FlagResult{false, err.Error()}
+	case <-time.After(1 * time.Second):
+		// Server started successfully (no immediate error)
 	}
 
 	serverMap.Store(serverID, server)
@@ -174,7 +175,15 @@ func (a *App) handleHttpRequest(serverID string) http.HandlerFunc {
 
 		runtime.EventsEmit(a.Ctx, serverID, requestID, r.Method, r.URL.RequestURI(), r.Header, body)
 
-		res := <-respChan
+		var res ResponseData
+		select {
+		case res = <-respChan:
+		case <-time.After(30 * time.Second):
+			runtime.EventsOff(a.Ctx, requestID)
+			w.WriteHeader(504)
+			w.Write([]byte("Gateway timeout: frontend did not respond within 30s"))
+			return
+		}
 		for key, value := range res.Headers {
 			w.Header().Set(key, value)
 		}
