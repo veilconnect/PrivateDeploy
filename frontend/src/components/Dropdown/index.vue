@@ -124,6 +124,13 @@ const onDomClick = (e: MouseEvent) => {
   }
 }
 
+const onKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && show.value) {
+    e.stopPropagation()
+    close()
+  }
+}
+
 onMounted(() => {
   if (hasTrigger('click')) {
     document.addEventListener('click', onDomClick)
@@ -145,13 +152,15 @@ onUnmounted(() => {
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     @click="onClick"
+    @keydown="onKeydown"
     class="gui-dropdown relative inline-flex flex-col items-center"
   >
-    <slot v-bind="{ open, close, toggle }"></slot>
+    <slot v-bind="{ open, close, toggle, expanded: show }"></slot>
     <Transition name="overlay">
       <div
         v-show="show"
         ref="overlayRef"
+        role="menu"
         :style="overlayStyle"
         class="gui-dropdown-overlay fixed z-99 rounded-8 backdrop-blur-sm shadow overflow-y-auto"
         @click.stop

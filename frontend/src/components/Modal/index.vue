@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch } from 'vue'
+import { computed, onUnmounted, provide, ref, watch, nextTick, useTemplateRef } from 'vue'
 
 import { useBool } from '@/hooks'
 import useI18n from '@/lang'
@@ -145,6 +145,48 @@ watch(open, (v) => {
 
 provide('cancel', handleCancel)
 provide('submit', handleSubmit)
+
+const modalRef = useTemplateRef('modalRef')
+const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`
+
+const trapFocus = (e: KeyboardEvent) => {
+  if (e.key !== 'Tab' || !modalRef.value) return
+  const focusable = modalRef.value.querySelectorAll<HTMLElement>(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+let previousFocus: HTMLElement | null = null
+
+watch(open, async (v) => {
+  if (v) {
+    previousFocus = document.activeElement as HTMLElement
+    await nextTick()
+    const firstFocusable = modalRef.value?.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+    firstFocusable?.focus()
+    document.addEventListener('keydown', trapFocus)
+  } else {
+    document.removeEventListener('keydown', trapFocus)
+    previousFocus?.focus()
+    previousFocus = null
+  }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', trapFocus)
+})
 </script>
 
 <template>
@@ -158,6 +200,10 @@ provide('submit', handleSubmit)
         style="--wails-draggable: drag"
       >
         <div
+          ref="modalRef"
+          role="dialog"
+          aria-modal="true"
+          :aria-labelledby="titleId"
           :style="contentStyle"
           :class="props.class"
           class="gui-modal-modal transition duration-200 flex flex-col rounded-8 shadow"
@@ -170,12 +216,12 @@ provide('submit', handleSubmit)
             style="--wails-draggable: drag"
           >
             <slot name="title">
-              <div v-if="title" class="font-bold">{{ t(title) }}</div>
+              <div v-if="title" :id="titleId" class="font-bold">{{ t(title) }}</div>
             </slot>
             <div class="ml-auto">
               <slot name="toolbar"></slot>
               <!-- <Button v-if="toolbar.minimize" @click="toggleMinimize" icon="minimize" type="text" /> -->
-              <Button v-if="toolbar.maximize" @click="toggleMaximize" type="text">
+              <Button v-if="toolbar.maximize" @click="toggleMaximize" type="text" :aria-label="isMaximize ? 'Restore' : 'Maximize'">
                 <Icon
                   :class="{ maximize: isMaximize }"
                   icon="arrowDown"

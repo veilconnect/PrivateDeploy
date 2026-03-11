@@ -1,14 +1,10 @@
 import { type RouteRecordRaw } from 'vue-router'
 
-import SettingsView from '@/views/SettingsView/index.vue'
-import WizardView from '@/views/WizardView/index.vue'
-import WorkbenchView from '@/views/WorkbenchView/index.vue'
-
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Workbench',
-    component: WorkbenchView,
+    component: () => import('@/views/WorkbenchView/index.vue'),
     meta: {
       name: 'router.workbench',
       icon: 'overview',
@@ -17,7 +13,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/settings',
     name: 'Settings',
-    component: SettingsView,
+    component: () => import('@/views/SettingsView/index.vue'),
     meta: {
       name: 'router.settings',
       icon: 'settings2',
@@ -27,7 +23,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/wizard',
     name: 'Wizard',
-    component: WizardView,
+    component: () => import('@/views/WizardView/index.vue'),
     meta: {
       name: 'router.wizard',
       icon: 'sparkle',

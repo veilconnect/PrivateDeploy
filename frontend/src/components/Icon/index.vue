@@ -32,5 +32,7 @@ withDefaults(defineProps<Props>(), { size: 16 })
     :width="size + 'px'"
     :height="size + 'px'"
     fill="var(--color)"
+    :aria-hidden="$attrs['aria-label'] ? undefined : 'true'"
+    role="img"
   />
 </template>

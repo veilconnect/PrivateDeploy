@@ -32,24 +32,37 @@ const toggle = () => {
 </script>
 
 <template>
-  <div
+  <button
+    type="button"
+    role="switch"
+    :aria-checked="model"
+    :aria-disabled="disabled"
     @click="toggle"
+    @keydown.space.prevent="toggle"
     v-tips.slow="label"
     :class="[size, border, model ? 'on' : 'off', disabled ? 'disabled' : '']"
     class="gui-switch relative cursor-pointer h-24 inline-flex items-center rounded-full text-12"
   >
-    <div class="dot absolute h-18 w-18 rounded-full duration-200"></div>
+    <div class="dot absolute h-18 w-18 rounded-full duration-200" aria-hidden="true"></div>
 
     <div v-if="$slots.default || label" class="slot line-clamp-1 break-all">
       <span v-if="label">{{ t(label) }}</span>
       <slot v-if="$slots.default"></slot>
     </div>
-  </div>
+  </button>
 </template>
 
 <style lang="less" scoped>
 .gui-switch {
   min-width: 50px;
+  border: none;
+  padding: 0;
+  font: inherit;
+  background: none;
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
   .slot {
     transition: margin 0.2s;
   }

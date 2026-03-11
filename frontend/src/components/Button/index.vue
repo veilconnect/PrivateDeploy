@@ -20,17 +20,20 @@ withDefaults(defineProps<Props>(), {
 </script>
 
 <template>
-  <div
-    :class="[type, size, { 'pointer-events-none': disabled || loading }]"
+  <button
+    :class="[type, size]"
+    :disabled="disabled || loading"
+    :aria-busy="loading"
     class="gui-button inline-flex items-center justify-center text-center align-middle rounded-6 text-14 text-nowrap cursor-pointer px-12 py-6 duration-200"
   >
-    <Icon v-if="loading" :fill="`var(--btn-${type}-color)`" icon="loading" class="rotation" />
+    <Icon v-if="loading" :fill="`var(--btn-${type}-color)`" icon="loading" class="rotation" aria-hidden="true" />
     <template v-else>
       <Icon
         v-if="disabled"
         :fill="`var(--btn-${type}-color)`"
         icon="forbidden"
         class="pointer-events-none shrink-0"
+        aria-hidden="true"
       />
       <Icon
         v-if="icon"
@@ -38,13 +41,27 @@ withDefaults(defineProps<Props>(), {
         :size="iconSize"
         :fill="iconColor || `var(--btn-${type}-color)`"
         :class="$slots.default ? 'mr-4' : ''"
+        aria-hidden="true"
       />
     </template>
     <slot></slot>
-  </div>
+  </button>
 </template>
 
 <style lang="less" scoped>
+.gui-button {
+  border: 1px solid transparent;
+  font: inherit;
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+  &:disabled {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+}
+
 .normal {
   color: var(--btn-normal-color);
   background-color: var(--btn-normal-bg);
