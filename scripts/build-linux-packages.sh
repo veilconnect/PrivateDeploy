@@ -38,25 +38,26 @@ GOOS=linux GOARCH=amd64 wails build \
 # 3. 创建临时打包目录
 STAGING_DIR="/tmp/${APP_NAME}-packaging"
 rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR"/{usr/bin,usr/share/applications,usr/share/pixmaps,usr/share/${APP_NAME}}
+mkdir -p "$STAGING_DIR"/{usr/bin,usr/lib/${APP_NAME},usr/share/applications,usr/share/pixmaps}
 
 # 4. 复制文件到临时目录
 echo "==> 第 3 步: 准备打包文件（排除敏感配置）"
-cp "build/bin/$APP_DISPLAY_NAME" "$STAGING_DIR/usr/bin/$APP_NAME"
-chmod +x "$STAGING_DIR/usr/bin/$APP_NAME"
+cp "build/bin/$APP_DISPLAY_NAME" "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
+chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
+ln -s "../lib/$APP_NAME/$APP_NAME" "$STAGING_DIR/usr/bin/$APP_NAME"
 
 # 只复制必要的数据文件（不含敏感配置）
-mkdir -p "$STAGING_DIR/usr/share/${APP_NAME}/data/sing-box"
-mkdir -p "$STAGING_DIR/usr/share/${APP_NAME}/data/subscribes"
-mkdir -p "$STAGING_DIR/usr/share/${APP_NAME}/data/cloud"
+mkdir -p "$STAGING_DIR/usr/lib/${APP_NAME}/data/sing-box"
+mkdir -p "$STAGING_DIR/usr/lib/${APP_NAME}/data/subscribes"
+mkdir -p "$STAGING_DIR/usr/lib/${APP_NAME}/data/cloud"
 
 # 复制核心文件
-cp "build/bin/data/sing-box/sing-box" "$STAGING_DIR/usr/share/${APP_NAME}/data/sing-box/"
-chmod +x "$STAGING_DIR/usr/share/${APP_NAME}/data/sing-box/sing-box"
+cp "build/bin/data/sing-box/sing-box" "$STAGING_DIR/usr/lib/${APP_NAME}/data/sing-box/"
+chmod +x "$STAGING_DIR/usr/lib/${APP_NAME}/data/sing-box/sing-box"
 
 # 复制资源文件（图标、图片）
 if [ -d "build/bin/data/.cache" ]; then
-    cp -r "build/bin/data/.cache" "$STAGING_DIR/usr/share/${APP_NAME}/data/"
+    cp -r "build/bin/data/.cache" "$STAGING_DIR/usr/lib/${APP_NAME}/data/"
 fi
 
 # 不复制敏感文件：

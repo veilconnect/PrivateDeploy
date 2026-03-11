@@ -45,7 +45,8 @@ const menus: Menu[] = [
         message.error('Not Support')
         return
       }
-      const regex = /(\b((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}|(?:\d{1,3}\.){3}\d{1,3})(:\d+)?\b)/g
+      // Match IPv4, IPv6 (bracketed), and domain names with optional port
+      const regex = /(\[[\da-fA-F:]+\](?::\d+)?|(?:(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?)/g
       const matches = payload.match(regex)
       if (!matches) {
         message.error('Not Matched')
@@ -55,8 +56,18 @@ const menus: Menu[] = [
       const options: PickerItem<Record<string, any>[]>[] = []
 
       matches.forEach((match: string) => {
-        // FIXME: IPv6
-        const address = match.split(':')[0]
+        // Strip brackets and port for address extraction
+        let address = match
+        if (address.startsWith('[')) {
+          // IPv6: [::1]:port or [::1]
+          address = address.replace(/^\[/, '').replace(/\](:\d+)?$/, '')
+        } else {
+          // IPv4 or domain: strip port
+          const lastColon = address.lastIndexOf(':')
+          if (lastColon > 0 && /^\d+$/.test(address.slice(lastColon + 1))) {
+            address = address.slice(0, lastColon)
+          }
+        }
         if (isValidIPv4(address) || isValidIPv6(address)) {
           options.push({
             label: t('kernel.rules.type.ip_cidr'),

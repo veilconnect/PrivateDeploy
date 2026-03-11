@@ -112,7 +112,7 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("invalid provider: expected ssh, got %s", config.Provider)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(p.configPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.configPath), 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -581,7 +581,7 @@ func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
 	sshNodesMu.Lock()
 	defer sshNodesMu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(p.nodesPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.nodesPath), 0o750); err != nil {
 		return err
 	}
 

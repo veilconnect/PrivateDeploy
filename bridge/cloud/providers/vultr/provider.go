@@ -3,10 +3,10 @@ package vultr
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -96,9 +96,11 @@ type vultrOS struct {
 }
 
 type vultrFirewallGroup struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	DateCreated string `json:"date_created"`
+	ID           string `json:"id"`
+	Description  string `json:"description"`
+	DateCreated  string `json:"date_created"`
+	RuleCount    int    `json:"rule_count"`
+	MaxRuleCount int    `json:"max_rule_count"`
 }
 
 type vultrFirewallRule struct {
@@ -180,7 +182,7 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(p.configPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.configPath), 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -325,7 +327,7 @@ func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
 	nodesMu.Lock()
 	defer nodesMu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(p.nodesPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.nodesPath), 0o750); err != nil {
 		return err
 	}
 
@@ -836,12 +838,18 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		}
 
 		// Configure firewall after instance is active
-		if firewallID, err := p.ensureFirewallGroup(ctx); err == nil {
+		if firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ssPort, hysteriaPort, vlessPort, trojanPort)); err == nil {
 			// Add firewall rules for this instance's ports
 			if err := p.ensureFirewallRules(ctx, firewallID, ssPort, hysteriaPort, vlessPort, trojanPort, opts.Label); err == nil {
 				// Attach firewall to instance
-				_ = p.attachFirewallToInstance(ctx, instanceID, firewallID)
+				if err := p.attachFirewallToInstance(ctx, instanceID, firewallID); err != nil {
+					fmt.Printf("[VultrProvider] Warning: failed to attach firewall: %v\n", err)
+				}
+			} else {
+				fmt.Printf("[VultrProvider] Warning: failed to configure firewall rules: %v\n", err)
 			}
+		} else {
+			fmt.Printf("[VultrProvider] Warning: failed to ensure firewall group: %v\n", err)
 		}
 
 		// Wait until externally reachable protocol ports are ready to reduce false "create succeeded but unusable" states.
@@ -1244,8 +1252,8 @@ func (p *Provider) getInstanceRaw(ctx context.Context, instanceID string) (vultr
 	return payload.Instance, nil
 }
 
-// ensureFirewallGroup gets or creates a firewall group for PrivateDeploy
-func (p *Provider) ensureFirewallGroup(ctx context.Context) (string, error) {
+// ensureFirewallGroup gets or creates a firewall group for PrivateDeploy.
+func (p *Provider) ensureFirewallGroup(ctx context.Context, requiredRules int) (string, error) {
 	// List existing firewall groups
 	res, err := p.apiRequest(ctx, http.MethodGet, "/firewalls", nil)
 	if err != nil {
@@ -1259,16 +1267,30 @@ func (p *Provider) ensureFirewallGroup(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to parse firewall groups: %w", err)
 	}
 
-	// Check if PrivateDeploy firewall group already exists
+	hasPrivateDeployGroup := false
 	for _, fg := range listPayload.FirewallGroups {
 		if strings.Contains(fg.Description, "PrivateDeploy") {
+			hasPrivateDeployGroup = true
+			if firewallGroupHasCapacity(fg, requiredRules) {
+				return fg.ID, nil
+			}
+		}
+	}
+
+	// Fall back to any existing PrivateDeploy group when the API omits capacity metadata.
+	for _, fg := range listPayload.FirewallGroups {
+		if strings.Contains(fg.Description, "PrivateDeploy") && fg.MaxRuleCount == 0 && fg.RuleCount == 0 {
 			return fg.ID, nil
 		}
 	}
 
 	// Create a new firewall group
+	description := "PrivateDeploy Auto-Managed Firewall"
+	if hasPrivateDeployGroup {
+		description = fmt.Sprintf("%s (%s)", description, time.Now().UTC().Format("20060102-150405"))
+	}
 	createPayload := map[string]any{
-		"description": "PrivateDeploy Auto-Managed Firewall",
+		"description": description,
 	}
 
 	res, err = p.apiRequest(ctx, http.MethodPost, "/firewalls", createPayload)
@@ -1283,8 +1305,30 @@ func (p *Provider) ensureFirewallGroup(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to parse created firewall group: %w", err)
 	}
 
-	// Add default SSH rule
-	sshRule := vultrFirewallRule{
+	// Add default SSH rule.
+	if err := p.addFirewallRule(ctx, createResult.FirewallGroup.ID, sshFirewallRule()); err != nil {
+		return "", fmt.Errorf("failed to add SSH rule: %w", err)
+	}
+
+	return createResult.FirewallGroup.ID, nil
+}
+
+func firewallGroupHasCapacity(group vultrFirewallGroup, requiredRules int) bool {
+	if requiredRules <= 0 {
+		return true
+	}
+	if group.MaxRuleCount <= 0 {
+		return false
+	}
+	return group.RuleCount+requiredRules <= group.MaxRuleCount
+}
+
+func requiredFirewallRuleCount(ssPort, hysteriaPort, vlessPort, trojanPort int) int {
+	return len(firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, ""))
+}
+
+func sshFirewallRule() vultrFirewallRule {
+	return vultrFirewallRule{
 		IPType:     "v4",
 		Protocol:   "tcp",
 		Subnet:     "0.0.0.0",
@@ -1292,11 +1336,66 @@ func (p *Provider) ensureFirewallGroup(ctx context.Context) (string, error) {
 		Port:       "22",
 		Notes:      "SSH Access",
 	}
-	if err := p.addFirewallRule(ctx, createResult.FirewallGroup.ID, sshRule); err != nil {
-		return "", fmt.Errorf("failed to add SSH rule: %w", err)
-	}
+}
 
-	return createResult.FirewallGroup.ID, nil
+func firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort int, label string) []vultrFirewallRule {
+	rules := []vultrFirewallRule{sshFirewallRule()}
+	if ssPort > 0 {
+		ssPortStr := strconv.Itoa(ssPort)
+		rules = append(rules,
+			vultrFirewallRule{
+				IPType:     "v4",
+				Protocol:   "tcp",
+				Subnet:     "0.0.0.0",
+				SubnetSize: 0,
+				Port:       ssPortStr,
+				Notes:      fmt.Sprintf("%s Shadowsocks TCP", label),
+			},
+			vultrFirewallRule{
+				IPType:     "v4",
+				Protocol:   "udp",
+				Subnet:     "0.0.0.0",
+				SubnetSize: 0,
+				Port:       ssPortStr,
+				Notes:      fmt.Sprintf("%s Shadowsocks UDP", label),
+			},
+		)
+	}
+	if hysteriaPort > 0 {
+		rules = append(rules, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "udp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       strconv.Itoa(hysteriaPort),
+			Notes:      fmt.Sprintf("%s Hysteria2", label),
+		})
+	}
+	if vlessPort > 0 {
+		rules = append(rules, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "tcp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       strconv.Itoa(vlessPort),
+			Notes:      fmt.Sprintf("%s VLESS", label),
+		})
+	}
+	if trojanPort > 0 {
+		rules = append(rules, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "tcp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       strconv.Itoa(trojanPort),
+			Notes:      fmt.Sprintf("%s Trojan", label),
+		})
+	}
+	return rules
+}
+
+func firewallRuleKey(protocol, port string) string {
+	return fmt.Sprintf("%s:%s", protocol, port)
 }
 
 // addFirewallRule adds a rule to a firewall group
@@ -1333,92 +1432,15 @@ func (p *Provider) ensureFirewallRules(ctx context.Context, firewallID string, s
 	// Check which ports already have rules (using "protocol:port" as key to distinguish TCP/UDP)
 	existingRules := make(map[string]bool)
 	for _, rule := range listPayload.FirewallRules {
-		ruleKey := fmt.Sprintf("%s:%s", rule.Protocol, rule.Port)
-		existingRules[ruleKey] = true
+		existingRules[firewallRuleKey(rule.Protocol, rule.Port)] = true
 	}
 
-	// Add Shadowsocks TCP rule if not exist
-	ssPortStr := fmt.Sprintf("%d", ssPort)
-	ssTCPKey := fmt.Sprintf("tcp:%s", ssPortStr)
-	if !existingRules[ssTCPKey] {
-		if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
-			IPType:     "v4",
-			Protocol:   "tcp",
-			Subnet:     "0.0.0.0",
-			SubnetSize: 0,
-			Port:       ssPortStr,
-			Notes:      fmt.Sprintf("%s Shadowsocks TCP", label),
-		}); err != nil {
+	for _, rule := range firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, label) {
+		if existingRules[firewallRuleKey(rule.Protocol, rule.Port)] {
+			continue
+		}
+		if err := p.addFirewallRule(ctx, firewallID, rule); err != nil {
 			return err
-		}
-	}
-
-	// Add Shadowsocks UDP rule if not exist
-	ssUDPKey := fmt.Sprintf("udp:%s", ssPortStr)
-	if !existingRules[ssUDPKey] {
-		if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
-			IPType:     "v4",
-			Protocol:   "udp",
-			Subnet:     "0.0.0.0",
-			SubnetSize: 0,
-			Port:       ssPortStr,
-			Notes:      fmt.Sprintf("%s Shadowsocks UDP", label),
-		}); err != nil {
-			return err
-		}
-	}
-
-	// Add Hysteria2 rule if not exist and port is valid
-	if hysteriaPort > 0 {
-		hyPortStr := fmt.Sprintf("%d", hysteriaPort)
-		hyUDPKey := fmt.Sprintf("udp:%s", hyPortStr)
-		if !existingRules[hyUDPKey] {
-			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
-				IPType:     "v4",
-				Protocol:   "udp",
-				Subnet:     "0.0.0.0",
-				SubnetSize: 0,
-				Port:       hyPortStr,
-				Notes:      fmt.Sprintf("%s Hysteria2", label),
-			}); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Add VLESS rule if not exist and port is valid
-	if vlessPort > 0 {
-		vlessPortStr := fmt.Sprintf("%d", vlessPort)
-		vlessTCPKey := fmt.Sprintf("tcp:%s", vlessPortStr)
-		if !existingRules[vlessTCPKey] {
-			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
-				IPType:     "v4",
-				Protocol:   "tcp",
-				Subnet:     "0.0.0.0",
-				SubnetSize: 0,
-				Port:       vlessPortStr,
-				Notes:      fmt.Sprintf("%s VLESS", label),
-			}); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Add Trojan rule if not exist and port is valid
-	if trojanPort > 0 {
-		trojanPortStr := fmt.Sprintf("%d", trojanPort)
-		trojanTCPKey := fmt.Sprintf("tcp:%s", trojanPortStr)
-		if !existingRules[trojanTCPKey] {
-			if err := p.addFirewallRule(ctx, firewallID, vultrFirewallRule{
-				IPType:     "v4",
-				Protocol:   "tcp",
-				Subnet:     "0.0.0.0",
-				SubnetSize: 0,
-				Port:       trojanPortStr,
-				Notes:      fmt.Sprintf("%s Trojan", label),
-			}); err != nil {
-				return err
-			}
 		}
 	}
 

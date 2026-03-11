@@ -112,6 +112,7 @@ umask 077
 
 LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1
+trap 'chmod 600 "$LOGFILE" 2>/dev/null' EXIT
 
 echo "=== PrivateDeploy Multi-Protocol Init Started at $(date) ==="
 
@@ -233,9 +234,34 @@ SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_V
 FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz"
 
 mkdir -p /tmp/privatedeploy
-if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
+SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz.sha256sum"
+
+verify_checksum() {
+  local file="$1" checksum_url="$2"
+  if curl -fsSLo /tmp/privatedeploy/singbox.sha256 "$checksum_url" 2>/dev/null; then
+    cd /tmp/privatedeploy
+    if sha256sum -c singbox.sha256 --status 2>/dev/null; then
+      echo "[OK] sing-box checksum verified"
+      cd - >/dev/null
+      return 0
+    else
+      echo "[WARN] sing-box checksum mismatch!" >&2
+      cd - >/dev/null
+      return 1
+    fi
+  else
+    echo "[WARN] Could not download checksum file, skipping verification" >&2
+    return 0
+  fi
+}
+
+# Skip download if sing-box is already installed
+if command -v sing-box >/dev/null 2>&1; then
+  echo "[OK] sing-box already installed: $(sing-box version 2>/dev/null | head -1)"
+elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
   if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
     echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
+    SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz.sha256sum"
     if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
       echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan deployment." >&2
       SKIP_SINGBOX=1
@@ -248,11 +274,21 @@ if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
   fi
 fi
 
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ]; then
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
+  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_CHECKSUM_URL"; then
+    echo "[ERROR] sing-box integrity check failed. Aborting sing-box deployment." >&2
+    SKIP_SINGBOX=1
+  fi
+fi
+
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
   tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
   find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
   chmod +x /usr/local/bin/sing-box
+fi
 
+# Configure sing-box services if sing-box is available
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && command -v sing-box >/dev/null 2>&1; then
   docker rm -f hysteria-server >/dev/null 2>&1 || true
   cat > /etc/systemd/system/hysteria-server.service <<'HYSTERIASERVICE'
 [Unit]
@@ -331,6 +367,7 @@ PublicKey: %[11]s
 ShortID: %[10]s
 REALITYINFO
   chmod 600 /etc/privatedeploy/vless/reality.txt
+  chown privatedeploy:privatedeploy /etc/privatedeploy/vless/config.json /etc/privatedeploy/vless/reality.txt
 
   cat > /etc/systemd/system/vless-server.service <<'SERVICEEOF'
 [Unit]
@@ -392,6 +429,7 @@ SERVICEEOF
 }
 TROJANEOF
   chmod 600 /etc/privatedeploy/trojan/config.json
+  chown privatedeploy:privatedeploy /etc/privatedeploy/trojan/config.json
 
   cat > /etc/systemd/system/trojan-server.service <<'TROJANSERVICE'
 [Unit]
@@ -527,12 +565,11 @@ echo "Listening ports:"
 ss -tlnup | grep -E ':%[1]d |:%[2]d |:%[3]d |:%[4]d ' || echo 'Warning: Some ports not yet listening'
 echo ""
 echo "Protocol Configuration:"
-echo "  [1] Shadowsocks:    Port %[1]d (TCP/UDP) - Password: %[5]s"
-echo "  [2] Hysteria2:      Port %[2]d (UDP) - Password: %[6]s"
-echo "  [3] VLESS-Reality:  Port %[3]d (TCP) - UUID: %[8]s"
-echo "                     Public Key: %[11]s"
-echo "                     Short ID: %[10]s"
-echo "  [4] Trojan:         Port %[4]d (TCP) - Password: %[7]s"
+echo "  [1] Shadowsocks:    Port %[1]d (TCP/UDP)"
+echo "  [2] Hysteria2:      Port %[2]d (UDP)"
+echo "  [3] VLESS-Reality:  Port %[3]d (TCP)"
+echo "  [4] Trojan:         Port %[4]d (TCP)"
+echo "  (Credentials managed by PrivateDeploy client - not logged for security)"
 echo ""
 echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
 `,
@@ -565,6 +602,7 @@ umask 077
 
 LOGFILE="/var/log/privatedeploy-init.log"
 exec > >(tee -a "$LOGFILE") 2>&1
+trap 'chmod 600 "$LOGFILE" 2>/dev/null' EXIT
 
 echo "=== PrivateDeploy Lightweight Init Started at $(date) ==="
 
@@ -598,4 +636,3 @@ echo ""
 echo "=== PrivateDeploy Lightweight Init Completed at $(date) ==="
 `, ssPort, shellEscape(ssPassword))
 }
-

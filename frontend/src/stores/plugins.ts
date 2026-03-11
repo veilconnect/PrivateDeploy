@@ -145,7 +145,6 @@ export const usePluginsStore = defineStore('plugins', () => {
     reloadTrigger && updatePluginTrigger(plugin)
   }
 
-  // FIXME: Plug-in execution order is wrong
   const updatePluginTrigger = (plugin: Plugin, isUpdate = true) => {
     const triggers = Object.keys(PluginsTriggerMap) as PluginTrigger[]
     triggers.forEach((trigger) => {
@@ -154,8 +153,20 @@ export const usePluginsStore = defineStore('plugins', () => {
       )
     })
     if (isUpdate) {
+      // Maintain execution order consistent with the plugins list
+      const pluginIndex = plugins.value.findIndex((p) => p.id === plugin.id)
       plugin.triggers.forEach((trigger) => {
-        PluginsTriggerMap[trigger].observers.push(plugin.id)
+        const observers = PluginsTriggerMap[trigger].observers
+        // Insert at the correct position to preserve plugin list order
+        const insertAt = observers.findIndex((id) => {
+          const idx = plugins.value.findIndex((p) => p.id === id)
+          return idx === -1 || idx > pluginIndex
+        })
+        if (insertAt === -1) {
+          observers.push(plugin.id)
+        } else {
+          observers.splice(insertAt, 0, plugin.id)
+        }
       })
     }
   }

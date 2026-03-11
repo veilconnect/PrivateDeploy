@@ -27,6 +27,12 @@ jobs:
       - name: Go tests (api)
         run: cd api && go test ./...
 
+      - name: Go vulnerability check (root)
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+
+      - name: Go vulnerability check (api)
+        run: cd api && govulncheck ./...
+
       - uses: pnpm/action-setup@v4
         with:
           version: latest
@@ -45,6 +51,9 @@ jobs:
 
       - name: Frontend lint (ci)
         run: cd frontend && pnpm run lint:ci
+
+      - name: Frontend security audit
+        run: cd frontend && pnpm audit --audit-level=high
 
       - uses: actions/setup-python@v5
         with:
@@ -79,7 +88,7 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: "latest"
+          node-version: "20"
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: |
@@ -117,7 +126,7 @@ jobs:
             $env:GOARCH=$arch
 
             Write-Host "==> Building Windows $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41 -o "$env:APP_NAME.exe"
+            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
 
             cd build/bin
             $zipName = "$env:APP_NAME-windows-$arch.zip"
@@ -160,7 +169,7 @@ jobs:
             export GOOS=darwin GOARCH=$arch
 
             echo "==> Building macOS $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41 -o $APP_NAME.exe
+            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
             cd build/bin
             zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
@@ -201,7 +210,7 @@ jobs:
             export GOOS=linux GOARCH=$arch
 
             echo "==> Building Linux $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41 -o $APP_NAME.exe
+            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
@@ -223,13 +232,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          find . -name '*.zip' -exec sha256sum {} + | sed 's|  \./[^/]*/|  |' | sort -k2 > ../checksums.sha256
+          cat ../checksums.sha256
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          files: release-assets/**/*.zip
+          files: |
+            release-assets/**/*.zip
+            checksums.sha256
           draft: false
           prerelease: false
           body: |
             Auto-generated release from GitHub Actions.
+
+            ## Verify Downloads
+            ```
+            sha256sum -c checksums.sha256
+            ```

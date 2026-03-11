@@ -80,7 +80,7 @@ func (s *Service) WriteFile(path string, content string, opts Options) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(fullPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
 		return err
 	}
 
@@ -126,7 +126,7 @@ func (s *Service) MoveFile(source, target string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(fullTarget), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fullTarget), 0o750); err != nil {
 		return err
 	}
 
@@ -160,7 +160,7 @@ func (s *Service) CopyFile(source, target string) error {
 	}
 	defer srcFile.Close()
 
-	if err := os.MkdirAll(filepath.Dir(fullTarget), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fullTarget), 0o750); err != nil {
 		return err
 	}
 
@@ -180,7 +180,7 @@ func (s *Service) MakeDir(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(fullPath, os.ModePerm)
+	return os.MkdirAll(fullPath, 0o750)
 }
 
 // ReadDir lists directory entries with minimal metadata.
@@ -244,13 +244,13 @@ func (s *Service) UnzipZIPFile(source, target string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
+			if err := os.MkdirAll(filePath, 0o750); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
 			return err
 		}
 
@@ -320,13 +320,13 @@ func (s *Service) UnzipTarGZFile(source, target string) error {
 		}
 
 		if header.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
+			if err := os.MkdirAll(filePath, 0o750); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
 			return err
 		}
 

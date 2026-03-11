@@ -124,7 +124,7 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(p.configPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.configPath), 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -172,7 +172,7 @@ func (p *Provider) saveNodeRecords(records map[string]cloud.InstanceRecord) erro
 	digitaloceanNodesMu.Lock()
 	defer digitaloceanNodesMu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(p.nodesPath), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.nodesPath), 0o750); err != nil {
 		return err
 	}
 

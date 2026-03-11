@@ -108,6 +108,9 @@ export type InstanceSyncDeps = {
     refreshProviderProxies: () => Promise<void>
     addCloudNodeToGroups: (node: ManagedCloudNode) => void
   }
+  subscribesStore: {
+    subscribes: Array<{ id: string; [key: string]: any }>
+  }
   ensureSubscriptionForNode: (node: CloudNode) => Promise<void>
   removeSubscriptionForNode: (instanceId: string) => Promise<void>
   applyNodeToProfile: (node: CloudNode, profileId?: string) => Promise<string | undefined>
@@ -236,8 +239,10 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     run()
   }
 
+  const providerRequiresApiKey = () => currentProvider.value !== 'ssh'
+
   const refreshInstances = async (silent = false, force = false) => {
-    if (!config.apiKey || config.apiKey.trim() === '') {
+    if (providerRequiresApiKey() && (!config.apiKey || config.apiKey.trim() === '')) {
       instances.value = []
       instancesUpdatedAt.value = Date.now()
       return
@@ -489,7 +494,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   }
 
   const startAutoRefresh = (refreshImmediately = false) => {
-    if (!config.apiKey || config.apiKey.trim() === '') {
+    if (providerRequiresApiKey() && (!config.apiKey || config.apiKey.trim() === '')) {
       stopAutoRefresh()
       return
     }
@@ -498,7 +503,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     }
 
     const runRefresh = () => {
-      if (!config.apiKey || config.apiKey.trim() === '') {
+      if (providerRequiresApiKey() && (!config.apiKey || config.apiKey.trim() === '')) {
         stopAutoRefresh()
         return
       }

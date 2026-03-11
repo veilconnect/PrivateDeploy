@@ -39,7 +39,7 @@ func (a *App) StartServer(address string, serverID string, options ServerOptions
 
 	if options.UploadPath != "" && options.UploadRoute != "" {
 		uploadPath := GetPath(options.UploadPath)
-		if err := os.MkdirAll(uploadPath, os.ModePerm); err != nil {
+		if err := os.MkdirAll(uploadPath, 0o750); err != nil {
 			return FlagResult{false, "Failed to create upload directory: " + err.Error()}
 		}
 
@@ -56,8 +56,12 @@ func (a *App) StartServer(address string, serverID string, options ServerOptions
 	mux.HandleFunc("/", a.handleHttpRequest(serverID))
 
 	server := &http.Server{
-		Addr:    address,
-		Handler: mux,
+		Addr:              address,
+		Handler:           mux,
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
@@ -127,18 +131,18 @@ func (a *App) ListServer() FlagResult {
 
 func (a *App) handleHttpRequest(serverID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		const maxBodySize = 10 * 1024 * 1024 // 10MB
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			w.WriteHeader(500)
-			w.Write([]byte("Failed to read request body: " + err.Error()))
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			w.Write([]byte("Request body too large or unreadable"))
 			return
 		}
 
 		count := atomic.AddUint64(&requestCounter, 1)
 		requestID := serverID + strconv.FormatUint(count, 10)
 		respChan := make(chan ResponseData, 1)
-
-		defer close(respChan)
 
 		runtime.EventsOn(a.Ctx, requestID, func(data ...any) {
 			runtime.EventsOff(a.Ctx, requestID)
@@ -170,7 +174,11 @@ func (a *App) handleHttpRequest(serverID string) http.HandlerFunc {
 				}
 			}
 
-			respChan <- resp
+			// Non-blocking send: if timeout already fired, discard safely
+			select {
+			case respChan <- resp:
+			default:
+			}
 		})
 
 		runtime.EventsEmit(a.Ctx, serverID, requestID, r.Method, r.URL.RequestURI(), r.Header, body)

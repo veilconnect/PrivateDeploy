@@ -5,6 +5,7 @@ import (
 	"privatedeploy/api/handlers"
 	"privatedeploy/api/middleware"
 	"privatedeploy/bridge/cloud"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -35,7 +36,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		// Auth
 		auth := public.Group("/auth")
 		{
-			auth.POST("/login", authHandler.Login)
+			auth.POST("/login", middleware.LoginRateLimit(5, 15*time.Minute), authHandler.Login)
 		}
 
 		// WebSocket (requires valid token)

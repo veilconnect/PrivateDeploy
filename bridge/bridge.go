@@ -38,6 +38,7 @@ const (
 var Env = &EnvResult{
 	IsStartup:    true,
 	FromTaskSch:  false,
+	ExecPath:     "",
 	AppName:      "",
 	AppVersion:   "v1.10.1",
 	BasePath:     "",
@@ -59,8 +60,13 @@ func CreateApp(fs embed.FS) *App {
 		panic(err)
 	}
 
-	Env.BasePath = filepath.Dir(exePath)
+	Env.ExecPath = exePath
+	Env.BasePath = resolveBasePath(Env.OS, exePath)
 	Env.AppName = filepath.Base(exePath)
+
+	if err := os.MkdirAll(Env.BasePath, 0o750); err != nil {
+		log.Printf("Warning: failed to create app base path %s: %v", Env.BasePath, err)
+	}
 
 	if err := os.Setenv("PRIVATEDEPLOY_BASE_PATH", Env.BasePath); err != nil {
 		log.Printf("Warning: failed to set PRIVATEDEPLOY_BASE_PATH: %v", err)
@@ -104,9 +110,7 @@ func (a *App) IsStartup() bool {
 }
 
 func (a *App) RestartApp() FlagResult {
-	exePath := Env.BasePath + "/" + Env.AppName
-
-	cmd := exec.Command(exePath)
+	cmd := exec.Command(Env.ExecPath)
 	SetCmdWindowHidden(cmd)
 
 	if err := cmd.Start(); err != nil {
@@ -154,8 +158,40 @@ func createMacOSSymlink() {
 	user, _ := user.Current()
 	linkPath := Env.BasePath + "/data"
 	appPath := "/Users/" + user.Username + "/Library/Application Support/" + Env.AppName
-	os.MkdirAll(appPath, os.ModePerm)
+	os.MkdirAll(appPath, 0o750)
 	os.Symlink(appPath, linkPath)
+}
+
+func resolveBasePath(osName, exePath string) string {
+	exeDir := filepath.Dir(exePath)
+	if osName != "linux" || !isLinuxSystemInstallPath(exeDir) {
+		return exeDir
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		return exeDir
+	}
+
+	return filepath.Join(homeDir, ".local", "share", "PrivateDeploy")
+}
+
+func isLinuxSystemInstallPath(exeDir string) bool {
+	candidates := []string{
+		"/usr/bin",
+		"/usr/local/bin",
+		"/usr/lib",
+		"/usr/local/lib",
+		"/opt",
+	}
+
+	for _, candidate := range candidates {
+		if exeDir == candidate || strings.HasPrefix(exeDir, candidate+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func buildPlatformCapabilities(osName string) PlatformCapabilities {
@@ -214,8 +250,8 @@ func extractEmbeddedFiles(fs embed.FS) {
 	imgSrc := "frontend/dist/imgs"
 	imgDst := "data/.cache/imgs"
 
-	os.MkdirAll(GetPath(iconDst), os.ModePerm)
-	os.MkdirAll(GetPath(imgDst), os.ModePerm)
+	os.MkdirAll(GetPath(iconDst), 0o750)
+	os.MkdirAll(GetPath(imgDst), 0o750)
 
 	extractFiles(fs, iconSrc, iconDst)
 	extractFiles(fs, imgSrc, imgDst)
@@ -237,7 +273,7 @@ func extractFiles(fs embed.FS, srcDir, dstDir string) {
 }
 
 func loadConfig() {
-	b, err := os.ReadFile(Env.BasePath + "/data/user.yaml")
+	b, err := os.ReadFile(GetPath("data/user.yaml"))
 	if err == nil {
 		yaml.Unmarshal(b, &Config)
 	}

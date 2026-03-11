@@ -85,7 +85,7 @@ func (a *App) Download(method string, url string, path string, headers map[strin
 
 	path = GetPath(path)
 
-	err = os.MkdirAll(filepath.Dir(path), os.ModePerm)
+	err = os.MkdirAll(filepath.Dir(path), 0o750)
 	if err != nil {
 		return HTTPResult{false, 500, nil, err.Error()}
 	}
