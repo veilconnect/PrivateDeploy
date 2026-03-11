@@ -133,7 +133,6 @@ useradd --system --no-create-home --shell /usr/sbin/nologin privatedeploy 2>/dev
 echo "[3/8] Generating TLS certificates..."
 mkdir -p /etc/privatedeploy/{hysteria,trojan,vless}
 chmod 700 /etc/privatedeploy /etc/privatedeploy/hysteria /etc/privatedeploy/trojan /etc/privatedeploy/vless
-chown -R privatedeploy:privatedeploy /etc/privatedeploy
 
 generate_cert() {
   local cert_path="$1"
@@ -278,6 +277,9 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 HYSTERIASERVICE
+
+  # Fix ownership after all config files are written
+  chown -R privatedeploy:privatedeploy /etc/privatedeploy
 
   systemctl daemon-reload
   systemctl enable hysteria-server
