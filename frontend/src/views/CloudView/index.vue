@@ -44,10 +44,17 @@ import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
 import MultiDeployModal from './components/MultiDeployModal.vue'
 import SSHConfigForm from './components/SSHConfigForm.vue'
+import {
+  formatSkippedImportEntry,
+  getManualInputFromForm,
+  mapManualError,
+  populateManualFormFromNode,
+  resetImportForm,
+  resetManualForm,
+} from './manualNodeForm'
 import { parseImportedNodes } from './manualNodeParser'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
-import type { ManualNodeInput } from '@/stores/cloud/types'
 import type { CloudNode, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
@@ -148,117 +155,19 @@ const planOptions = computed(() =>
   buildPlanOptions(cloudStore.plans, cloudStore.availability, form.region, t),
 )
 
-const resetManualForm = () => {
-  manualForm.label = ''
-  manualForm.ipv4 = ''
-  manualForm.ipv6 = ''
-  manualForm.ssPort = ''
-  manualForm.ssPassword = ''
-  manualForm.hysteriaPort = ''
-  manualForm.hysteriaPassword = ''
-  manualForm.vlessPort = ''
-  manualForm.vlessUUID = ''
-  manualForm.vlessPublicKey = ''
-  manualForm.vlessShortId = ''
-  manualForm.trojanPort = ''
-  manualForm.trojanPassword = ''
-}
-
-const resetImportForm = () => {
-  importForm.raw = ''
-}
-
-const toOptionalNumber = (value: string) => {
-  if (!value) return undefined
-  const num = Number(value)
-  if (!Number.isFinite(num)) return undefined
-  const port = Math.trunc(num)
-  if (port <= 0 || port > 65535) return undefined
-  return port
-}
-
 const isManualNode = (node: CloudNode | Record<string, any>) => (node as any).provider === 'manual'
 
 const manualEditingId = ref('')
 
-const mapManualError = (error: unknown) => {
-  const messageText = error instanceof Error ? error.message : String(error)
-  if (messageText === 'label-required') {
-    return t('cloud.errors.manualLabelRequired')
-  }
-  if (messageText === 'address-required') {
-    return t('cloud.errors.manualAddressRequired')
-  }
-  if (messageText === 'protocol-required') {
-    return t('cloud.errors.manualProtocolRequired')
-  }
-  if (messageText === 'duplicate') {
-    return t('cloud.errors.manualDuplicate')
-  }
-  if (messageText === 'manual-node-not-found') {
-    return t('cloud.errors.importInvalid')
-  }
-  return messageText
-}
-
-const formatSkippedImportEntry = (entry: ManualNodeSkipEntry) => {
-  if (entry.reason === 'ipv4') {
-    return t('cloud.manual.importSkippedIpv4', { value: entry.identifier })
-  }
-  if (entry.reason === 'ipv6') {
-    return t('cloud.manual.importSkippedIpv6', { value: entry.identifier })
-  }
-  return t('cloud.manual.importSkippedLabel', { value: entry.identifier })
-}
-
-const getManualInputFromForm = (): ManualNodeInput => {
-  const label = manualForm.label.trim()
-  if (!label) {
-    throw new Error('label-required')
-  }
-  const ipv4 = manualForm.ipv4.trim()
-  const ipv6 = manualForm.ipv6.trim()
-  if (!ipv4 && !ipv6) {
-    throw new Error('address-required')
-  }
-  const input: ManualNodeInput = {
-    label,
-    ipv4: ipv4 || undefined,
-    ipv6: ipv6 || undefined,
-    ssPort: toOptionalNumber(manualForm.ssPort) ?? undefined,
-    ssPassword: manualForm.ssPassword.trim() || undefined,
-    hysteriaPort: toOptionalNumber(manualForm.hysteriaPort) ?? undefined,
-    hysteriaPassword: manualForm.hysteriaPassword.trim() || undefined,
-    vlessPort: toOptionalNumber(manualForm.vlessPort) ?? undefined,
-    vlessUUID: manualForm.vlessUUID.trim() || undefined,
-    vlessPublicKey: manualForm.vlessPublicKey.trim() || undefined,
-    vlessShortId: manualForm.vlessShortId.trim() || undefined,
-    trojanPort: toOptionalNumber(manualForm.trojanPort) ?? undefined,
-    trojanPassword: manualForm.trojanPassword.trim() || undefined,
-  }
-
-  const hasProtocol =
-    (input.ssPort && input.ssPassword) ||
-    (input.hysteriaPort && input.hysteriaPassword) ||
-    (input.vlessPort && input.vlessUUID && input.vlessPublicKey) ||
-    (input.trojanPort && input.trojanPassword)
-
-  if (!hasProtocol) {
-    throw new Error('protocol-required')
-  }
-
-  return input
-}
-
 const handleManualSubmit = async () => {
   try {
-    const input = getManualInputFromForm()
+    const input = getManualInputFromForm(manualForm)
     const node = await cloudStore.addManualNode(input)
     await cloudStore.applyNodeToProfile(node)
     message.success(t('cloud.manual.addSuccess'))
     return true
   } catch (error) {
-    message.error(mapManualError(error))
+    message.error(mapManualError(error, t))
     return false
   }
 }
@@ -269,31 +178,15 @@ const handleManualUpdate = async () => {
     return false
   }
   try {
-    const input = getManualInputFromForm()
+    const input = getManualInputFromForm(manualForm)
     const node = await cloudStore.updateManualNode(id, input)
     await cloudStore.applyNodeToProfile(node)
     message.success(t('cloud.manual.updateSuccess'))
     return true
   } catch (error) {
-    message.error(mapManualError(error))
+    message.error(mapManualError(error, t))
     return false
   }
-}
-
-const populateManualFormFromNode = (node: Record<string, any>) => {
-  manualForm.label = node.label || ''
-  manualForm.ipv4 = node.ipv4 || ''
-  manualForm.ipv6 = node.ipv6 || ''
-  manualForm.ssPort = node.ssPort ? String(node.ssPort) : node.port ? String(node.port) : ''
-  manualForm.ssPassword = node.ssPassword || node.password || ''
-  manualForm.hysteriaPort = node.hysteriaPort ? String(node.hysteriaPort) : ''
-  manualForm.hysteriaPassword = node.hysteriaPassword || ''
-  manualForm.vlessPort = node.vlessPort ? String(node.vlessPort) : ''
-  manualForm.vlessUUID = node.vlessUUID || ''
-  manualForm.vlessPublicKey = node.vlessPublicKey || ''
-  manualForm.vlessShortId = node.vlessShortId || ''
-  manualForm.trojanPort = node.trojanPort ? String(node.trojanPort) : ''
-  manualForm.trojanPassword = node.trojanPassword || ''
 }
 
 const handleImportSubmit = async () => {
@@ -303,7 +196,7 @@ const handleImportSubmit = async () => {
     return false
   }
 
-  let inputs: ManualNodeInput[]
+  let inputs
   try {
     inputs = parseImportedNodes(raw)
   } catch {
@@ -324,19 +217,19 @@ const handleImportSubmit = async () => {
     }
     await Promise.all(added.map((node) => cloudStore.applyNodeToProfile(node).catch(() => undefined)))
     if (skipped.length) {
-      const detail = skipped.map(formatSkippedImportEntry).join('; ')
+      const detail = skipped.map((entry: ManualNodeSkipEntry) => formatSkippedImportEntry(entry, t)).join('; ')
       message.warn(t('cloud.manual.importSkippedList', { count: skipped.length, labels: detail }))
     }
     message.success(t('cloud.manual.importSuccess', { count: added.length }))
     return true
   } catch (error) {
-    message.error(mapManualError(error))
+    message.error(mapManualError(error, t))
     return false
   }
 }
 
 const openManualNodeModal = () => {
-  resetManualForm()
+  resetManualForm(manualForm)
   manualEditingId.value = ''
   modalApi
     .setProps({
@@ -353,7 +246,7 @@ const openManualNodeModal = () => {
 }
 
 const openImportModal = () => {
-  resetImportForm()
+  resetImportForm(importForm)
   modalApi
     .setProps({
       title: t('cloud.manual.importTitle'),
@@ -372,7 +265,7 @@ const openImportModal = () => {
 
 const openEditManualNode = (record: CloudNode | Record<string, any>) => {
   manualEditingId.value = record.instanceId
-  populateManualFormFromNode(record as Record<string, any>)
+  populateManualFormFromNode(manualForm, record as Record<string, any>)
   modalApi
     .setProps({
       title: t('cloud.manual.editTitle'),
