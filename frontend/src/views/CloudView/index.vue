@@ -1,16 +1,13 @@
 <script setup lang="ts">
-import { EventsOn, EventsOff } from '@wails/runtime/runtime'
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { formatDate, formatRelativeTime, message } from '@/utils'
 import { createBackup, parseBackup, downloadBackup } from '@/utils/backup'
-import { checkAllNodesHealth, scheduleHealthChecks, getHealthSummary } from '@/utils/healthCheck'
-import { logError, logInfo } from '@/utils/logger'
-import { isOnline, initOfflineMode } from '@/utils/offline'
-import { generateMockConnectivityHistory, type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
+import { logError } from '@/utils/logger'
+import { isOnline } from '@/utils/offline'
 
 import ConnectivityChart from '@/components/ConnectivityChart.vue'
 import LatencyChart from '@/components/LatencyChart.vue'
@@ -27,7 +24,6 @@ import {
   shouldShowDeploymentProgress,
 } from './cloudNodeDisplay'
 import {
-  buildCloudTableData,
   buildPlanOptions,
   buildRegionOptions,
   formatNodeRegion as formatNodeRegionLabel,
@@ -53,6 +49,8 @@ import {
 import { parseImportedNodes } from './manualNodeParser'
 import { useCloudViewActions } from './useCloudViewActions'
 import { defaultCloudLabel, useCloudViewMeta } from './useCloudViewMeta'
+import { useCloudViewMonitoring } from './useCloudViewMonitoring'
+import { useCloudViewTable } from './useCloudViewTable'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, RegionLatency } from '@/types/cloud'
@@ -99,28 +97,13 @@ const testingLatency = ref(false)
 const latencyResults = ref<RegionLatency[]>([])
 const showLatencyResults = ref(false)
 
-// Visualization state
-const viewingChartNode = ref<ManagedCloudNode | null>(null)
-const showChartsModal = ref(false)
-
-// Search and filter state
-const searchQuery = ref('')
-const filterConnectivity = ref<string>('all')
-const filterStatus = ref<string>('all')
-const sortBy = ref<string>('')
-const sortOrder = ref<'asc' | 'desc'>('asc')
-
-// Keyboard shortcuts help
-const showKeyboardHelp = ref(false)
-
 // SSH deploy state
 const isSSHProvider = computed(() => cloudStore.currentProvider === 'ssh')
-const sshDeployProgress = ref<Array<{ id: string; stage: string; message: string }>>([])
 const showMultiDeployModal = ref(false)
 
 const handleSSHDeploy = async (extra: Record<string, string>) => {
   try {
-    sshDeployProgress.value = []
+    resetSSHDeployProgress()
     await cloudStore.createSSHInstance(extra)
     message.success('SSH 节点部署完成')
   } catch (err: any) {
@@ -299,16 +282,17 @@ function formatNodeRegion(regionId: string): string {
   return formatNodeRegionLabel(regionId, regionMap.value, t)
 }
 
-const tableData = computed(() =>
-  buildCloudTableData(cloudStore.instances, {
-    searchQuery: searchQuery.value,
-    filterConnectivity: filterConnectivity.value,
-    filterStatus: filterStatus.value,
-    sortBy: sortBy.value,
-    sortOrder: sortOrder.value,
-    formatNodeRegion,
-  }),
-)
+const {
+  clearFilters,
+  columns,
+  filterConnectivity,
+  filterStatus,
+  hasActiveFilters,
+  searchQuery,
+  sortBy,
+  sortOrder,
+  tableData,
+} = useCloudViewTable(cloudStore, formatNodeRegion)
 
 const lastInstancesUpdateRelative = computed(() => {
   if (!cloudStore.instancesUpdatedAt) {
@@ -327,19 +311,6 @@ const lastInstancesUpdateExact = computed(() => {
 const disableDeploy = computed(
   () => !hasApiKey.value || !form.region || !form.plan || !form.label.trim(),
 )
-
-const columns = [
-  { title: 'selection', key: 'selection', width: '40px' },
-  { title: 'cloud.table.label', key: 'label', width: '11%' },
-  { title: 'cloud.table.region', key: 'region', width: '9%' },
-  { title: 'cloud.table.plan', key: 'plan', width: '11%' },
-  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '12%' },
-  { title: 'cloud.table.protocols', key: 'protocols', width: '17%' },
-  { title: 'cloud.table.status', key: 'status', width: '13%' },
-  { title: 'cloud.table.connectivity', key: 'connectivity', width: '9%' },
-  { title: 'cloud.table.createdAt', key: 'createdAt', width: '8%' },
-  { title: 'cloud.table.actions', key: 'actions', width: '11%' },
-]
 
 const handleError = (error: unknown) => {
   let messageText = error instanceof Error ? error.message : String(error)
@@ -479,65 +450,20 @@ const {
   isManualNode,
 })
 
-// Search and filter handlers
-const clearFilters = () => {
-  searchQuery.value = ''
-  filterConnectivity.value = 'all'
-  filterStatus.value = 'all'
-  sortBy.value = ''
-  sortOrder.value = 'asc'
-}
-
-const hasActiveFilters = computed(() => {
-  return (
-    searchQuery.value.trim() !== '' ||
-    filterConnectivity.value !== 'all' ||
-    filterStatus.value !== 'all'
-  )
-})
-
-// Visualization handlers
-const handleViewCharts = (node: ManagedCloudNode) => {
-  viewingChartNode.value = node
-  showChartsModal.value = true
-}
-
-const closeChartsModal = () => {
-  showChartsModal.value = false
-  viewingChartNode.value = null
-}
-
-const connectivityChartData = computed<ConnectivityDataPoint[]>(() => {
-  if (!viewingChartNode.value) return []
-  // Generate mock data based on current connectivity status
-  // In production, this would come from backend tracking
-  return generateMockConnectivityHistory(
-    viewingChartNode.value.connectivityStatus || 'unknown',
-    24 // 24 hours
-  )
-})
-
-const latencyChartData = computed<LatencyDataPoint[]>(() => {
-  if (!viewingChartNode.value) return []
-  // Generate mock latency data
-  // In production, this would come from backend tracking
-  const data: LatencyDataPoint[] = []
-  const now = Date.now()
-  const interval = (24 * 60 * 60 * 1000) / 48 // 48 data points over 24 hours
-
-  // Use a default latency as base (no latency tracking in current data model)
-  // In production, this would come from backend latency tracking
-  const baseLatency = 100
-
-  for (let i = 0; i < 48; i++) {
-    const variance = (Math.random() - 0.5) * 40 // +/- 20ms variance
-    data.push({
-      timestamp: now - (48 - i) * interval,
-      latency: Math.max(0, baseLatency + variance),
-    })
-  }
-
-  return data
+const {
+  closeChartsModal,
+  connectivityChartData,
+  handleViewCharts,
+  latencyChartData,
+  resetSSHDeployProgress,
+  showChartsModal,
+  showKeyboardHelp,
+  viewingChartNode,
+} = useCloudViewMonitoring({
+  cloudStore,
+  tableData,
+  translate: t,
+  handleTestAllSpeed,
 })
 
 const handleDeploy = async () => {
@@ -572,107 +498,6 @@ const handleDeploy = async () => {
 const getDeploymentSteps = (node: CloudNode | Record<string, any>) => getNodeDeploymentSteps(node, t)
 
 const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeDeploymentSummary(node, t)
-
-// Keyboard shortcuts, health checks, and offline mode
-onMounted(() => {
-  // Initialize offline mode detection
-  const cleanupOfflineMode = initOfflineMode()
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    // ? - Show keyboard shortcuts help
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      e.preventDefault()
-      showKeyboardHelp.value = true
-      return
-    }
-
-    // Escape - Close help modal
-    if (e.key === 'Escape' && showKeyboardHelp.value) {
-      e.preventDefault()
-      showKeyboardHelp.value = false
-      return
-    }
-
-    // Ctrl+T or Cmd+T - Test all nodes speed
-    if ((e.ctrlKey || e.metaKey) && e.key === 't') {
-      e.preventDefault()
-      if (tableData.value.length > 0) {
-        handleTestAllSpeed()
-      }
-    }
-
-    // Ctrl+R or Cmd+R - Refresh instances
-    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-      e.preventDefault()
-      cloudStore.refreshInstances(false, true) // Force refresh
-      message.info(t('cloud.quickActions.refreshing'))
-    }
-
-    // Ctrl+F or Cmd+F - Focus search box
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-      e.preventDefault()
-      const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
-      if (searchInput) {
-        searchInput.focus()
-      }
-    }
-  }
-
-  window.addEventListener('keydown', handleKeyDown)
-
-  // Schedule periodic health checks (every 5 minutes)
-  const performHealthCheck = () => {
-    const allNodes = cloudStore.instances
-    if (allNodes.length === 0) return
-
-    const healthResults = checkAllNodesHealth(allNodes)
-    const summary = getHealthSummary(healthResults)
-
-    logInfo(`[CloudView] Health check: ${summary.healthy}/${summary.total} healthy nodes (avg score: ${summary.avgScore})`)
-
-    // Warn if there are critical issues
-    if (summary.criticalIssues > 0) {
-      logInfo(`[CloudView] Warning: ${summary.criticalIssues} nodes have critical health issues`)
-    }
-  }
-
-  const stopHealthChecks = scheduleHealthChecks(performHealthCheck, 5 * 60 * 1000)
-
-  // Listen for backend health monitor events
-  EventsOn('cloud:health:changed', (nodeId: string, healthy: boolean, failures: number) => {
-    const node = cloudStore.instances.find(n => n.instanceId === nodeId)
-    if (node) {
-      node.connectivityStatus = healthy ? 'reachable' : 'blocked'
-      if (!healthy) {
-        logInfo(`[CloudView] Health changed: ${nodeId} unhealthy (${failures} failures)`)
-      }
-    }
-  })
-
-  EventsOn('cloud:health:alert', (nodeId: string, failures: number) => {
-    const node = cloudStore.instances.find(n => n.instanceId === nodeId)
-    const label = node?.label || nodeId
-    message.error(`节点 ${label} 连续 ${failures} 次健康检查失败`)
-  })
-
-  // Listen for SSH deploy progress
-  EventsOn('cloud:ssh:progress', (instanceId: string, stage: string, msg: string) => {
-    logInfo(`[SSH Deploy] ${instanceId}: [${stage}] ${msg}`)
-    sshDeployProgress.value = [
-      ...sshDeployProgress.value.filter(p => p.id !== instanceId),
-      { id: instanceId, stage, message: msg },
-    ]
-  })
-
-  onUnmounted(() => {
-    window.removeEventListener('keydown', handleKeyDown)
-    stopHealthChecks()
-    cleanupOfflineMode()
-    EventsOff('cloud:health:changed')
-    EventsOff('cloud:health:alert')
-    EventsOff('cloud:ssh:progress')
-  })
-})
 </script>
 
 <template>
