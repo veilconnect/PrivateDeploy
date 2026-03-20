@@ -33,7 +33,7 @@ export const GetCloudConfig = async (): Promise<CloudConfig> => {
 }
 
 export const SaveCloudConfig = async (config: CloudConfig): Promise<void> => {
-  await App.SaveCloudConfigTyped(config as Record<string, any>)
+  await App.SaveCloudConfigTyped(config as any)
 }
 
 export const ListCloudProviders = async (): Promise<Array<{ name: string; displayName: string }>> => {
@@ -53,7 +53,7 @@ export const ListCloudInstances = async (): Promise<Array<Record<string, any>>> 
 }
 
 export const CreateCloudInstance = async (options: Record<string, any>): Promise<Record<string, any>> => {
-  return await App.CreateCloudInstanceTyped(options)
+  return await App.CreateCloudInstanceTyped(options as any)
 }
 
 export const DestroyCloudInstance = async (instanceId: string): Promise<void> => {
@@ -95,7 +95,7 @@ export const TestSSHConnection = async (config: Record<string, string>): Promise
 export const CreateMultipleCloudInstances = async (
   configs: Array<Record<string, any>>,
 ): Promise<MultiDeployResult[]> => {
-  return await App.CreateMultipleCloudInstancesTyped(configs) as MultiDeployResult[]
+  return await App.CreateMultipleCloudInstancesTyped(configs as any) as MultiDeployResult[]
 }
 
 export const ScoreCloudRegions = App.ScoreCloudRegions

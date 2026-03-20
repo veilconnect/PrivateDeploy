@@ -1,5 +1,19 @@
 export namespace bridge {
 	
+	export class CloudProviderInfo {
+	    name: string;
+	    displayName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CloudProviderInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.displayName = source["displayName"];
+	    }
+	}
 	export class PlatformCapabilities {
 	    traySupported: boolean;
 	    showMainWindowFromTray: boolean;
@@ -168,6 +182,22 @@ export namespace bridge {
 		    return a;
 		}
 	}
+	export class MultiDeployResult {
+	    id: string;
+	    success: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MultiDeployResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.success = source["success"];
+	        this.error = source["error"];
+	    }
+	}
 	export class NotifyOptions {
 	    AppName: string;
 	    Beep: boolean;
@@ -243,6 +273,207 @@ export namespace bridge {
 	        this.icon = source["icon"];
 	        this.title = source["title"];
 	        this.tooltip = source["tooltip"];
+	    }
+	}
+
+}
+
+export namespace cloud {
+	
+	export class CreateInstanceOptions {
+	    label: string;
+	    region: string;
+	    plan: string;
+	    osId: number;
+	    sshKeyId: string;
+	    host?: string;
+	    extra?: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateInstanceOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.region = source["region"];
+	        this.plan = source["plan"];
+	        this.osId = source["osId"];
+	        this.sshKeyId = source["sshKeyId"];
+	        this.host = source["host"];
+	        this.extra = source["extra"];
+	    }
+	}
+	export class Instance {
+	    id: string;
+	    provider: string;
+	    label: string;
+	    status: string;
+	    region: string;
+	    plan: string;
+	    osId: number;
+	    ipv4: string;
+	    ipv6: string;
+	    port: number;
+	    password: string;
+	    // Go type: time
+	    createdAt: any;
+	    ssPort?: number;
+	    ssPassword?: string;
+	    hysteriaPort?: number;
+	    hysteriaPassword?: string;
+	    hysteriaServerName?: string;
+	    hysteriaInsecure?: boolean;
+	    vlessPort?: number;
+	    vlessUUID?: string;
+	    vlessPublicKey?: string;
+	    vlessShortId?: string;
+	    vlessServerName?: string;
+	    trojanPort?: number;
+	    trojanPassword?: string;
+	    trojanServerName?: string;
+	    trojanInsecure?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Instance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.label = source["label"];
+	        this.status = source["status"];
+	        this.region = source["region"];
+	        this.plan = source["plan"];
+	        this.osId = source["osId"];
+	        this.ipv4 = source["ipv4"];
+	        this.ipv6 = source["ipv6"];
+	        this.port = source["port"];
+	        this.password = source["password"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.ssPort = source["ssPort"];
+	        this.ssPassword = source["ssPassword"];
+	        this.hysteriaPort = source["hysteriaPort"];
+	        this.hysteriaPassword = source["hysteriaPassword"];
+	        this.hysteriaServerName = source["hysteriaServerName"];
+	        this.hysteriaInsecure = source["hysteriaInsecure"];
+	        this.vlessPort = source["vlessPort"];
+	        this.vlessUUID = source["vlessUUID"];
+	        this.vlessPublicKey = source["vlessPublicKey"];
+	        this.vlessShortId = source["vlessShortId"];
+	        this.vlessServerName = source["vlessServerName"];
+	        this.trojanPort = source["trojanPort"];
+	        this.trojanPassword = source["trojanPassword"];
+	        this.trojanServerName = source["trojanServerName"];
+	        this.trojanInsecure = source["trojanInsecure"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Plan {
+	    id: string;
+	    description?: string;
+	    ram: number;
+	    vcpus: number;
+	    disk: number;
+	    bandwidth: number;
+	    monthlyCost?: number;
+	    hourlyCost?: number;
+	    type?: string;
+	    locations?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Plan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.description = source["description"];
+	        this.ram = source["ram"];
+	        this.vcpus = source["vcpus"];
+	        this.disk = source["disk"];
+	        this.bandwidth = source["bandwidth"];
+	        this.monthlyCost = source["monthlyCost"];
+	        this.hourlyCost = source["hourlyCost"];
+	        this.type = source["type"];
+	        this.locations = source["locations"];
+	    }
+	}
+	export class ProviderConfig {
+	    provider: string;
+	    apiKey?: string;
+	    defaultRegion: string;
+	    defaultPlan: string;
+	    extra?: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.apiKey = source["apiKey"];
+	        this.defaultRegion = source["defaultRegion"];
+	        this.defaultPlan = source["defaultPlan"];
+	        this.extra = source["extra"];
+	    }
+	}
+	export class Region {
+	    id: string;
+	    city: string;
+	    country: string;
+	    continent: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Region(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.city = source["city"];
+	        this.country = source["country"];
+	        this.continent = source["continent"];
+	    }
+	}
+
+}
+
+export namespace ssh {
+	
+	export class ServerInfo {
+	    os: string;
+	    arch: string;
+	    memoryMB: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.os = source["os"];
+	        this.arch = source["arch"];
+	        this.memoryMB = source["memoryMB"];
 	    }
 	}
 

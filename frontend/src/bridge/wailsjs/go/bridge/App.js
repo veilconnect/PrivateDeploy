@@ -86,10 +86,6 @@ export function GetEnv() {
   return window['go']['bridge']['App']['GetEnv']();
 }
 
-export function GetLoadBalancerStatus() {
-  return window['go']['bridge']['App']['GetLoadBalancerStatus']();
-}
-
 export function GetFastestCloudRegion() {
   return window['go']['bridge']['App']['GetFastestCloudRegion']();
 }
@@ -100,6 +96,10 @@ export function GetHealthStatus() {
 
 export function GetInterfaces() {
   return window['go']['bridge']['App']['GetInterfaces']();
+}
+
+export function GetLoadBalancerStatus() {
+  return window['go']['bridge']['App']['GetLoadBalancerStatus']();
 }
 
 export function IsStartup() {
@@ -234,16 +234,16 @@ export function StartLoadBalancer(arg1, arg2) {
   return window['go']['bridge']['App']['StartLoadBalancer'](arg1, arg2);
 }
 
-export function StopLoadBalancer() {
-  return window['go']['bridge']['App']['StopLoadBalancer']();
-}
-
 export function StartServer(arg1, arg2, arg3) {
   return window['go']['bridge']['App']['StartServer'](arg1, arg2, arg3);
 }
 
 export function StopHealthMonitor() {
   return window['go']['bridge']['App']['StopHealthMonitor']();
+}
+
+export function StopLoadBalancer() {
+  return window['go']['bridge']['App']['StopLoadBalancer']();
 }
 
 export function StopServer(arg1) {
