@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'cloud_provider.dart';
+import 'vultr_api.dart';
+import '../profiles/profile_provider.dart';
 
 class CloudScreen extends StatefulWidget {
   const CloudScreen({Key? key}) : super(key: key);
@@ -15,8 +17,10 @@ class _CloudScreenState extends State<CloudScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<CloudProvider>().loadInstances();
-      context.read<CloudProvider>().loadProviders();
+      final provider = context.read<CloudProvider>();
+      if (provider.hasApiKey) {
+        provider.loadInstances();
+      }
     });
   }
 
@@ -24,39 +28,52 @@ class _CloudScreenState extends State<CloudScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Cloud Servers'),
+        title: const Text('Cloud Nodes'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              context.read<CloudProvider>().loadInstances();
+            icon: const Icon(Icons.key),
+            onPressed: () => _showApiKeyDialog(context),
+            tooltip: 'API Key',
+          ),
+          Consumer<CloudProvider>(
+            builder: (context, provider, _) {
+              if (!provider.hasApiKey) return const SizedBox.shrink();
+              return IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => provider.loadInstances(),
+              );
             },
           ),
         ],
       ),
       body: Consumer<CloudProvider>(
-        builder: (context, cloudProvider, _) {
-          if (cloudProvider.isLoading) {
+        builder: (context, provider, _) {
+          if (!provider.hasApiKey) {
+            return _buildNoApiKey(context);
+          }
+
+          if (provider.isLoading && provider.instances.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (cloudProvider.error != null) {
+          if (provider.error != null && provider.instances.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.error_outline, size: 64.w, color: Colors.red),
                   SizedBox(height: 16.h),
-                  Text(
-                    'Error: ${cloudProvider.error}',
-                    style: TextStyle(fontSize: 16.sp),
-                    textAlign: TextAlign.center,
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24.w),
+                    child: Text(
+                      provider.error!,
+                      style: TextStyle(fontSize: 14.sp),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
                   SizedBox(height: 24.h),
                   ElevatedButton(
-                    onPressed: () {
-                      cloudProvider.loadInstances();
-                    },
+                    onPressed: () => provider.loadInstances(),
                     child: const Text('Retry'),
                   ),
                 ],
@@ -64,210 +81,207 @@ class _CloudScreenState extends State<CloudScreen> {
             );
           }
 
-          if (cloudProvider.instances.isEmpty) {
+          if (provider.instances.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.cloud_off, size: 64.w, color: Colors.grey),
                   SizedBox(height: 16.h),
-                  Text(
-                    'No cloud servers',
-                    style: TextStyle(
-                      fontSize: 20.sp,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('No cloud nodes', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
                   SizedBox(height: 8.h),
-                  Text(
-                    'Create your first server',
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      color: Colors.grey,
-                    ),
-                  ),
+                  Text('Deploy your first proxy node', style: TextStyle(fontSize: 16.sp, color: Colors.grey)),
                 ],
               ),
             );
           }
 
-          return ListView.builder(
-            padding: EdgeInsets.all(16.w),
-            itemCount: cloudProvider.instances.length,
-            itemBuilder: (context, index) {
-              final instance = cloudProvider.instances[index];
-              return Card(
-                margin: EdgeInsets.only(bottom: 12.h),
-                child: ListTile(
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 16.w,
-                    vertical: 8.h,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: _getStatusColor(instance.status),
-                    child: Icon(
-                      _getStatusIcon(instance.status),
-                      color: Colors.white,
-                    ),
-                  ),
-                  title: Text(
-                    instance.label,
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(height: 4.h),
-                      Text('Status: ${instance.status}'),
-                      Text('Region: ${instance.region}'),
-                      if (instance.ipv4 != null)
-                        Text('IP: ${instance.ipv4}'),
-                    ],
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => _confirmDelete(context, instance),
-                  ),
-                  onTap: () => _showInstanceDetails(context, instance),
-                ),
-              );
-            },
+          return RefreshIndicator(
+            onRefresh: () => provider.loadInstances(),
+            child: ListView.builder(
+              padding: EdgeInsets.all(16.w),
+              itemCount: provider.instances.length,
+              itemBuilder: (context, index) {
+                final instance = provider.instances[index];
+                return _buildInstanceCard(context, instance, provider);
+              },
+            ),
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCreateDialog(context),
-        child: const Icon(Icons.add),
+      floatingActionButton: Consumer<CloudProvider>(
+        builder: (context, provider, _) {
+          if (!provider.hasApiKey) return const SizedBox.shrink();
+          return FloatingActionButton(
+            onPressed: () => _showCreateDialog(context),
+            child: const Icon(Icons.add),
+          );
+        },
       ),
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'active':
-      case 'running':
-        return Colors.green;
-      case 'pending':
-        return Colors.orange;
-      case 'error':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getStatusIcon(String status) {
-    switch (status.toLowerCase()) {
-      case 'active':
-      case 'running':
-        return Icons.check_circle;
-      case 'pending':
-        return Icons.hourglass_empty;
-      case 'error':
-        return Icons.error;
-      default:
-        return Icons.cloud;
-    }
-  }
-
-  void _showInstanceDetails(BuildContext context, CloudInstance instance) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(instance.label),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildNoApiKey(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(32.w),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _buildDetailRow('ID', instance.id),
-            _buildDetailRow('Status', instance.status),
-            _buildDetailRow('Region', instance.region),
-            _buildDetailRow('Plan', instance.plan),
-            if (instance.ipv4 != null)
-              _buildDetailRow('IPv4', instance.ipv4!),
-            if (instance.ipv6 != null)
-              _buildDetailRow('IPv6', instance.ipv6!),
-            _buildDetailRow(
-              'Created',
-              instance.createdAt.toString().substring(0, 19),
+            Icon(Icons.vpn_key, size: 64.w, color: Colors.grey),
+            SizedBox(height: 16.h),
+            Text('Vultr API Key Required', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
+            SizedBox(height: 8.h),
+            Text(
+              'Enter your Vultr API key to deploy and manage cloud proxy nodes.',
+              style: TextStyle(fontSize: 14.sp, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 24.h),
+            ElevatedButton.icon(
+              onPressed: () => _showApiKeyDialog(context),
+              icon: const Icon(Icons.key),
+              label: const Text('Set API Key'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
       ),
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 8.h),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildInstanceCard(BuildContext context, VultrInstance instance, CloudProvider provider) {
+    final isActive = instance.isActive;
+    final hasIp = instance.hasIp;
+    final hasNodeInfo = instance.nodeInfo != null;
+
+    return Card(
+      margin: EdgeInsets.only(bottom: 12.h),
+      child: Column(
         children: [
-          SizedBox(
-            width: 80.w,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 14.sp,
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: isActive ? Colors.green : Colors.orange,
+              child: Icon(
+                isActive ? Icons.check_circle : Icons.hourglass_empty,
+                color: Colors.white,
               ),
             ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(fontSize: 14.sp),
+            title: Text(instance.label, style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(height: 4.h),
+                Text('Status: ${instance.status} | Region: ${instance.region}'),
+                if (hasIp) Text('IP: ${instance.mainIp}'),
+                if (hasNodeInfo) Text('Protocols: SS / Hy2 / VLESS / Trojan', style: TextStyle(color: Colors.green[700], fontSize: 12.sp)),
+              ],
             ),
           ),
+          if (isActive && hasIp && hasNodeInfo)
+            Padding(
+              padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 12.h),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _importAsProfile(context, instance, provider),
+                      icon: const Icon(Icons.download, size: 18),
+                      label: const Text('Import as Profile'),
+                    ),
+                  ),
+                  SizedBox(width: 8.w),
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () => _confirmDelete(context, instance),
+                  ),
+                ],
+              ),
+            )
+          else
+            Padding(
+              padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 12.h),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () => _confirmDelete(context, instance),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
 
-  void _confirmDelete(BuildContext context, CloudInstance instance) {
+  void _importAsProfile(BuildContext context, VultrInstance instance, CloudProvider cloudProvider) async {
+    final config = cloudProvider.generateNodeConfig(instance);
+    if (config == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Node not ready yet'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    final profileProvider = context.read<ProfileProvider>();
+    final success = await profileProvider.createProfile(
+      name: 'Cloud: ${instance.label}',
+      content: config,
+    );
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? 'Profile created and activated' : 'Failed to create profile'),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showApiKeyDialog(BuildContext context) {
+    final controller = TextEditingController(
+      text: context.read<CloudProvider>().apiKey ?? '',
+    );
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Server'),
-        content: Text(
-          'Are you sure you want to delete "${instance.label}"?\n\nThis action cannot be undone.',
+        title: const Text('Vultr API Key'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'API Key',
+            hintText: 'Enter your Vultr API key',
+            border: OutlineInputBorder(),
+          ),
+          maxLines: 1,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () async {
               Navigator.pop(context);
-              final success = await context
-                  .read<CloudProvider>()
-                  .deleteInstance(instance.id);
-              
+              final provider = context.read<CloudProvider>();
+              final success = await provider.setApiKey(controller.text.trim());
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      success
-                          ? 'Server deleted successfully'
-                          : 'Failed to delete server',
-                    ),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
-                );
+                if (success) {
+                  provider.loadInstances();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('API key saved'), backgroundColor: Colors.green),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(provider.error ?? 'Invalid key'), backgroundColor: Colors.red),
+                  );
+                }
               }
             },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -275,109 +289,125 @@ class _CloudScreenState extends State<CloudScreen> {
   }
 
   void _showCreateDialog(BuildContext context) {
+    final provider = context.read<CloudProvider>();
     final labelController = TextEditingController();
     String? selectedRegion;
     String? selectedPlan;
 
+    // Load regions and plans
+    provider.loadRegions();
+    provider.loadPlans();
+
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Create Server'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: labelController,
-                  decoration: const InputDecoration(
-                    labelText: 'Server Name',
-                    hintText: 'My Server',
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => Consumer<CloudProvider>(
+          builder: (context, provider, _) => AlertDialog(
+            title: const Text('Deploy Node'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: labelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Node Name',
+                      hintText: 'e.g. Tokyo-1',
+                    ),
                   ),
-                ),
-                SizedBox(height: 16.h),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedRegion,
-                  decoration: const InputDecoration(labelText: 'Region'),
-                  items: const [
-                    DropdownMenuItem(value: 'ewr', child: Text('New York')),
-                    DropdownMenuItem(value: 'lax', child: Text('Los Angeles')),
-                    DropdownMenuItem(value: 'lhr', child: Text('London')),
-                    DropdownMenuItem(value: 'sgp', child: Text('Singapore')),
-                  ],
-                  onChanged: (value) {
-                    setState(() => selectedRegion = value);
-                  },
-                ),
-                SizedBox(height: 16.h),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedPlan,
-                  decoration: const InputDecoration(labelText: 'Plan'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'vc2-1c-1gb',
-                      child: Text('1 CPU, 1GB RAM - \$6/mo'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'vc2-1c-2gb',
-                      child: Text('1 CPU, 2GB RAM - \$12/mo'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'vc2-2c-4gb',
-                      child: Text('2 CPU, 4GB RAM - \$24/mo'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() => selectedPlan = value);
-                  },
-                ),
-              ],
+                  SizedBox(height: 16.h),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedRegion,
+                    decoration: const InputDecoration(labelText: 'Region'),
+                    isExpanded: true,
+                    items: provider.regions
+                        .map((r) => DropdownMenuItem(value: r.id, child: Text(r.displayName)))
+                        .toList(),
+                    onChanged: (value) => setState(() => selectedRegion = value),
+                  ),
+                  SizedBox(height: 16.h),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedPlan,
+                    decoration: const InputDecoration(labelText: 'Plan'),
+                    isExpanded: true,
+                    items: provider.plans
+                        .where((p) => selectedRegion == null || p.locations.contains(selectedRegion))
+                        .map((p) => DropdownMenuItem(value: p.id, child: Text(p.displayName)))
+                        .toList(),
+                    onChanged: (value) => setState(() => selectedPlan = value),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                if (labelController.text.isEmpty ||
-                    selectedRegion == null ||
-                    selectedPlan == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please fill all fields'),
-                      backgroundColor: Colors.orange,
-                    ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (labelController.text.isEmpty || selectedRegion == null || selectedPlan == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Please fill all fields'), backgroundColor: Colors.orange),
+                    );
+                    return;
+                  }
+
+                  Navigator.pop(context);
+                  final success = await provider.createInstance(
+                    region: selectedRegion!,
+                    plan: selectedPlan!,
+                    label: labelController.text,
                   );
-                  return;
-                }
 
-                Navigator.pop(context);
-                
-                final success = await context.read<CloudProvider>().createInstance(
-                  region: selectedRegion!,
-                  plan: selectedPlan!,
-                  label: labelController.text,
-                );
-
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        success
-                            ? 'Server creation started'
-                            : 'Failed to create server',
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(
+                        content: Text(success
+                            ? 'Node deploying... It takes 3-5 minutes.'
+                            : provider.error ?? 'Failed to create'),
+                        backgroundColor: success ? Colors.green : Colors.red,
                       ),
-                      backgroundColor: success ? Colors.green : Colors.red,
-                    ),
-                  );
-                }
-              },
-              child: const Text('Create'),
-            ),
-          ],
+                    );
+                  }
+                },
+                child: const Text('Deploy'),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context, VultrInstance instance) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Node'),
+        content: Text('Delete "${instance.label}"?\n\nThis will destroy the server permanently.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(context);
+              final success = await context.read<CloudProvider>().deleteInstance(instance.id);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success ? 'Node deleted' : 'Failed to delete'),
+                    backgroundColor: success ? Colors.green : Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }

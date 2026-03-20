@@ -6,21 +6,19 @@
  * from state management.
  */
 
-import { Inbound, Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
 import * as ProfileDefaults from '@/constant/profile'
+import { Inbound, Outbound, RuleAction, RuleType, Strategy } from '@/enums/kernel'
 
 import {
   CloudSmartOutboundIds,
   CloudSmartRuleIds,
   CloudSmartLegacyIds,
-  CloudSmartNodeOutboundPrefix,
   CloudSmartProbeURLPrimary,
   CloudSmartProbeURLSecondary,
   SmartProtocolInclude,
   CloudSubscriptionPrefix,
   type ProtocolHealthMap,
 } from './constants'
-
 import {
   isManagedCloudOutboundId,
   nodeSmartOutboundId,
@@ -154,6 +152,63 @@ export const ensureLinkAggregation = (profile: IProfile, cloudSubscriptionCount:
   profile.route.auto_detect_interface = true
 }
 
+// ─── Load Balance Support ────────────────────────────────────────────────────
+
+// Cached subscription entries from the last ensureSmartAutoRouting call
+let _lastSubscriptionEntries: CloudSubscriptionEntry[] = []
+
+/**
+ * Inject per-node SOCKS inbounds and route rules into the final sing-box config
+ * for connection-level load balancing.
+ *
+ * For each cloud node, adds:
+ * - A SOCKS inbound on a unique port (basePort + index)
+ * - A route rule: inbound tag → node's "Cloud Node X Best Auto" outbound
+ *
+ * Returns the list of upstream ports for the Go load balancer.
+ */
+export const injectLoadBalanceConfig = (
+  config: Record<string, any>,
+  basePort: number,
+): number[] => {
+  // Discover per-node "Cloud Node X Best Auto" outbounds directly from config
+  const nodeOutboundTags = (config.outbounds || [])
+    .map((ob: any) => ob.tag as string)
+    .filter((tag: string) => tag && tag.startsWith('Cloud Node ') && tag.endsWith(' Best Auto'))
+
+  if (nodeOutboundTags.length < 2) return []
+
+  const ports: number[] = []
+
+  for (let i = 0; i < nodeOutboundTags.length; i++) {
+    const outboundTag = nodeOutboundTags[i]
+    const port = basePort + i
+    const inboundTag = `lb-node-${i}`
+
+    // Add SOCKS inbound for this node
+    config.inbounds = config.inbounds || []
+    config.inbounds.push({
+      type: 'socks',
+      tag: inboundTag,
+      listen: '127.0.0.1',
+      listen_port: port,
+    })
+
+    // Add route rule: traffic from this inbound → this node's best outbound
+    // Insert at the beginning so it takes priority
+    config.route = config.route || {}
+    config.route.rules = config.route.rules || []
+    config.route.rules.unshift({
+      inbound: [inboundTag],
+      outbound: outboundTag,
+    })
+
+    ports.push(port)
+  }
+
+  return ports
+}
+
 // ─── Core Smart Routing Function ─────────────────────────────────────────────
 
 export const ensureSmartAutoRouting = (
@@ -182,6 +237,9 @@ export const ensureSmartAutoRouting = (
   const subscriptions = collectSubscriptionEntries(profile, healthMap)
   ensureLinkAggregation(profile, subscriptions.length)
   if (subscriptions.length === 0) return
+
+  // Track subscription entries for load balance config injection
+  _lastSubscriptionEntries = subscriptions
 
   // Per-node best protocol auto outbounds
   const nodeAutoOutbounds = subscriptions.map((entry) => {

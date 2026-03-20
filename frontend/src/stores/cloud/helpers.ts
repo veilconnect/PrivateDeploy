@@ -7,8 +7,6 @@
 
 import { logError } from '@/utils/logger'
 
-import type { CloudProvider, CloudNode } from '@/types/cloud'
-import type { ManagedProtocol, ProtocolHealthEntry, ProtocolExcludePattern, CloudNodeStatus } from './constants'
 import {
   CloudSubscriptionPrefix,
   CloudSmartOutboundIds,
@@ -17,7 +15,9 @@ import {
   ProtocolExcludePattern as ExcludePatterns,
 } from './constants'
 
+import type { ManagedProtocol, ProtocolHealthEntry, CloudNodeStatus } from './constants'
 import type { ManagedCloudNode } from './types'
+import type { CloudProvider, CloudNode } from '@/types/cloud'
 
 // ─── JSON Parsing ────────────────────────────────────────────────────────────
 

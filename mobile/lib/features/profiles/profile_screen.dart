@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
+import 'package:dio/dio.dart';
 import 'profile_provider.dart';
+import '../../core/subscription/parser.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/empty_view.dart';
@@ -14,16 +16,6 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<ProfileProvider>();
-      provider.loadProfiles();
-      provider.loadActiveProfile();
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -55,7 +47,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             return EmptyView(
               icon: Icons.description_outlined,
               title: 'No Profiles',
-              message: 'Create a configuration profile to get started',
+              message:
+                  'Create a profile with sing-box JSON config to get started',
               onAction: () => _showCreateDialog(context),
               actionLabel: 'Create Profile',
             );
@@ -76,7 +69,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: isActive ? Colors.green : Colors.grey,
+                          backgroundColor:
+                              isActive ? Colors.green : Colors.grey,
                           child: Icon(
                             isActive ? Icons.check : Icons.description,
                             color: Colors.white,
@@ -117,18 +111,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (profile.subscriptionUrl != null) ...[
-                              SizedBox(height: 4.h),
-                              Text(
-                                'Subscription: ${profile.subscriptionUrl}',
-                                style: TextStyle(
-                                  fontSize: 12.sp,
-                                  color: Colors.grey[600],
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
                             SizedBox(height: 4.h),
                             Text(
                               'Created: ${_formatDate(profile.createdAt)}',
@@ -137,14 +119,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 color: Colors.grey[600],
                               ),
                             ),
-                            if (profile.lastUpdated != null)
-                              Text(
-                                'Last Updated: ${_formatDate(profile.lastUpdated!)}',
-                                style: TextStyle(
-                                  fontSize: 12.sp,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
                           ],
                         ),
                         trailing: PopupMenuButton<String>(
@@ -158,9 +132,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 break;
                               case 'view':
                                 _viewProfileContent(context, profile);
-                                break;
-                              case 'update':
-                                _updateSubscription(context, profile);
                                 break;
                               case 'delete':
                                 _confirmDelete(context, profile);
@@ -185,7 +156,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 children: [
                                   Icon(Icons.visibility),
                                   SizedBox(width: 8),
-                                  Text('View Content'),
+                                  Text('View / Edit Config'),
                                 ],
                               ),
                             ),
@@ -195,28 +166,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 children: [
                                   Icon(Icons.edit),
                                   SizedBox(width: 8),
-                                  Text('Edit'),
+                                  Text('Rename'),
                                 ],
                               ),
                             ),
-                            if (profile.subscriptionUrl != null)
-                              const PopupMenuItem(
-                                value: 'update',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.refresh),
-                                    SizedBox(width: 8),
-                                    Text('Update Subscription'),
-                                  ],
-                                ),
-                              ),
                             const PopupMenuItem(
                               value: 'delete',
                               child: Row(
                                 children: [
                                   Icon(Icons.delete, color: Colors.red),
                                   SizedBox(width: 8),
-                                  Text('Delete', style: TextStyle(color: Colors.red)),
+                                  Text('Delete',
+                                      style: TextStyle(color: Colors.red)),
                                 ],
                               ),
                             ),
@@ -231,9 +192,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCreateDialog(context),
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'import',
+            onPressed: () => _showImportDialog(context),
+            child: const Icon(Icons.link),
+          ),
+          SizedBox(height: 8.h),
+          FloatingActionButton(
+            heroTag: 'create',
+            onPressed: () => _showCreateDialog(context),
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
     );
   }
@@ -243,9 +216,122 @@ class _ProfileScreenState extends State<ProfileScreen> {
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
+  void _showImportDialog(BuildContext context) {
+    final urlController = TextEditingController();
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import from URL'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Profile Name',
+                  hintText: 'e.g. My Subscription',
+                ),
+              ),
+              SizedBox(height: 16.h),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  labelText: 'Subscription URL',
+                  hintText: 'https://example.com/sub?token=...',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              SizedBox(height: 8.h),
+              Text(
+                'Supports: sing-box JSON, base64 URI list (ss/vless/trojan/hy2/vmess)',
+                style: TextStyle(fontSize: 11.sp, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final url = urlController.text.trim();
+              final name = nameController.text.trim();
+              if (url.isEmpty) return;
+
+              Navigator.pop(context);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Fetching subscription...')),
+              );
+
+              try {
+                final dio = Dio(BaseOptions(
+                  connectTimeout: const Duration(seconds: 15),
+                  receiveTimeout: const Duration(seconds: 15),
+                  headers: {'User-Agent': 'PrivateDeploy/1.0'},
+                ));
+                final resp = await dio.get(url);
+                final config =
+                    SubscriptionParser.parseResponseDataToSingboxConfig(
+                  resp.data,
+                );
+                if (config == null) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Failed to parse subscription'),
+                          backgroundColor: Colors.red),
+                    );
+                  }
+                  return;
+                }
+
+                final profileName = name.isNotEmpty
+                    ? name
+                    : 'Sub ${DateTime.now().toString().substring(0, 16)}';
+                final provider = context.read<ProfileProvider>();
+                final success = await provider.createProfile(
+                  name: profileName,
+                  subscriptionUrl: url,
+                  content: config,
+                );
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(success
+                          ? 'Imported successfully'
+                          : 'Failed to import'),
+                      backgroundColor: success ? Colors.green : Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text('Network error: $e'),
+                        backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showCreateDialog(BuildContext context) {
     final nameController = TextEditingController();
-    final urlController = TextEditingController();
+    final configController = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
     showDialog(
@@ -254,31 +340,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: const Text('Create Profile'),
         content: Form(
           key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Profile Name',
-                  hintText: 'Enter profile name',
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Profile Name',
+                    hintText: 'e.g. My VPN Config',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a profile name';
+                    }
+                    return null;
+                  },
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a profile name';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16.h),
-              TextFormField(
-                controller: urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Subscription URL (Optional)',
-                  hintText: 'Enter subscription URL',
+                SizedBox(height: 16.h),
+                TextFormField(
+                  controller: configController,
+                  decoration: const InputDecoration(
+                    labelText: 'sing-box JSON Config',
+                    hintText: 'Paste sing-box configuration JSON here...',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 8,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12.sp,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         actions: [
@@ -293,7 +387,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final provider = context.read<ProfileProvider>();
                 final success = await provider.createProfile(
                   name: nameController.text,
-                  subscriptionUrl: urlController.text.isEmpty ? null : urlController.text,
+                  content: configController.text,
                 );
 
                 if (context.mounted) {
@@ -317,38 +411,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showEditDialog(BuildContext context, Profile profile) {
     final nameController = TextEditingController(text: profile.name);
-    final urlController = TextEditingController(text: profile.subscriptionUrl ?? '');
     final formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Edit Profile'),
+        title: const Text('Rename Profile'),
         content: Form(
           key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Profile Name',
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a profile name';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16.h),
-              TextFormField(
-                controller: urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Subscription URL',
-                ),
-              ),
-            ],
+          child: TextFormField(
+            controller: nameController,
+            decoration: const InputDecoration(
+              labelText: 'Profile Name',
+            ),
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter a profile name';
+              }
+              return null;
+            },
           ),
         ),
         actions: [
@@ -364,22 +445,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final success = await provider.updateProfile(
                   id: profile.id,
                   name: nameController.text,
-                  subscriptionUrl: urlController.text.isEmpty ? null : urlController.text,
                 );
 
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(success
-                          ? 'Profile updated successfully'
-                          : provider.error ?? 'Failed to update profile'),
+                          ? 'Profile renamed'
+                          : provider.error ?? 'Failed to rename'),
                       backgroundColor: success ? Colors.green : Colors.red,
                     ),
                   );
                 }
               }
             },
-            child: const Text('Update'),
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -392,24 +472,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!context.mounted) return;
 
-    if (content != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ProfileContentScreen(
-            profile: profile,
-            content: content,
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProfileContentScreen(
+          profile: profile,
+          content: content ?? '',
         ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(provider.error ?? 'Failed to load profile content'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+      ),
+    );
   }
 
   void _activateProfile(BuildContext context, Profile profile) async {
@@ -420,29 +491,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(success
-              ? 'Profile activated successfully'
-              : provider.error ?? 'Failed to activate profile'),
-          backgroundColor: success ? Colors.green : Colors.red,
-        ),
-      );
-    }
-  }
-
-  void _updateSubscription(BuildContext context, Profile profile) async {
-    final provider = context.read<ProfileProvider>();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Updating subscription...')),
-    );
-
-    final success = await provider.updateSubscription(profile.id);
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(success
-              ? 'Subscription updated successfully'
-              : provider.error ?? 'Failed to update subscription'),
+              ? 'Profile activated'
+              : provider.error ?? 'Failed to activate'),
           backgroundColor: success ? Colors.green : Colors.red,
         ),
       );
@@ -474,8 +524,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(success
-                        ? 'Profile deleted successfully'
-                        : provider.error ?? 'Failed to delete profile'),
+                        ? 'Profile deleted'
+                        : provider.error ?? 'Failed to delete'),
                     backgroundColor: success ? Colors.green : Colors.red,
                   ),
                 );
@@ -489,7 +539,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-/// Profile content viewer/editor screen
 class ProfileContentScreen extends StatefulWidget {
   final Profile profile;
   final String content;
@@ -556,7 +605,7 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
           expands: true,
           decoration: InputDecoration(
             border: _isEditing ? const OutlineInputBorder() : InputBorder.none,
-            hintText: 'Profile configuration content...',
+            hintText: 'Paste sing-box JSON configuration here...',
           ),
           style: TextStyle(
             fontFamily: 'monospace',
@@ -577,9 +626,8 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success
-              ? 'Profile saved successfully'
-              : provider.error ?? 'Failed to save profile'),
+          content: Text(
+              success ? 'Config saved' : provider.error ?? 'Failed to save'),
           backgroundColor: success ? Colors.green : Colors.red,
         ),
       );

@@ -193,6 +193,7 @@ MOCK_BRIDGE_JS = r"""
       'autoStartKernel: false',
       'autoSetSystemProxy: false',
       'systemProxyPolicyInitialized: true',
+      'builtinPresetsVersion: 1',
       'pages:',
       '  - Overview',
       '  - Profiles',

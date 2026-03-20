@@ -1,293 +1,564 @@
 import Flutter
-import UIKit
 import NetworkExtension
+import UIKit
 
-/**
- * VPN Plugin for iOS
- *
- * 处理 Flutter 和 iOS Network Extension 之间的通信
- */
+#if canImport(VPNCore)
+import VPNCore
+#endif
+
 public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
+    private static let methodChannel = "com.privatedeploy.vpn/native"
+    private static let eventChannel = "com.privatedeploy.vpn/events"
+    private static let appGroupInfoKey = "PrivateDeployVPNAppGroup"
+    private static let extensionBundleInfoKey = "PrivateDeployVPNExtensionBundleIdentifier"
+    private static let defaultAppGroup = "group.com.privatedeploy.mobile"
+    private static let configDefaultsKey = "vpn_config"
+    private static let statusDefaultsKey = "vpn_status"
+    private static let statsDefaultsKey = "vpn_stats"
+    private static let unsupportedMessage =
+        "iOS VPN core is not available in this build. Build and embed VPNCore.framework before using native VPN control."
 
-    private static let METHOD_CHANNEL = "com.privatedeploy.vpn/native"
-    private static let EVENT_CHANNEL = "com.privatedeploy.vpn/events"
-
-    private var methodChannel: FlutterMethodChannel?
-    private var eventChannel: FlutterEventChannel?
     private var eventSink: FlutterEventSink?
-
-    private var vpnManager: NETunnelProviderManager?
-    private var isConnected = false
+    private var statusObserver: NSObjectProtocol?
+    private var statusPollTimer: Timer?
+    private var cachedManager: NETunnelProviderManager?
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = VpnPlugin()
 
         let methodChannel = FlutterMethodChannel(
-            name: METHOD_CHANNEL,
+            name: Self.methodChannel,
             binaryMessenger: registrar.messenger()
         )
-        instance.methodChannel = methodChannel
         registrar.addMethodCallDelegate(instance, channel: methodChannel)
 
         let eventChannel = FlutterEventChannel(
-            name: EVENT_CHANNEL,
+            name: Self.eventChannel,
             binaryMessenger: registrar.messenger()
         )
-        instance.eventChannel = eventChannel
         eventChannel.setStreamHandler(instance)
-
-        instance.setupVPNManager()
     }
 
-    private func setupVPNManager() {
-        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
-            if let error = error {
-                NSLog("[VpnPlugin] Error loading VPN preferences: \(error)")
-                return
-            }
-
-            if let manager = managers?.first {
-                self?.vpnManager = manager
-            } else {
-                self?.createVPNManager()
-            }
-
-            self?.observeVPNStatus()
-        }
-    }
-
-    private func createVPNManager() {
-        let manager = NETunnelProviderManager()
-        manager.localizedDescription = "PrivateDeploy VPN"
-
-        let proto = NETunnelProviderProtocol()
-        proto.providerBundleIdentifier = "com.privatedeploy.mobile.vpnextension"
-        proto.serverAddress = "PrivateDeploy"
-
-        manager.protocolConfiguration = proto
-        manager.isEnabled = true
-
-        manager.saveToPreferences { [weak self] error in
-            if let error = error {
-                NSLog("[VpnPlugin] Error saving VPN preferences: \(error)")
-            } else {
-                self?.vpnManager = manager
-                NSLog("[VpnPlugin] VPN manager created successfully")
-            }
-        }
-    }
-
-    private func observeVPNStatus() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(vpnStatusDidChange),
-            name: .NEVPNStatusDidChange,
-            object: nil
-        )
-    }
-
-    @objc private func vpnStatusDidChange() {
-        guard let status = vpnManager?.connection.status else { return }
-
-        let statusString: String
-        let isConnected: Bool
-
-        switch status {
-        case .connected:
-            statusString = "connected"
-            isConnected = true
-        case .connecting:
-            statusString = "connecting"
-            isConnected = false
-        case .disconnected:
-            statusString = "disconnected"
-            isConnected = false
-        case .disconnecting:
-            statusString = "disconnecting"
-            isConnected = false
-        case .reasserting:
-            statusString = "reconnecting"
-            isConnected = false
-        case .invalid:
-            statusString = "invalid"
-            isConnected = false
-        @unknown default:
-            statusString = "unknown"
-            isConnected = false
-        }
-
-        self.isConnected = isConnected
-
-        eventSink?([
-            "type": "status",
-            "data": [
-                "running": isConnected,
-                "status": statusString
-            ]
-        ])
-
-        NSLog("[VpnPlugin] VPN status changed to: \(statusString)")
+    deinit {
+        stopStatusObservation()
     }
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "startVpn":
-            startVpn(call: call, result: result)
+            startVpn(call, result: result)
         case "stopVpn":
-            stopVpn(result: result)
+            stopVpn(result)
         case "restartVpn":
-            restartVpn(result: result)
+            restartVpn(result)
         case "isRunning":
-            isRunning(result: result)
+            isRunning(result)
         case "getStatus":
-            getStatus(result: result)
+            getStatus(result)
         case "getStats":
-            getStats(result: result)
+            getStats(result)
         case "resetStats":
-            resetStats(result: result)
+            resetStats(result)
         case "updateConfig":
-            updateConfig(call: call, result: result)
+            updateConfig(call, result: result)
         case "getVersion":
-            getVersion(result: result)
+            getVersion(result)
         case "requestPermission":
-            requestPermission(result: result)
+            requestPermission(result)
         default:
             result(FlutterMethodNotImplemented)
         }
     }
 
-    private func startVpn(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let manager = vpnManager else {
-            result(FlutterError(
-                code: "NO_VPN_MANAGER",
-                message: "VPN manager not initialized",
-                details: nil
-            ))
-            return
-        }
-
-        guard let args = call.arguments as? [String: Any],
-              let config = args["config"] as? String else {
-            result(FlutterError(
-                code: "INVALID_ARGS",
-                message: "Invalid arguments",
-                details: nil
-            ))
-            return
-        }
-
-        // 保存配置到 UserDefaults (供 Network Extension 使用)
-        if let sharedDefaults = UserDefaults(suiteName: "group.com.privatedeploy.mobile") {
-            sharedDefaults.set(config, forKey: "vpn_config")
-            sharedDefaults.synchronize()
-        }
-
-        do {
-            try manager.connection.startVPNTunnel()
-            result(true)
-            NSLog("[VpnPlugin] VPN start requested")
-        } catch {
-            result(FlutterError(
-                code: "START_FAILED",
-                message: "Failed to start VPN: \(error.localizedDescription)",
-                details: nil
-            ))
-        }
-    }
-
-    private func stopVpn(result: @escaping FlutterResult) {
-        guard let manager = vpnManager else {
-            result(FlutterError(
-                code: "NO_VPN_MANAGER",
-                message: "VPN manager not initialized",
-                details: nil
-            ))
-            return
-        }
-
-        manager.connection.stopVPNTunnel()
-        result(true)
-        NSLog("[VpnPlugin] VPN stop requested")
-    }
-
-    private func restartVpn(result: @escaping FlutterResult) {
-        stopVpn { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                let call = FlutterMethodCall(methodName: "startVpn", arguments: ["config": ""])
-                self?.startVpn(call: call, result: result)
-            }
-        }
-    }
-
-    private func isRunning(result: @escaping FlutterResult) {
-        result(isConnected)
-    }
-
-    private func getStatus(result: @escaping FlutterResult) {
-        result([
-            "running": isConnected,
-            "connected_at": 0,
-            "uptime": 0
-        ])
-    }
-
-    private func getStats(result: @escaping FlutterResult) {
-        // TODO: 从 Network Extension 获取实际统计数据
-        result([
-            "upload_bytes": 0,
-            "download_bytes": 0,
-            "upload_speed": 0,
-            "download_speed": 0
-        ])
-    }
-
-    private func resetStats(result: @escaping FlutterResult) {
-        // TODO: 重置 Network Extension 的统计数据
-        result(true)
-    }
-
-    private func updateConfig(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let config = args["config"] as? String else {
-            result(FlutterError(
-                code: "INVALID_ARGS",
-                message: "Invalid arguments",
-                details: nil
-            ))
-            return
-        }
-
-        if let sharedDefaults = UserDefaults(suiteName: "group.com.privatedeploy.mobile") {
-            sharedDefaults.set(config, forKey: "vpn_config")
-            sharedDefaults.synchronize()
-        }
-
-        result(true)
-    }
-
-    private func getVersion(result: @escaping FlutterResult) {
-        result("PrivateDeploy VPN iOS 1.0.0")
-    }
-
-    private func requestPermission(result: @escaping FlutterResult) {
-        // iOS VPN 权限在首次连接时自动请求
-        result(true)
-    }
-
-    // FlutterStreamHandler
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         eventSink = events
-        NSLog("[VpnPlugin] Event stream listener attached")
+        startStatusObservation()
+        publishStatusEvent()
         return nil
     }
 
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         eventSink = nil
-        NSLog("[VpnPlugin] Event stream listener cancelled")
+        stopStatusObservation()
         return nil
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+    private func startVpn(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        guard
+            let arguments = call.arguments as? [String: Any],
+            let config = arguments["config"] as? String,
+            !config.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            result(flutterError(code: "INVALID_CONFIG", message: "VPN config is empty"))
+            return
+        }
+
+        persistConfig(config)
+        ensureManagerSaved { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_SAVE_FAILED", message: error.localizedDescription))
+                return
+            }
+            guard let session = manager?.connection as? NETunnelProviderSession else {
+                result(self.flutterError(code: "VPN_SESSION_UNAVAILABLE", message: "Tunnel provider session is unavailable"))
+                return
+            }
+            do {
+                try session.startVPNTunnel()
+                self.publishStatusEvent()
+                result(true)
+            } catch {
+                result(self.flutterError(code: "VPN_START_FAILED", message: error.localizedDescription))
+            }
+        }
+#else
+        result(flutterError(code: "UNSUPPORTED", message: Self.unsupportedMessage))
+#endif
+    }
+
+    private func stopVpn(_ result: @escaping FlutterResult) {
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            manager?.connection.stopVPNTunnel()
+            self.publishStatusEvent()
+            result(true)
+        }
+    }
+
+    private func restartVpn(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            guard let manager else {
+                result(self.flutterError(code: "VPN_MANAGER_UNAVAILABLE", message: "Tunnel provider manager is unavailable"))
+                return
+            }
+            switch manager.connection.status {
+            case .connected, .connecting, .reasserting:
+                self.sendProviderCommand(["action": "restart"], manager: manager) { commandError, _ in
+                    if let commandError {
+                        result(self.flutterError(code: "VPN_RESTART_FAILED", message: commandError.localizedDescription))
+                        return
+                    }
+                    self.publishStatusEvent()
+                    result(true)
+                }
+            default:
+                if let session = manager.connection as? NETunnelProviderSession {
+                    do {
+                        try session.startVPNTunnel()
+                        self.publishStatusEvent()
+                        result(true)
+                    } catch {
+                        result(self.flutterError(code: "VPN_RESTART_FAILED", message: error.localizedDescription))
+                    }
+                } else {
+                    result(self.flutterError(code: "VPN_SESSION_UNAVAILABLE", message: "Tunnel provider session is unavailable"))
+                }
+            }
+        }
+#else
+        result(flutterError(code: "UNSUPPORTED", message: Self.unsupportedMessage))
+#endif
+    }
+
+    private func isRunning(_ result: @escaping FlutterResult) {
+        loadManager { manager, _ in
+            result(self.isConnectedStatus(manager?.connection.status ?? .invalid))
+        }
+    }
+
+    private func getStatus(_ result: @escaping FlutterResult) {
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            result(self.statusPayload(manager: manager))
+        }
+    }
+
+    private func getStats(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            guard let manager, self.isConnectedStatus(manager.connection.status) else {
+                result(self.statsPayload())
+                return
+            }
+            self.sendProviderCommand(["action": "getStats"], manager: manager) { commandError, payload in
+                if let commandError {
+                    result(self.flutterError(code: "VPN_STATS_FAILED", message: commandError.localizedDescription))
+                    return
+                }
+                if let payload {
+                    result(payload)
+                } else {
+                    result(self.statsPayload())
+                }
+            }
+        }
+#else
+        result([
+            "upload_bytes": 0,
+            "download_bytes": 0,
+            "upload_speed": 0,
+            "download_speed": 0,
+            "memory_bytes": 0,
+            "connections_in": 0,
+            "connections_out": 0,
+            "traffic_available": false,
+        ])
+#endif
+    }
+
+    private func resetStats(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            guard let manager, self.isConnectedStatus(manager.connection.status) else {
+                self.persistStats([
+                    "upload_bytes": 0,
+                    "download_bytes": 0,
+                    "upload_speed": 0,
+                    "download_speed": 0,
+                    "memory_bytes": 0,
+                    "connections_in": 0,
+                    "connections_out": 0,
+                    "traffic_available": false,
+                ])
+                result(true)
+                return
+            }
+            self.sendProviderCommand(["action": "resetStats"], manager: manager) { commandError, _ in
+                if let commandError {
+                    result(self.flutterError(code: "VPN_RESET_STATS_FAILED", message: commandError.localizedDescription))
+                    return
+                }
+                result(true)
+            }
+        }
+#else
+        result(flutterError(code: "UNSUPPORTED", message: Self.unsupportedMessage))
+#endif
+    }
+
+    private func updateConfig(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        guard
+            let arguments = call.arguments as? [String: Any],
+            let config = arguments["config"] as? String,
+            !config.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            result(flutterError(code: "INVALID_CONFIG", message: "VPN config is empty"))
+            return
+        }
+
+        persistConfig(config)
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_MANAGER_LOAD_FAILED", message: error.localizedDescription))
+                return
+            }
+            guard let manager, self.isConnectedStatus(manager.connection.status) else {
+                result(true)
+                return
+            }
+            self.sendProviderCommand(["action": "updateConfig", "config": config], manager: manager) { commandError, _ in
+                if let commandError {
+                    result(self.flutterError(code: "VPN_UPDATE_CONFIG_FAILED", message: commandError.localizedDescription))
+                    return
+                }
+                result(true)
+            }
+        }
+#else
+        result(flutterError(code: "UNSUPPORTED", message: Self.unsupportedMessage))
+#endif
+    }
+
+    private func getVersion(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        result(VPNCoreNewVPNService().getVersion())
+#else
+        result("PrivateDeploy VPN iOS")
+#endif
+    }
+
+    private func requestPermission(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        ensureManagerSaved { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                result(self.flutterError(code: "VPN_PERMISSION_REQUEST_FAILED", message: error.localizedDescription))
+                return
+            }
+            result(true)
+        }
+#else
+        result(flutterError(code: "UNSUPPORTED", message: Self.unsupportedMessage))
+#endif
+    }
+
+    private func loadManager(_ completion: @escaping (NETunnelProviderManager?, Error?) -> Void) {
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
+            guard let self else { return }
+            if let error {
+                completion(nil, error)
+                return
+            }
+
+            let targetBundleId = self.extensionBundleIdentifier()
+            let manager = managers?.first(where: {
+                guard let proto = $0.protocolConfiguration as? NETunnelProviderProtocol else {
+                    return false
+                }
+                return proto.providerBundleIdentifier == targetBundleId
+            }) ?? managers?.first ?? NETunnelProviderManager()
+
+            self.cachedManager = manager
+            completion(manager, nil)
+        }
+    }
+
+    private func ensureManagerSaved(_ completion: @escaping (NETunnelProviderManager?, Error?) -> Void) {
+        loadManager { [weak self] manager, error in
+            guard let self else { return }
+            if let error {
+                completion(nil, error)
+                return
+            }
+            guard let manager else {
+                completion(nil, NSError(domain: "com.privatedeploy.mobile.vpn", code: 1001, userInfo: [
+                    NSLocalizedDescriptionKey: "Tunnel provider manager is unavailable",
+                ]))
+                return
+            }
+
+            let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+            proto.providerBundleIdentifier = self.extensionBundleIdentifier()
+            proto.serverAddress = "PrivateDeploy"
+            proto.disconnectOnSleep = false
+            proto.providerConfiguration = [
+                Self.appGroupInfoKey: self.appGroupIdentifier(),
+                "configKey": Self.configDefaultsKey,
+                "statusKey": Self.statusDefaultsKey,
+                "statsKey": Self.statsDefaultsKey,
+            ]
+
+            manager.protocolConfiguration = proto
+            manager.localizedDescription = "PrivateDeploy VPN"
+            manager.isEnabled = true
+
+            manager.saveToPreferences { saveError in
+                if let saveError {
+                    completion(nil, saveError)
+                    return
+                }
+                manager.loadFromPreferences { loadError in
+                    if let loadError {
+                        completion(nil, loadError)
+                        return
+                    }
+                    self.cachedManager = manager
+                    completion(manager, nil)
+                }
+            }
+        }
+    }
+
+    private func sendProviderCommand(
+        _ payload: [String: Any],
+        manager: NETunnelProviderManager,
+        completion: @escaping (Error?, [String: Any]?) -> Void
+    ) {
+        guard let session = manager.connection as? NETunnelProviderSession else {
+            completion(NSError(domain: "com.privatedeploy.mobile.vpn", code: 1002, userInfo: [
+                NSLocalizedDescriptionKey: "Tunnel provider session is unavailable",
+            ]), nil)
+            return
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            try session.sendProviderMessage(data) { responseData in
+                guard let responseData else {
+                    completion(nil, nil)
+                    return
+                }
+                do {
+                    let json = try JSONSerialization.jsonObject(with: responseData)
+                    guard let dictionary = json as? [String: Any] else {
+                        completion(nil, nil)
+                        return
+                    }
+                    if let errorMessage = dictionary["error"] as? String, !errorMessage.isEmpty {
+                        completion(NSError(domain: "com.privatedeploy.mobile.vpn", code: 1003, userInfo: [
+                            NSLocalizedDescriptionKey: errorMessage,
+                        ]), nil)
+                        return
+                    }
+                    if let dataPayload = dictionary["data"] as? [String: Any] {
+                        completion(nil, dataPayload)
+                    } else {
+                        completion(nil, dictionary)
+                    }
+                } catch {
+                    completion(error, nil)
+                }
+            }
+        } catch {
+            completion(error, nil)
+        }
+    }
+
+    private func persistConfig(_ config: String) {
+        sharedDefaults()?.set(config, forKey: Self.configDefaultsKey)
+    }
+
+    private func persistStatus(_ status: [String: Any]) {
+        sharedDefaults()?.set(status, forKey: Self.statusDefaultsKey)
+    }
+
+    private func persistStats(_ stats: [String: Any]) {
+        sharedDefaults()?.set(stats, forKey: Self.statsDefaultsKey)
+    }
+
+    private func statusPayload(manager: NETunnelProviderManager?) -> [String: Any] {
+        let status = manager?.connection.status ?? .invalid
+        let sharedStatus = sharedDefaults()?.dictionary(forKey: Self.statusDefaultsKey) ?? [:]
+        var payload: [String: Any] = [
+            "running": isConnectedStatus(status),
+            "status": statusString(status),
+            "connected_at": sharedStatus["connected_at"] ?? 0,
+            "uptime": sharedStatus["uptime"] ?? 0,
+        ]
+        payload["message"] = sharedStatus["message"] ?? NSNull()
+        return payload
+    }
+
+    private func statsPayload() -> [String: Any] {
+        (sharedDefaults()?.dictionary(forKey: Self.statsDefaultsKey) as? [String: Any]) ?? [
+            "upload_bytes": 0,
+            "download_bytes": 0,
+            "upload_speed": 0,
+            "download_speed": 0,
+            "memory_bytes": 0,
+            "connections_in": 0,
+            "connections_out": 0,
+            "traffic_available": false,
+        ]
+    }
+
+    private func publishStatusEvent() {
+        guard let eventSink else { return }
+        loadManager { [weak self] manager, _ in
+            guard let self else { return }
+            eventSink([
+                "type": "status",
+                "data": self.statusPayload(manager: manager),
+            ])
+        }
+    }
+
+    private func startStatusObservation() {
+        if statusObserver == nil {
+            statusObserver = NotificationCenter.default.addObserver(
+                forName: .NEVPNStatusDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishStatusEvent()
+            }
+        }
+        if statusPollTimer == nil {
+            statusPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.publishStatusEvent()
+            }
+        }
+    }
+
+    private func stopStatusObservation() {
+        if let statusObserver {
+            NotificationCenter.default.removeObserver(statusObserver)
+            self.statusObserver = nil
+        }
+        statusPollTimer?.invalidate()
+        statusPollTimer = nil
+    }
+
+    private func statusString(_ status: NEVPNStatus) -> String {
+        switch status {
+        case .connected:
+            return "connected"
+        case .connecting, .reasserting:
+            return "connecting"
+        case .disconnecting:
+            return "disconnecting"
+        case .disconnected, .invalid:
+            return "disconnected"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private func isConnectedStatus(_ status: NEVPNStatus) -> Bool {
+        switch status {
+        case .connected, .connecting, .reasserting:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func appGroupIdentifier() -> String {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: Self.appGroupInfoKey) as? String {
+            let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return Self.defaultAppGroup
+    }
+
+    private func extensionBundleIdentifier() -> String {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: Self.extensionBundleInfoKey) as? String {
+            let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        if let bundleId = Bundle.main.bundleIdentifier {
+            return bundleId + ".VPNExtension"
+        }
+        return "com.privatedeploy.mobile.VPNExtension"
+    }
+
+    private func sharedDefaults() -> UserDefaults? {
+        UserDefaults(suiteName: appGroupIdentifier())
+    }
+
+    private func flutterError(code: String, message: String) -> FlutterError {
+        FlutterError(code: code, message: message, details: nil)
     }
 }

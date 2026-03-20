@@ -77,6 +77,7 @@ echo ""
 OUTPUT_DIR="../ios"
 FRAMEWORK_NAME="VPNCore.framework"
 OUTPUT_PATH="$OUTPUT_DIR/$FRAMEWORK_NAME"
+TAGS="${PRIVATEDEPLOY_IOS_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"
@@ -86,6 +87,7 @@ echo ""
 
 echo -e "${YELLOW}[4/5] 编译 Framework...${NC}"
 echo "目标架构: arm64 (真机), x86_64 (模拟器)"
+echo "Go build tags: ${TAGS:-<none>}"
 echo "输出路径: $OUTPUT_PATH"
 echo ""
 
@@ -96,6 +98,7 @@ echo ""
 gomobile bind \
     -target=ios \
     -iosversion=12.0 \
+    -tags="$TAGS" \
     -o="$OUTPUT_PATH" \
     .
 

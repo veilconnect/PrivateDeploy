@@ -57,6 +57,12 @@ export const GetFastestCloudRegion = App.GetFastestCloudRegion
 
 export const GetAvailablePort = App.GetAvailablePort
 
+export const StartLoadBalancer = App.StartLoadBalancer
+
+export const StopLoadBalancer = App.StopLoadBalancer
+
+export const GetLoadBalancerStatus = App.GetLoadBalancerStatus
+
 export const CleanInvalidCloudNodes = App.CleanInvalidCloudNodes
 
 export const TestSSHConnection = App.TestSSHConnection
@@ -70,6 +76,54 @@ export const StartHealthMonitor = App.StartHealthMonitor
 export const StopHealthMonitor = App.StopHealthMonitor
 
 export const GetHealthStatus = App.GetHealthStatus
+
+export const TestNodeSpeed = async (
+  ip: string,
+  probe: number[] | import('@/types/cloud').ConnectivityProbeRequest
+): Promise<{ latencyMs: number; port: number; status: string }> => {
+  const portsJSON = JSON.stringify(probe)
+  const { flag, data } = await App.TestNodeSpeed(ip, portsJSON)
+  const result = JSON.parse(data)
+  if (!flag && result.status === 'timeout') {
+    return result
+  }
+  if (!flag) {
+    throw new Error(data)
+  }
+  return result
+}
+
+export const TestNodeDirectSpeed = async (
+  outbounds: Array<Record<string, any>>,
+  timeoutSec?: number,
+): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string }> => {
+  const outboundsJSON = JSON.stringify(outbounds)
+  const { flag, data } = await App.TestNodeDirectSpeed(outboundsJSON, timeoutSec || 15)
+  const result = JSON.parse(data)
+  if (!flag && result.status === 'error') {
+    return result
+  }
+  if (!flag) {
+    throw new Error(data)
+  }
+  return result
+}
+
+export const TestDownloadSpeed = async (
+  proxyURL: string,
+  testURL?: string,
+  timeoutSec?: number,
+): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string }> => {
+  const { flag, data } = await App.TestDownloadSpeed(proxyURL, testURL || '', timeoutSec || 15)
+  const result = JSON.parse(data)
+  if (!flag && result.status === 'error') {
+    return result
+  }
+  if (!flag) {
+    throw new Error(data)
+  }
+  return result
+}
 
 export const TestConnectivity = async (
   ip: string,

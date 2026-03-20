@@ -4,14 +4,17 @@
  * Shared type definitions for the cloud module.
  */
 
+import type { CloudNodeStatus } from './constants'
 import type { CloudNode, CloudProvider, ConnectivityResult, ConnectivityStatus } from '@/types/cloud'
-import type { CloudNodeStatus, ManagedProtocol, ProtocolHealthEntry, ProtocolHealthMap } from './constants'
 
 export type ManagedCloudNode = CloudNode & {
   statusText?: CloudNodeStatus
   connectivityStatus?: ConnectivityStatus
   connectivityTesting?: boolean
   lastConnectivityResult?: ConnectivityResult
+  speedMs?: number
+  speedMbps?: number
+  speedTesting?: boolean
 }
 
 export type CloudSubscriptionEntry = IProxy & {

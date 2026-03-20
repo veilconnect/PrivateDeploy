@@ -34,6 +34,8 @@ export function GetCloudProvider():Promise<bridge.FlagResult>;
 
 export function GetEnv():Promise<bridge.EnvResult>;
 
+export function GetLoadBalancerStatus():Promise<bridge.FlagResult>;
+
 export function GetFastestCloudRegion():Promise<bridge.FlagResult>;
 
 export function GetHealthStatus():Promise<bridge.FlagResult>;
@@ -80,27 +82,39 @@ export function RestartApp():Promise<bridge.FlagResult>;
 
 export function SaveCloudConfig(arg1:string):Promise<bridge.FlagResult>;
 
+export function ScoreCloudRegions(arg1:string):Promise<bridge.FlagResult>;
+
 export function SetCloudProvider(arg1:string):Promise<bridge.FlagResult>;
+
+export function SetupSSHEventEmitter():Promise<void>;
 
 export function ShowMainWindow():Promise<void>;
 
-export function StartServer(arg1:string,arg2:string,arg3:bridge.ServerOptions):Promise<bridge.FlagResult>;
-
 export function StartHealthMonitor():Promise<bridge.FlagResult>;
 
-export function StopServer(arg1:string):Promise<bridge.FlagResult>;
+export function StartLoadBalancer(arg1:number,arg2:string):Promise<bridge.FlagResult>;
+
+export function StopLoadBalancer():Promise<bridge.FlagResult>;
+
+export function StartServer(arg1:string,arg2:string,arg3:bridge.ServerOptions):Promise<bridge.FlagResult>;
 
 export function StopHealthMonitor():Promise<bridge.FlagResult>;
+
+export function StopServer(arg1:string):Promise<bridge.FlagResult>;
 
 export function TestAllCloudRegions():Promise<bridge.FlagResult>;
 
 export function TestCloudRegionLatency(arg1:string):Promise<bridge.FlagResult>;
 
-export function TestSSHConnection(arg1:string):Promise<bridge.FlagResult>;
-
 export function TestConnectivity(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
-export function ScoreCloudRegions(arg1:string):Promise<bridge.FlagResult>;
+export function TestDownloadSpeed(arg1:string,arg2:string,arg3:number):Promise<bridge.FlagResult>;
+
+export function TestNodeDirectSpeed(arg1:string,arg2:number):Promise<bridge.FlagResult>;
+
+export function TestNodeSpeed(arg1:string,arg2:string):Promise<bridge.FlagResult>;
+
+export function TestSSHConnection(arg1:string):Promise<bridge.FlagResult>;
 
 export function UnzipGZFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 

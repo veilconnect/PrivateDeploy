@@ -12,15 +12,18 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	xproxy "golang.org/x/net/proxy"
 )
 
 func (a *App) Requests(method string, url string, headers map[string]string, body string, options RequestOptions) HTTPResult {
@@ -442,6 +445,314 @@ func probeUDPPort(ip string, port int, timeout time.Duration) string {
 		return "closed"
 	}
 	return "unknown"
+}
+
+// TestNodeSpeed measures TCP connection latency to the best available proxy port.
+// Tests multiple ports and returns the lowest latency in milliseconds.
+func (a *App) TestNodeSpeed(ip string, portsJSON string) FlagResult {
+	log.Printf("TestNodeSpeed: %s ports=%s", ip, portsJSON)
+	req := parseConnectivityProbeRequest(portsJSON)
+
+	var tcpPorts []int
+	for _, t := range req.Targets {
+		if t.Network == "tcp" {
+			tcpPorts = append(tcpPorts, t.Port)
+		}
+	}
+	if len(tcpPorts) == 0 {
+		tcpPorts = req.TCPPorts
+	}
+	if len(tcpPorts) == 0 {
+		// Fallback: test SSH port (22) for basic latency measurement
+		tcpPorts = []int{22}
+	}
+
+	type portLatency struct {
+		port    int
+		latency time.Duration
+	}
+
+	const rounds = 3
+	timeout := 5 * time.Second
+	if req.TCPTimeout > 0 {
+		timeout = time.Duration(req.TCPTimeout) * time.Millisecond
+	}
+
+	var mu sync.Mutex
+	var results []portLatency
+	var wg sync.WaitGroup
+
+	for _, port := range tcpPorts {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			addr := net.JoinHostPort(ip, fmt.Sprintf("%d", p))
+			var best time.Duration
+			for i := 0; i < rounds; i++ {
+				start := time.Now()
+				conn, err := net.DialTimeout("tcp", addr, timeout)
+				elapsed := time.Since(start)
+				if err != nil {
+					continue
+				}
+				conn.Close()
+				if best == 0 || elapsed < best {
+					best = elapsed
+				}
+			}
+			if best > 0 {
+				mu.Lock()
+				results = append(results, portLatency{p, best})
+				mu.Unlock()
+			}
+		}(port)
+	}
+	wg.Wait()
+
+	if len(results) == 0 {
+		return FlagResult{false, `{"latencyMs":-1,"status":"timeout"}`}
+	}
+
+	// Find lowest latency
+	best := results[0]
+	for _, r := range results[1:] {
+		if r.latency < best.latency {
+			best = r
+		}
+	}
+
+	latencyMs := float64(best.latency.Microseconds()) / 1000.0
+	data := fmt.Sprintf(`{"latencyMs":%.1f,"port":%d,"status":"ok"}`, latencyMs, best.port)
+	log.Printf("TestNodeSpeed result: %s -> %s", ip, data)
+	return FlagResult{true, data}
+}
+
+// TestDownloadSpeed measures download speed through a proxy by downloading a test file.
+// proxyURL: e.g. "socks5://127.0.0.1:20122" or "http://127.0.0.1:20121", empty for direct
+// Returns JSON with speedMbps, bytes downloaded, elapsed time
+func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int) FlagResult {
+	log.Printf("TestDownloadSpeed: proxy=%s url=%s timeout=%ds", proxyURL, testURL, timeoutSec)
+
+	if testURL == "" {
+		testURL = "https://speed.cloudflare.com/__down?bytes=5000000"
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 15
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+	}
+
+	// Support SOCKS5 proxy via x/net/proxy (http.Transport.Proxy only handles HTTP)
+	if strings.HasPrefix(proxyURL, "socks5://") || strings.HasPrefix(proxyURL, "socks://") {
+		parsed, err := url.Parse(proxyURL)
+		if err == nil {
+			dialer, dErr := xproxy.FromURL(parsed, xproxy.Direct)
+			if dErr == nil {
+				// Wrap dialer to resolve DNS locally first, then connect via SOCKS5 with IP.
+				// sing-box's SOCKS inbound doesn't support remote DNS resolution (socks5h).
+				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					host, port, splitErr := net.SplitHostPort(addr)
+					if splitErr == nil {
+						ips, resolveErr := net.LookupHost(host)
+						if resolveErr == nil && len(ips) > 0 {
+							addr = net.JoinHostPort(ips[0], port)
+						}
+					}
+					if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
+						return ctxDialer.DialContext(ctx, network, addr)
+					}
+					return dialer.Dial(network, addr)
+				}
+			}
+		}
+	} else if proxyURL != "" {
+		transport.Proxy = GetProxy(proxyURL)
+	}
+
+	client := &http.Client{
+		Timeout:   time.Duration(timeoutSec) * time.Second,
+		Transport: transport,
+	}
+
+	start := time.Now()
+	resp, err := client.Get(testURL)
+	if err != nil {
+		log.Printf("TestDownloadSpeed error: %v", err)
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"%s"}`, err.Error())}
+	}
+	defer resp.Body.Close()
+
+	n, err := io.Copy(io.Discard, resp.Body)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		log.Printf("TestDownloadSpeed read error: %v", err)
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"%s"}`, err.Error())}
+	}
+
+	elapsedSec := elapsed.Seconds()
+	if elapsedSec <= 0 {
+		elapsedSec = 0.001
+	}
+	speedMbps := float64(n*8) / elapsedSec / 1_000_000.0
+
+	data := fmt.Sprintf(`{"speedMbps":%.2f,"bytes":%d,"elapsedMs":%.0f,"status":"ok"}`, speedMbps, n, elapsed.Seconds()*1000)
+	log.Printf("TestDownloadSpeed result: %s", data)
+	return FlagResult{true, data}
+}
+
+// TestNodeDirectSpeed tests download speed for a node by spawning a temporary sing-box
+// process with the node's outbound config, without requiring the main kernel to have this node.
+// outboundsJSON: JSON array of sing-box outbound objects for this node
+// Returns JSON with speedMbps, bytes, elapsedMs, status
+func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResult {
+	log.Printf("TestNodeDirectSpeed: outbounds=%d bytes timeout=%ds", len(outboundsJSON), timeoutSec)
+
+	if timeoutSec <= 0 {
+		timeoutSec = 15
+	}
+
+	// Parse outbounds
+	var outbounds []json.RawMessage
+	if err := json.Unmarshal([]byte(outboundsJSON), &outbounds); err != nil {
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"invalid outbounds: %s"}`, err.Error())}
+	}
+	if len(outbounds) == 0 {
+		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"no outbounds provided"}`}
+	}
+
+	// Find sing-box binary
+	singboxPath := findSingboxBinaryFromEnv()
+	if singboxPath == "" {
+		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"sing-box binary not found"}`}
+	}
+
+	// Get a free port for the temporary SOCKS5 inbound
+	localPort, err := getAvailablePort()
+	if err != nil {
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"no free port: %s"}`, err.Error())}
+	}
+
+	// Use the first outbound's tag as the default route
+	var firstOutbound struct {
+		Tag string `json:"tag"`
+	}
+	json.Unmarshal(outbounds[0], &firstOutbound)
+	if firstOutbound.Tag == "" {
+		firstOutbound.Tag = "speed-test-proxy"
+		// Inject tag into first outbound
+		var ob map[string]interface{}
+		json.Unmarshal(outbounds[0], &ob)
+		ob["tag"] = firstOutbound.Tag
+		outbounds[0], _ = json.Marshal(ob)
+	}
+
+	// Build temporary sing-box config
+	tmpConfig := map[string]interface{}{
+		"log": map[string]interface{}{
+			"disabled": true,
+		},
+		"inbounds": []map[string]interface{}{
+			{
+				"type":   "socks",
+				"tag":    "socks-in",
+				"listen": "127.0.0.1",
+				"listen_port": localPort,
+			},
+		},
+		"outbounds": outbounds,
+		"route": map[string]interface{}{
+			"default_mark":      0,
+			"final":             firstOutbound.Tag,
+			"auto_detect_interface": true,
+		},
+	}
+
+	configBytes, err := json.Marshal(tmpConfig)
+	if err != nil {
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"config marshal: %s"}`, err.Error())}
+	}
+
+	// Write temp config file
+	tmpFile, err := os.CreateTemp("", "pd-speedtest-*.json")
+	if err != nil {
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"tmpfile: %s"}`, err.Error())}
+	}
+	tmpFile.Write(configBytes)
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	// Start temporary sing-box
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec+10)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, singboxPath, "run", "--disable-color", "-c", tmpFile.Name())
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"start sing-box: %s"}`, err.Error())}
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	// Wait for the SOCKS5 port to become ready
+	proxyURL := fmt.Sprintf("socks5://127.0.0.1:%d", localPort)
+	ready := false
+	for i := 0; i < 30; i++ {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", localPort), 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !ready {
+		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"sing-box socks not ready"}`}
+	}
+
+	// Now run the speed test through the temporary proxy
+	result := a.TestDownloadSpeed(proxyURL, "", timeoutSec)
+	log.Printf("TestNodeDirectSpeed result: %s", result.Data)
+	return result
+}
+
+// findSingboxBinaryFromEnv locates the sing-box binary using the app's base path.
+func findSingboxBinaryFromEnv() string {
+	basePath := Env.BasePath
+	candidates := []string{}
+	if fromEnv := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_SINGBOX_PATH")); fromEnv != "" {
+		candidates = append(candidates, fromEnv)
+	}
+	if basePath != "" {
+		candidates = append(candidates,
+			filepath.Join(basePath, "data", "sing-box", "sing-box"),
+			filepath.Join(basePath, "data", "sing-box", "sing-box-latest"),
+		)
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c
+		}
+	}
+	if fromPath, err := exec.LookPath("sing-box"); err == nil {
+		return fromPath
+	}
+	return ""
+}
+
+// getAvailablePort returns an available TCP port on localhost (non-exported helper).
+func getAvailablePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // TestConnectivity tests the connectivity to a given IP and ports

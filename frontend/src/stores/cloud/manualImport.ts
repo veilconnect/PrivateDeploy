@@ -5,16 +5,12 @@
  * removing manual nodes, and syncing them into the instances list.
  */
 
-import type { Ref, ShallowRef } from 'vue'
 
 import { ReadFile, WriteFile } from '@/bridge'
 import { ignoredError, sampleID, debounce } from '@/utils'
-import { logError, logInfo } from '@/utils/logger'
+import { logError } from '@/utils/logger'
 
 import { manualNodesPath } from './constants'
-import type { CloudNodeStatus } from './constants'
-import type { CloudProvider } from '@/types/cloud'
-
 import { parseJSON } from './helpers'
 import {
   ManualNodeError,
@@ -24,6 +20,10 @@ import {
   type ManualNodeConflictType,
   type ManualNodeSkipEntry,
 } from './types'
+
+import type { CloudNodeStatus } from './constants'
+import type { CloudProvider } from '@/types/cloud'
+import type { Ref, ShallowRef } from 'vue'
 
 export type ManualImportDeps = {
   manualNodes: ShallowRef<ManagedCloudNode[]>

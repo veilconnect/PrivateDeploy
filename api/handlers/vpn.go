@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
@@ -53,6 +54,18 @@ func NewVPNHandler(vpnManager VPNManager) *VPNHandler {
 	}
 }
 
+func writeVPNError(c *gin.Context, err error) {
+	statusCode := http.StatusInternalServerError
+	if errors.Is(err, ErrVPNUnsupported) {
+		statusCode = http.StatusNotImplemented
+	}
+
+	c.JSON(statusCode, models.ErrorResponse(
+		models.ErrVPNError,
+		err.Error(),
+	))
+}
+
 // Start starts the VPN connection.
 func (h *VPNHandler) Start(c *gin.Context) {
 	var req struct {
@@ -67,10 +80,7 @@ func (h *VPNHandler) Start(c *gin.Context) {
 
 	if err := h.vpnManager.Start(req.ProfileID); err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to start VPN: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 
@@ -88,10 +98,7 @@ func (h *VPNHandler) Stop(c *gin.Context) {
 
 	if err := h.vpnManager.Stop(); err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to stop VPN: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 
@@ -108,10 +115,7 @@ func (h *VPNHandler) Restart(c *gin.Context) {
 
 	if err := h.vpnManager.Restart(); err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to restart VPN: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 
@@ -126,10 +130,7 @@ func (h *VPNHandler) Restart(c *gin.Context) {
 func (h *VPNHandler) ResetStats(c *gin.Context) {
 	if err := h.vpnManager.ResetStats(); err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to reset stats: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 
@@ -143,10 +144,7 @@ func (h *VPNHandler) GetStatus(c *gin.Context) {
 	status, err := h.vpnManager.GetStatus()
 	if err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to get status: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 
@@ -165,10 +163,7 @@ func (h *VPNHandler) GetStats(c *gin.Context) {
 	stats, err := h.vpnManager.GetStats()
 	if err != nil {
 		log.Printf("[VPNHandler] ERROR: Failed to get stats: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
-			models.ErrVPNError,
-			err.Error(),
-		))
+		writeVPNError(c, err)
 		return
 	}
 

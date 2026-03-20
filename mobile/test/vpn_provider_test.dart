@@ -1,200 +1,125 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mockito/mockito.dart';
-import 'package:mockito/annotations.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
-import 'package:privatedeploy_mobile/core/network/api_client.dart';
-
-// 生成 Mock 类
-// 运行: flutter pub run build_runner build
-@GenerateMocks([ApiClient])
-import 'vpn_provider_test.mocks.dart';
+import 'package:privatedeploy_mobile/services/vpn_native_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  const methodChannel = MethodChannel('com.privatedeploy.vpn/native');
   late VpnProvider vpnProvider;
-  late MockApiClient mockApiClient;
 
   setUp(() {
-    mockApiClient = MockApiClient();
-    vpnProvider = VpnProvider(mockApiClient);
+    vpnProvider = VpnProvider();
+  });
+
+  tearDown(() async {
+    vpnProvider.dispose();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(methodChannel, null);
+    await VpnNativeService.instance.dispose();
   });
 
   group('VpnProvider Tests', () {
-    test('初始状态应该是断开连接', () {
+    test('initial state is disconnected', () {
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.isConnected, false);
+      expect(vpnProvider.isLoading, false);
+      expect(vpnProvider.error, isNull);
     });
 
-    test('启动 VPN 成功应该更新状态', () async {
-      // Arrange
-      when(mockApiClient.startVpn()).thenAnswer(
-        (_) async => {'success': true, 'data': {'status': 'connected'}},
-      );
-      when(mockApiClient.getVpnStatus()).thenAnswer(
-        (_) async => {
-          'success': true,
-          'data': {
-            'status': 'connected',
-            'active_profile': 'default',
-            'stats': {
-              'upload_bytes': 0,
-              'download_bytes': 0,
-              'upload_speed': 0,
-              'download_speed': 0,
-              'connection_time': 0,
-            },
-          },
-        },
-      );
-
-      // Act
-      final result = await vpnProvider.connect();
-
-      // Assert
-      expect(result, true);
-      verify(mockApiClient.startVpn()).called(1);
-    });
-
-    test('停止 VPN 成功应该更新状态', () async {
-      // Arrange
-      when(mockApiClient.stopVpn()).thenAnswer(
-        (_) async => {'success': true},
-      );
-
-      // Act
-      final result = await vpnProvider.disconnect();
-
-      // Assert
-      expect(result, true);
-      verify(mockApiClient.stopVpn()).called(1);
-    });
-
-    test('加载流量统计应该更新 stats', () async {
-      // Arrange
-      when(mockApiClient.getTrafficStats()).thenAnswer(
-        (_) async => {
-          'success': true,
-          'data': {
-            'upload_bytes': 1024,
-            'download_bytes': 2048,
-            'upload_speed': 10,
-            'download_speed': 20,
-            'connection_time': 60,
-          }
-        },
-      );
-
-      // Act
-      await vpnProvider.loadStats();
-
-      // Assert
-      expect(vpnProvider.stats.uploadBytes, 1024);
-      expect(vpnProvider.stats.downloadBytes, 2048);
-      verify(mockApiClient.getTrafficStats()).called(1);
-    });
-
-    test('重置统计应该清空数据', () async {
-      // Arrange
-      when(mockApiClient.resetTrafficStats()).thenAnswer(
-        (_) async => {'success': true},
-      );
-
-      // Act
-      final result = await vpnProvider.resetStats();
-
-      // Assert
-      expect(result, true);
+    test('traffic stats start at zero', () {
       expect(vpnProvider.stats.uploadBytes, 0);
       expect(vpnProvider.stats.downloadBytes, 0);
+      expect(vpnProvider.stats.totalBytes, 0);
     });
 
-    test('API 调用失败应该返回 false', () async {
-      // Arrange
-      when(mockApiClient.startVpn()).thenAnswer(
-        (_) async => {'success': false, 'message': 'Connection failed'},
-      );
-
-      // Act
-      final result = await vpnProvider.connect();
-
-      // Assert
-      expect(result, false);
-      expect(vpnProvider.error, isNotNull);
-    });
-
-    test('重启 VPN 应该先停止再启动', () async {
-      // Arrange
-      when(mockApiClient.restartVpn()).thenAnswer(
-        (_) async => {'success': true, 'data': {'status': 'connected'}},
-      );
-      when(mockApiClient.getVpnStatus()).thenAnswer(
-        (_) async => {
-          'success': true,
-          'data': {
-            'status': 'connected',
-            'active_profile': 'default',
-            'stats': {
-              'upload_bytes': 0,
-              'download_bytes': 0,
-              'upload_speed': 0,
-              'download_speed': 0,
-              'connection_time': 0,
-            },
-          },
-        },
-      );
-
-      // Act
-      final result = await vpnProvider.restart();
-
-      // Assert
-      expect(result, true);
-      verify(mockApiClient.restartVpn()).called(1);
-    });
-  });
-
-  group('TrafficStats Tests', () {
-    test('应该正确格式化字节数', () {
+    test('TrafficStats formatting works', () {
       final stats = TrafficStats(
-        uploadBytes: 1024,
-        downloadBytes: 1024 * 1024,
-        uploadSpeed: 1024.0,
-        downloadSpeed: 1024.0 * 1024,
-        connectionTime: const Duration(hours: 1, minutes: 30),
+        uploadBytes: 1024 * 1024,
+        downloadBytes: 1024 * 1024 * 500,
+        uploadSpeed: 1024 * 100,
+        downloadSpeed: 1024 * 1024 * 2,
+        connectionTime: const Duration(hours: 1, minutes: 30, seconds: 45),
       );
 
-      expect(stats.uploadFormatted, '1.00 KB');
-      expect(stats.downloadFormatted, '1.00 MB');
-      expect(stats.uploadSpeedFormatted, '1.00 KB/s');
-      expect(stats.downloadSpeedFormatted, '1.00 MB/s');
+      expect(stats.uploadFormatted, '1.00 MB');
+      expect(stats.downloadFormatted, '500.00 MB');
+      expect(stats.totalFormatted, '501.00 MB');
+      expect(stats.connectionTimeFormatted, '1h 30m 45s');
+      expect(stats.uploadSpeedFormatted, '100.00 KB/s');
+      expect(stats.downloadSpeedFormatted, '2.00 MB/s');
     });
 
-    test('应该正确计算总流量', () {
-      final stats = TrafficStats(
-        uploadBytes: 1024,
-        downloadBytes: 2048,
-        uploadSpeed: 0,
-        downloadSpeed: 0,
-        connectionTime: Duration.zero,
-      );
-
-      expect(stats.totalBytes, 3072);
-      expect(stats.totalFormatted, '3.00 KB');
+    test('TrafficStats.zero returns zeroed stats', () {
+      final stats = TrafficStats.zero();
+      expect(stats.uploadBytes, 0);
+      expect(stats.downloadBytes, 0);
+      expect(stats.uploadSpeed, 0);
+      expect(stats.downloadSpeed, 0);
+      expect(stats.connectionTime, Duration.zero);
     });
 
-    test('应该正确格式化连接时间', () {
-      final stats = TrafficStats(
-        uploadBytes: 0,
-        downloadBytes: 0,
-        uploadSpeed: 0,
-        downloadSpeed: 0,
-        connectionTime: const Duration(hours: 2, minutes: 30, seconds: 45),
-      );
+    test('connect returns false when native start does not reach running state',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': false,
+              'status': 'error',
+              'message': 'boom',
+              'connected_at': 0,
+              'uptime': 0,
+            };
+          case 'isRunning':
+            return false;
+          default:
+            return null;
+        }
+      });
 
-      expect(stats.connectionTimeFormatted, '2h 30m 45s');
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, false);
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.isConnected, false);
+      expect(vpnProvider.error, 'boom');
     });
-  });
 
-  tearDown(() {
-    vpnProvider.dispose();
+    test('connect only reports success after confirmed running status',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isConnected, true);
+      expect(vpnProvider.activeProfile, 'Test');
+    });
   });
 }

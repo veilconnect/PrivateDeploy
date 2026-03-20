@@ -66,6 +66,10 @@ export function GetEnv() {
   return window['go']['bridge']['App']['GetEnv']();
 }
 
+export function GetLoadBalancerStatus() {
+  return window['go']['bridge']['App']['GetLoadBalancerStatus']();
+}
+
 export function GetFastestCloudRegion() {
   return window['go']['bridge']['App']['GetFastestCloudRegion']();
 }
@@ -166,24 +170,36 @@ export function SetCloudProvider(arg1) {
   return window['go']['bridge']['App']['SetCloudProvider'](arg1);
 }
 
-export function ShowMainWindow() {
-  return window['go']['bridge']['App']['ShowMainWindow']();
+export function SetupSSHEventEmitter() {
+  return window['go']['bridge']['App']['SetupSSHEventEmitter']();
 }
 
-export function StartServer(arg1, arg2, arg3) {
-  return window['go']['bridge']['App']['StartServer'](arg1, arg2, arg3);
+export function ShowMainWindow() {
+  return window['go']['bridge']['App']['ShowMainWindow']();
 }
 
 export function StartHealthMonitor() {
   return window['go']['bridge']['App']['StartHealthMonitor']();
 }
 
-export function StopServer(arg1) {
-  return window['go']['bridge']['App']['StopServer'](arg1);
+export function StartLoadBalancer(arg1, arg2) {
+  return window['go']['bridge']['App']['StartLoadBalancer'](arg1, arg2);
+}
+
+export function StopLoadBalancer() {
+  return window['go']['bridge']['App']['StopLoadBalancer']();
+}
+
+export function StartServer(arg1, arg2, arg3) {
+  return window['go']['bridge']['App']['StartServer'](arg1, arg2, arg3);
 }
 
 export function StopHealthMonitor() {
   return window['go']['bridge']['App']['StopHealthMonitor']();
+}
+
+export function StopServer(arg1) {
+  return window['go']['bridge']['App']['StopServer'](arg1);
 }
 
 export function TestAllCloudRegions() {
@@ -194,12 +210,24 @@ export function TestCloudRegionLatency(arg1) {
   return window['go']['bridge']['App']['TestCloudRegionLatency'](arg1);
 }
 
-export function TestSSHConnection(arg1) {
-  return window['go']['bridge']['App']['TestSSHConnection'](arg1);
-}
-
 export function TestConnectivity(arg1, arg2) {
   return window['go']['bridge']['App']['TestConnectivity'](arg1, arg2);
+}
+
+export function TestDownloadSpeed(arg1, arg2, arg3) {
+  return window['go']['bridge']['App']['TestDownloadSpeed'](arg1, arg2, arg3);
+}
+
+export function TestNodeDirectSpeed(arg1, arg2) {
+  return window['go']['bridge']['App']['TestNodeDirectSpeed'](arg1, arg2);
+}
+
+export function TestNodeSpeed(arg1, arg2) {
+  return window['go']['bridge']['App']['TestNodeSpeed'](arg1, arg2);
+}
+
+export function TestSSHConnection(arg1) {
+  return window['go']['bridge']['App']['TestSSHConnection'](arg1);
 }
 
 export function UnzipGZFile(arg1, arg2) {

@@ -32,11 +32,14 @@ go run main.go
 |------|--------|------|
 | `API_HOST` | `0.0.0.0` | 服务器监听地址 |
 | `API_PORT` | `8443` | 服务器端口 |
-| `JWT_SECRET` | `privatedeploy-secret-change-me` | JWT 签名密钥（若未设置或使用默认值，服务启动时会生成进程内随机密钥） |
+| `JWT_SECRET` | _空_ | JWT 签名密钥；显式开发模式下可临时生成进程内随机密钥 |
+| `JWT_SECRET_FILE` | _空_ | 从文件读取 JWT 签名密钥，适合容器 Secret/挂载文件 |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |
 | `INITIAL_ADMIN_USERNAME` | `admin` | 首次初始化管理员用户名 |
-| `INITIAL_ADMIN_PASSWORD` | _空_ | 首次初始化管理员密码（未设置时将生成一次性随机密码并打印日志） |
+| `INITIAL_ADMIN_PASSWORD` | _空_ | 首次初始化管理员密码 |
+| `INITIAL_ADMIN_PASSWORD_FILE` | _空_ | 从文件读取首次初始化管理员密码 |
 | `DB_PATH` | `data/privatedeploy.db` | SQLite 数据库路径 |
+| `API_ENV` / `APP_ENV` | _空_ | 设为 `dev`/`development`/`local`/`test` 时启用显式开发模式 |
 | `GIN_MODE` | `release` | Gin 模式 (debug/release) |
 
 ### 编译
@@ -50,9 +53,16 @@ go build -o privatedeploy-api
 
 - 首次启动且数据库没有用户时，服务会创建 bootstrap 管理员账号。
 - 用户名默认 `admin`，可通过 `INITIAL_ADMIN_USERNAME` 覆盖。
-- 密码建议通过 `INITIAL_ADMIN_PASSWORD` 显式设置；未设置时服务会生成一次性随机密码并写入启动日志。
+- 非开发模式下，必须通过 `INITIAL_ADMIN_PASSWORD` 或 `INITIAL_ADMIN_PASSWORD_FILE` 提供初始密码。
+- 显式开发模式下，若未提供密码，服务会生成一次性随机密码并写入 `bootstrap-admin-password.txt`，而不是打印到启动日志。
 
 ⚠️ **请在首次登录后立即更改密码。**
+
+## 🔐 开发模式与密钥策略
+
+- 只有 `API_ENV` / `APP_ENV` 显式设置为 `dev`、`development`、`local` 或 `test` 时，服务才会进入开发模式。
+- 开发模式下如果未提供 `JWT_SECRET` / `JWT_SECRET_FILE`，服务会为当前进程生成临时 JWT 密钥。
+- 非开发模式下，如果缺少 `JWT_SECRET` / `JWT_SECRET_FILE`，服务会拒绝启动。
 
 ## 📖 API 文档
 

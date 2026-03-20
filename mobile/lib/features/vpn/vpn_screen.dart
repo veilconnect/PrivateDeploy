@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'vpn_provider.dart';
+import '../profiles/profile_provider.dart';
 import '../../shared/widgets/loading_indicator.dart';
 
 class VpnScreen extends StatefulWidget {
@@ -157,7 +158,8 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
                         height: 120.w + (_pulseController.value * 20.w),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: statusColor.withValues(alpha: 0.2 - (_pulseController.value * 0.2)),
+                          color: statusColor.withValues(
+                              alpha: 0.2 - (_pulseController.value * 0.2)),
                         ),
                       );
                     },
@@ -207,7 +209,8 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
               ),
             ],
 
-            if (provider.isConnected && provider.stats.connectionTime.inSeconds > 0) ...[
+            if (provider.isConnected &&
+                provider.stats.connectionTime.inSeconds > 0) ...[
               SizedBox(height: 8.h),
               Text(
                 'Connected for ${provider.stats.connectionTimeFormatted}',
@@ -433,7 +436,25 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _handleConnect(VpnProvider provider) async {
-    final success = await provider.connect();
+    final profileProvider = context.read<ProfileProvider>();
+    final activeProfile = profileProvider.activeProfile;
+    final configJson = profileProvider.getActiveConfigJson();
+    if (configJson == null || configJson.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Please create and activate a profile with sing-box config first'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    final success = await provider.connect(
+      configJson: configJson,
+      profileName: activeProfile?.name,
+    );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -465,7 +486,8 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Restart VPN'),
-        content: const Text('Are you sure you want to restart the VPN connection?'),
+        content:
+            const Text('Are you sure you want to restart the VPN connection?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -499,7 +521,8 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reset Statistics'),
-        content: const Text('Are you sure you want to reset all traffic statistics?'),
+        content: const Text(
+            'Are you sure you want to reset all traffic statistics?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),

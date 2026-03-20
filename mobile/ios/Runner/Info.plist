@@ -47,5 +47,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>PrivateDeployVPNAppGroup</key>
+	<string>group.com.privatedeploy.mobile</string>
+	<key>PrivateDeployVPNExtensionBundleIdentifier</key>
+	<string>com.privatedeploy.mobile.VPNExtension</string>
 </dict>
 </plist>

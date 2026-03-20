@@ -12,6 +12,7 @@ class VpnNativeService {
   StreamSubscription? _eventSubscription;
   final _statusController = StreamController<VpnNativeStatus>.broadcast();
   final _statsController = StreamController<VpnNativeStats>.broadcast();
+  String? _lastError;
 
   VpnNativeService._();
 
@@ -27,10 +28,22 @@ class VpnNativeService {
   /// 流量统计变化流
   Stream<VpnNativeStats> get statsStream => _statsController.stream;
 
+  /// 最近一次原生调用错误
+  String? get lastError => _lastError;
+
+  void _clearLastError() {
+    _lastError = null;
+  }
+
+  void _recordLastError(String message) {
+    _lastError = message;
+  }
+
   /// 初始化原生服务
   Future<void> initialize() async {
     try {
       AppLogger.info('[VpnNativeService] Initializing...');
+      _clearLastError();
 
       // 监听原生事件
       _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
@@ -51,15 +64,21 @@ class VpnNativeService {
   Future<bool> startVpn(String configJson) async {
     try {
       AppLogger.info('[VpnNativeService] Starting VPN...');
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('startVpn', {
         'config': configJson,
       });
       AppLogger.info('[VpnNativeService] Start result: $result');
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN start request was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Native VPN start failed');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to start VPN: $e');
       AppLogger.error('[VpnNativeService] Failed to start VPN', e);
       return false;
     }
@@ -69,13 +88,19 @@ class VpnNativeService {
   Future<bool> stopVpn() async {
     try {
       AppLogger.info('[VpnNativeService] Stopping VPN...');
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('stopVpn');
       AppLogger.info('[VpnNativeService] Stop result: $result');
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN stop request was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Native VPN stop failed');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to stop VPN: $e');
       AppLogger.error('[VpnNativeService] Failed to stop VPN', e);
       return false;
     }
@@ -85,13 +110,19 @@ class VpnNativeService {
   Future<bool> restartVpn() async {
     try {
       AppLogger.info('[VpnNativeService] Restarting VPN...');
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('restartVpn');
       AppLogger.info('[VpnNativeService] Restart result: $result');
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN restart request was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Native VPN restart failed');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to restart VPN: $e');
       AppLogger.error('[VpnNativeService] Failed to restart VPN', e);
       return false;
     }
@@ -100,12 +131,15 @@ class VpnNativeService {
   /// 检查 VPN 是否正在运行
   Future<bool> isRunning() async {
     try {
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('isRunning');
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to query VPN status');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to check VPN status: $e');
       AppLogger.error('[VpnNativeService] Failed to check VPN status', e);
       return false;
     }
@@ -114,15 +148,18 @@ class VpnNativeService {
   /// 获取 VPN 状态
   Future<VpnNativeStatus?> getStatus() async {
     try {
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<Map>('getStatus');
       if (result != null) {
         return VpnNativeStatus.fromJson(Map<String, dynamic>.from(result));
       }
       return null;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to get native VPN status');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return null;
     } catch (e) {
+      _recordLastError('Failed to get VPN status: $e');
       AppLogger.error('[VpnNativeService] Failed to get status', e);
       return null;
     }
@@ -131,15 +168,18 @@ class VpnNativeService {
   /// 获取流量统计
   Future<VpnNativeStats?> getStats() async {
     try {
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<Map>('getStats');
       if (result != null) {
         return VpnNativeStats.fromJson(Map<String, dynamic>.from(result));
       }
       return null;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to get native VPN stats');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return null;
     } catch (e) {
+      _recordLastError('Failed to get VPN stats: $e');
       AppLogger.error('[VpnNativeService] Failed to get stats', e);
       return null;
     }
@@ -149,12 +189,18 @@ class VpnNativeService {
   Future<bool> resetStats() async {
     try {
       AppLogger.info('[VpnNativeService] Resetting stats...');
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('resetStats');
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN stats reset request was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to reset native VPN stats');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to reset VPN stats: $e');
       AppLogger.error('[VpnNativeService] Failed to reset stats', e);
       return false;
     }
@@ -164,14 +210,20 @@ class VpnNativeService {
   Future<bool> updateConfig(String configJson) async {
     try {
       AppLogger.info('[VpnNativeService] Updating config...');
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('updateConfig', {
         'config': configJson,
       });
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN config update was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to update native VPN config');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to update VPN config: $e');
       AppLogger.error('[VpnNativeService] Failed to update config', e);
       return false;
     }
@@ -180,12 +232,15 @@ class VpnNativeService {
   /// 获取版本信息
   Future<String?> getVersion() async {
     try {
+      _clearLastError();
       final result = await _methodChannel.invokeMethod<String>('getVersion');
       return result;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to get native VPN version');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return null;
     } catch (e) {
+      _recordLastError('Failed to get VPN version: $e');
       AppLogger.error('[VpnNativeService] Failed to get version', e);
       return null;
     }
@@ -195,12 +250,19 @@ class VpnNativeService {
   Future<bool> requestPermission() async {
     try {
       AppLogger.info('[VpnNativeService] Requesting VPN permission...');
-      final result = await _methodChannel.invokeMethod<bool>('requestPermission');
+      _clearLastError();
+      final result =
+          await _methodChannel.invokeMethod<bool>('requestPermission');
+      if (result != true && _lastError == null) {
+        _recordLastError('Native VPN permission request was rejected');
+      }
       return result ?? false;
     } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to request VPN permission');
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
+      _recordLastError('Failed to request VPN permission: $e');
       AppLogger.error('[VpnNativeService] Failed to request permission', e);
       return false;
     }
@@ -218,7 +280,14 @@ class VpnNativeService {
 
       switch (eventType) {
         case 'status':
-          final status = VpnNativeStatus.fromJson(eventData['data']);
+          final status = VpnNativeStatus.fromJson(
+            Map<String, dynamic>.from(eventData['data'] as Map),
+          );
+          if (status.message != null && status.message!.isNotEmpty) {
+            _recordLastError(status.message!);
+          } else if (status.running || status.status == 'disconnected') {
+            _clearLastError();
+          }
           _statusController.add(status);
           break;
 
@@ -229,11 +298,15 @@ class VpnNativeService {
 
         case 'error':
           final error = eventData['message'] as String?;
+          if (error != null && error.isNotEmpty) {
+            _recordLastError(error);
+          }
           AppLogger.error('[VpnNativeService] Native error: $error');
           break;
 
         default:
-          AppLogger.warning('[VpnNativeService] Unknown event type: $eventType');
+          AppLogger.warning(
+              '[VpnNativeService] Unknown event type: $eventType');
       }
     } catch (e) {
       AppLogger.error('[VpnNativeService] Failed to handle event', e);
@@ -252,26 +325,39 @@ class VpnNativeService {
 /// VPN 原生状态
 class VpnNativeStatus {
   final bool running;
+  final String status;
+  final String? message;
   final int connectedAt;
   final int uptime;
 
   VpnNativeStatus({
     required this.running,
+    required this.status,
+    this.message,
     required this.connectedAt,
     required this.uptime,
   });
 
   factory VpnNativeStatus.fromJson(Map<String, dynamic> json) {
+    final running = json['running'] == true;
+    final status =
+        (json['status'] ?? (running ? 'connected' : 'disconnected')).toString();
+    final message = json['message']?.toString();
+
     return VpnNativeStatus(
-      running: json['running'] ?? false,
-      connectedAt: json['connected_at'] ?? 0,
-      uptime: json['uptime'] ?? 0,
+      running: running,
+      status: status,
+      message: message == null || message.isEmpty ? null : message,
+      connectedAt: (json['connected_at'] as num?)?.toInt() ?? 0,
+      uptime: (json['uptime'] as num?)?.toInt() ?? 0,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'running': running,
+      'status': status,
+      'message': message,
       'connected_at': connectedAt,
       'uptime': uptime,
     };

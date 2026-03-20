@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -29,6 +31,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         private const val METHOD_CHANNEL = "com.privatedeploy.vpn/native"
         private const val EVENT_CHANNEL = "com.privatedeploy.vpn/events"
         private const val VPN_REQUEST_CODE = 100
+        private const val START_TIMEOUT_MS = 15000L
     }
 
     private lateinit var methodChannel: MethodChannel
@@ -36,7 +39,12 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     private var activity: Activity? = null
     private var context: Context? = null
     private var eventSink: EventChannel.EventSink? = null
-    private var pendingResult: MethodChannel.Result? = null
+    private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingStartResult: MethodChannel.Result? = null
+    private var pendingStartConfig: String? = null
+    private var pendingStartDispatched = false
+    private var pendingStartTimeout: Runnable? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val vpnStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -55,6 +63,26 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                             )
                         )
                     )
+
+                    when (status) {
+                        "connected" -> completePendingStart()
+                        "error" -> failPendingStart(
+                            code = "START_FAILED",
+                            message = message ?: "Failed to start VPN"
+                        )
+                        "revoked" -> failPendingStart(
+                            code = "PERMISSION_REVOKED",
+                            message = "VPN permission revoked"
+                        )
+                        "disconnected" -> {
+                            if (pendingStartResult != null) {
+                                failPendingStart(
+                                    code = "START_FAILED",
+                                    message = message ?: "VPN disconnected during startup"
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -139,17 +167,30 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      */
     private fun startVpn(call: MethodCall, result: MethodChannel.Result) {
         val config = call.argument<String>("config") ?: ""
+        if (config.isBlank()) {
+            result.error("INVALID_CONFIG", "VPN config is empty", null)
+            return
+        }
 
-        // 检查 VPN 权限
+        if (pendingStartResult != null) {
+            result.error("START_IN_PROGRESS", "VPN start already in progress", null)
+            return
+        }
+
+        pendingStartResult = result
+        pendingStartConfig = config
+        pendingStartDispatched = false
+
         val intent = VpnService.prepare(context)
         if (intent != null) {
-            // 需要请求权限
-            pendingResult = result
-            activity?.startActivityForResult(intent, VPN_REQUEST_CODE)
+            val currentActivity = activity
+            if (currentActivity == null) {
+                failPendingStart("NO_ACTIVITY", "Activity unavailable for VPN permission request")
+                return
+            }
+            currentActivity.startActivityForResult(intent, VPN_REQUEST_CODE)
         } else {
-            // 已有权限，直接启动
-            doStartVpn(config)
-            result.success(true)
+            launchPendingStart(config)
         }
     }
 
@@ -171,14 +212,62 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         Log.i(TAG, "VPN start command sent")
     }
 
+    private fun launchPendingStart(config: String) {
+        schedulePendingStartTimeout()
+        try {
+            doStartVpn(config)
+            pendingStartDispatched = true
+        } catch (e: Exception) {
+            failPendingStart(
+                code = "START_FAILED",
+                message = e.message ?: "Failed to dispatch VPN start request"
+            )
+        }
+    }
+
+    private fun schedulePendingStartTimeout() {
+        pendingStartTimeout?.let(mainHandler::removeCallbacks)
+        val timeoutRunnable = Runnable {
+            if (pendingStartResult != null) {
+                failPendingStart(
+                    code = "START_TIMEOUT",
+                    message = "Timed out waiting for VPN to connect"
+                )
+            }
+        }
+        pendingStartTimeout = timeoutRunnable
+        mainHandler.postDelayed(timeoutRunnable, START_TIMEOUT_MS)
+    }
+
+    private fun completePendingStart() {
+        val result = pendingStartResult ?: return
+        clearPendingStart()
+        result.success(true)
+    }
+
+    private fun failPendingStart(code: String, message: String) {
+        val shouldStopVpn = pendingStartDispatched
+        val result = pendingStartResult ?: return
+        clearPendingStart()
+        if (shouldStopVpn) {
+            sendVpnAction(ACTION_STOP)
+        }
+        result.error(code, message, null)
+    }
+
+    private fun clearPendingStart() {
+        pendingStartTimeout?.let(mainHandler::removeCallbacks)
+        pendingStartTimeout = null
+        pendingStartResult = null
+        pendingStartConfig = null
+        pendingStartDispatched = false
+    }
+
     /**
      * 停止 VPN
      */
     private fun stopVpn(result: MethodChannel.Result) {
-        val intent = Intent(context, PrivateDeployVpnService::class.java).apply {
-            action = ACTION_STOP
-        }
-        context?.startService(intent)
+        sendVpnAction(ACTION_STOP)
         result.success(true)
         Log.i(TAG, "VPN stop command sent")
     }
@@ -187,25 +276,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      * 重启 VPN
      */
     private fun restartVpn(result: MethodChannel.Result) {
-        // 先停止再启动
-        val stopIntent = Intent(context, PrivateDeployVpnService::class.java).apply {
-            action = ACTION_STOP
-        }
-        context?.startService(stopIntent)
-
-        // 延迟启动
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            val startIntent = Intent(context, PrivateDeployVpnService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_CONFIG, "")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context?.startForegroundService(startIntent)
-            } else {
-                context?.startService(startIntent)
-            }
-        }, 1000)
-
+        sendVpnAction(ACTION_RESTART)
         result.success(true)
         Log.i(TAG, "VPN restart command sent")
     }
@@ -221,33 +292,21 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      * 获取 VPN 状态
      */
     private fun getStatus(result: MethodChannel.Result) {
-        val status = mapOf(
-            "running" to PrivateDeployVpnService.isRunning,
-            "connected_at" to 0,
-            "uptime" to 0
-        )
-        result.success(status)
+        result.success(PrivateDeployVpnService.currentStatus())
     }
 
     /**
      * 获取流量统计
      */
     private fun getStats(result: MethodChannel.Result) {
-        // TODO: 从 Go Mobile VPN Core 获取实际统计数据
-        val stats = mapOf(
-            "upload_bytes" to 0,
-            "download_bytes" to 0,
-            "upload_speed" to 0,
-            "download_speed" to 0
-        )
-        result.success(stats)
+        result.success(PrivateDeployVpnService.currentStats())
     }
 
     /**
      * 重置统计
      */
     private fun resetStats(result: MethodChannel.Result) {
-        // TODO: 重置 Go Mobile VPN Core 的统计数据
+        sendVpnAction(ACTION_RESET_STATS)
         result.success(true)
     }
 
@@ -256,15 +315,29 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      */
     private fun updateConfig(call: MethodCall, result: MethodChannel.Result) {
         val config = call.argument<String>("config") ?: ""
-        // TODO: 更新配置
+        if (config.isBlank()) {
+            result.error("INVALID_CONFIG", "VPN config is empty", null)
+            return
+        }
+        sendVpnAction(ACTION_UPDATE_CONFIG) {
+            putExtra(EXTRA_CONFIG, config)
+        }
         result.success(true)
+    }
+
+    private fun sendVpnAction(action: String, extras: (Intent.() -> Unit)? = null) {
+        val intent = Intent(context, PrivateDeployVpnService::class.java).apply {
+            this.action = action
+            extras?.invoke(this)
+        }
+        context?.startService(intent)
     }
 
     /**
      * 获取版本
      */
     private fun getVersion(result: MethodChannel.Result) {
-        result.success("PrivateDeploy VPN Android 1.0.0")
+        result.success(PrivateDeployVpnService.currentVersion())
     }
 
     /**
@@ -273,8 +346,17 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     private fun requestPermission(result: MethodChannel.Result) {
         val intent = VpnService.prepare(context)
         if (intent != null) {
-            pendingResult = result
-            activity?.startActivityForResult(intent, VPN_REQUEST_CODE)
+            if (pendingPermissionResult != null) {
+                result.error("PERMISSION_REQUEST_IN_PROGRESS", "VPN permission request already in progress", null)
+                return
+            }
+            val currentActivity = activity
+            if (currentActivity == null) {
+                result.error("NO_ACTIVITY", "Activity unavailable for VPN permission request", null)
+                return
+            }
+            pendingPermissionResult = result
+            currentActivity.startActivityForResult(intent, VPN_REQUEST_CODE)
         } else {
             result.success(true)
         }
@@ -282,19 +364,33 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode == VPN_REQUEST_CODE) {
-            pendingResult?.let { result ->
+            pendingPermissionResult?.let { result ->
                 if (resultCode == Activity.RESULT_OK) {
-                    // 权限已授予
                     result.success(true)
                     Log.i(TAG, "VPN permission granted")
                 } else {
-                    // 权限被拒绝
                     result.success(false)
                     Log.w(TAG, "VPN permission denied")
                 }
-                pendingResult = null
+                pendingPermissionResult = null
+                return true
             }
-            return true
+
+            if (pendingStartResult != null) {
+                if (resultCode == Activity.RESULT_OK) {
+                    val config = pendingStartConfig
+                    if (!config.isNullOrBlank()) {
+                        launchPendingStart(config)
+                    } else {
+                        failPendingStart("INVALID_CONFIG", "VPN config is empty")
+                    }
+                    Log.i(TAG, "VPN permission granted")
+                } else {
+                    failPendingStart("PERMISSION_DENIED", "VPN permission denied")
+                    Log.w(TAG, "VPN permission denied")
+                }
+                return true
+            }
         }
         return false
     }

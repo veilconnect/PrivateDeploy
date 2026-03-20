@@ -1,5 +1,5 @@
 export namespace bridge {
-
+	
 	export class PlatformCapabilities {
 	    traySupported: boolean;
 	    showMainWindowFromTray: boolean;
@@ -26,7 +26,6 @@ export namespace bridge {
 	        this.kernelGrantPermissionSupported = source["kernelGrantPermissionSupported"];
 	    }
 	}
-	
 	export class EnvResult {
 	    appName: string;
 	    appVersion: string;
@@ -48,7 +47,7 @@ export namespace bridge {
 	        this.arch = source["arch"];
 	        this.capabilities = this.convertValues(source["capabilities"], PlatformCapabilities);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -183,6 +182,7 @@ export namespace bridge {
 	        this.Beep = source["Beep"];
 	    }
 	}
+	
 	export class RequestOptions {
 	    Proxy: string;
 	    Insecure: boolean;
@@ -247,3 +247,4 @@ export namespace bridge {
 	}
 
 }
+

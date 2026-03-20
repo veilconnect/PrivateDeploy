@@ -22,10 +22,11 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 	systemHandler := handlers.NewSystemHandler("v1.10.1", "/opt/privatedeploy")
 	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
-	// Note: These require actual implementations, using nil for now
 	profileHandler := handlers.NewProfileHandler(db)
 	subscriptionHandler := handlers.NewSubscriptionHandler(db)
-	vpnHandler := handlers.NewVPNHandler(handlers.NewInMemoryVPNManager())
+	vpnHandler := handlers.NewVPNHandler(
+		handlers.NewUnsupportedVPNManager("the standalone API server does not embed a device-level VPN runtime"),
+	)
 
 	// Public routes
 	public := router.Group("/api/v1")

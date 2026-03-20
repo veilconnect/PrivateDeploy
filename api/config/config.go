@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -38,8 +39,16 @@ type CORSConfig struct {
 	AllowedOrigins []string
 }
 
-// Load loads configuration from environment variables with defaults
-func Load() *Config {
+// Load loads configuration from environment variables with defaults.
+func Load() (*Config, error) {
+	jwtSecret, found, err := LookupEnvOrFile("JWT_SECRET", "JWT_SECRET_FILE")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		jwtSecret = ""
+	}
+
 	return &Config{
 		Server: ServerConfig{
 			Host:         getEnv("API_HOST", "0.0.0.0"),
@@ -48,7 +57,7 @@ func Load() *Config {
 			WriteTimeout: 10 * time.Second,
 		},
 		JWT: JWTConfig{
-			Secret:     getEnv("JWT_SECRET", "privatedeploy-secret-change-me"),
+			Secret:     jwtSecret,
 			ExpireTime: 24 * time.Hour,
 		},
 		Database: DatabaseConfig{
@@ -60,7 +69,7 @@ func Load() *Config {
 				"http://localhost:5173,http://127.0.0.1:5173",
 			)),
 		},
-	}
+	}, nil
 }
 
 // getEnv gets environment variable with fallback
@@ -69,6 +78,31 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// LookupEnvOrFile reads a value from KEY or, if unset, from KEY_FILE.
+// The direct environment variable takes precedence. Empty values are treated as unset.
+func LookupEnvOrFile(key, fileKey string) (string, bool, error) {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value, true, nil
+	}
+
+	filePath := strings.TrimSpace(os.Getenv(fileKey))
+	if filePath == "" {
+		return "", false, nil
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to read %s=%q: %w", fileKey, filePath, err)
+	}
+
+	value := strings.TrimSpace(string(content))
+	if value == "" {
+		return "", false, fmt.Errorf("%s=%q points to an empty file", fileKey, filePath)
+	}
+
+	return value, true, nil
 }
 
 func parseCSV(value string) []string {

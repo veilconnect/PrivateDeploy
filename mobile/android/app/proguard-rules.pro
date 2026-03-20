@@ -18,8 +18,11 @@
 # Keep VPN Service
 -keep class com.privatedeploy.mobile.** { *; }
 
-# GoMobile generated code (when integrated)
--keep class gomobile.** { *; }
+# GoMobile generated code
+-keep class com.privatedeploy.mobile.vpncore.** { *; }
+
+# Google Play Core (referenced by Flutter but not needed for sideload)
+-dontwarn com.google.android.play.core.**
 
 # Kotlin
 -dontwarn kotlin.**

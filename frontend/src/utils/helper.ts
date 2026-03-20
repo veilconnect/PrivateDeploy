@@ -547,7 +547,7 @@ export const processMagicVariables = (str: string) => {
 export const getKernelRuntimeEnv = (isAlpha = false) => {
   const appSettings = useAppSettingsStore()
   const { env } = isAlpha ? appSettings.app.kernel.alpha : appSettings.app.kernel.main
-  return Object.entries(env).reduce((p, [key, value]) => {
+  const result = Object.entries(env).reduce((p, [key, value]) => {
     if (DeprecatedKernelEnvKeySet.has(key)) {
       return p
     }
@@ -557,6 +557,10 @@ export const getKernelRuntimeEnv = (isAlpha = false) => {
     p[key] = processMagicVariables(value)
     return p
   }, {} as Recordable)
+  // sing-box 1.13+ requires these env vars for backward-compatible DNS config
+  result['ENABLE_DEPRECATED_LEGACY_DNS_SERVERS'] = 'true'
+  result['ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER'] = 'true'
+  return result
 }
 
 export const getKernelRuntimeArgs = (isAlpha = false) => {

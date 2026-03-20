@@ -163,11 +163,44 @@ const handleUseNode = async (node: CloudNode) => {
 
 const handleTestNode = async (node: CloudNode) => {
   try {
-    await cloudStore.testNodeConnectivity(node.instanceId)
-    message.success('common.success')
+    await cloudStore.testNodeSpeedTest(node.instanceId)
   } catch (error: any) {
     console.error(error)
     message.error(error.message || error)
+  }
+}
+
+const speedTestAllLoading = ref(false)
+const handleTestAllSpeed = async () => {
+  speedTestAllLoading.value = true
+  try {
+    await cloudStore.testAllNodesSpeed()
+    message.success(t('cloud.speed.testAllComplete'))
+  } catch (error: any) {
+    console.error(error)
+    message.error(error.message || error)
+  } finally {
+    speedTestAllLoading.value = false
+  }
+}
+
+const loadBalanceLoading = ref(false)
+const handleToggleLoadBalance = async () => {
+  loadBalanceLoading.value = true
+  try {
+    if (cloudStore.loadBalanceEnabled) {
+      await cloudStore.stopLoadBalance()
+    } else {
+      await cloudStore.startLoadBalance()
+      if (!cloudStore.loadBalanceEnabled) {
+        message.error(t('cloud.loadBalance.startFailed'))
+      }
+    }
+  } catch (error: any) {
+    console.error(error)
+    message.error(error.message || error)
+  } finally {
+    loadBalanceLoading.value = false
   }
 }
 
@@ -259,6 +292,25 @@ onMounted(() => {
         </div>
 
         <div class="flex items-center gap-8">
+          <Button @click="handleTestAllSpeed" :loading="speedTestAllLoading" :disabled="!cloudNodes.length" type="text">
+            {{ t('cloud.speed.testAll') }}
+          </Button>
+          <Button
+            @click="handleToggleLoadBalance"
+            :loading="loadBalanceLoading"
+            :disabled="cloudNodes.length < 2 && !cloudStore.loadBalanceEnabled"
+            :type="cloudStore.loadBalanceEnabled ? 'primary' : 'text'"
+          >
+            {{
+              loadBalanceLoading
+                ? cloudStore.loadBalanceEnabled
+                  ? t('cloud.loadBalance.stopping')
+                  : t('cloud.loadBalance.starting')
+                : cloudStore.loadBalanceEnabled
+                  ? t('cloud.loadBalance.disable')
+                  : t('cloud.loadBalance.enable')
+            }}
+          </Button>
           <Button @click="handleRefreshNodes" :loading="cloudStore.loadingInstances" type="text" icon="refresh">
             {{ t('cloud.create.refresh') }}
           </Button>
@@ -266,6 +318,10 @@ onMounted(() => {
             {{ t('router.subscriptions') }}
           </Button>
         </div>
+      </div>
+
+      <div v-if="cloudStore.loadBalanceEnabled && cloudStore.loadBalanceListenPort" class="text-12 text-primary mt-4">
+        {{ t('cloud.loadBalance.running', { port: cloudStore.loadBalanceListenPort }) }}
       </div>
 
       <div v-if="cloudNodes.length" class="mt-12">
@@ -280,7 +336,16 @@ onMounted(() => {
               <Tag :color="statusTagColor(node.statusText)">
                 {{ t(`cloud.status.${node.statusText || 'unknown'}`) }}
               </Tag>
-              <Tag :color="connectivityTagColor(node.connectivityStatus)">
+              <Tag v-if="node.speedTesting" color="default">
+                {{ t('cloud.speed.testing') }}
+              </Tag>
+              <Tag v-else-if="node.speedMbps != null" :color="node.speedMbps < 0 ? 'red' : node.speedMbps > 50 ? 'green' : node.speedMbps > 10 ? 'cyan' : 'red'">
+                {{ node.speedMbps < 0 ? t('cloud.speed.timeout') : t('cloud.speed.mbps', { speed: node.speedMbps }) }}
+              </Tag>
+              <Tag v-else-if="node.speedMs != null" :color="node.speedMs < 0 ? 'red' : node.speedMs < 200 ? 'green' : node.speedMs < 500 ? 'cyan' : 'red'">
+                {{ node.speedMs < 0 ? t('cloud.speed.timeout') : t('cloud.speed.ms', { ms: node.speedMs }) }}
+              </Tag>
+              <Tag v-else :color="connectivityTagColor(node.connectivityStatus)">
                 {{ t(`cloud.connectivity.${node.connectivityStatus || 'unknown'}`) }}
               </Tag>
               <Tag v-if="node.provider" color="default">{{ node.provider }}</Tag>
@@ -291,7 +356,7 @@ onMounted(() => {
           </div>
 
           <div class="ml-auto flex items-center gap-8">
-            <Button @click="handleTestNode(node)" :loading="node.connectivityTesting" type="text" size="small">
+            <Button @click="handleTestNode(node)" :loading="node.speedTesting" type="text" size="small">
               {{ t('cloud.connectivity.testButton') }}
             </Button>
             <Button @click="handleUseNode(node)" type="primary" size="small">

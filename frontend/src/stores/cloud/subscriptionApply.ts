@@ -5,7 +5,6 @@
  * protocol health management, and syncing managed cloud profiles.
  */
 
-import type { Ref, ShallowRef } from 'vue'
 
 import { ReadFile, WriteFile, RemoveFile } from '@/bridge'
 import { DefaultSubscribeScript } from '@/constant/app'
@@ -16,8 +15,6 @@ import { Outbound } from '@/enums/kernel'
 import { sampleID, deepClone, ignoredError, debounce } from '@/utils'
 import { logError, logInfo } from '@/utils/logger'
 
-import type { Subscription } from '@/types/app'
-import type { CloudNode, ConnectivityResult } from '@/types/cloud'
 
 import {
   DefaultHysteriaServerName,
@@ -29,7 +26,6 @@ import {
   type ProtocolHealthReason,
   type ProtocolHealthMap,
 } from './constants'
-
 import {
   parseJSON,
   subscriptionId,
@@ -42,10 +38,12 @@ import {
   isPublicIPv4Address,
   hasUsableAddress,
 } from './helpers'
-
 import { ensureSmartAutoRouting } from './smartRouting'
 
 import type { ManagedCloudNode } from './types'
+import type { Subscription } from '@/types/app'
+import type { CloudNode, ConnectivityResult } from '@/types/cloud'
+import type { Ref, ShallowRef } from 'vue'
 
 export type SubscriptionApplyDeps = {
   protocolHealth: ShallowRef<ProtocolHealthMap>
@@ -133,7 +131,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     reason: ProtocolHealthReason,
   ) => {
     await loadProtocolHealth()
-    const current = { ...(protocolHealth.value[instanceId] || {}) }
+    const current = { ...protocolHealth.value[instanceId] }
     const existing = current[protocol]
     if (existing?.state === nextState && existing.reason === reason) {
       return false

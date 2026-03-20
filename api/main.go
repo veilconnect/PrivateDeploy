@@ -31,7 +31,10 @@ func main() {
 	log.Println("🚀 Starting PrivateDeploy API Server...")
 
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("❌ Failed to load configuration: %v", err)
+	}
 	if err := ensureJWTSecret(cfg); err != nil {
 		log.Fatalf("❌ Security bootstrap failed: %v", err)
 	}
@@ -45,7 +48,7 @@ func main() {
 	log.Println("✅ Database initialized")
 
 	// Initialize default user
-	if err := initializeDefaultUser(db); err != nil {
+	if err := initializeDefaultUser(db, cfg.Database.Path); err != nil {
 		log.Fatalf("❌ Failed to initialize default user: %v", err)
 	}
 
@@ -91,7 +94,7 @@ func main() {
 func setupDatabase(dbPath string) (*gorm.DB, error) {
 	// Ensure data directory exists
 	dbDir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
+	if err := os.MkdirAll(dbDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
@@ -110,7 +113,7 @@ func setupDatabase(dbPath string) (*gorm.DB, error) {
 }
 
 // initializeDefaultUser creates a default admin user if it doesn't exist
-func initializeDefaultUser(db *gorm.DB) error {
+func initializeDefaultUser(db *gorm.DB, dbPath string) error {
 	var count int64
 	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
 		return fmt.Errorf("failed to count users: %w", err)
@@ -127,14 +130,21 @@ func initializeDefaultUser(db *gorm.DB) error {
 		username = "admin"
 	}
 
-	password := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD"))
-	if password == "" {
-		if isProductionMode() {
-			return fmt.Errorf("INITIAL_ADMIN_PASSWORD is required in production when bootstrapping the first admin user")
+	password, found, err := config.LookupEnvOrFile("INITIAL_ADMIN_PASSWORD", "INITIAL_ADMIN_PASSWORD_FILE")
+	if err != nil {
+		return fmt.Errorf("failed to resolve bootstrap admin password: %w", err)
+	}
+	if !found {
+		if !isDevelopmentMode() {
+			return fmt.Errorf("INITIAL_ADMIN_PASSWORD is required when bootstrapping the first admin user outside explicit development mode")
 		}
 		password = generateSecureToken(20)
-		log.Printf("⚠️  INITIAL_ADMIN_PASSWORD not set, generated one-time password for %q: %s", username, password)
-		log.Println("⚠️  Set INITIAL_ADMIN_PASSWORD in environment to avoid random bootstrap credentials.")
+		passwordPath, err := writeBootstrapPasswordFile(dbPath, username, password)
+		if err != nil {
+			return fmt.Errorf("failed to persist generated bootstrap password: %w", err)
+		}
+		log.Printf("⚠️  INITIAL_ADMIN_PASSWORD not set; wrote one-time password for %q to %s", username, passwordPath)
+		log.Println("⚠️  Set INITIAL_ADMIN_PASSWORD in environment to avoid generated bootstrap credentials.")
 	}
 
 	hashedPassword, err := utils.HashPassword(password)
@@ -163,8 +173,8 @@ func ensureJWTSecret(cfg *config.Config) error {
 		return nil
 	}
 
-	if isProductionMode() {
-		return fmt.Errorf("JWT_SECRET is required in production and cannot use the default insecure value")
+	if !isDevelopmentMode() {
+		return fmt.Errorf("JWT_SECRET is required outside explicit development mode and cannot use the default insecure value")
 	}
 
 	cfg.JWT.Secret = generateSecureToken(48)
@@ -214,4 +224,29 @@ func isProductionMode() bool {
 		}
 	}
 	return false
+}
+
+func isDevelopmentMode() bool {
+	for _, key := range []string{"API_ENV", "APP_ENV"} {
+		value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+		if value == "development" || value == "dev" || value == "local" || value == "test" {
+			return true
+		}
+	}
+	return false
+}
+
+func writeBootstrapPasswordFile(dbPath, username, password string) (string, error) {
+	outputDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		return "", err
+	}
+
+	passwordPath := filepath.Join(outputDir, "bootstrap-admin-password.txt")
+	content := fmt.Sprintf("username=%s\npassword=%s\n", username, password)
+	if err := os.WriteFile(passwordPath, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+
+	return passwordPath, nil
 }

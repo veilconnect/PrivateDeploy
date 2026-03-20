@@ -5,7 +5,6 @@
  * fetching regions/plans/availability data.
  */
 
-import type { Ref, ShallowRef } from 'vue'
 
 import {
   GetCloudConfig,
@@ -23,9 +22,11 @@ import { logError, logInfo } from '@/utils/logger'
 import { notifications } from '@/utils/notification'
 import { isOnline, saveToOfflineCache, loadFromOfflineCache } from '@/utils/offline'
 
-import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
 import { CACHE_TTL } from './constants'
 import { parseJSON } from './helpers'
+
+import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
+import type { Ref, ShallowRef } from 'vue'
 
 export type ProviderConfigDeps = {
   availableProviders: Ref<Array<{ name: string; displayName: string }>>

@@ -1,10 +1,10 @@
 import 'package:flutter/foundation.dart';
-import '../../core/network/api_client.dart';
+import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
 import 'dart:async';
 
 class VpnProvider with ChangeNotifier {
-  final ApiClient apiClient;
+  final VpnNativeService _nativeService = VpnNativeService.instance;
 
   VpnStatus _status = VpnStatus.disconnected;
   String? _activeProfile;
@@ -12,6 +12,8 @@ class VpnProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   Timer? _statsTimer;
+  StreamSubscription? _statusSub;
+  StreamSubscription? _statsSub;
 
   VpnStatus get status => _status;
   String? get activeProfile => _activeProfile;
@@ -20,88 +22,92 @@ class VpnProvider with ChangeNotifier {
   String? get error => _error;
   bool get isConnected => _status == VpnStatus.connected;
 
-  VpnProvider(this.apiClient);
+  VpnProvider();
 
-  String _extractError(Map<String, dynamic> response, String fallback) {
-    final message = response['message'];
-    if (message is String && message.isNotEmpty) return message;
-    final error = response['error'];
-    if (error is Map<String, dynamic>) {
-      final errMsg = error['message'];
-      if (errMsg is String && errMsg.isNotEmpty) return errMsg;
-    }
-    return fallback;
-  }
-
-  /// 初始化 - 加载当前状态
   Future<void> initialize() async {
+    try {
+      await _nativeService.initialize();
+
+      _statusSub = _nativeService.statusStream.listen((nativeStatus) {
+        _applyNativeStatus(nativeStatus);
+      });
+
+      _statsSub = _nativeService.statsStream.listen((nativeStats) {
+        _stats = TrafficStats(
+          uploadBytes: nativeStats.uploadBytes,
+          downloadBytes: nativeStats.downloadBytes,
+          uploadSpeed: nativeStats.uploadSpeed.toDouble(),
+          downloadSpeed: nativeStats.downloadSpeed.toDouble(),
+          connectionTime: Duration.zero,
+        );
+        notifyListeners();
+      });
+    } catch (e) {
+      AppLogger.error('[VpnProvider] Initialize error', e);
+    }
+
     await loadStatus();
     if (_status == VpnStatus.connected) {
       _startStatsPolling();
     }
   }
 
-  /// 加载 VPN 状态
   Future<void> loadStatus() async {
     try {
-      AppLogger.info('[VpnProvider] Loading VPN status...');
-      final response = await apiClient.getVpnStatus();
-
-      if (response['success'] == true) {
-        final data = response['data'];
-        _status = _parseStatus(data['status']);
-        _activeProfile = data['active_profile'];
-
-        if (data['stats'] != null) {
-          _stats = TrafficStats.fromJson(data['stats']);
+      final nativeStatus = await _nativeService.getStatus();
+      if (nativeStatus != null) {
+        _applyNativeStatus(nativeStatus, notify: false);
+      } else {
+        final running = await _nativeService.isRunning();
+        _status = running ? VpnStatus.connected : VpnStatus.disconnected;
+        _error = running ? null : _nativeService.lastError;
+        if (running) {
+          _startStatsPolling();
+        } else {
+          _stopStatsPolling();
         }
-
-        AppLogger.info('[VpnProvider] Status: $_status, Profile: $_activeProfile');
-        notifyListeners();
       }
+      notifyListeners();
     } catch (e) {
-      _error = 'Failed to load VPN status: ${e.toString()}';
+      _error = 'Failed to load status: ${e.toString()}';
       AppLogger.error('[VpnProvider] Load status error', e);
       notifyListeners();
     }
   }
 
-  /// 启动 VPN
-  Future<bool> connect() async {
+  Future<bool> connect({String? configJson, String? profileName}) async {
     _isLoading = true;
     _error = null;
+    _status = VpnStatus.connecting;
     notifyListeners();
 
     try {
-      AppLogger.info('[VpnProvider] Starting VPN...');
-      final response = await apiClient.startVpn();
+      final config = configJson ?? '{}';
+      final success = await _nativeService.startVpn(config);
 
-      if (response['success'] == true) {
-        _status = VpnStatus.connecting;
-        notifyListeners();
-
-        // 等待连接建立
-        await Future.delayed(const Duration(seconds: 2));
+      if (success) {
+        _activeProfile = profileName;
         await loadStatus();
-
         if (_status == VpnStatus.connected) {
-          AppLogger.info('[VpnProvider] VPN connected successfully');
-          _startStatsPolling();
+          AppLogger.info('[VpnProvider] VPN connected');
           return true;
-        } else {
-          _error = 'VPN failed to connect';
-          AppLogger.error('[VpnProvider] Connect failed: $_error');
-          return false;
         }
-      } else {
-        _error = _extractError(response, 'Failed to start VPN');
+
         _status = VpnStatus.disconnected;
-        AppLogger.error('[VpnProvider] Start failed: $_error');
+        _error = _nativeService.lastError ??
+            _error ??
+            'VPN did not reach connected state';
+        return false;
+      } else {
+        _status = VpnStatus.disconnected;
+        _stopStatsPolling();
+        _error = _nativeService.lastError ?? 'Failed to start VPN';
         return false;
       }
     } catch (e) {
       _error = 'Failed to start VPN: ${e.toString()}';
       _status = VpnStatus.disconnected;
+      _stopStatsPolling();
       AppLogger.error('[VpnProvider] Start error', e);
       return false;
     } finally {
@@ -110,34 +116,23 @@ class VpnProvider with ChangeNotifier {
     }
   }
 
-  /// 停止 VPN
   Future<bool> disconnect() async {
     _isLoading = true;
     _error = null;
+    _status = VpnStatus.disconnecting;
     notifyListeners();
 
     try {
-      AppLogger.info('[VpnProvider] Stopping VPN...');
-      final response = await apiClient.stopVpn();
-
-      if (response['success'] == true) {
-        _status = VpnStatus.disconnecting;
-        notifyListeners();
-
-        // 等待断开完成
-        await Future.delayed(const Duration(seconds: 1));
-
+      final success = await _nativeService.stopVpn();
+      if (success) {
         _status = VpnStatus.disconnected;
         _activeProfile = null;
         _stopStatsPolling();
-
-        AppLogger.info('[VpnProvider] VPN disconnected successfully');
-        return true;
       } else {
-        _error = _extractError(response, 'Failed to stop VPN');
-        AppLogger.error('[VpnProvider] Stop failed: $_error');
-        return false;
+        _status = VpnStatus.connected;
+        _error = _nativeService.lastError ?? 'Failed to stop VPN';
       }
+      return success;
     } catch (e) {
       _error = 'Failed to stop VPN: ${e.toString()}';
       AppLogger.error('[VpnProvider] Stop error', e);
@@ -148,33 +143,24 @@ class VpnProvider with ChangeNotifier {
     }
   }
 
-  /// 重启 VPN
   Future<bool> restart() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      AppLogger.info('[VpnProvider] Restarting VPN...');
-      final response = await apiClient.restartVpn();
-
-      if (response['success'] == true) {
-        _status = VpnStatus.connecting;
-        notifyListeners();
-
-        await Future.delayed(const Duration(seconds: 2));
+      final success = await _nativeService.restartVpn();
+      if (success) {
         await loadStatus();
-
         if (_status == VpnStatus.connected) {
-          AppLogger.info('[VpnProvider] VPN restarted successfully');
           return true;
-        } else {
-          _error = 'VPN failed to restart';
-          return false;
         }
+        _error = _nativeService.lastError ??
+            _error ??
+            'VPN did not restart successfully';
+        return false;
       } else {
-        _error = _extractError(response, 'Failed to restart VPN');
-        AppLogger.error('[VpnProvider] Restart failed: $_error');
+        _error = _nativeService.lastError ?? 'Failed to restart VPN';
         return false;
       }
     } catch (e) {
@@ -187,13 +173,17 @@ class VpnProvider with ChangeNotifier {
     }
   }
 
-  /// 获取流量统计
   Future<void> loadStats() async {
     try {
-      final response = await apiClient.getTrafficStats();
-
-      if (response['success'] == true) {
-        _stats = TrafficStats.fromJson(response['data']);
+      final nativeStats = await _nativeService.getStats();
+      if (nativeStats != null) {
+        _stats = TrafficStats(
+          uploadBytes: nativeStats.uploadBytes,
+          downloadBytes: nativeStats.downloadBytes,
+          uploadSpeed: nativeStats.uploadSpeed.toDouble(),
+          downloadSpeed: nativeStats.downloadSpeed.toDouble(),
+          connectionTime: Duration.zero,
+        );
         notifyListeners();
       }
     } catch (e) {
@@ -201,30 +191,22 @@ class VpnProvider with ChangeNotifier {
     }
   }
 
-  /// 重置流量统计
   Future<bool> resetStats() async {
     try {
-      AppLogger.info('[VpnProvider] Resetting traffic stats...');
-      final response = await apiClient.resetTrafficStats();
-
-      if (response['success'] == true) {
+      final success = await _nativeService.resetStats();
+      if (success) {
         _stats = TrafficStats.zero();
-        AppLogger.info('[VpnProvider] Stats reset successfully');
         notifyListeners();
-        return true;
       } else {
-        _error = _extractError(response, 'Failed to reset stats');
-        AppLogger.error('[VpnProvider] Reset stats failed: $_error');
-        return false;
+        _error = _nativeService.lastError ?? 'Failed to reset stats';
       }
+      return success;
     } catch (e) {
       _error = 'Failed to reset stats: ${e.toString()}';
-      AppLogger.error('[VpnProvider] Reset stats error', e);
       return false;
     }
   }
 
-  /// 开始定时轮询流量统计
   void _startStatsPolling() {
     _stopStatsPolling();
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -234,36 +216,53 @@ class VpnProvider with ChangeNotifier {
     });
   }
 
-  /// 停止定时轮询
   void _stopStatsPolling() {
     _statsTimer?.cancel();
     _statsTimer = null;
   }
 
-  VpnStatus _parseStatus(dynamic status) {
-    if (status == null) return VpnStatus.disconnected;
-
-    final statusStr = status.toString().toLowerCase();
-    switch (statusStr) {
-      case 'connected':
-        return VpnStatus.connected;
+  void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
+    switch (nativeStatus.status) {
       case 'connecting':
-        return VpnStatus.connecting;
+        _status = VpnStatus.connecting;
+        break;
       case 'disconnecting':
-        return VpnStatus.disconnecting;
+        _status = VpnStatus.disconnecting;
+        break;
       default:
-        return VpnStatus.disconnected;
+        _status =
+            nativeStatus.running ? VpnStatus.connected : VpnStatus.disconnected;
+        break;
+    }
+
+    final message = nativeStatus.message?.trim();
+    if (message != null && message.isNotEmpty) {
+      _error = message;
+    } else if (nativeStatus.status != 'error' &&
+        nativeStatus.status != 'revoked') {
+      _error = null;
+    }
+
+    if (_status == VpnStatus.connected) {
+      _startStatsPolling();
+    } else {
+      _stopStatsPolling();
+    }
+
+    if (notify) {
+      notifyListeners();
     }
   }
 
   @override
   void dispose() {
     _stopStatsPolling();
+    _statusSub?.cancel();
+    _statsSub?.cancel();
     super.dispose();
   }
 }
 
-/// VPN 连接状态
 enum VpnStatus {
   disconnected,
   connecting,
@@ -271,12 +270,11 @@ enum VpnStatus {
   disconnecting,
 }
 
-/// 流量统计数据模型
 class TrafficStats {
   final int uploadBytes;
   final int downloadBytes;
-  final double uploadSpeed;   // bytes per second
-  final double downloadSpeed; // bytes per second
+  final double uploadSpeed;
+  final double downloadSpeed;
   final Duration connectionTime;
 
   TrafficStats({
@@ -297,23 +295,14 @@ class TrafficStats {
     );
   }
 
-  factory TrafficStats.fromJson(Map<String, dynamic> json) {
-    return TrafficStats(
-      uploadBytes: json['upload_bytes'] ?? 0,
-      downloadBytes: json['download_bytes'] ?? 0,
-      uploadSpeed: (json['upload_speed'] ?? 0).toDouble(),
-      downloadSpeed: (json['download_speed'] ?? 0).toDouble(),
-      connectionTime: Duration(seconds: json['connection_time'] ?? 0),
-    );
-  }
-
   int get totalBytes => uploadBytes + downloadBytes;
 
   String get uploadFormatted => _formatBytes(uploadBytes);
   String get downloadFormatted => _formatBytes(downloadBytes);
   String get totalFormatted => _formatBytes(totalBytes);
   String get uploadSpeedFormatted => '${_formatBytes(uploadSpeed.toInt())}/s';
-  String get downloadSpeedFormatted => '${_formatBytes(downloadSpeed.toInt())}/s';
+  String get downloadSpeedFormatted =>
+      '${_formatBytes(downloadSpeed.toInt())}/s';
 
   String get connectionTimeFormatted {
     final hours = connectionTime.inHours;
@@ -339,15 +328,5 @@ class TrafficStats {
     } else {
       return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
     }
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'upload_bytes': uploadBytes,
-      'download_bytes': downloadBytes,
-      'upload_speed': uploadSpeed,
-      'download_speed': downloadSpeed,
-      'connection_time': connectionTime.inSeconds,
-    };
   }
 }

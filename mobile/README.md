@@ -229,10 +229,17 @@ flutter test --coverage
 ### Android
 
 ```bash
-# Debug APK
+# Debug APK（体积大，仅用于本地调试）
 flutter build apk --debug
 
-# Release APK
+# 推荐：按 ABI 拆分的 Release APK（仅输出真机架构，安装包最小）
+flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
+
+# 输出示例：
+# build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+# build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+
+# 通用 Release APK（单文件更方便，但体积更大）
 flutter build apk --release
 
 # Release Bundle (for Google Play)

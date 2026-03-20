@@ -140,7 +140,7 @@ export const useEnvStore = defineStore('env', () => {
       ..._env,
       capabilities: {
         ...defaultCapabilities(),
-        ...(_env.capabilities || {}),
+        ..._env.capabilities,
       },
     }
   }

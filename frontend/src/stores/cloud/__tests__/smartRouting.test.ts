@@ -7,8 +7,9 @@
 import { describe, it, expect } from 'vitest'
 
 // Import only pure functions - no Vue/Pinia dependencies
-import { ensureSmartAutoRouting } from '../smartRouting'
 import { deriveManagedExclude } from '../helpers'
+import { ensureSmartAutoRouting } from '../smartRouting'
+
 import type { ProtocolHealthMap } from '../constants'
 
 // ─── Minimal type stubs (avoid importing from Vue stores) ────────────────────

@@ -994,7 +994,7 @@ const columns = [
   { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '12%' },
   { title: 'cloud.table.protocols', key: 'protocols', width: '17%' },
   { title: 'cloud.table.status', key: 'status', width: '13%' },
-  { title: 'cloud.table.connectivity', key: 'connectivity', width: '8%' },
+  { title: 'cloud.table.connectivity', key: 'connectivity', width: '9%' },
   { title: 'cloud.table.createdAt', key: 'createdAt', width: '8%' },
   { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
@@ -1405,15 +1405,6 @@ const handleRefreshInstances = async () => {
   }
 }
 
-const handleTestAllConnectivity = async () => {
-  try {
-    await cloudStore.testAllNodesConnectivity()
-    message.success(t('cloud.connectivity.testAll') + ' completed')
-  } catch (error) {
-    handleError(error)
-  }
-}
-
 const handleShowRecommendations = () => {
   const allNodes = cloudStore.instances
 
@@ -1485,7 +1476,7 @@ const handleBatchTestConnectivity = async () => {
   batchOperating.value = true
   try {
     const promises = Array.from(selectedNodeIds.value).map(id =>
-      cloudStore.testNodeConnectivity(id)
+      cloudStore.testNodeSpeedTest(id)
     )
     await Promise.all(promises)
     message.success(t('cloud.batch.testComplete', { count: selectedNodeIds.value.size }))
@@ -1997,13 +1988,45 @@ ${protocols.join('\n')}
 const handleQuickTestConnectivity = async (node: ManagedCloudNode) => {
   try {
     message.info(t('cloud.quickActions.testingConnectivity'))
-    await cloudStore.testNodeConnectivity(node.instanceId)
-    const status = node.connectivityStatus || 'unknown'
-    const statusText = getConnectivityLabel(status)
+    await cloudStore.testNodeSpeedTest(node.instanceId)
+    const ms = node.speedMs
+    const statusText = ms != null && ms >= 0 ? `${ms}ms` : t('cloud.speed.timeout')
     message.success(t('cloud.quickActions.testComplete', { status: statusText }))
   } catch (error) {
     logError('QuickTestConnectivity', error)
     message.error(t('cloud.quickActions.testFailed'))
+  }
+}
+
+const speedTestAllLoading = ref(false)
+const handleTestAllSpeed = async () => {
+  speedTestAllLoading.value = true
+  try {
+    await cloudStore.testAllNodesSpeed()
+    message.success(t('cloud.speed.testAllComplete'))
+  } catch (error) {
+    handleError(error)
+  } finally {
+    speedTestAllLoading.value = false
+  }
+}
+
+const loadBalanceLoading = ref(false)
+const handleToggleLoadBalance = async () => {
+  loadBalanceLoading.value = true
+  try {
+    if (cloudStore.loadBalanceEnabled) {
+      await cloudStore.stopLoadBalance()
+    } else {
+      await cloudStore.startLoadBalance()
+      if (!cloudStore.loadBalanceEnabled) {
+        message.error(t('cloud.loadBalance.startFailed'))
+      }
+    }
+  } catch (error) {
+    handleError(error)
+  } finally {
+    loadBalanceLoading.value = false
   }
 }
 
@@ -2052,12 +2075,11 @@ onMounted(() => {
       return
     }
 
-    // Ctrl+T or Cmd+T - Test all nodes connectivity
+    // Ctrl+T or Cmd+T - Test all nodes speed
     if ((e.ctrlKey || e.metaKey) && e.key === 't') {
       e.preventDefault()
-      if (cloudStore.instances.length > 0) {
-        cloudStore.testAllNodesConnectivity()
-        message.info(t('cloud.quickActions.testingAll'))
+      if (tableData.value.length > 0) {
+        handleTestAllSpeed()
       }
     }
 
@@ -2263,11 +2285,28 @@ onMounted(() => {
             {{ t('cloud.create.refresh') }}
           </Button>
           <Button
-            @click="handleTestAllConnectivity"
+            @click="handleTestAllSpeed"
             type="link"
-            :disabled="!hasApiKey || tableData.length === 0"
+            :loading="speedTestAllLoading"
+            :disabled="tableData.length === 0"
           >
-            {{ t('cloud.connectivity.testAll') }}
+            {{ t('cloud.speed.testAll') }}
+          </Button>
+          <Button
+            @click="handleToggleLoadBalance"
+            :type="cloudStore.loadBalanceEnabled ? 'primary' : 'link'"
+            :loading="loadBalanceLoading"
+            :disabled="tableData.length < 2 && !cloudStore.loadBalanceEnabled"
+          >
+            {{
+              loadBalanceLoading
+                ? cloudStore.loadBalanceEnabled
+                  ? t('cloud.loadBalance.stopping')
+                  : t('cloud.loadBalance.starting')
+                : cloudStore.loadBalanceEnabled
+                  ? t('cloud.loadBalance.disable')
+                  : t('cloud.loadBalance.enable')
+            }}
           </Button>
           <Button
             @click="handleShowRecommendations"
@@ -2285,6 +2324,9 @@ onMounted(() => {
         </div>
         <div v-if="cloudStore.creatingInstance" class="text-12 text-tertiary">
           {{ t('cloud.create.deployingProgress') }}
+        </div>
+        <div v-if="cloudStore.loadBalanceEnabled && cloudStore.loadBalanceListenPort" class="text-12 text-primary">
+          {{ t('cloud.loadBalance.running', { port: cloudStore.loadBalanceListenPort }) }}
         </div>
       </div>
     </Card>
@@ -2496,9 +2538,20 @@ onMounted(() => {
               </div>
             </template>
             <template #connectivity="{ record }">
-              <div class="flex flex-col gap-2">
+              <div class="flex flex-col items-start gap-2">
+                <div v-if="record.speedTesting" class="text-secondary text-12">
+                  {{ t('cloud.speed.testing') }}
+                </div>
+                <div v-else-if="record.speedMs != null" class="flex items-center gap-4">
+                  <Tag
+                    :color="record.speedMs < 0 ? 'red' : record.speedMs < 200 ? 'green' : record.speedMs < 500 ? 'cyan' : 'red'"
+                    size="small"
+                  >
+                    {{ record.speedMs < 0 ? t('cloud.speed.timeout') : t('cloud.speed.ms', { ms: record.speedMs }) }}
+                  </Tag>
+                </div>
                 <Tag
-                  v-if="record.connectivityStatus"
+                  v-else-if="record.connectivityStatus"
                   :color="getConnectivityColor(record.connectivityStatus)"
                   size="small"
                 >

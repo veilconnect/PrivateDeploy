@@ -5,7 +5,6 @@
  * connectivity testing, IP rotation, and auto-apply scheduling.
  */
 
-import type { Ref, ShallowRef } from 'vue'
 
 import {
   ListCloudInstances,
@@ -13,13 +12,14 @@ import {
   CreateMultipleCloudInstances,
   DestroyCloudInstance,
   TestConnectivity,
+  TestNodeDirectSpeed,
+  ReadFile,
 } from '@/bridge'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
 import { notifications } from '@/utils/notification'
 import { saveToOfflineCache, loadFromOfflineCache, isOnline } from '@/utils/offline'
 
-import type { CloudNode, CloudProvider, ConnectivityProbeRequest, ConnectivityResult } from '@/types/cloud'
 
 import { CACHE_TTL, type CloudNodeStatus } from './constants'
 import {
@@ -29,10 +29,11 @@ import {
   providerStatusToNodeStatus,
   hasUsableAddress,
   addUniquePort,
-  isReachableTargetStatus,
 } from './helpers'
 
 import type { ManagedCloudNode } from './types'
+import type { CloudNode, CloudProvider, ConnectivityProbeRequest, ConnectivityResult } from '@/types/cloud'
+import type { Ref, ShallowRef } from 'vue'
 
 const buildConnectivityProbe = (node: CloudNode): ConnectivityProbeRequest => {
   const tcpPorts: number[] = []
@@ -105,8 +106,11 @@ export type InstanceSyncDeps = {
   }
   kernelApiStore: {
     running: boolean
+    config: Record<string, any>
+    proxies: Record<string, { name: string; type: string; now: string; all: string[] }>
     refreshProviderProxies: () => Promise<void>
     addCloudNodeToGroups: (node: ManagedCloudNode) => void
+    getProxyPort: () => { port: number; proxyType: string } | undefined
   }
   subscribesStore: {
     subscribes: Array<{ id: string; [key: string]: any }>
@@ -294,9 +298,10 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       // Store previous instances for comparison
       const previousInstances = instances.value
 
-      const statusMap = new Map(instances.value.map((node) => [node.instanceId, node.statusText || 'unknown']))
+      const previousMap = new Map(instances.value.map((node) => [node.instanceId, node]))
       const enriched: ManagedCloudNode[] = nodesToProcess.map((node) => {
-        const previousStatus = statusMap.get(node.instanceId) || 'unknown'
+        const prev = previousMap.get(node.instanceId)
+        const previousStatus = prev?.statusText || 'unknown'
         const providerStatus = providerStatusToNodeStatus(node.status)
         let statusText: CloudNodeStatus = previousStatus
 
@@ -313,6 +318,10 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         return {
           ...node,
           statusText,
+          // Preserve speed test data across refreshes
+          ...(prev?.speedMs !== undefined ? { speedMs: prev.speedMs } : {}),
+          ...(prev?.speedMbps !== undefined ? { speedMbps: prev.speedMbps } : {}),
+          ...(prev?.speedTesting ? { speedTesting: prev.speedTesting } : {}),
         }
       })
 
@@ -781,6 +790,92 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     logInfo('[CloudStore] Completed connectivity tests for all nodes')
   }
 
+  const patchNode = (instanceId: string, patch: Partial<ManagedCloudNode>) => {
+    const idx = instances.value.findIndex((n) => n.instanceId === instanceId)
+    if (idx !== -1) {
+      instances.value = instances.value.map((n, i) =>
+        i === idx ? { ...n, ...patch } : n
+      )
+      return
+    }
+    const mIdx = manualNodes.value.findIndex((n) => n.instanceId === instanceId)
+    if (mIdx !== -1) {
+      manualNodes.value = manualNodes.value.map((n, i) =>
+        i === mIdx ? { ...n, ...patch } : n
+      )
+    }
+  }
+
+  /**
+   * Get the full outbound objects for a node from its subscription file.
+   */
+  const getNodeOutbounds = async (instanceId: string): Promise<Record<string, any>[]> => {
+    const subPath = `data/subscribes/${subscriptionId(instanceId)}.json`
+    try {
+      const content = await ReadFile(subPath)
+      const data = parseJSON<{ outbounds?: Record<string, any>[] }>(content, {})
+      return (data.outbounds || []).filter(o => !!o.tag)
+    } catch {
+      return []
+    }
+  }
+
+  const testNodeSpeedTest = async (instanceId: string) => {
+    const node = instances.value.find((item) => item.instanceId === instanceId) ||
+                 manualNodes.value.find((item) => item.instanceId === instanceId)
+    if (!node) return
+
+    patchNode(instanceId, { speedTesting: true, speedMbps: undefined })
+
+    // Read outbounds directly from this node's subscription file
+    const outbounds = await getNodeOutbounds(instanceId)
+    if (!outbounds.length) {
+      logError(`[CloudStore] Speed test skipped for ${node.label}: no outbound config`)
+      patchNode(instanceId, { speedMbps: -1, speedTesting: false })
+      return
+    }
+
+    try {
+      // Test directly via temporary sing-box — no dependency on main kernel
+      const result = await TestNodeDirectSpeed(outbounds, 15)
+      const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
+      logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
+      patchNode(instanceId, { speedMbps: mbps, speedTesting: false })
+    } catch {
+      patchNode(instanceId, { speedMbps: -1, speedTesting: false })
+    }
+  }
+
+  const testAllNodesSpeed = async () => {
+    const allNodes = [...instances.value, ...manualNodes.value]
+    if (!allNodes.length) return
+
+    // Mark all as testing
+    allNodes.forEach(node => {
+      patchNode(node.instanceId, { speedTesting: true, speedMbps: undefined })
+    })
+
+    // Test each node sequentially — each spawns its own temporary sing-box
+    for (const node of allNodes) {
+      const outbounds = await getNodeOutbounds(node.instanceId)
+      if (!outbounds.length) {
+        logInfo(`[CloudStore] Skipping ${node.label}: no outbound config`)
+        patchNode(node.instanceId, { speedMbps: -1, speedTesting: false })
+        continue
+      }
+      try {
+        const result = await TestNodeDirectSpeed(outbounds, 15)
+        const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
+        logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
+        patchNode(node.instanceId, { speedMbps: mbps, speedTesting: false })
+      } catch {
+        patchNode(node.instanceId, { speedMbps: -1, speedTesting: false })
+      }
+    }
+
+    logInfo('[CloudStore] Speed test completed')
+  }
+
   const verifyNodeConnectivity = async (node: ManagedCloudNode) => {
     logInfo('[CloudStore] Verifying end-to-end connectivity for:', node.label)
 
@@ -861,6 +956,8 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     rotateIP,
     testNodeConnectivity,
     testAllNodesConnectivity,
+    testNodeSpeedTest,
+    testAllNodesSpeed,
     verifyNodeConnectivity,
   }
 }

@@ -4,7 +4,7 @@
 #
 # 功能：
 # - 编译 Go 代码为 Android AAR 库
-# - 支持多架构 (arm, arm64, x86, x86_64)
+# - 默认输出面向真机的精简 ABI 集合
 # - 自动复制到 Android 项目
 
 set -e
@@ -69,6 +69,10 @@ echo ""
 OUTPUT_DIR="../android/app/libs"
 OUTPUT_FILE="vpncore.aar"
 PACKAGE_NAME="com.privatedeploy.mobile.vpncore"
+TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm}"
+LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w}"
+TRIMPATH="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TRIMPATH:-true}"
+TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"
@@ -77,7 +81,9 @@ echo "✓ 清理完成"
 echo ""
 
 echo -e "${YELLOW}[4/5] 编译 AAR 库...${NC}"
-echo "目标架构: arm, arm64, 386, amd64"
+echo "目标架构: $TARGETS"
+echo "Go build tags: ${TAGS:-<none>}"
+echo "Go 链接参数: ${LDFLAGS:-<none>}"
 echo "输出文件: $OUTPUT_DIR/$OUTPUT_FILE"
 echo ""
 
@@ -85,12 +91,28 @@ echo ""
 # -target=android: 目标平台为 Android
 # -o: 输出文件路径
 # -javapkg: Java 包名
-gomobile bind \
-    -target=android \
-    -androidapi=21 \
-    -javapkg="$PACKAGE_NAME" \
-    -o="$OUTPUT_DIR/$OUTPUT_FILE" \
-    .
+GOMOBILE_CMD=(
+    gomobile bind
+    -target="$TARGETS"
+    -androidapi=21
+    -javapkg="$PACKAGE_NAME"
+    -o="$OUTPUT_DIR/$OUTPUT_FILE"
+)
+
+if [ -n "$LDFLAGS" ]; then
+    GOMOBILE_CMD+=(-ldflags="$LDFLAGS")
+fi
+
+if [ -n "$TAGS" ]; then
+    GOMOBILE_CMD+=(-tags="$TAGS")
+fi
+
+if [ "$TRIMPATH" = "true" ]; then
+    GOMOBILE_CMD+=(-trimpath)
+fi
+
+GOMOBILE_CMD+=(.)
+"${GOMOBILE_CMD[@]}"
 
 if [ $? -eq 0 ]; then
     echo ""

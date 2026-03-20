@@ -69,6 +69,20 @@ import type {
 } from '@/types/kernel'
 
 export type ProxyType = 'mixed' | 'http' | 'socks'
+export type ConfigWriteHook = (config: Record<string, any>) => void | Promise<void>
+
+// Hooks that modify the sing-box config before it is written to disk.
+// Used by the cloud store to inject load balance inbounds/routes.
+const _configWriteHooks: ConfigWriteHook[] = []
+
+export const registerConfigWriteHook = (hook: ConfigWriteHook) => {
+  _configWriteHooks.push(hook)
+}
+
+export const unregisterConfigWriteHook = (hook: ConfigWriteHook) => {
+  const idx = _configWriteHooks.indexOf(hook)
+  if (idx >= 0) _configWriteHooks.splice(idx, 1)
+}
 
 const StableReleaseURL = 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'
 const AlphaReleaseURL = 'https://api.github.com/repos/SagerNet/sing-box/releases?per_page=2'
@@ -638,6 +652,16 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
         if (!block) return
         block.listen = block.listen || { listen: '127.0.0.1', listen_port: 0 }
         block.listen.listen = block.listen.listen || '127.0.0.1'
+
+        // Prefer the existing configured port if it's not conflicting with other inbounds
+        const currentPort = block.listen.listen_port
+        if (currentPort > 0 && !usedPorts.has(currentPort)) {
+          usedPorts.add(currentPort)
+          inbound.enable = true
+          return
+        }
+
+        // Only allocate a random port if the configured port conflicts
         const newPort = await allocatePort()
         block.listen.listen_port = newPort
         inbound.enable = true
@@ -677,12 +701,18 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
           }
         }
 
-        collectPort(Number(rawPort))
-
-        const newPort = await allocatePort()
-        const trimmedHost = host?.trim()?.length ? host.trim() : '127.0.0.1'
-        target.experimental.clash_api.external_controller = `${trimmedHost}:${newPort}`
-        changes.controller = newPort
+        const existingPort = Number(rawPort)
+        if (existingPort > 0 && !usedPorts.has(existingPort)) {
+          // Keep the existing controller port
+          usedPorts.add(existingPort)
+        } else {
+          // Only reassign if conflicting
+          collectPort(existingPort)
+          const newPort = await allocatePort()
+          const trimmedHost = host?.trim()?.length ? host.trim() : '127.0.0.1'
+          target.experimental.clash_api.external_controller = `${trimmedHost}:${newPort}`
+          changes.controller = newPort
+        }
       }
 
       return { changed: Object.keys(changes).length > 0, ports: changes }
@@ -762,9 +792,14 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
           }
 
           try {
-            await generateConfigFile(profileToUse, (config) =>
-              pluginsStore.onBeforeCoreStartTrigger(config, profileToUse),
-            )
+            await generateConfigFile(profileToUse, async (config) => {
+              const result = await pluginsStore.onBeforeCoreStartTrigger(config, profileToUse)
+              // Allow registered hooks to modify config (e.g., load balance injection)
+              for (const hook of _configWriteHooks) {
+                await hook(result || config)
+              }
+              return result
+            })
 
             const pid = await runCoreProcess(isAlpha)
             if (pid) {
