@@ -1,7 +1,7 @@
 import * as App from '@wails/go/bridge/App'
 
 import type { TrayContent } from '@/types/app'
-import type { CloudConfig, CloudPlan, CloudProvider, CloudRegion } from '@/types/cloud'
+import type { CloudConfig, CloudPlan, CloudProvider, CloudRegion, MultiDeployResult, SSHServerInfo } from '@/types/cloud'
 
 export const RestartApp = App.RestartApp
 
@@ -88,9 +88,15 @@ export const GetLoadBalancerStatus = App.GetLoadBalancerStatus
 
 export const CleanInvalidCloudNodes = App.CleanInvalidCloudNodes
 
-export const TestSSHConnection = App.TestSSHConnection
+export const TestSSHConnection = async (config: Record<string, string>): Promise<SSHServerInfo> => {
+  return await App.TestSSHConnectionTyped(config) as SSHServerInfo
+}
 
-export const CreateMultipleCloudInstances = App.CreateMultipleCloudInstances
+export const CreateMultipleCloudInstances = async (
+  configs: Array<Record<string, any>>,
+): Promise<MultiDeployResult[]> => {
+  return await App.CreateMultipleCloudInstancesTyped(configs) as MultiDeployResult[]
+}
 
 export const ScoreCloudRegions = App.ScoreCloudRegions
 

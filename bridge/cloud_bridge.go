@@ -544,6 +544,22 @@ func (a *App) CleanInvalidCloudNodes() FlagResult {
 }
 
 // TestSSHConnection tests SSH connectivity with the given configuration
+func (a *App) TestSSHConnectionTyped(extra map[string]string) (*sshprovider.ServerInfo, error) {
+	log.Printf("[CloudBridge] TestSSHConnectionTyped called")
+
+	provider, err := a.CloudManager.GetProvider("ssh")
+	if err != nil {
+		return nil, fmt.Errorf("SSH provider not registered: %w", err)
+	}
+
+	sshProvider, ok := provider.(*sshprovider.Provider)
+	if !ok {
+		return nil, fmt.Errorf("failed to get SSH provider instance")
+	}
+
+	return sshProvider.TestConnection(extra)
+}
+
 func (a *App) TestSSHConnection(configJSON string) FlagResult {
 	log.Printf("[CloudBridge] TestSSHConnection called")
 
@@ -552,17 +568,7 @@ func (a *App) TestSSHConnection(configJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: "invalid config JSON: " + err.Error()}
 	}
 
-	provider, err := a.CloudManager.GetProvider("ssh")
-	if err != nil {
-		return FlagResult{Flag: false, Data: "SSH provider not registered: " + err.Error()}
-	}
-
-	sshProvider, ok := provider.(*sshprovider.Provider)
-	if !ok {
-		return FlagResult{Flag: false, Data: "failed to get SSH provider instance"}
-	}
-
-	info, err := sshProvider.TestConnection(extra)
+	info, err := a.TestSSHConnectionTyped(extra)
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
@@ -600,21 +606,16 @@ type MultiDeployResult struct {
 }
 
 // CreateMultipleCloudInstances deploys multiple instances in parallel (max 3 concurrent).
-func (a *App) CreateMultipleCloudInstances(optionsJSON string) FlagResult {
-	log.Printf("[CloudBridge] CreateMultipleCloudInstances called")
-
-	var optsList []cloud.CreateInstanceOptions
-	if err := json.Unmarshal([]byte(optionsJSON), &optsList); err != nil {
-		return FlagResult{Flag: false, Data: "invalid options JSON: " + err.Error()}
-	}
+func (a *App) CreateMultipleCloudInstancesTyped(optsList []cloud.CreateInstanceOptions) ([]MultiDeployResult, error) {
+	log.Printf("[CloudBridge] CreateMultipleCloudInstancesTyped called")
 
 	if len(optsList) == 0 {
-		return FlagResult{Flag: false, Data: "no instances to create"}
+		return nil, fmt.Errorf("no instances to create")
 	}
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
-		return FlagResult{Flag: false, Data: err.Error()}
+		return nil, err
 	}
 
 	results := make([]MultiDeployResult, len(optsList))
@@ -644,6 +645,21 @@ func (a *App) CreateMultipleCloudInstances(optionsJSON string) FlagResult {
 	}
 
 	wg.Wait()
+	return results, nil
+}
+
+func (a *App) CreateMultipleCloudInstances(optionsJSON string) FlagResult {
+	log.Printf("[CloudBridge] CreateMultipleCloudInstances called")
+
+	var optsList []cloud.CreateInstanceOptions
+	if err := json.Unmarshal([]byte(optionsJSON), &optsList); err != nil {
+		return FlagResult{Flag: false, Data: "invalid options JSON: " + err.Error()}
+	}
+
+	results, err := a.CreateMultipleCloudInstancesTyped(optsList)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
 
 	data, err := json.Marshal(results)
 	if err != nil {

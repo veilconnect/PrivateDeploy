@@ -14,6 +14,7 @@ export function CreateCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 export function CreateCloudInstanceTyped(arg1:Record<string, any>):Promise<Record<string, any>>;
 
 export function CreateMultipleCloudInstances(arg1:string):Promise<bridge.FlagResult>;
+export function CreateMultipleCloudInstancesTyped(arg1:Array<Record<string, any>>):Promise<Array<Record<string, any>>>;
 
 export function DestroyCloudInstance(arg1:string):Promise<bridge.FlagResult>;
 export function DestroyCloudInstanceTyped(arg1:string):Promise<void>;
@@ -126,6 +127,7 @@ export function TestNodeDirectSpeed(arg1:string,arg2:number):Promise<bridge.Flag
 export function TestNodeSpeed(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function TestSSHConnection(arg1:string):Promise<bridge.FlagResult>;
+export function TestSSHConnectionTyped(arg1:Record<string, string>):Promise<Record<string, any>>;
 
 export function UnzipGZFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 

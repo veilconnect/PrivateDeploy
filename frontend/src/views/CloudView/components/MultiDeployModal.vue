@@ -91,13 +91,8 @@ const handleDeploy = async () => {
   })
 
   try {
-    const res = await CreateMultipleCloudInstances(JSON.stringify(configs))
-    if (res.flag) {
-      results.value = JSON.parse(res.data) as MultiDeployResult[]
-      emit('done', results.value)
-    } else {
-      logError('[MultiDeploy] Failed:', res.data)
-    }
+    results.value = await CreateMultipleCloudInstances(configs)
+    emit('done', results.value)
   } catch (err: any) {
     logError('[MultiDeploy] Error:', err)
   } finally {

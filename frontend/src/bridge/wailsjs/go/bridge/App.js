@@ -30,6 +30,10 @@ export function CreateMultipleCloudInstances(arg1) {
   return window['go']['bridge']['App']['CreateMultipleCloudInstances'](arg1);
 }
 
+export function CreateMultipleCloudInstancesTyped(arg1) {
+  return window['go']['bridge']['App']['CreateMultipleCloudInstancesTyped'](arg1);
+}
+
 export function DestroyCloudInstance(arg1) {
   return window['go']['bridge']['App']['DestroyCloudInstance'](arg1);
 }
@@ -272,6 +276,10 @@ export function TestNodeSpeed(arg1, arg2) {
 
 export function TestSSHConnection(arg1) {
   return window['go']['bridge']['App']['TestSSHConnection'](arg1);
+}
+
+export function TestSSHConnectionTyped(arg1) {
+  return window['go']['bridge']['App']['TestSSHConnectionTyped'](arg1);
 }
 
 export function UnzipGZFile(arg1, arg2) {

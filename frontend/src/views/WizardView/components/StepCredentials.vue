@@ -96,8 +96,8 @@ const handleSSHTest = async () => {
       extra.privateKey = sshForm.privateKey
     }
 
-    const res = await TestSSHConnection(JSON.stringify(extra))
-    sshTestResult.value = { success: res.flag, error: res.flag ? undefined : res.data }
+    await TestSSHConnection(extra)
+    sshTestResult.value = { success: true }
   } catch (err: any) {
     sshTestResult.value = { success: false, error: err.message }
   } finally {

@@ -51,13 +51,8 @@ const handleTest = async () => {
   testing.value = true
   testResult.value = null
   try {
-    const res = await TestSSHConnection(JSON.stringify(buildExtra()))
-    if (res.flag) {
-      const info: SSHServerInfo = JSON.parse(res.data)
-      testResult.value = { success: true, info }
-    } else {
-      testResult.value = { success: false, error: res.data }
-    }
+    const info: SSHServerInfo = await TestSSHConnection(buildExtra())
+    testResult.value = { success: true, info }
   } catch (err: any) {
     logError('[SSHConfigForm] Test connection failed', err)
     testResult.value = { success: false, error: err.message || String(err) }

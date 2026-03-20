@@ -23,7 +23,6 @@ import { saveToOfflineCache, loadFromOfflineCache, isOnline } from '@/utils/offl
 
 import { CACHE_TTL, type CloudNodeStatus } from './constants'
 import {
-  parseJSON,
   subscriptionId,
   normalizeCloudNode,
   providerStatusToNodeStatus,
@@ -158,10 +157,6 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
   const autoApplyTimers = new Map<string, ReturnType<typeof setInterval>>()
   let refreshingInstances = false
-
-  const ensureFlag = (flag: boolean, data: string) => {
-    if (!flag) throw new Error(data)
-  }
 
   const isCacheValid = (timestamp: number | null, ttl: number): boolean => {
     if (!timestamp) return false
@@ -648,9 +643,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   const createMultipleInstances = async (configs: Array<{ label: string; region: string; plan: string; extra?: Record<string, string> }>) => {
     multiDeployProgress.value = new Map()
     try {
-      const res = await CreateMultipleCloudInstances(JSON.stringify(configs))
-      ensureFlag(res.flag, res.data)
-      const results = parseJSON<import('@/types/cloud').MultiDeployResult[]>(res.data, [])
+      const results = await CreateMultipleCloudInstances(configs)
       await refreshInstances(true)
       return results
     } catch (error) {
@@ -806,8 +799,8 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     const subPath = `data/subscribes/${subscriptionId(instanceId)}.json`
     try {
       const content = await ReadFile(subPath)
-      const data = parseJSON<{ outbounds?: Record<string, any>[] }>(content, {})
-      return (data.outbounds || []).filter(o => !!o.tag)
+      const data = JSON.parse(content) as { outbounds?: Record<string, any>[] }
+      return (data.outbounds || []).filter((o: Record<string, any>) => !!o.tag)
     } catch {
       return []
     }
