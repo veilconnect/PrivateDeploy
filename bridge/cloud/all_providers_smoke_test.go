@@ -12,6 +12,7 @@ import (
 
 func TestAllProvidersOfflineSmoke(t *testing.T) {
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", t.TempDir())
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", t.TempDir())
 
 	reg := cloud.NewRegistry()
 	reg.Register("vultr", vultr.New(nil))
@@ -53,6 +54,9 @@ func TestAllProvidersOfflineSmoke(t *testing.T) {
 		}
 		if loaded.Provider != name {
 			t.Fatalf("loaded provider mismatch for %s: got=%s", name, loaded.Provider)
+		}
+		if name != "ssh" && loaded.APIKey != "test-key" {
+			t.Fatalf("loaded api key mismatch for %s: got=%q", name, loaded.APIKey)
 		}
 	}
 }

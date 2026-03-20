@@ -135,7 +135,7 @@ EOF
 # 测试所有协议的延迟
 for proto in ss hysteria2 vless trojan; do
     echo "测试 sg-${proto}-v4..."
-    curl -s -H "Authorization: Bearer b23cda9d2746e7656027c9d2252c1c30fd2b8d35b89ce0f2626283973228e3ce" \
+    curl -s -H "Authorization: Bearer YOUR_TEST_BEARER_TOKEN" \
       "http://127.0.0.1:20123/proxies/sg-${proto}-v4/delay?url=https://www.gstatic.com/generate_204&timeout=10000"
     echo ""
 done

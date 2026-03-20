@@ -3,9 +3,9 @@ package digitalocean
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -112,6 +112,24 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	migrated, err := cloud.RestoreProviderAPIKey(p.configPath, &config)
+	if err != nil {
+		return nil, err
+	}
+	if migrated {
+		sanitized, err := cloud.PrepareProviderConfigForSave(p.configPath, &config)
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.MarshalIndent(sanitized, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal sanitized config: %w", err)
+		}
+		if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+			return nil, fmt.Errorf("failed to rewrite sanitized config file: %w", err)
+		}
+	}
+
 	// Update in-memory config
 	p.config = &config
 	return &config, nil
@@ -128,8 +146,13 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
+	sanitized, err := cloud.PrepareProviderConfigForSave(p.configPath, config)
+	if err != nil {
+		return err
+	}
+
 	// Marshal config to JSON
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

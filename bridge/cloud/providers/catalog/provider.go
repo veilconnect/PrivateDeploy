@@ -245,6 +245,24 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 	if cfg.Extra == nil {
 		cfg.Extra = map[string]string{}
 	}
+
+	migrated, err := cloud.RestoreProviderAPIKey(p.configPath, &cfg)
+	if err != nil {
+		return nil, err
+	}
+	if migrated {
+		sanitized, err := cloud.PrepareProviderConfigForSave(p.configPath, &cfg)
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.MarshalIndent(sanitized, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal sanitized config: %w", err)
+		}
+		if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+			return nil, fmt.Errorf("failed to rewrite sanitized config: %w", err)
+		}
+	}
 	p.config = &cfg
 	return &cfg, nil
 }
@@ -266,7 +284,12 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	sanitized, err := cloud.PrepareProviderConfigForSave(p.configPath, config)
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

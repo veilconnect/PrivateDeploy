@@ -27,5 +27,6 @@ mobile/android/app/*.jks
 # Local release outputs and test artifacts
 output/
 test-results/
+tmp/
 scripts/__pycache__/
 .claude-octopus/
