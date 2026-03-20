@@ -1,11 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, ref, shallowRef, computed, watch } from 'vue'
 
-import {
-  StartLoadBalancer,
-  StopLoadBalancer,
-  GetAvailablePort,
-} from '@/bridge'
 import { logError, logInfo } from '@/utils/logger'
 
 import { useAppSettingsStore } from './appSettings'
@@ -15,11 +10,10 @@ import {
 } from './cloud/constants'
 import { hasUsableAddress } from './cloud/helpers'
 import { createInstanceSync } from './cloud/instanceSync'
+import { createCloudLoadBalance } from './cloud/loadBalance'
 import { createManualImport } from './cloud/manualImport'
 import { createProviderConfig } from './cloud/providerConfig'
-import { injectLoadBalanceConfig } from './cloud/smartRouting'
 import { createSubscriptionApply } from './cloud/subscriptionApply'
-import { registerConfigWriteHook, unregisterConfigWriteHook } from './kernelApi'
 import { useKernelApiStore } from './kernelApi'
 import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
@@ -311,65 +305,14 @@ export const useCloudStore = defineStore('cloud', () => {
 
   // ─── Load Balance ──────────────────────────────────────────────────────────
 
-  const loadBalanceEnabled = ref(false)
-  const loadBalancePorts = ref<number[]>([])
-  const loadBalanceListenPort = ref(0)
-
-  const lbConfigHook = async (config: Record<string, any>) => {
-    if (!loadBalanceEnabled.value) return
-    const basePort = await GetAvailablePort()
-    logInfo(`[CloudStore] LB hook: config has ${(config?.outbounds || []).length} outbounds, ${(config?.inbounds || []).length} inbounds`)
-    const ports = injectLoadBalanceConfig(config, basePort)
-    loadBalancePorts.value = ports
-    logInfo(`[CloudStore] LB hook: injected ${ports.length} ports (base ${basePort})`)
-    if (ports.length >= 2) {
-      logInfo(`[CloudStore] LB: injected ${ports.length} per-node inbounds (base port ${basePort})`)
-    }
-  }
-
-  const startLoadBalance = async () => {
-    loadBalanceEnabled.value = true
-    // Register the hook so next kernel start/restart includes LB inbounds
-    registerConfigWriteHook(lbConfigHook)
-
-    // Ensure kernel is running with LB config
-    if (kernelApiStore.running) {
-      await kernelApiStore.restartCore()
-    } else {
-      await kernelApiStore.startCore()
-    }
-    // Wait for kernel to start and ports to be ready
-    await new Promise(resolve => setTimeout(resolve, 3000))
-
-    if (loadBalancePorts.value.length < 2) {
-      logError('[CloudStore] LB: not enough nodes for load balancing')
-      loadBalanceEnabled.value = false
-      unregisterConfigWriteHook(lbConfigHook)
-      return
-    }
-
-    // Start the Go load balancer on a new port
-    const lbPort = await GetAvailablePort()
-    const portsJSON = JSON.stringify(loadBalancePorts.value)
-    const { flag, data } = await StartLoadBalancer(lbPort, portsJSON)
-    if (!flag) {
-      logError('[CloudStore] LB start failed:', data)
-      loadBalanceEnabled.value = false
-      unregisterConfigWriteHook(lbConfigHook)
-      return
-    }
-    loadBalanceListenPort.value = lbPort
-    logInfo(`[CloudStore] Load balancer started on port ${lbPort} with ${loadBalancePorts.value.length} upstreams`)
-  }
-
-  const stopLoadBalance = async () => {
-    loadBalanceEnabled.value = false
-    unregisterConfigWriteHook(lbConfigHook)
-    await StopLoadBalancer()
-    loadBalanceListenPort.value = 0
-    loadBalancePorts.value = []
-    logInfo('[CloudStore] Load balancer stopped')
-  }
+  const {
+    loadBalanceEnabled,
+    loadBalanceListenPort,
+    startLoadBalance,
+    stopLoadBalance,
+  } = createCloudLoadBalance({
+    kernelApi: kernelApiStore,
+  })
 
   return {
     // Multi-cloud
