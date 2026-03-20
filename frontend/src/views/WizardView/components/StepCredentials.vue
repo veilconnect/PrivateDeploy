@@ -117,6 +117,7 @@ const handleCloudValidate = async () => {
     cloudValid.value = true
     await cloudStore.loadConfig()
     await cloudStore.fetchRegions()
+    await cloudStore.fetchPlans()
   } catch (err: any) {
     cloudValid.value = false
     logError('[Wizard] Cloud validate failed:', err)
