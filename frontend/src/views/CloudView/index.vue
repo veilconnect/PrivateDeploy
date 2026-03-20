@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
@@ -53,6 +53,7 @@ import {
   resetManualForm,
 } from './manualNodeForm'
 import { parseImportedNodes } from './manualNodeParser'
+import { defaultCloudLabel, useCloudViewMeta } from './useCloudViewMeta'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, RegionLatency } from '@/types/cloud'
@@ -66,7 +67,7 @@ const [Modal, modalApi] = useModal({
 })
 
 const form = reactive({
-  label: defaultLabel(cloudStore.currentProvider),
+  label: defaultCloudLabel(cloudStore.currentProvider),
   region: '',
   plan: '',
 })
@@ -329,35 +330,10 @@ const lastInstancesUpdateExact = computed(() => {
 })
 
 const applyingNodeId = ref('')
-const refreshIntervalId = ref<number | null>(null)
 
 const disableDeploy = computed(
   () => !hasApiKey.value || !form.region || !form.plan || !form.label.trim(),
 )
-
-function defaultLabel(provider: string = cloudStore.currentProvider) {
-  const safePrefix = provider && provider.trim().length > 0 ? provider : 'node'
-  return `${safePrefix}-${Date.now().toString(36)}`
-}
-
-const pickPlanForRegion = (region: string) => {
-  const ids = cloudStore.availability[region] || []
-  const fallback = ids.find((id) => cloudStore.plans.some((plan) => plan.id === id))
-  if (fallback) return fallback
-  return cloudStore.plans[0]?.id || ''
-}
-
-const ensurePlanForRegion = (region: string) => {
-  if (!region) return
-  const ids = cloudStore.availability[region]
-  if (!ids || ids.length === 0) return
-  if (!ids.includes(form.plan)) {
-    const replacement = ids.find((id) => cloudStore.plans.some((plan) => plan.id === id)) || ''
-    if (replacement) {
-      form.plan = replacement
-    }
-  }
-}
 
 const columns = [
   { title: 'selection', key: 'selection', width: '40px' },
@@ -371,264 +347,6 @@ const columns = [
   { title: 'cloud.table.createdAt', key: 'createdAt', width: '8%' },
   { title: 'cloud.table.actions', key: 'actions', width: '11%' },
 ]
-
-const applyDefaults = async () => {
-  console.log('[CloudView] applyDefaults called, form.region:', form.region, 'config.defaultRegion:', cloudStore.config.defaultRegion, 'regions[0]:', cloudStore.regions[0]?.id)
-
-  // Drop stale selections when provider defaults were cleared
-  const validRegionIds = new Set(cloudStore.regions.map((region) => region.id))
-  if (form.region && !validRegionIds.has(form.region)) {
-    form.region = ''
-  }
-  const validPlanIds = new Set(cloudStore.plans.map((plan) => plan.id))
-  if (form.plan && !validPlanIds.has(form.plan)) {
-    form.plan = ''
-  }
-
-  if (!form.region) {
-    const defaultRegion = cloudStore.config.defaultRegion
-    const autoPickRegion = defaultRegion || (cloudStore.regions.length === 1 ? cloudStore.regions[0]?.id : '')
-    form.region = autoPickRegion || ''
-    console.log('[CloudView] Set form.region to:', form.region)
-  }
-  if (form.region) {
-    await cloudStore.ensureRegionAvailability(form.region, true)
-    if (!form.plan) {
-      form.plan = cloudStore.config.defaultPlan || pickPlanForRegion(form.region)
-    } else {
-      ensurePlanForRegion(form.region)
-    }
-  } else if (!form.plan) {
-    form.plan = cloudStore.config.defaultPlan || cloudStore.plans[0]?.id || ''
-  }
-}
-
-// Latency testing functions
-const testLatencySilently = async () => {
-  if (!hasApiKey.value || cloudStore.regions.length === 0 || testingLatency.value) {
-    return
-  }
-
-  // Use cached results if available and valid (24-hour TTL)
-  if (cloudStore.isLatencyCacheValid() && latencyResults.value.length > 0) {
-    console.log('[CloudView] Using cached latency results')
-    return
-  }
-
-  console.log('[CloudView] Auto-testing region latency...')
-  testingLatency.value = true
-
-  try {
-    const result = await TestAllCloudRegions()
-
-    if (!result.flag) {
-      console.warn('[CloudView] Latency test failed:', result.data)
-      return
-    }
-
-    const results: RegionLatency[] = JSON.parse(result.data)
-    latencyResults.value = results
-
-    // Update cache
-    cloudStore.latencyTestResults = {}
-    results.forEach((r) => {
-      if (r.status === 'ok') {
-        cloudStore.latencyTestResults[r.code] = r.latency
-      }
-    })
-    cloudStore.latencyUpdatedAt = Date.now()
-
-    console.log('[CloudView] Latency test completed and cached, results:', results.length)
-
-    // Auto-select the fastest region if no region is selected
-    if (!form.region) {
-      const fastest = results.find((r) => r.status === 'ok')
-      if (fastest) {
-        form.region = fastest.code
-        console.log('[CloudView] Auto-selected fastest region:', fastest.name, fastest.latency + 'ms')
-      }
-    }
-  } catch (error) {
-    console.error('[CloudView] Latency test error:', error)
-  } finally {
-    testingLatency.value = false
-  }
-}
-
-const handleTestLatency = async () => {
-  console.log('[CloudView] Manual latency test triggered - forcing refresh')
-
-  if (!hasApiKey.value) {
-    message.warn(t('cloud.latency.noApiKey'))
-    return
-  }
-
-  testingLatency.value = true
-  latencyResults.value = []
-
-  try {
-    const result = await TestAllCloudRegions()
-
-    if (!result.flag) {
-      throw new Error(result.data)
-    }
-
-    const results: RegionLatency[] = JSON.parse(result.data)
-    latencyResults.value = results
-    showLatencyResults.value = true
-
-    // Update cache with fresh results
-    cloudStore.latencyTestResults = {}
-    results.forEach((r) => {
-      if (r.status === 'ok') {
-        cloudStore.latencyTestResults[r.code] = r.latency
-      }
-    })
-    cloudStore.latencyUpdatedAt = Date.now()
-    console.log('[CloudView] Latency cache updated with manual test results')
-
-    // Auto-select the fastest region
-    const fastest = results.find((r) => r.status === 'ok')
-    if (fastest) {
-      form.region = fastest.code
-      message.success(
-        t('cloud.latency.testComplete', {
-          region: fastest.name,
-          latency: fastest.latency.toFixed(1),
-        })
-      )
-    } else {
-      message.warn(t('cloud.latency.noAvailableRegion'))
-    }
-  } catch (error) {
-    logError('TestLatency', error)
-    message.error(t('cloud.latency.testFailed'))
-  } finally {
-    testingLatency.value = false
-  }
-}
-
-watch(
-  () => [cloudStore.regions.length, cloudStore.plans.length, cloudStore.config.defaultPlan, cloudStore.config.defaultRegion],
-  applyDefaults,
-)
-
-// Auto-test latency when regions are loaded and API key is available
-watch(
-  () => [cloudStore.regions.length, hasApiKey.value] as const,
-  ([regionsCount, hasKey]) => {
-    if (regionsCount > 0 && hasKey && latencyResults.value.length === 0) {
-      // Delay a bit to ensure the UI is ready
-      setTimeout(() => {
-        testLatencySilently()
-      }, 500)
-    }
-  },
-  { immediate: true }
-)
-
-watch(
-  () => form.region,
-  async (value, oldValue) => {
-    console.log('[CloudView] Region changed:', oldValue, '->', value)
-
-    // Only save region to config if it's valid for the current provider
-    const isValidRegion = value && cloudStore.regions.some(r => r.id === value)
-    if (isValidRegion) {
-      cloudStore.config.defaultRegion = value
-      console.log('[CloudView] Saved valid region to config:', value)
-    } else {
-      console.log('[CloudView] Skipped saving invalid region:', value)
-    }
-
-    if (value && value !== oldValue) {
-      console.log('[CloudView] Forcing availability reload for region:', value)
-      // 强制重新加载可用性数据
-      await cloudStore.ensureRegionAvailability(value, true)
-      console.log('[CloudView] Availability loaded:', cloudStore.availability[value])
-      ensurePlanForRegion(value)
-    }
-  },
-)
-
-watch(
-  () => form.plan,
-  (value) => {
-    // Only save plan to config if it's valid for the current provider
-    const isValidPlan = value && cloudStore.plans.some(p => p.id === value)
-    if (isValidPlan) {
-      cloudStore.config.defaultPlan = value
-    }
-  },
-  { flush: 'post' }, // Defer execution until after DOM updates for better performance
-)
-
-watch(
-  () => cloudStore.currentProvider,
-  (provider, previous) => {
-    if (!provider || provider === previous) {
-      return
-    }
-    const trimmedLabel = form.label.trim()
-    const previousPrefix = previous ? `${previous}-` : 'node-'
-    const wasAutoGenerated =
-      trimmedLabel.startsWith(previousPrefix) &&
-      /^[0-9a-z]+$/i.test(trimmedLabel.slice(previousPrefix.length))
-
-    if (!trimmedLabel || wasAutoGenerated) {
-      form.label = defaultLabel(provider)
-    }
-  },
-)
-
-onUnmounted(() => {
-  // 清理本组件的定时器
-  if (refreshIntervalId.value !== null) {
-    clearInterval(refreshIntervalId.value)
-    refreshIntervalId.value = null
-  }
-
-  // 清理cloudStore中的所有定时器，防止内存泄漏
-  cloudStore.clearAllTimers()
-})
-
-onMounted(async () => {
-  try {
-    // Load available providers and get current provider
-    await Promise.allSettled([cloudStore.loadProviders(), cloudStore.getCurrentProvider()])
-
-    await cloudStore.loadManualNodes()
-
-    await cloudStore.loadConfig()
-    if (cloudStore.config.apiKey) {
-      // Load regions and plans in parallel
-      await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
-
-      // First refresh: use silent mode to avoid blocking UI on slow networks
-      cloudStore.refreshInstances(true).catch((e) => {
-        logError('[CloudView] Initial refresh failed:', e)
-      })
-
-      // Start background refresh (silent, updates every 30 seconds)
-      if (refreshIntervalId.value !== null) {
-        clearInterval(refreshIntervalId.value)
-      }
-      refreshIntervalId.value = window.setInterval(() => {
-        if (cloudStore.config.apiKey) {
-          cloudStore.refreshInstances(true).catch((e) => logError('[CloudView] Background refresh failed:', e))
-        }
-      }, 30000)
-    } else {
-      await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
-    }
-    await applyDefaults()
-  } catch (error) {
-    logError('[CloudView] onMounted error:', error)
-    // Ensure loading state is reset on error
-    cloudStore.loadingInstances = false
-    handleError(error)
-  }
-})
 
 const handleError = (error: unknown) => {
   let messageText = error instanceof Error ? error.message : String(error)
@@ -665,52 +383,24 @@ const handleError = (error: unknown) => {
   message.error(messageText)
 }
 
-const handleProviderChange = async () => {
-  try {
-    await cloudStore.switchProvider(cloudStore.currentProvider)
-    message.success(t('cloud.provider.switched'))
-
-    // Clear form values since region/plan IDs are provider-specific
-    form.region = ''
-    form.plan = ''
-    form.label = defaultLabel(cloudStore.currentProvider)
-
-    // Auto-refresh regions and plans if API key is available
-    if (hasApiKey.value) {
-      await fetchMeta()
-    }
-
-    // Apply defaults for the new provider
-    await applyDefaults()
-  } catch (error) {
-    logError('[CloudView] Failed to switch provider:', error)
-    handleError(error)
-  }
-}
-
-const handleSaveConfig = async () => {
-  if (!hasApiKey.value) {
-    message.error(t('cloud.errors.apiKeyRequired'))
-    return
-  }
-  try {
-    await cloudStore.saveConfig()
-    message.success('common.success')
-    await fetchMeta()
-  } catch (error) {
-    handleError(error)
-  }
-}
-
-const fetchMeta = async () => {
-  try {
-    await Promise.all([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
-    await cloudStore.refreshInstances(true)
-    applyDefaults()
-  } catch (error) {
-    handleError(error)
-  }
-}
+const {
+  ensurePlanForRegion,
+  fetchMeta,
+  handleProviderChange,
+  handleRefreshInstances,
+  handleSaveConfig,
+  handleTestLatency,
+} = useCloudViewMeta({
+  cloudStore,
+  form,
+  hasApiKey,
+  testingLatency,
+  latencyResults,
+  showLatencyResults,
+  handleError,
+  translate: t,
+  testAllCloudRegions: TestAllCloudRegions,
+})
 
 const handleBackupConfig = async () => {
   try {
@@ -762,18 +452,6 @@ const handleRestoreConfig = async () => {
     input.click()
   } catch (error) {
     message.error(t('cloud.backup.importFailed'))
-    handleError(error)
-  }
-}
-
-const handleRefreshInstances = async () => {
-  if (!hasApiKey.value) {
-    message.error(t('cloud.errors.apiKeyRequired'))
-    return
-  }
-  try {
-    await cloudStore.refreshInstances()
-  } catch (error) {
     handleError(error)
   }
 }
@@ -1027,7 +705,7 @@ const handleDeploy = async () => {
       plan: form.plan,
     })
     message.success('common.success')
-    form.label = defaultLabel()
+    form.label = defaultCloudLabel(cloudStore.currentProvider)
     await cloudStore.refreshInstances(true)
   } catch (error) {
     handleError(error)
