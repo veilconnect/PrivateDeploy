@@ -28,6 +28,18 @@ import {
   isPublicIPv4,
   shouldShowDeploymentProgress,
 } from './cloudNodeDisplay'
+import {
+  buildCloudTableData,
+  buildPlanOptions,
+  buildRegionOptions,
+  formatNodeRegion as formatNodeRegionLabel,
+  formatPlan as formatCloudPlan,
+  formatRegion as formatCloudRegion,
+  getConnectivityColor,
+  getConnectivityLabel,
+  getStatusColor,
+  getStatusLabel,
+} from './cloudViewPresentation'
 import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
 import MultiDeployModal from './components/MultiDeployModal.vue'
@@ -36,7 +48,7 @@ import { parseImportedNodes } from './manualNodeParser'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
 import type { ManualNodeInput } from '@/stores/cloud/types'
-import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
+import type { CloudNode, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
 const cloudStore = useCloudStore()
@@ -119,73 +131,6 @@ const handleMultiDeployDone = async () => {
   message.success('批量部署完成')
 }
 
-// Reachability Risk Rating for regions
-// Low: Generally stable, less likely to be blocked
-// Medium: Occasional blocking, moderate risk
-// High: Frequently targeted, higher risk
-// Critical: High blocking risk, unstable
-const reachabilityRiskRating: Record<string, 'low' | 'medium' | 'high' | 'critical'> = {
-  // Low Risk - Generally stable
-  'sgp': 'low',        // Singapore
-  'nrt': 'low',        // Tokyo
-  'icn': 'low',        // Seoul
-  'hkg': 'medium',     // Hong Kong (升级为medium due to recent events)
-  'tpe': 'low',        // Taipei
-  'bom': 'low',        // Mumbai
-  'syd': 'low',        // Sydney
-
-  // Medium Risk - Occasionally targeted
-  'lax': 'medium',     // Los Angeles
-  'sjc': 'medium',     // San Jose
-  'sea': 'medium',     // Seattle
-  'ams': 'medium',     // Amsterdam
-  'fra': 'medium',     // Frankfurt
-  'lhr': 'medium',     // London
-
-  // High Risk - Frequently blocked
-  'ewr': 'high',       // New York
-  'ord': 'high',       // Chicago
-  'dfw': 'high',       // Dallas
-  'mia': 'high',       // Miami
-  'atl': 'high',       // Atlanta
-  'yto': 'high',       // Toronto
-  'cdg': 'high',       // Paris
-
-  // Critical Risk - Very unstable
-  'default': 'medium'  // Default for unknown regions
-}
-
-const getRiskLevel = (regionId: string): 'low' | 'medium' | 'high' | 'critical' => {
-  return reachabilityRiskRating[regionId] || reachabilityRiskRating['default']
-}
-
-const getRiskIcon = (risk: 'low' | 'medium' | 'high' | 'critical'): string => {
-  const iconMap = {
-    low: '🟢',
-    medium: '🟡',
-    high: '🟠',
-    critical: '🔴'
-  }
-  return iconMap[risk]
-}
-
-function formatRegion(region: CloudRegion) {
-  // For DigitalOcean, backend already provides bilingual format (e.g., "New York 1 (纽约1)")
-  // Just display the city field directly
-  if (cloudStore.currentProvider === 'digitalocean') {
-    return region.city
-  }
-
-  // For other providers (Vultr), use i18n translation
-  const cityKey = `cloud.regions.${region.city}`
-  const countryKey = `cloud.regions.${region.country}`
-
-  const city = t(cityKey) !== cityKey ? t(cityKey) : region.city
-  const country = t(countryKey) !== countryKey ? t(countryKey) : region.country
-
-  return `${city}, ${country}`
-}
-
 const providerOptions = computed(() =>
   cloudStore.availableProviders.map((provider) => ({
     label: provider.displayName,
@@ -193,122 +138,15 @@ const providerOptions = computed(() =>
   })),
 )
 
-const regionOptions = computed(() => {
-  // Create a map of region code to latency
-  const latencyMap = new Map<string, RegionLatency>()
-  latencyResults.value.forEach((result) => {
-    latencyMap.set(result.code, result)
-  })
-
-  // Map regions with latency and risk info
-  const regionsWithInfo = cloudStore.regions.map((region: CloudRegion) => {
-    const latency = latencyMap.get(region.id)
-    const regionLabel = formatRegion(region)
-    const riskLevel = getRiskLevel(region.id)
-    const riskIcon = getRiskIcon(riskLevel)
-
-    // Format label with risk icon and latency if available
-    let label = `${riskIcon} ${regionLabel}`
-    if (latency) {
-      if (latency.status === 'ok') {
-        label = `${riskIcon} ${regionLabel} · ${latency.latency.toFixed(0)}ms`
-      } else {
-        label = `${riskIcon} ${regionLabel} · ${t('cloud.latency.timeout')}`
-      }
-    }
-
-    return {
-      label,
-      value: region.id,
-      latency: latency?.latency || 9999,
-      status: latency?.status || 'unknown',
-      riskLevel,
-    }
-  })
-
-  // Sort by risk level first (low risk first), then by latency
-  return regionsWithInfo.sort((a, b) => {
-    const riskOrder = { low: 0, medium: 1, high: 2, critical: 3 }
-    const riskDiff = riskOrder[a.riskLevel] - riskOrder[b.riskLevel]
-    if (riskDiff !== 0) return riskDiff
-
-    // Within same risk level, sort by latency
-    if (a.status === 'timeout' && b.status !== 'timeout') return 1
-    if (a.status !== 'timeout' && b.status === 'timeout') return -1
-    return a.latency - b.latency
-  })
-})
-
-type StatusKey = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
-
-const statusLabels = computed<Record<StatusKey, string>>(() => ({
-  unknown: t('cloud.status.unknown'),
-  pending: t('cloud.status.pending'),
-  applying: t('cloud.status.applying'),
-  connected: t('cloud.status.connected'),
-  error: t('cloud.status.error'),
-}))
-
-type TagColor = 'cyan' | 'green' | 'red' | 'default' | 'primary'
-const statusColors: Record<StatusKey, TagColor> = {
-  unknown: 'default',
-  pending: 'green',
-  applying: 'cyan',
-  connected: 'primary',
-  error: 'red',
-}
-
-const getStatusLabel = (status?: string) => statusLabels.value[(status || 'unknown') as StatusKey]
-const getStatusColor = (status?: string): TagColor => statusColors[(status || 'unknown') as StatusKey]
-
-const getConnectivityLabel = (status?: string) => {
-  const key = `cloud.connectivity.${status || 'unknown'}`
-  return t(key)
-}
-
-const getConnectivityColor = (status?: string): TagColor => {
-  const colorMap: Record<string, TagColor> = {
-    reachable: 'green',
-    icmp_blocked: 'cyan',
-    blocked: 'red',
-    testing: 'default',
-    unknown: 'default',
-  }
-  return colorMap[status || 'unknown'] || 'default'
-}
+const regionOptions = computed(() =>
+  buildRegionOptions(cloudStore.regions, latencyResults.value, cloudStore.currentProvider, t),
+)
 
 const availablePlanIds = computed(() => cloudStore.availability[form.region] || [])
 
-const planOptions = computed(() => {
-  const availabilityData = cloudStore.availability
-  const currentRegion = form.region
-
-  if (!cloudStore.plans.length) {
-    return []
-  }
-
-  if (!currentRegion) {
-    return cloudStore.plans.map((plan: CloudPlan) => ({
-      label: formatPlan(plan),
-      value: plan.id,
-    }))
-  }
-
-  const ids = availabilityData[currentRegion] || []
-
-  if (ids.length > 0) {
-    const source = cloudStore.plans.filter((plan: CloudPlan) => ids.includes(plan.id))
-    return source.map((plan: CloudPlan) => ({
-      label: formatPlan(plan),
-      value: plan.id,
-    }))
-  }
-
-  return cloudStore.plans.map((plan: CloudPlan) => ({
-    label: formatPlan(plan),
-    value: plan.id,
-  }))
-})
+const planOptions = computed(() =>
+  buildPlanOptions(cloudStore.plans, cloudStore.availability, form.region, t),
+)
 
 const resetManualForm = () => {
   manualForm.label = ''
@@ -549,12 +387,14 @@ const openEditManualNode = (record: CloudNode | Record<string, any>) => {
     .open()
 }
 
-const regionMap = computed(() => new Map(cloudStore.regions.map((r) => [r.id, formatRegion(r)])))
+const regionMap = computed(() => new Map(
+  cloudStore.regions.map((r) => [r.id, formatCloudRegion(r, cloudStore.currentProvider, t)]),
+))
 const planMap = computed(() => {
   const map = new Map()
   for (const p of cloudStore.plans) {
     try {
-      map.set(p.id, formatPlan(p))
+      map.set(p.id, formatCloudPlan(p, t))
     } catch (error) {
       console.error('[CloudView] Error formatting plan:', p.id, error)
       // Fallback to plan ID if formatting fails
@@ -567,77 +407,19 @@ const planMap = computed(() => {
 
 // Function to translate region ID or name in node list
 function formatNodeRegion(regionId: string): string {
-  // First try to translate as region ID (e.g., "atl" -> "亚特兰大")
-  const idKey = `cloud.regions.${regionId}`
-  if (t(idKey) !== idKey) {
-    return t(idKey)
-  }
-
-  // If not found, try regionMap (for formatted region strings)
-  const mapped = regionMap.value.get(regionId)
-  if (mapped) {
-    return mapped
-  }
-
-  // Last resort: try to translate as city name
-  return t(idKey) !== idKey ? t(idKey) : regionId
+  return formatNodeRegionLabel(regionId, regionMap.value, t)
 }
 
-const tableData = computed(() => {
-  let data = cloudStore.instances.map((node) => ({
-    ...node,
-    id: node.instanceId,
-  }))
-
-  // Apply search filter
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase().trim()
-    data = data.filter((node) => {
-      return (
-        node.label?.toLowerCase().includes(query) ||
-        node.ipv4?.toLowerCase().includes(query) ||
-        node.ipv6?.toLowerCase().includes(query) ||
-        formatNodeRegion(node.region || '').toLowerCase().includes(query) ||
-        node.region?.toLowerCase().includes(query)
-      )
-    })
-  }
-
-  // Apply connectivity filter
-  if (filterConnectivity.value !== 'all') {
-    data = data.filter((node) => node.connectivityStatus === filterConnectivity.value)
-  }
-
-  // Apply status filter
-  if (filterStatus.value !== 'all') {
-    data = data.filter((node) => node.statusText === filterStatus.value)
-  }
-
-  // Apply sorting
-  if (sortBy.value) {
-    data = [...data].sort((a, b) => {
-      let aVal: any = a[sortBy.value as keyof typeof a]
-      let bVal: any = b[sortBy.value as keyof typeof b]
-
-      // Handle special cases
-      if (sortBy.value === 'createdAt') {
-        aVal = new Date(aVal || 0).getTime()
-        bVal = new Date(bVal || 0).getTime()
-      }
-
-      // Handle undefined/null
-      if (aVal == null) return 1
-      if (bVal == null) return -1
-
-      // Compare
-      if (aVal < bVal) return sortOrder.value === 'asc' ? -1 : 1
-      if (aVal > bVal) return sortOrder.value === 'asc' ? 1 : -1
-      return 0
-    })
-  }
-
-  return data
-})
+const tableData = computed(() =>
+  buildCloudTableData(cloudStore.instances, {
+    searchQuery: searchQuery.value,
+    filterConnectivity: filterConnectivity.value,
+    filterStatus: filterStatus.value,
+    sortBy: sortBy.value,
+    sortOrder: sortOrder.value,
+    formatNodeRegion,
+  }),
+)
 
 const lastInstancesUpdateRelative = computed(() => {
   if (!cloudStore.instancesUpdatedAt) {
@@ -663,39 +445,6 @@ const disableDeploy = computed(
 function defaultLabel(provider: string = cloudStore.currentProvider) {
   const safePrefix = provider && provider.trim().length > 0 ? provider : 'node'
   return `${safePrefix}-${Date.now().toString(36)}`
-}
-
-function formatPlan(plan: CloudPlan) {
-  // Defensive: handle missing or invalid plan data
-  if (!plan || typeof plan !== 'object') {
-    return String(plan || '')
-  }
-
-  const cpuCount = (plan as Record<string, any>).vcpu_count ?? (plan as Record<string, any>).vcpus ?? plan.vcpus ?? 0
-
-  // Defensive: ensure numeric values are valid before formatting
-  const ramValue = typeof plan.ram === 'number' && !isNaN(plan.ram) && isFinite(plan.ram) ? plan.ram : 0
-  const diskValue = typeof plan.disk === 'number' && !isNaN(plan.disk) && isFinite(plan.disk) ? plan.disk : 0
-  const bandwidthValue = typeof plan.bandwidth === 'number' && !isNaN(plan.bandwidth) && isFinite(plan.bandwidth) ? plan.bandwidth : 0
-
-  const ram = ramValue >= 1024 ? `${(ramValue / 1024).toFixed(1)}GB` : `${ramValue}MB`
-  const disk = diskValue >= 1024 ? `${(diskValue / 1024).toFixed(1)}TB` : `${diskValue}GB`
-  const bandwidth = bandwidthValue >= 1024 ? `${(bandwidthValue / 1024).toFixed(1)}TB` : `${bandwidthValue}GB`
-
-  const meta = [
-    `${cpuCount} ${t('cloud.format.vcpu')}`,
-    `${ram} ${t('cloud.format.ram')}`,
-    `${disk} ${t('cloud.format.disk')}`,
-    `${bandwidth} ${t('cloud.format.bandwidth')}`
-  ]
-
-  // Add price if available (check both camelCase and snake_case)
-  const monthlyCost = plan.monthlyCost || (plan as Record<string, any>).monthly_cost
-  if (monthlyCost && monthlyCost > 0 && isFinite(monthlyCost)) {
-    meta.push(`$${monthlyCost.toFixed(2)}${t('cloud.format.monthly')}`)
-  }
-
-  return plan.description ? `${plan.description} · ${meta.join(' · ')}` : `${plan.id} · ${meta.join(' · ')}`
 }
 
 const pickPlanForRegion = (region: string) => {
@@ -2056,7 +1805,7 @@ onMounted(() => {
                 <div class="flex items-center gap-4">
                   <span class="capitalize">{{ record.status }}</span>
                   <Tag :color="getStatusColor(record.statusText)" size="small">
-                    {{ getStatusLabel(record.statusText) }}
+                    {{ getStatusLabel(record.statusText, t) }}
                   </Tag>
                 <Tag v-if="isManualNode(record)" color="cyan" size="small">
                   {{ t('cloud.manual.badge') }}
@@ -2098,7 +1847,7 @@ onMounted(() => {
                   :color="getConnectivityColor(record.connectivityStatus)"
                   size="small"
                 >
-                  {{ getConnectivityLabel(record.connectivityStatus) }}
+                  {{ getConnectivityLabel(record.connectivityStatus, t) }}
                 </Tag>
                 <span v-else class="text-secondary">-</span>
               </div>
