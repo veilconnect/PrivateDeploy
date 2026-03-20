@@ -48,13 +48,17 @@ func Load() (*Config, error) {
 	if !found {
 		jwtSecret = ""
 	}
+	writeTimeout, err := getEnvDuration("API_WRITE_TIMEOUT", 120*time.Second)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Config{
 		Server: ServerConfig{
 			Host:         getEnv("API_HOST", "0.0.0.0"),
 			Port:         getEnv("API_PORT", "8443"),
 			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			WriteTimeout: writeTimeout,
 		},
 		JWT: JWTConfig{
 			Secret:     jwtSecret,
@@ -78,6 +82,19 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s duration %q: %w", key, value, err)
+	}
+	return duration, nil
 }
 
 // LookupEnvOrFile reads a value from KEY or, if unset, from KEY_FILE.

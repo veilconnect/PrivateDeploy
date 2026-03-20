@@ -32,6 +32,7 @@ go run main.go
 |------|--------|------|
 | `API_HOST` | `0.0.0.0` | 服务器监听地址 |
 | `API_PORT` | `8443` | 服务器端口 |
+| `API_WRITE_TIMEOUT` | `120s` | HTTP 响应写超时，支持 Go duration 格式 |
 | `JWT_SECRET` | _空_ | JWT 签名密钥；显式开发模式下可临时生成进程内随机密钥 |
 | `JWT_SECRET_FILE` | _空_ | 从文件读取 JWT 签名密钥，适合容器 Secret/挂载文件 |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |

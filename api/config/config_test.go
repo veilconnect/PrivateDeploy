@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLookupEnvOrFile_EnvTakesPrecedence(t *testing.T) {
@@ -76,5 +77,26 @@ func TestLoad_UsesJWTSecretFile(t *testing.T) {
 	}
 	if cfg.JWT.Secret != "super-secret" {
 		t.Fatalf("expected JWT secret from file, got %q", cfg.JWT.Secret)
+	}
+}
+
+func TestLoad_UsesAPIWriteTimeoutEnv(t *testing.T) {
+	t.Setenv("API_WRITE_TIMEOUT", "90s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Server.WriteTimeout != 90*time.Second {
+		t.Fatalf("expected API write timeout from env, got %s", cfg.Server.WriteTimeout)
+	}
+}
+
+func TestLoad_InvalidAPIWriteTimeoutReturnsError(t *testing.T) {
+	t.Setenv("API_WRITE_TIMEOUT", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid API write timeout")
 	}
 }
