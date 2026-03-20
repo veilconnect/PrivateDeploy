@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n'
 import { TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { formatDate, formatRelativeTime, message } from '@/utils'
-import { createBackup, parseBackup, downloadBackup } from '@/utils/backup'
 import { logError } from '@/utils/logger'
 import { isOnline } from '@/utils/offline'
 
@@ -34,25 +33,16 @@ import {
   getStatusColor,
   getStatusLabel,
 } from './cloudViewPresentation'
-import ImportNodesModal from './components/ImportNodesModal.vue'
-import ManualNodeModal from './components/ManualNodeModal.vue'
 import MultiDeployModal from './components/MultiDeployModal.vue'
 import SSHConfigForm from './components/SSHConfigForm.vue'
-import {
-  formatSkippedImportEntry,
-  getManualInputFromForm,
-  mapManualError,
-  populateManualFormFromNode,
-  resetImportForm,
-  resetManualForm,
-} from './manualNodeForm'
-import { parseImportedNodes } from './manualNodeParser'
 import { useCloudViewActions } from './useCloudViewActions'
+import { useCloudViewBackup } from './useCloudViewBackup'
+import { useCloudViewManualNodes } from './useCloudViewManualNodes'
 import { defaultCloudLabel, useCloudViewMeta } from './useCloudViewMeta'
 import { useCloudViewMonitoring } from './useCloudViewMonitoring'
 import { useCloudViewTable } from './useCloudViewTable'
 
-import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
+import type { ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNode, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
@@ -67,26 +57,6 @@ const form = reactive({
   label: defaultCloudLabel(cloudStore.currentProvider),
   region: '',
   plan: '',
-})
-
-const manualForm = reactive({
-  label: '',
-  ipv4: '',
-  ipv6: '',
-  ssPort: '',
-  ssPassword: '',
-  hysteriaPort: '',
-  hysteriaPassword: '',
-  vlessPort: '',
-  vlessUUID: '',
-  vlessPublicKey: '',
-  vlessShortId: '',
-  trojanPort: '',
-  trojanPassword: '',
-})
-
-const importForm = reactive({
-  raw: '',
 })
 
 const loadingMeta = computed(() => cloudStore.loadingPlans || cloudStore.loadingRegions)
@@ -135,129 +105,6 @@ const planOptions = computed(() =>
 )
 
 const isManualNode = (node: CloudNode | Record<string, any>) => (node as any).provider === 'manual'
-
-const manualEditingId = ref('')
-
-const handleManualSubmit = async () => {
-  try {
-    const input = getManualInputFromForm(manualForm)
-    const node = await cloudStore.addManualNode(input)
-    await cloudStore.applyNodeToProfile(node)
-    message.success(t('cloud.manual.addSuccess'))
-    return true
-  } catch (error) {
-    message.error(mapManualError(error, t))
-    return false
-  }
-}
-
-const handleManualUpdate = async () => {
-  const id = manualEditingId.value
-  if (!id) {
-    return false
-  }
-  try {
-    const input = getManualInputFromForm(manualForm)
-    const node = await cloudStore.updateManualNode(id, input)
-    await cloudStore.applyNodeToProfile(node)
-    message.success(t('cloud.manual.updateSuccess'))
-    return true
-  } catch (error) {
-    message.error(mapManualError(error, t))
-    return false
-  }
-}
-
-const handleImportSubmit = async () => {
-  const raw = importForm.raw.trim()
-  if (!raw) {
-    message.error(t('cloud.errors.importEmpty'))
-    return false
-  }
-
-  let inputs
-  try {
-    inputs = parseImportedNodes(raw)
-  } catch {
-    message.error(t('cloud.errors.importInvalid'))
-    return false
-  }
-
-  if (!inputs.length) {
-    message.error(t('cloud.errors.importInvalid'))
-    return false
-  }
-
-  try {
-    const { added, skipped } = await cloudStore.addManualNodes(inputs)
-    if (!added.length) {
-      message.error(t('cloud.errors.importInvalid'))
-      return false
-    }
-    await Promise.all(added.map((node) => cloudStore.applyNodeToProfile(node).catch(() => undefined)))
-    if (skipped.length) {
-      const detail = skipped.map((entry: ManualNodeSkipEntry) => formatSkippedImportEntry(entry, t)).join('; ')
-      message.warn(t('cloud.manual.importSkippedList', { count: skipped.length, labels: detail }))
-    }
-    message.success(t('cloud.manual.importSuccess', { count: added.length }))
-    return true
-  } catch (error) {
-    message.error(mapManualError(error, t))
-    return false
-  }
-}
-
-const openManualNodeModal = () => {
-  resetManualForm(manualForm)
-  manualEditingId.value = ''
-  modalApi
-    .setProps({
-      title: t('cloud.manual.addTitle'),
-      cancelText: 'common.cancel',
-      submitText: 'common.save',
-      onOk: handleManualSubmit,
-    })
-    .setContent(ManualNodeModal, {
-      form: manualForm,
-      'onUpdate:form': (value: Record<string, any>) => Object.assign(manualForm, value),
-    })
-    .open()
-}
-
-const openImportModal = () => {
-  resetImportForm(importForm)
-  modalApi
-    .setProps({
-      title: t('cloud.manual.importTitle'),
-      cancelText: 'common.cancel',
-      submitText: 'common.import',
-      onOk: handleImportSubmit,
-    })
-    .setContent(ImportNodesModal, {
-      form: importForm,
-      'onUpdate:form': (value: Record<string, any>) => {
-        importForm.raw = typeof value?.raw === 'string' ? value.raw : ''
-      },
-    })
-    .open()
-}
-
-const openEditManualNode = (record: CloudNode | Record<string, any>) => {
-  manualEditingId.value = record.instanceId
-  populateManualFormFromNode(manualForm, record as Record<string, any>)
-  modalApi
-    .setProps({
-      title: t('cloud.manual.editTitle'),
-      cancelText: 'common.cancel',
-      submitText: 'common.save',
-      onOk: handleManualUpdate,
-    })
-    .setContent(ManualNodeModal, {
-      form: manualForm,
-      'onUpdate:form': (value: Record<string, any>) => Object.assign(manualForm, value),
-    })
-    .open()
-}
 
 const regionMap = computed(() => new Map(
   cloudStore.regions.map((r) => [r.id, formatCloudRegion(r, cloudStore.currentProvider, t)]),
@@ -366,59 +213,18 @@ const {
   testAllCloudRegions: TestAllCloudRegions,
 })
 
-const handleBackupConfig = async () => {
-  try {
-    const backupData = {
-      cloudConfig: cloudStore.config,
-    }
-    const backupString = await createBackup(backupData)
-    downloadBackup(backupString)
-    message.success(t('cloud.backup.exported'))
-  } catch (error) {
-    message.error(t('cloud.backup.exportFailed'))
-    handleError(error)
-  }
-}
+const { handleBackupConfig, handleRestoreConfig } = useCloudViewBackup({
+  cloudStore,
+  fetchMeta,
+  handleError,
+  translate: t,
+})
 
-const handleRestoreConfig = async () => {
-  try {
-    // Create file input
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.json'
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      const reader = new FileReader()
-      reader.onload = async (event) => {
-        try {
-          const backupString = event.target?.result as string
-          const backup = parseBackup(backupString)
-
-          // Restore cloud config
-          if (backup.cloudConfig) {
-            cloudStore.config = backup.cloudConfig
-            await cloudStore.saveConfig()
-          }
-
-          message.success(t('cloud.backup.imported'))
-
-          // Refresh data after restore
-          await fetchMeta()
-        } catch (error) {
-          message.error(t('cloud.backup.importFailed'))
-          handleError(error)
-        }
-      }
-      reader.readAsText(file)
-    }
-    input.click()
-  } catch (error) {
-    message.error(t('cloud.backup.importFailed'))
-    handleError(error)
-  }
-}
+const { openEditManualNode, openImportModal, openManualNodeModal } = useCloudViewManualNodes({
+  cloudStore,
+  modalApi,
+  translate: t,
+})
 
 const {
   applyingNodeId,
