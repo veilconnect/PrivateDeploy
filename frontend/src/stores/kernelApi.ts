@@ -12,7 +12,6 @@ import {
 } from '@/bridge'
 import {
   CoreConfigFilePath,
-  CoreCacheFilePath,
   CorePidFilePath,
   CoreStopOutputKeyword,
   CoreWorkingDirectory,
@@ -45,9 +44,8 @@ import {
 } from './kernelApiProxyGroups'
 import {
   ensureKernelCoreExecutable,
-  pruneMissingKernelCloudSubscriptions,
-  reassignKernelProfilePorts,
 } from './kernelApiRuntime'
+import { runKernelStartAttempts } from './kernelApiStartRunner'
 import { createKernelApiWebsocketManager } from './kernelApiWebsocket'
 
 import type {
@@ -382,111 +380,43 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       }
 
       starting.value = true
-      let lastError: any = null
       const profileToUse = deepClone(profile)
       let portsAdjusted = false
       let missingCloudSubscriptionsPruned = false
 
       try {
-        const maxAttempts = 5  // 增加到5次
-        const backoffDelays = [0, 500, 1000, 2000, 3000]  // 退避延迟（毫秒）
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-          // 如果不是第一次尝试，等待一段时间
-          if (attempt > 1 && backoffDelays[attempt - 1] > 0) {
-            logsStore.recordKernelLog(
-              `[KernelApi] Waiting ${backoffDelays[attempt - 1]}ms before retry ${attempt}/${maxAttempts}`,
-            )
-            await new Promise(resolve => setTimeout(resolve, backoffDelays[attempt - 1]))
-          }
-
-          try {
-            await generateConfigFile(profileToUse, async (config) => {
-              const result = await pluginsStore.onBeforeCoreStartTrigger(config, profileToUse)
-              // Allow registered hooks to modify config (e.g., load balance injection)
+        const result = await runKernelStartAttempts({
+          isAlpha,
+          profileToUse,
+          writeConfig: async () => {
+            await generateConfigFile(profileToUse, async (generatedConfig) => {
+              const result = await pluginsStore.onBeforeCoreStartTrigger(generatedConfig, profileToUse)
               for (const hook of _configWriteHooks) {
-                await hook(result || config)
+                await hook(result || generatedConfig)
               }
               return result
             })
-
-            const pid = await runCoreProcess(isAlpha)
-            if (pid) {
-              await onCoreStarted(pid)
+          },
+          runCoreProcess,
+          onCoreStarted,
+          log: (entry) => logsStore.recordKernelLog(entry),
+          onPortsAdjusted: (ports) => {
+            if (ports[Inbound.Mixed]) {
+              config.value['mixed-port'] = ports[Inbound.Mixed]
             }
-            lastError = null
-            logsStore.recordKernelLog(`[KernelApi] Core started successfully on attempt ${attempt}`)
-            break
-          } catch (error) {
-            lastError = error
-            const messageText = String(error ?? '').toLowerCase()
-            logsStore.recordKernelLog(
-              `[KernelApi] startCore attempt ${attempt}/${maxAttempts} failed: ${String(error ?? '')}`,
-            )
-
-            const cacheError =
-              messageText.includes('initialize cache-file') || messageText.includes('cache-file')
-            if (cacheError && attempt < maxAttempts) {
-              await RemoveFile(CoreCacheFilePath).catch(() => undefined)
-              message.warn('kernel.errors.cacheResetting')
-              logsStore.recordKernelLog('[KernelApi] Cache file removed, retrying...')
-              continue
+            if (ports[Inbound.Http]) {
+              config.value['port'] = ports[Inbound.Http]
             }
-
-            const portConflict =
-              messageText.includes('address already in use') ||
-              messageText.includes('bind: address already in use')
-            if (portConflict && attempt < maxAttempts) {
-              logsStore.recordKernelLog('[KernelApi] Port conflict detected, reassigning ports...')
-              const result = await reassignKernelProfilePorts(profileToUse)
-              if (result.changed) {
-                portsAdjusted = true
-                const ports = result.ports
-                if (ports[Inbound.Mixed]) {
-                  config.value['mixed-port'] = ports[Inbound.Mixed]
-                }
-                if (ports[Inbound.Http]) {
-                  config.value['port'] = ports[Inbound.Http]
-                }
-                if (ports[Inbound.Socks]) {
-                  config.value['socks-port'] = ports[Inbound.Socks]
-                }
-                logsStore.recordKernelLog(`[KernelApi] Ports reassigned: ${JSON.stringify(ports)}`)
-                message.warn('kernel.errors.portResetting')
-                continue
-              } else {
-                logsStore.recordKernelLog('[KernelApi] Port reassignment returned no changes')
-              }
+            if (ports[Inbound.Socks]) {
+              config.value['socks-port'] = ports[Inbound.Socks]
             }
+          },
+        })
 
-            const missingCloudSubscriptionFile =
-              messageText.includes('no such file or directory') &&
-              messageText.includes('data/subscribes/cloud-')
-
-            if (missingCloudSubscriptionFile && attempt < maxAttempts) {
-              const result = await pruneMissingKernelCloudSubscriptions(profileToUse)
-              if (result.changed) {
-                missingCloudSubscriptionsPruned = true
-                logsStore.recordKernelLog(
-                  `[KernelApi] Removed missing cloud subscriptions: ${result.removed.join(', ')}`,
-                )
-                continue
-              }
-            }
-
-            // 如果是最后一次尝试，或者不是可重试的错误，抛出异常
-            if (attempt === maxAttempts) {
-              logsStore.recordKernelLog(`[KernelApi] All ${maxAttempts} attempts failed, giving up`)
-            }
-            throw error
-          }
-        }
+        portsAdjusted = result.portsAdjusted
+        missingCloudSubscriptionsPruned = result.missingCloudSubscriptionsPruned
       } finally {
         starting.value = false
-      }
-
-      if (lastError) {
-        throw lastError
       }
 
       if ((portsAdjusted || missingCloudSubscriptionsPruned) && profileToUse.id) {
