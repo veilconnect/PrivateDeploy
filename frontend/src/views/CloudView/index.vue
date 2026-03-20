@@ -3,14 +3,13 @@ import { EventsOn, EventsOff } from '@wails/runtime/runtime'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { ClipboardSetText, TestAllCloudRegions } from '@/bridge'
+import { TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
-import { confirm, formatDate, formatRelativeTime, message } from '@/utils'
+import { formatDate, formatRelativeTime, message } from '@/utils'
 import { createBackup, parseBackup, downloadBackup } from '@/utils/backup'
 import { checkAllNodesHealth, scheduleHealthChecks, getHealthSummary } from '@/utils/healthCheck'
 import { logError, logInfo } from '@/utils/logger'
 import { isOnline, initOfflineMode } from '@/utils/offline'
-import { getRecommendedNodes } from '@/utils/recommendation'
 import { generateMockConnectivityHistory, type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
 
 import ConnectivityChart from '@/components/ConnectivityChart.vue'
@@ -18,7 +17,6 @@ import LatencyChart from '@/components/LatencyChart.vue'
 import { useModal } from '@/components/Modal'
 
 import {
-  buildNodeProtocolLinks,
   getDeploymentSteps as getNodeDeploymentSteps,
   getDeploymentSummary as getNodeDeploymentSummary,
   hasHysteria,
@@ -53,6 +51,7 @@ import {
   resetManualForm,
 } from './manualNodeForm'
 import { parseImportedNodes } from './manualNodeParser'
+import { useCloudViewActions } from './useCloudViewActions'
 import { defaultCloudLabel, useCloudViewMeta } from './useCloudViewMeta'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
@@ -99,10 +98,6 @@ const hasApiKey = computed(() => cloudStore.config.apiKey.trim().length > 0)
 const testingLatency = ref(false)
 const latencyResults = ref<RegionLatency[]>([])
 const showLatencyResults = ref(false)
-
-// Batch operations state
-const selectedNodeIds = ref<Set<string>>(new Set())
-const batchOperating = ref(false)
 
 // Visualization state
 const viewingChartNode = ref<ManagedCloudNode | null>(null)
@@ -329,8 +324,6 @@ const lastInstancesUpdateExact = computed(() => {
   return formatDate(cloudStore.instancesUpdatedAt, 'YYYY-MM-DD HH:mm:ss')
 })
 
-const applyingNodeId = ref('')
-
 const disableDeploy = computed(
   () => !hasApiKey.value || !form.region || !form.plan || !form.label.trim(),
 )
@@ -456,171 +449,35 @@ const handleRestoreConfig = async () => {
   }
 }
 
-const handleShowRecommendations = () => {
-  const allNodes = cloudStore.instances
-
-  if (allNodes.length === 0) {
-    message.info(t('cloud.recommendations.noNodes'))
-    return
-  }
-
-  // Build latency map from cached results
-  const latencyMap = new Map<string, number>()
-  if (latencyResults.value.length > 0) {
-    latencyResults.value.forEach(r => {
-      if (r.status === 'ok') {
-        latencyMap.set(r.code, r.latency)
-      }
-    })
-  }
-
-  // Get top 5 recommended nodes
-  const recommendations = getRecommendedNodes(allNodes, {
-    preferLowLatency: true,
-    preferLowRisk: true,
-    preferReachable: true,
-    preferRecent: false,
-  }, latencyMap)
-
-  // Build recommendation message
-  const topNodes = recommendations.slice(0, 5)
-  if (topNodes.length === 0) {
-    message.info(t('cloud.recommendations.noneAvailable'))
-    return
-  }
-
-  const recommendationText = topNodes.map((result, index) => {
-    const { node, score, reasons, antiBlockingScore } = result
-    const ipv4 = node.ipv4 || 'N/A'
-    const region = node.region ? formatNodeRegion(node.region) : 'N/A'
-    return `${index + 1}. ${node.label} (${region})\n   Score: ${score}/100\n   Reachability: ${antiBlockingScore ?? 'N/A'}/100\n   IP: ${ipv4}\n   ${reasons.join(', ')}`
-  }).join('\n\n')
-
-  // Show recommendations using console log since there's no modal API
-  // User can see detailed recommendations in browser console
-  console.log('=== Recommended Nodes ===\n' + recommendationText)
-  message.success(t('cloud.recommendations.title') + ': Check console for details')
-}
-
-// Batch operations
-const toggleNodeSelection = (nodeId: string) => {
-  if (selectedNodeIds.value.has(nodeId)) {
-    selectedNodeIds.value.delete(nodeId)
-  } else {
-    selectedNodeIds.value.add(nodeId)
-  }
-  // Trigger reactivity
-  selectedNodeIds.value = new Set(selectedNodeIds.value)
-}
-
-const clearSelection = () => {
-  selectedNodeIds.value.clear()
-  selectedNodeIds.value = new Set(selectedNodeIds.value)
-}
-
-const handleBatchTestConnectivity = async () => {
-  if (selectedNodeIds.value.size === 0) {
-    message.info(t('cloud.batch.noSelection'))
-    return
-  }
-
-  batchOperating.value = true
-  try {
-    const promises = Array.from(selectedNodeIds.value).map(id =>
-      cloudStore.testNodeSpeedTest(id)
-    )
-    await Promise.all(promises)
-    message.success(t('cloud.batch.testComplete', { count: selectedNodeIds.value.size }))
-  } catch (error) {
-    handleError(error)
-  } finally {
-    batchOperating.value = false
-  }
-}
-
-const handleBatchRotateIP = async () => {
-  if (selectedNodeIds.value.size === 0) {
-    message.info(t('cloud.batch.noSelection'))
-    return
-  }
-
-  const confirmed = await confirm(
-    t('cloud.batch.rotateIP'),
-    t('cloud.batch.rotateConfirm', { count: selectedNodeIds.value.size })
-  )
-  if (!confirmed) return
-
-  batchOperating.value = true
-  let successCount = 0
-  let failCount = 0
-
-  try {
-    for (const nodeId of selectedNodeIds.value) {
-      try {
-        await cloudStore.rotateIP(nodeId)
-        successCount++
-      } catch (error) {
-        failCount++
-        logError(`[CloudView] Failed to rotate IP for ${nodeId}:`, error)
-      }
-    }
-
-    if (successCount > 0) {
-      message.success(t('cloud.batch.rotateComplete', { success: successCount, fail: failCount }))
-    } else {
-      message.error(t('cloud.batch.allFailed'))
-    }
-
-    clearSelection()
-    await cloudStore.refreshInstances(true)
-  } catch (error) {
-    handleError(error)
-  } finally {
-    batchOperating.value = false
-  }
-}
-
-const handleBatchDestroy = async () => {
-  if (selectedNodeIds.value.size === 0) {
-    message.info(t('cloud.batch.noSelection'))
-    return
-  }
-
-  const confirmed = await confirm(
-    t('cloud.batch.destroy'),
-    t('cloud.batch.destroyConfirm', { count: selectedNodeIds.value.size })
-  )
-  if (!confirmed) return
-
-  batchOperating.value = true
-  let successCount = 0
-  let failCount = 0
-
-  try {
-    for (const nodeId of selectedNodeIds.value) {
-      try {
-        await cloudStore.destroyInstance(nodeId)
-        successCount++
-      } catch (error) {
-        failCount++
-        logError(`[CloudView] Failed to destroy ${nodeId}:`, error)
-      }
-    }
-
-    if (successCount > 0) {
-      message.success(t('cloud.batch.destroyComplete', { success: successCount, fail: failCount }))
-    } else {
-      message.error(t('cloud.batch.allFailed'))
-    }
-
-    clearSelection()
-    await cloudStore.refreshInstances(true)
-  } catch (error) {
-    handleError(error)
-  } finally {
-    batchOperating.value = false
-  }
-}
+const {
+  applyingNodeId,
+  batchOperating,
+  clearSelection,
+  copyNodeConfig,
+  handleBatchDestroy,
+  handleBatchRotateIP,
+  handleBatchTestConnectivity,
+  handleDestroy,
+  handleRotateIP,
+  handleShowRecommendations,
+  handleTestAllSpeed,
+  handleToggleLoadBalance,
+  handleUseNode,
+  loadBalanceLoading,
+  rotatingNodeId,
+  selectedNodeIds,
+  speedTestAllLoading,
+  tableContextMenu,
+  toggleNodeSelection,
+} = useCloudViewActions({
+  cloudStore,
+  kernelApiStore,
+  latencyResults,
+  translate: t,
+  handleError,
+  formatNodeRegion,
+  isManualNode,
+})
 
 // Search and filter handlers
 const clearFilters = () => {
@@ -712,211 +569,9 @@ const handleDeploy = async () => {
   }
 }
 
-const handleUseNode = async (node: CloudNode | Record<string, any>) => {
-  const target = node as CloudNode
-  cloudStore.markNodeStatus(target.instanceId, 'applying')
-  applyingNodeId.value = target.instanceId
-  try {
-    await cloudStore.applyNodeToProfile(target)
-    if (kernelApiStore.running) {
-      await kernelApiStore.restartCore()
-    } else {
-      await kernelApiStore.startCore()
-    }
-    cloudStore.markNodeStatus(target.instanceId, 'connected')
-    // Use silent refresh to avoid showing loading state
-    cloudStore.refreshInstances(true).catch((e) => logError('[CloudView] Silent refresh after apply failed:', e))
-    message.success(t('cloud.nodes.applied'))
-    message.info(t('cloud.nodes.applyTip'))
-  } catch (error) {
-    cloudStore.markNodeStatus(target.instanceId, 'error')
-    handleError(error)
-  } finally {
-    applyingNodeId.value = ''
-  }
-}
-
-const copyValue = async (value: string) => {
-  if (!value) return
-  try {
-    await ClipboardSetText(value)
-    message.success('common.copied')
-  } catch (error) {
-    handleError(error)
-  }
-}
-
 const getDeploymentSteps = (node: CloudNode | Record<string, any>) => getNodeDeploymentSteps(node, t)
 
 const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeDeploymentSummary(node, t)
-
-const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
-  const links = buildNodeProtocolLinks(record)
-
-  if (!links.length) {
-    message.error(t('cloud.errors.noProtocols'))
-    return
-  }
-
-  const payload = links.map((item) => `${item.label}: ${item.url}`).join('\n')
-  await copyValue(payload)
-}
-
-const rotatingNodeId = ref('')
-
-const handleRotateIP = async (record: CloudNode | Record<string, any>) => {
-  const node = record as CloudNode
-
-  // Check if it's a manual node
-  if (isManualNode(node)) {
-    message.error(t('cloud.nodes.rotateIPBlocked'))
-    return
-  }
-
-  try {
-    await confirm('common.warning', t('cloud.nodes.rotateIPConfirm'))
-  } catch {
-    return
-  }
-
-  rotatingNodeId.value = node.instanceId
-  try {
-    const newNode = await cloudStore.rotateIP(node.instanceId)
-    message.success(t('cloud.nodes.rotateIPSuccess'))
-    logInfo('[CloudView] IP rotated successfully. New node:', newNode.instanceId)
-  } catch (error) {
-    handleError(error)
-  } finally {
-    rotatingNodeId.value = ''
-  }
-}
-
-const handleDestroy = async (record: CloudNode | Record<string, any>) => {
-  const node = record as CloudNode
-  try {
-    const messageText = isManualNode(node)
-      ? t('cloud.manual.confirmRemove', { label: node.label })
-      : t('cloud.confirmDestroy', { label: node.label })
-    await confirm('common.warning', messageText)
-  } catch {
-    return
-  }
-  try {
-    await cloudStore.destroyInstance(node.instanceId)
-    message.success('common.success')
-  } catch (error) {
-    handleError(error)
-  }
-}
-
-// Quick operations for context menu
-const handleCopyNodeConfig = async (node: ManagedCloudNode) => {
-  try {
-    // Build configuration text with all node details
-    const ipv4 = node.ipv4 || 'N/A'
-    const ipv6 = node.ipv6 || 'N/A'
-    const protocols = []
-
-    if (node.ssPort && node.ssPassword) {
-      protocols.push(`Shadowsocks: ${ipv4}:${node.ssPort} (${node.ssPassword})`)
-    }
-    if (node.hysteriaPort && node.hysteriaPassword) {
-      protocols.push(`Hysteria2: ${ipv4}:${node.hysteriaPort} (${node.hysteriaPassword})`)
-    }
-    if (node.vlessPort && node.vlessUUID) {
-      protocols.push(`VLESS: ${ipv4}:${node.vlessPort} (UUID: ${node.vlessUUID})`)
-    }
-    if (node.trojanPort && node.trojanPassword) {
-      protocols.push(`Trojan: ${ipv4}:${node.trojanPort} (${node.trojanPassword})`)
-    }
-
-    const configText = `
-Node: ${node.label}
-Region: ${node.region ? formatNodeRegion(node.region) : 'N/A'}
-IPv4: ${ipv4}
-IPv6: ${ipv6}
-
-Protocols:
-${protocols.join('\n')}
-`.trim()
-
-    await ClipboardSetText(configText)
-    message.success(t('cloud.quickActions.configCopied'))
-  } catch (error) {
-    logError('CopyNodeConfig', error)
-    message.error(t('cloud.quickActions.copyFailed'))
-  }
-}
-
-const handleQuickTestConnectivity = async (node: ManagedCloudNode) => {
-  try {
-    message.info(t('cloud.quickActions.testingConnectivity'))
-    await cloudStore.testNodeSpeedTest(node.instanceId)
-    const ms = node.speedMs
-    const statusText = ms != null && ms >= 0 ? `${ms}ms` : t('cloud.speed.timeout')
-    message.success(t('cloud.quickActions.testComplete', { status: statusText }))
-  } catch (error) {
-    logError('QuickTestConnectivity', error)
-    message.error(t('cloud.quickActions.testFailed'))
-  }
-}
-
-const speedTestAllLoading = ref(false)
-const handleTestAllSpeed = async () => {
-  speedTestAllLoading.value = true
-  try {
-    await cloudStore.testAllNodesSpeed()
-    message.success(t('cloud.speed.testAllComplete'))
-  } catch (error) {
-    handleError(error)
-  } finally {
-    speedTestAllLoading.value = false
-  }
-}
-
-const loadBalanceLoading = ref(false)
-const handleToggleLoadBalance = async () => {
-  loadBalanceLoading.value = true
-  try {
-    if (cloudStore.loadBalanceEnabled) {
-      await cloudStore.stopLoadBalance()
-    } else {
-      await cloudStore.startLoadBalance()
-      if (!cloudStore.loadBalanceEnabled) {
-        message.error(t('cloud.loadBalance.startFailed'))
-      }
-    }
-  } catch (error) {
-    handleError(error)
-  } finally {
-    loadBalanceLoading.value = false
-  }
-}
-
-// Context menu for table rows
-const tableContextMenu = computed(() => [
-  {
-    label: t('cloud.quickActions.useNode'),
-    handler: (record: ManagedCloudNode) => handleUseNode(record),
-  },
-  {
-    label: t('cloud.quickActions.copyConfig'),
-    handler: (record: ManagedCloudNode) => handleCopyNodeConfig(record),
-  },
-  {
-    label: t('cloud.quickActions.testConnectivity'),
-    handler: (record: ManagedCloudNode) => handleQuickTestConnectivity(record),
-  },
-  {
-    label: t('cloud.quickActions.rotateIP'),
-    handler: (record: ManagedCloudNode) => handleRotateIP(record),
-    hidden: (record: ManagedCloudNode) => isManualNode(record) || record.connectivityStatus !== 'blocked',
-  },
-  {
-    label: t('cloud.quickActions.destroy'),
-    handler: (record: ManagedCloudNode) => handleDestroy(record),
-  },
-])
 
 // Keyboard shortcuts, health checks, and offline mode
 onMounted(() => {
