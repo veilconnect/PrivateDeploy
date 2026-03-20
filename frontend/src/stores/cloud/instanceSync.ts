@@ -279,13 +279,11 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       loadingInstances.value = true
     }
     try {
-      const res = await retryWithBackoff(
+      const rawNodes = await retryWithBackoff(
         () => ListCloudInstances(),
         'ListCloudInstances',
         { maxAttempts: 3, baseDelay: 1000 }
       )
-      ensureFlag(res.flag, res.data)
-      const rawNodes = parseJSON<Record<string, any>[]>(res.data, [])
       const normalizedNodes = rawNodes
         .map((node) => normalizeCloudNode(node, currentProvider.value))
       const filteredNodes = normalizedNodes.filter((node) => node.instanceId)
@@ -534,13 +532,11 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   const createInstance = async (options: { label: string; region: string; plan: string }) => {
     creatingInstance.value = true
     try {
-      const res = await retryWithBackoff(
-        () => CreateCloudInstance(JSON.stringify(options)),
+      const rawNode = await retryWithBackoff(
+        () => CreateCloudInstance(options),
         'CreateCloudInstance',
         { maxAttempts: 3, baseDelay: 2000 }
       )
-      ensureFlag(res.flag, res.data)
-      const rawNode = parseJSON<Record<string, any>>(res.data, {} as CloudNode)
       const node = normalizeCloudNode(rawNode, currentProvider.value)
       if (node.instanceId) {
         await ensureRegionAvailability(node.region || '')
@@ -617,9 +613,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         plan: '',
         extra,
       }
-      const res = await CreateCloudInstance(JSON.stringify(options))
-      ensureFlag(res.flag, res.data)
-      const rawNode = parseJSON<Record<string, any>>(res.data, {})
+      const rawNode = await CreateCloudInstance(options)
       const node = normalizeCloudNode(rawNode, 'ssh')
 
       if (node.instanceId) {
@@ -680,8 +674,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         syncManualNodesIntoInstances()
         return
       }
-      const res = await DestroyCloudInstance(instanceId)
-      ensureFlag(res.flag, res.data)
+      await DestroyCloudInstance(instanceId)
       instances.value = instances.value.filter((node) => node.instanceId !== instanceId)
       instancesUpdatedAt.value = Date.now()
       await removeSubscriptionForNode(instanceId)

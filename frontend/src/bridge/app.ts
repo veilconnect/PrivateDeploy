@@ -1,6 +1,7 @@
 import * as App from '@wails/go/bridge/App'
 
 import type { TrayContent } from '@/types/app'
+import type { CloudConfig, CloudPlan, CloudProvider, CloudRegion } from '@/types/cloud'
 
 export const RestartApp = App.RestartApp
 
@@ -27,27 +28,49 @@ export const GetInterfaces = async () => {
   return data.split('|')
 }
 
-export const GetCloudConfig = App.GetCloudConfig
+export const GetCloudConfig = async (): Promise<CloudConfig> => {
+  return await App.GetCloudConfigTyped() as CloudConfig
+}
 
-export const SaveCloudConfig = App.SaveCloudConfig
+export const SaveCloudConfig = async (config: CloudConfig): Promise<void> => {
+  await App.SaveCloudConfigTyped(config as Record<string, any>)
+}
 
-export const ListCloudProviders = App.ListCloudProviders
+export const ListCloudProviders = async (): Promise<Array<{ name: string; displayName: string }>> => {
+  return await App.ListCloudProvidersTyped() as Array<{ name: string; displayName: string }>
+}
 
-export const GetCloudProvider = App.GetCloudProvider
+export const GetCloudProvider = async (): Promise<{ name: string; displayName: string }> => {
+  return await App.GetCloudProviderTyped() as { name: string; displayName: string }
+}
 
-export const SetCloudProvider = App.SetCloudProvider
+export const SetCloudProvider = async (provider: CloudProvider): Promise<{ name: string; displayName: string }> => {
+  return await App.SetCloudProviderTyped(provider) as { name: string; displayName: string }
+}
 
-export const ListCloudInstances = App.ListCloudInstances
+export const ListCloudInstances = async (): Promise<Array<Record<string, any>>> => {
+  return await App.ListCloudInstancesTyped()
+}
 
-export const CreateCloudInstance = App.CreateCloudInstance
+export const CreateCloudInstance = async (options: Record<string, any>): Promise<Record<string, any>> => {
+  return await App.CreateCloudInstanceTyped(options)
+}
 
-export const DestroyCloudInstance = App.DestroyCloudInstance
+export const DestroyCloudInstance = async (instanceId: string): Promise<void> => {
+  await App.DestroyCloudInstanceTyped(instanceId)
+}
 
-export const ListCloudRegions = App.ListCloudRegions
+export const ListCloudRegions = async (): Promise<CloudRegion[]> => {
+  return await App.ListCloudRegionsTyped() as CloudRegion[]
+}
 
-export const ListCloudPlans = App.ListCloudPlans
+export const ListCloudPlans = async (): Promise<CloudPlan[]> => {
+  return await App.ListCloudPlansTyped() as CloudPlan[]
+}
 
-export const ListCloudAvailability = App.ListCloudAvailability
+export const ListCloudAvailability = async (region: string): Promise<string[]> => {
+  return await App.ListCloudAvailabilityTyped(region)
+}
 
 export const TestAllCloudRegions = App.TestAllCloudRegions
 

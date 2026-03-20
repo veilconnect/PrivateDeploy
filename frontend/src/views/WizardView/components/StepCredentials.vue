@@ -113,13 +113,12 @@ const handleCloudValidate = async () => {
       provider: cloudProvider.value,
       apiKey: apiKey.value,
     }
-    const res = await SaveCloudConfig(JSON.stringify(cfg))
-    cloudValid.value = res.flag
-    if (res.flag) {
-      await cloudStore.loadConfig()
-      await cloudStore.fetchRegions()
-    }
+    await SaveCloudConfig(cfg)
+    cloudValid.value = true
+    await cloudStore.loadConfig()
+    await cloudStore.fetchRegions()
   } catch (err: any) {
+    cloudValid.value = false
     logError('[Wizard] Cloud validate failed:', err)
   } finally {
     cloudValidating.value = false

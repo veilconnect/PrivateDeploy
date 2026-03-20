@@ -22,12 +22,20 @@ export function CreateCloudInstance(arg1) {
   return window['go']['bridge']['App']['CreateCloudInstance'](arg1);
 }
 
+export function CreateCloudInstanceTyped(arg1) {
+  return window['go']['bridge']['App']['CreateCloudInstanceTyped'](arg1);
+}
+
 export function CreateMultipleCloudInstances(arg1) {
   return window['go']['bridge']['App']['CreateMultipleCloudInstances'](arg1);
 }
 
 export function DestroyCloudInstance(arg1) {
   return window['go']['bridge']['App']['DestroyCloudInstance'](arg1);
+}
+
+export function DestroyCloudInstanceTyped(arg1) {
+  return window['go']['bridge']['App']['DestroyCloudInstanceTyped'](arg1);
 }
 
 export function Download(arg1, arg2, arg3, arg4, arg5, arg6) {
@@ -58,8 +66,16 @@ export function GetCloudConfig() {
   return window['go']['bridge']['App']['GetCloudConfig']();
 }
 
+export function GetCloudConfigTyped() {
+  return window['go']['bridge']['App']['GetCloudConfigTyped']();
+}
+
 export function GetCloudProvider() {
   return window['go']['bridge']['App']['GetCloudProvider']();
+}
+
+export function GetCloudProviderTyped() {
+  return window['go']['bridge']['App']['GetCloudProviderTyped']();
 }
 
 export function GetEnv() {
@@ -94,20 +110,40 @@ export function ListCloudAvailability(arg1) {
   return window['go']['bridge']['App']['ListCloudAvailability'](arg1);
 }
 
+export function ListCloudAvailabilityTyped(arg1) {
+  return window['go']['bridge']['App']['ListCloudAvailabilityTyped'](arg1);
+}
+
 export function ListCloudInstances() {
   return window['go']['bridge']['App']['ListCloudInstances']();
+}
+
+export function ListCloudInstancesTyped() {
+  return window['go']['bridge']['App']['ListCloudInstancesTyped']();
 }
 
 export function ListCloudPlans() {
   return window['go']['bridge']['App']['ListCloudPlans']();
 }
 
+export function ListCloudPlansTyped() {
+  return window['go']['bridge']['App']['ListCloudPlansTyped']();
+}
+
 export function ListCloudProviders() {
   return window['go']['bridge']['App']['ListCloudProviders']();
 }
 
+export function ListCloudProvidersTyped() {
+  return window['go']['bridge']['App']['ListCloudProvidersTyped']();
+}
+
 export function ListCloudRegions() {
   return window['go']['bridge']['App']['ListCloudRegions']();
+}
+
+export function ListCloudRegionsTyped() {
+  return window['go']['bridge']['App']['ListCloudRegionsTyped']();
 }
 
 export function ListServer() {
@@ -162,12 +198,20 @@ export function SaveCloudConfig(arg1) {
   return window['go']['bridge']['App']['SaveCloudConfig'](arg1);
 }
 
+export function SaveCloudConfigTyped(arg1) {
+  return window['go']['bridge']['App']['SaveCloudConfigTyped'](arg1);
+}
+
 export function ScoreCloudRegions(arg1) {
   return window['go']['bridge']['App']['ScoreCloudRegions'](arg1);
 }
 
 export function SetCloudProvider(arg1) {
   return window['go']['bridge']['App']['SetCloudProvider'](arg1);
+}
+
+export function SetCloudProviderTyped(arg1) {
+  return window['go']['bridge']['App']['SetCloudProviderTyped'](arg1);
 }
 
 export function SetupSSHEventEmitter() {

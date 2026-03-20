@@ -23,7 +23,6 @@ import { notifications } from '@/utils/notification'
 import { isOnline, saveToOfflineCache, loadFromOfflineCache } from '@/utils/offline'
 
 import { CACHE_TTL } from './constants'
-import { parseJSON } from './helpers'
 
 import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
 import type { Ref, ShallowRef } from 'vue'
@@ -69,10 +68,6 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     refreshInstances,
   } = deps
 
-  const ensureFlag = (flag: boolean, data: string) => {
-    if (!flag) throw new Error(data)
-  }
-
   /**
    * Check if cache is still valid
    */
@@ -85,9 +80,7 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
   const isPlansCacheValid = () => isCacheValid(plansUpdatedAt.value, CACHE_TTL.plans)
 
   const loadConfig = async () => {
-    const res = await GetCloudConfig()
-    ensureFlag(res.flag, res.data)
-    const loadedConfig = parseJSON<CloudConfig>(res.data, {} as CloudConfig)
+    const loadedConfig = await GetCloudConfig()
     Object.assign(config, loadedConfig)
     config.provider = loadedConfig.provider ?? currentProvider.value
     config.extra = loadedConfig.extra ?? {}
@@ -106,12 +99,11 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
       const payload = deepClone(config) as CloudConfig
       payload.provider = currentProvider.value
       payload.extra = payload.extra ?? {}
-      const res = await retryWithBackoff(
-        () => SaveCloudConfig(JSON.stringify(payload)),
+      await retryWithBackoff(
+        () => SaveCloudConfig(payload),
         'SaveCloudConfig',
         { maxAttempts: 3, baseDelay: 1000 }
       )
-      ensureFlag(res.flag, res.data)
       if (payload.apiKey && payload.apiKey.trim() !== '') {
         startAutoRefresh(true)
       } else {
@@ -145,13 +137,11 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
     loadingRegions.value = true
     try {
-      const res = await retryWithBackoff(
+      regions.value = await retryWithBackoff(
         () => ListCloudRegions(),
         'ListCloudRegions',
         { maxAttempts: 2, baseDelay: 1000 }
       )
-      ensureFlag(res.flag, res.data)
-      regions.value = parseJSON<CloudRegion[]>(res.data, [])
       regionsUpdatedAt.value = Date.now()
 
       saveToOfflineCache('regions', regions.value)
@@ -189,13 +179,11 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
     loadingPlans.value = true
     try {
-      const res = await retryWithBackoff(
+      plans.value = await retryWithBackoff(
         () => ListCloudPlans(),
         'ListCloudPlans',
         { maxAttempts: 2, baseDelay: 1000 }
       )
-      ensureFlag(res.flag, res.data)
-      plans.value = parseJSON<CloudPlan[]>(res.data, [])
       plansUpdatedAt.value = Date.now()
 
       saveToOfflineCache('plans', plans.value)
@@ -227,9 +215,7 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     }
 
     try {
-      const res = await ListCloudAvailability(region)
-      ensureFlag(res.flag, res.data)
-      availability[region] = parseJSON<string[]>(res.data, [])
+      availability[region] = await ListCloudAvailability(region)
     } catch (error) {
       logError('[CloudStore] Failed to load availability:', error)
       availability[region] = availability[region] || []
@@ -247,11 +233,8 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         return
       }
 
-      const res = await ListCloudProviders()
-      if (res.flag) {
-        availableProviders.value = parseJSON<Array<{ name: string; displayName: string }>>(res.data, [])
-        console.log('[CloudStore] Loaded providers:', availableProviders.value)
-      }
+      availableProviders.value = await ListCloudProviders()
+      console.log('[CloudStore] Loaded providers:', availableProviders.value)
     } catch (error) {
       logError('[CloudStore] Failed to load providers:', error)
       availableProviders.value = [{ name: 'vultr', displayName: 'Vultr' }]
@@ -281,10 +264,9 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         return
       }
 
-      const res = await SetCloudProvider(provider)
-      ensureFlag(res.flag, res.data)
-      currentProvider.value = provider
-      console.log('[CloudStore] Switched to provider:', provider)
+      const current = await SetCloudProvider(provider)
+      currentProvider.value = current.name as CloudProvider
+      console.log('[CloudStore] Switched to provider:', current)
 
       // Clear current data when switching providers
       regions.value = []
@@ -322,12 +304,9 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         return
       }
 
-      const res = await GetCloudProvider()
-      if (res.flag) {
-        const provider = parseJSON<{ name: string; displayName: string }>(res.data, { name: 'vultr', displayName: 'Vultr' })
-        currentProvider.value = provider.name as CloudProvider
-        console.log('[CloudStore] Current provider:', provider)
-      }
+      const provider = await GetCloudProvider()
+      currentProvider.value = provider.name as CloudProvider
+      console.log('[CloudStore] Current provider:', provider)
     } catch (error) {
       logError('[CloudStore] Failed to get current provider:', error)
     }

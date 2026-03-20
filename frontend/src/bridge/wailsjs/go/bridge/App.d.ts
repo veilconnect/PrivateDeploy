@@ -11,10 +11,12 @@ export function CloseMMDB(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 export function CopyFile(arg1:string,arg2:string):Promise<bridge.FlagResult>;
 
 export function CreateCloudInstance(arg1:string):Promise<bridge.FlagResult>;
+export function CreateCloudInstanceTyped(arg1:Record<string, any>):Promise<Record<string, any>>;
 
 export function CreateMultipleCloudInstances(arg1:string):Promise<bridge.FlagResult>;
 
 export function DestroyCloudInstance(arg1:string):Promise<bridge.FlagResult>;
+export function DestroyCloudInstanceTyped(arg1:string):Promise<void>;
 
 export function Download(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>,arg5:string,arg6:bridge.RequestOptions):Promise<bridge.HTTPResult>;
 
@@ -29,8 +31,10 @@ export function FileExists(arg1:string):Promise<bridge.FlagResult>;
 export function GetAvailablePort():Promise<number>;
 
 export function GetCloudConfig():Promise<bridge.FlagResult>;
+export function GetCloudConfigTyped():Promise<Record<string, any>>;
 
 export function GetCloudProvider():Promise<bridge.FlagResult>;
+export function GetCloudProviderTyped():Promise<Record<string, any>>;
 
 export function GetEnv():Promise<bridge.EnvResult>;
 
@@ -47,14 +51,19 @@ export function IsStartup():Promise<boolean>;
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
 
 export function ListCloudAvailability(arg1:string):Promise<bridge.FlagResult>;
+export function ListCloudAvailabilityTyped(arg1:string):Promise<Array<string>>;
 
 export function ListCloudInstances():Promise<bridge.FlagResult>;
+export function ListCloudInstancesTyped():Promise<Array<Record<string, any>>>;
 
 export function ListCloudPlans():Promise<bridge.FlagResult>;
+export function ListCloudPlansTyped():Promise<Array<Record<string, any>>>;
 
 export function ListCloudProviders():Promise<bridge.FlagResult>;
+export function ListCloudProvidersTyped():Promise<Array<Record<string, any>>>;
 
 export function ListCloudRegions():Promise<bridge.FlagResult>;
+export function ListCloudRegionsTyped():Promise<Array<Record<string, any>>>;
 
 export function ListServer():Promise<bridge.FlagResult>;
 
@@ -81,10 +90,12 @@ export function Requests(arg1:string,arg2:string,arg3:Record<string, string>,arg
 export function RestartApp():Promise<bridge.FlagResult>;
 
 export function SaveCloudConfig(arg1:string):Promise<bridge.FlagResult>;
+export function SaveCloudConfigTyped(arg1:Record<string, any>):Promise<void>;
 
 export function ScoreCloudRegions(arg1:string):Promise<bridge.FlagResult>;
 
 export function SetCloudProvider(arg1:string):Promise<bridge.FlagResult>;
+export function SetCloudProviderTyped(arg1:string):Promise<Record<string, any>>;
 
 export function SetupSSHEventEmitter():Promise<void>;
 

@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 
@@ -18,9 +19,8 @@ type CloudProviderInfo struct {
 	DisplayName string `json:"displayName"`
 }
 
-// ListCloudProviders returns all available cloud providers
-func (a *App) ListCloudProviders() FlagResult {
-	log.Printf("[CloudBridge] ListCloudProviders called")
+func (a *App) ListCloudProvidersTyped() ([]CloudProviderInfo, error) {
+	log.Printf("[CloudBridge] ListCloudProvidersTyped called")
 
 	providerNames := a.CloudManager.ListProviders()
 	providers := make([]CloudProviderInfo, 0, len(providerNames))
@@ -38,6 +38,17 @@ func (a *App) ListCloudProviders() FlagResult {
 		})
 	}
 
+	return providers, nil
+}
+
+// ListCloudProviders returns all available cloud providers
+func (a *App) ListCloudProviders() FlagResult {
+	providers, err := a.ListCloudProvidersTyped()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to list providers: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
 	data, err := json.Marshal(providers)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to marshal providers: %v", err)
@@ -48,33 +59,53 @@ func (a *App) ListCloudProviders() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
+func (a *App) SetCloudProviderTyped(providerName string) (*CloudProviderInfo, error) {
+	log.Printf("[CloudBridge] SetCloudProviderTyped called with: %s", providerName)
+
+	if err := a.CloudManager.SetActiveProvider(providerName); err != nil {
+		return nil, err
+	}
+
+	return a.GetCloudProviderTyped()
+}
+
 // SetCloudProvider sets the active cloud provider
 func (a *App) SetCloudProvider(providerName string) FlagResult {
-	log.Printf("[CloudBridge] SetCloudProvider called with: %s", providerName)
-
-	err := a.CloudManager.SetActiveProvider(providerName)
+	info, err := a.SetCloudProviderTyped(providerName)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to set provider: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
 	log.Printf("[CloudBridge] Successfully set active provider to: %s", providerName)
-	return FlagResult{Flag: true, Data: providerName}
+	data, err := json.Marshal(info)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func (a *App) GetCloudProviderTyped() (*CloudProviderInfo, error) {
+	log.Printf("[CloudBridge] GetCloudProviderTyped called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	info := &CloudProviderInfo{
+		Name:        provider.Name(),
+		DisplayName: provider.DisplayName(),
+	}
+	return info, nil
 }
 
 // GetCloudProvider returns the current active provider
 func (a *App) GetCloudProvider() FlagResult {
-	log.Printf("[CloudBridge] GetCloudProvider called")
-
-	provider, err := a.CloudManager.GetActiveProvider()
+	info, err := a.GetCloudProviderTyped()
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	info := CloudProviderInfo{
-		Name:        provider.Name(),
-		DisplayName: provider.DisplayName(),
 	}
 
 	data, err := json.Marshal(info)
@@ -87,20 +118,17 @@ func (a *App) GetCloudProvider() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-// GetCloudConfig returns the persisted configuration for the active provider
-func (a *App) GetCloudConfig() FlagResult {
-	log.Printf("[CloudBridge] GetCloudConfig called")
+func (a *App) GetCloudConfigTyped() (*cloud.ProviderConfig, error) {
+	log.Printf("[CloudBridge] GetCloudConfigTyped called")
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
+		return nil, err
 	}
 
 	cfg, err := provider.LoadConfig()
 	if err != nil {
-		log.Printf("[CloudBridge] ERROR: Failed to load config: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
+		return nil, err
 	}
 
 	if cfg == nil {
@@ -113,6 +141,17 @@ func (a *App) GetCloudConfig() FlagResult {
 		cfg.Extra = map[string]string{}
 	}
 
+	return cfg, nil
+}
+
+// GetCloudConfig returns the persisted configuration for the active provider
+func (a *App) GetCloudConfig() FlagResult {
+	cfg, err := a.GetCloudConfigTyped()
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to load config: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to marshal config: %v", err)
@@ -123,20 +162,12 @@ func (a *App) GetCloudConfig() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-// SaveCloudConfig persists configuration for the active provider
-func (a *App) SaveCloudConfig(configJSON string) FlagResult {
-	log.Printf("[CloudBridge] SaveCloudConfig called with payload length: %d", len(configJSON))
+func (a *App) SaveCloudConfigTyped(cfg cloud.ProviderConfig) error {
+	log.Printf("[CloudBridge] SaveCloudConfigTyped called")
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	var cfg cloud.ProviderConfig
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-		log.Printf("[CloudBridge] ERROR: Failed to parse config JSON: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
+		return err
 	}
 
 	if cfg.Provider == "" {
@@ -147,18 +178,28 @@ func (a *App) SaveCloudConfig(configJSON string) FlagResult {
 	}
 
 	if cfg.Provider != provider.Name() {
-		errMsg := "config provider mismatch with active provider"
-		log.Printf("[CloudBridge] ERROR: %s (config=%s, active=%s)", errMsg, cfg.Provider, provider.Name())
-		return FlagResult{Flag: false, Data: errMsg}
+		return fmt.Errorf("config provider mismatch with active provider")
 	}
 
 	if err := provider.ValidateConfig(&cfg); err != nil {
-		log.Printf("[CloudBridge] ERROR: Config validation failed: %v", err)
+		return err
+	}
+
+	return provider.SaveConfig(&cfg)
+}
+
+// SaveCloudConfig persists configuration for the active provider
+func (a *App) SaveCloudConfig(configJSON string) FlagResult {
+	log.Printf("[CloudBridge] SaveCloudConfig called with payload length: %d", len(configJSON))
+
+	var cfg cloud.ProviderConfig
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to parse config JSON: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	if err := provider.SaveConfig(&cfg); err != nil {
-		log.Printf("[CloudBridge] ERROR: Failed to save config: %v", err)
+	if err := a.SaveCloudConfigTyped(cfg); err != nil {
+		log.Printf("[CloudBridge] ERROR: Config validation failed: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
@@ -166,18 +207,20 @@ func (a *App) SaveCloudConfig(configJSON string) FlagResult {
 	return FlagResult{Flag: true, Data: "Success"}
 }
 
-// ListCloudInstances returns all instances for the active provider
-func (a *App) ListCloudInstances() FlagResult {
-	log.Printf("[CloudBridge] ListCloudInstances called")
+func (a *App) ListCloudInstancesTyped() ([]cloud.Instance, error) {
+	log.Printf("[CloudBridge] ListCloudInstancesTyped called")
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
+		return nil, err
 	}
 
-	ctx := context.Background()
-	instances, err := provider.ListInstances(ctx)
+	return provider.ListInstances(context.Background())
+}
+
+// ListCloudInstances returns all instances for the active provider
+func (a *App) ListCloudInstances() FlagResult {
+	instances, err := a.ListCloudInstancesTyped()
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to list instances: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -189,19 +232,24 @@ func (a *App) ListCloudInstances() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Listed %d instances for provider %s", len(instances), provider.Name())
+	log.Printf("[CloudBridge] Listed %d instances", len(instances))
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+	log.Printf("[CloudBridge] CreateCloudInstanceTyped called (options redacted for security)")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.CreateInstance(context.Background(), &opts)
 }
 
 // CreateCloudInstance creates a new instance on the active provider
 func (a *App) CreateCloudInstance(optionsJSON string) FlagResult {
 	log.Printf("[CloudBridge] CreateCloudInstance called (options redacted for security)")
-
-	provider, err := a.CloudManager.GetActiveProvider()
-	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
 
 	var opts cloud.CreateInstanceOptions
 	if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
@@ -209,8 +257,7 @@ func (a *App) CreateCloudInstance(optionsJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	ctx := context.Background()
-	instance, err := provider.CreateInstance(ctx, &opts)
+	instance, err := a.CreateCloudInstanceTyped(opts)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to create instance: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -222,42 +269,46 @@ func (a *App) CreateCloudInstance(optionsJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Created instance %s on provider %s", instance.ID, provider.Name())
+	log.Printf("[CloudBridge] Created instance %s", instance.ID)
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func (a *App) DestroyCloudInstanceTyped(instanceID string) error {
+	log.Printf("[CloudBridge] DestroyCloudInstanceTyped called for instance: %s", instanceID)
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return err
+	}
+
+	return provider.DestroyInstance(context.Background(), instanceID)
 }
 
 // DestroyCloudInstance destroys an instance on the active provider
 func (a *App) DestroyCloudInstance(instanceID string) FlagResult {
-	log.Printf("[CloudBridge] DestroyCloudInstance called for instance: %s", instanceID)
-
-	provider, err := a.CloudManager.GetActiveProvider()
-	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	ctx := context.Background()
-	if err := provider.DestroyInstance(ctx, instanceID); err != nil {
+	if err := a.DestroyCloudInstanceTyped(instanceID); err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to destroy instance: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Destroyed instance %s on provider %s", instanceID, provider.Name())
+	log.Printf("[CloudBridge] Destroyed instance %s", instanceID)
 	return FlagResult{Flag: true, Data: "Instance destroyed successfully"}
+}
+
+func (a *App) ListCloudRegionsTyped() ([]cloud.Region, error) {
+	log.Printf("[CloudBridge] ListCloudRegionsTyped called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.ListRegions(context.Background())
 }
 
 // ListCloudRegions returns all regions for the active provider
 func (a *App) ListCloudRegions() FlagResult {
-	log.Printf("[CloudBridge] ListCloudRegions called")
-
-	provider, err := a.CloudManager.GetActiveProvider()
-	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	ctx := context.Background()
-	regions, err := provider.ListRegions(ctx)
+	regions, err := a.ListCloudRegionsTyped()
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to list regions: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -269,22 +320,24 @@ func (a *App) ListCloudRegions() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Listed %d regions for provider %s", len(regions), provider.Name())
+	log.Printf("[CloudBridge] Listed %d regions", len(regions))
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func (a *App) ListCloudPlansTyped() ([]cloud.Plan, error) {
+	log.Printf("[CloudBridge] ListCloudPlansTyped called")
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.ListPlans(context.Background(), "")
 }
 
 // ListCloudPlans returns all plans for the active provider
 func (a *App) ListCloudPlans() FlagResult {
-	log.Printf("[CloudBridge] ListCloudPlans called")
-
-	provider, err := a.CloudManager.GetActiveProvider()
-	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	ctx := context.Background()
-	plans, err := provider.ListPlans(ctx, "")
+	plans, err := a.ListCloudPlansTyped()
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to list plans: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -296,22 +349,24 @@ func (a *App) ListCloudPlans() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Listed %d plans for provider %s", len(plans), provider.Name())
+	log.Printf("[CloudBridge] Listed %d plans", len(plans))
 	return FlagResult{Flag: true, Data: string(data)}
+}
+
+func (a *App) ListCloudAvailabilityTyped(region string) ([]string, error) {
+	log.Printf("[CloudBridge] ListCloudAvailabilityTyped called for region: %s", region)
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.ListAvailability(context.Background(), region)
 }
 
 // ListCloudAvailability returns plan availability for the active provider
 func (a *App) ListCloudAvailability(region string) FlagResult {
-	log.Printf("[CloudBridge] ListCloudAvailability called for region: %s", region)
-
-	provider, err := a.CloudManager.GetActiveProvider()
-	if err != nil {
-		log.Printf("[CloudBridge] ERROR: No active provider: %v", err)
-		return FlagResult{Flag: false, Data: err.Error()}
-	}
-
-	ctx := context.Background()
-	plans, err := provider.ListAvailability(ctx, region)
+	plans, err := a.ListCloudAvailabilityTyped(region)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to list availability: %v", err)
 		return FlagResult{Flag: false, Data: err.Error()}
@@ -323,7 +378,7 @@ func (a *App) ListCloudAvailability(region string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	log.Printf("[CloudBridge] Listed %d available plans for provider %s region %s", len(plans), provider.Name(), region)
+	log.Printf("[CloudBridge] Listed %d available plans for region %s", len(plans), region)
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
