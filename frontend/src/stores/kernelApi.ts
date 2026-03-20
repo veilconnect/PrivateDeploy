@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
-import { getProxies, getConfigs, setConfigs, Api } from '@/api/kernel'
+import { getProxies, getConfigs, setConfigs } from '@/api/kernel'
 import {
   ProcessInfo,
   KillProcess,
@@ -50,8 +50,6 @@ import {
   getKernelFileName,
   restoreProfile,
   deepClone,
-  WebSockets,
-  setIntervalImmediately,
   message,
   getKernelRuntimeArgs,
   getKernelRuntimeEnv,
@@ -59,13 +57,16 @@ import {
   getGitHubApiAuthorization,
 } from '@/utils'
 
+import {
+  addCloudNodeToKernelGroups,
+  addProxyToKernelGroups,
+  removeProxyFromKernelGroups,
+} from './kernelApiProxyGroups'
+import { createKernelApiWebsocketManager } from './kernelApiWebsocket'
+
 import type {
   CoreApiConfig,
   CoreApiProxy,
-  CoreApiLogsData,
-  CoreApiMemoryData,
-  CoreApiTrafficData,
-  CoreApiConnectionsData,
 } from '@/types/kernel'
 
 export type ProxyType = 'mixed' | 'http' | 'socks'
@@ -243,126 +244,20 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     proxies.value = b
   }
 
-  /* WebSocket */
-  let websocketInstance: WebSockets | null
-  const longLivedWS = {
-    setup: undefined as (() => void) | undefined,
-    cleanup: undefined as (() => void) | undefined,
-    timer: -1,
-  }
-  const shortLivedWS = {
-    setup: undefined as (() => void) | undefined,
-    cleanup: undefined as (() => void) | undefined,
-    timer: -1,
-  }
-  const onLogsEvents = {
-    onFirst: undefined as (() => void) | undefined,
-    onEmpty: undefined as (() => void) | undefined,
-  }
-
-  const websocketHandlers = {
-    logs: [] as ((data: CoreApiLogsData) => void)[],
-    memory: [] as ((data: CoreApiMemoryData) => void)[],
-    traffic: [] as ((data: CoreApiTrafficData) => void)[],
-    connections: [] as ((data: CoreApiConnectionsData) => void)[],
-  } as const
-
-  const createCoreWSHandlerRegister = <S extends C[], C>(
-    source: S,
-    events: { onFirst?: () => void; onEmpty?: () => void } = {},
-  ) => {
-    const register = (cb: S[number]) => {
-      source.push(cb)
-      source.length === 1 && events.onFirst?.()
-      const unregister = () => {
-        const idx = source.indexOf(cb)
-        idx !== -1 && source.splice(idx, 1)
-        source.length === 0 && events.onEmpty?.()
+  const coreWebsockets = createKernelApiWebsocketManager({
+    getControllerInfo: () => {
+      let base = 'ws://127.0.0.1:20123'
+      let bearer = ''
+      const profile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
+      if (profile) {
+        const controller = profile.experimental.clash_api.external_controller || '127.0.0.1:20123'
+        const [, port = 20123] = controller.split(':')
+        base = `ws://127.0.0.1:${port}`
+        bearer = profile.experimental.clash_api.secret
       }
-      return unregister
-    }
-    return register
-  }
-
-  const createCoreWSDispatcher = <T>(source: ((data: T) => void)[]) => {
-    return (data: T) => {
-      source.forEach((cb) => cb(data))
-    }
-  }
-
-  const initCoreWebsockets = () => {
-    websocketInstance = new WebSockets({
-      beforeConnect() {
-        let base = 'ws://127.0.0.1:20123'
-        let bearer = ''
-        const profile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
-        if (profile) {
-          const controller = profile.experimental.clash_api.external_controller || '127.0.0.1:20123'
-          const [, port = 20123] = controller.split(':')
-          base = `ws://127.0.0.1:${port}`
-          bearer = profile.experimental.clash_api.secret
-        }
-        this.base = base
-        this.bearer = bearer
-      },
-    })
-
-    const { connect: connectLongLived, disconnect: disconnectLongLived } =
-      websocketInstance.createWS([
-        {
-          name: 'Memory',
-          url: Api.Memory,
-          cb: createCoreWSDispatcher(websocketHandlers.memory),
-        },
-        {
-          name: 'Traffic',
-          url: Api.Traffic,
-          cb: createCoreWSDispatcher(websocketHandlers.traffic),
-        },
-        {
-          name: 'Connections',
-          url: Api.Connections,
-          cb: createCoreWSDispatcher(websocketHandlers.connections),
-        },
-      ])
-
-    const { connect: connectShortLived, disconnect: disconnectShortLived } =
-      websocketInstance.createWS([
-        {
-          name: 'Logs',
-          url: Api.Logs,
-          params: { level: 'debug' },
-          cb: createCoreWSDispatcher(websocketHandlers.logs),
-        },
-      ])
-
-    longLivedWS.setup = () => {
-      longLivedWS.timer = setIntervalImmediately(connectLongLived, 3_000)
-    }
-    longLivedWS.cleanup = () => {
-      clearInterval(longLivedWS.timer)
-      disconnectLongLived()
-      longLivedWS.cleanup = undefined
-    }
-
-    shortLivedWS.setup = () => {
-      shortLivedWS.timer = setIntervalImmediately(connectShortLived, 3_000)
-    }
-    shortLivedWS.cleanup = () => {
-      clearInterval(shortLivedWS.timer)
-      disconnectShortLived()
-      shortLivedWS.cleanup = undefined
-    }
-
-    onLogsEvents.onFirst = shortLivedWS.setup
-    onLogsEvents.onEmpty = shortLivedWS.cleanup
-  }
-
-  const destroyCoreWebsockets = () => {
-    longLivedWS.cleanup?.()
-    shortLivedWS.cleanup?.()
-    websocketInstance = null
-  }
+      return { base, bearer }
+    },
+  })
 
   /* Bridge API */
   const corePid = ref(-1)
@@ -384,8 +279,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     coreStateLoading.value = false
 
     if (running.value) {
-      initCoreWebsockets()
-      longLivedWS.setup?.()
+      coreWebsockets.init()
+      coreWebsockets.connectLongLived()
       await Promise.all([refreshConfig(), refreshProviderProxies()])
     } else if (appSettingsStore.app.autoStartKernel) {
       await envStore.restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
@@ -441,8 +336,8 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     }
     await pluginsStore.onCoreStartedTrigger()
 
-    initCoreWebsockets()
-    longLivedWS.setup?.()
+    coreWebsockets.init()
+    coreWebsockets.connectLongLived()
   }
 
   const onCoreStopped = async () => {
@@ -458,7 +353,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
 
     coreStoppedResolver(null)
 
-    destroyCoreWebsockets()
+    coreWebsockets.destroy()
   }
 
   const ensureCoreExecutable = async (isAlpha: boolean, corePath: string) => {
@@ -987,26 +882,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * This provides immediate UI feedback without waiting for kernel restart
    */
   const removeProxyFromGroups = (subscriptionId: string) => {
-    // Use deep clone to ensure Vue can track nested object changes
-    const updated = deepClone(proxies.value)
-
-    // Remove from all selector and urltest groups
-    Object.keys(updated).forEach((groupName) => {
-      const group = updated[groupName]
-      if (group.all && Array.isArray(group.all)) {
-        group.all = group.all.filter((proxyName) => proxyName !== subscriptionId)
-
-        // If the current selection was the removed proxy, switch to first available
-        if (group.now === subscriptionId && group.all.length > 0) {
-          group.now = group.all[0]
-        }
-      }
-    })
-
-    // Remove the proxy itself if it exists as a top-level entry
-    delete updated[subscriptionId]
-
-    proxies.value = updated
+    proxies.value = removeProxyFromKernelGroups(proxies.value, subscriptionId)
   }
 
   /**
@@ -1014,31 +890,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * This provides immediate UI feedback without waiting for kernel restart
    */
   const addProxyToGroups = (subscriptionId: string) => {
-    // Use deep clone to ensure Vue can track nested object changes
-    const updated = deepClone(proxies.value)
-
-    // Add a temporary proxy entry
-    updated[subscriptionId] = {
-      name: subscriptionId,
-      type: 'Subscription',
-      now: '',
-      all: [],
-      history: [],
-      alive: false,
-      udp: false,
-    }
-
-    // Add to selector and urltest groups
-    Object.keys(updated).forEach((groupName) => {
-      const group = updated[groupName]
-      if (group.type === 'Selector' || group.type === 'URLTest') {
-        if (group.all && Array.isArray(group.all) && !group.all.includes(subscriptionId)) {
-          group.all = [...group.all, subscriptionId]
-        }
-      }
-    })
-
-    proxies.value = updated
+    proxies.value = addProxyToKernelGroups(proxies.value, subscriptionId)
   }
 
   /**
@@ -1046,93 +898,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
    * Generates node tags based on CloudNode configuration (multi-protocol support)
    */
   const addCloudNodeToGroups = (node: any) => {
-    // Use deep clone to ensure Vue can track nested object changes
-    const updated = deepClone(proxies.value)
-
-    // Generate all proxy node tags based on available protocols and IPs
-    const proxyTags: string[] = []
-
-    // Determine available IP versions (filter out private IPs for IPv4)
-    const isPublicIPv4 = (ip: string): boolean => {
-      if (!ip) return false
-      // Check for private/internal IP ranges
-      const parts = ip.split('.').map(Number)
-      if (parts[0] === 10) return false // 10.0.0.0/8
-      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false // 172.16.0.0/12
-      if (parts[0] === 192 && parts[1] === 168) return false // 192.168.0.0/16
-      if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return false // 100.64.0.0/10 CGNAT
-      return true
-    }
-
-    const hasIPv4 = node.ipv4 && isPublicIPv4(node.ipv4)
-    const hasIPv6 = !!node.ipv6
-    const ipVersions: string[] = []
-    if (hasIPv4) ipVersions.push('-v4')
-    if (hasIPv6) ipVersions.push('-v6')
-
-    if (ipVersions.length === 0) {
-      console.warn(`[KernelApi] Node ${node.label} has no usable public IP, skipping`)
-      return
-    }
-
-    // 1. Shadowsocks
-    if (node.ssPort && node.ssPassword) {
-      ipVersions.forEach(suffix => {
-        proxyTags.push(`${node.label}-ss${suffix}`)
-      })
-    }
-
-    // 2. Hysteria2
-    if (node.hysteriaPort && node.hysteriaPassword) {
-      ipVersions.forEach(suffix => {
-        proxyTags.push(`${node.label}-hysteria2${suffix}`)
-      })
-    }
-
-    // 3. VLESS-Reality
-    if (node.vlessPort && node.vlessUUID && node.vlessPublicKey && node.vlessShortId) {
-      ipVersions.forEach(suffix => {
-        proxyTags.push(`${node.label}-vless${suffix}`)
-      })
-    }
-
-    // 4. Trojan
-    if (node.trojanPort && node.trojanPassword) {
-      ipVersions.forEach(suffix => {
-        proxyTags.push(`${node.label}-trojan${suffix}`)
-      })
-    }
-
-    console.log(`[KernelApi] Adding ${proxyTags.length} proxy nodes for ${node.label}:`, proxyTags)
-
-    // Add temporary proxy entries for all generated nodes
-    proxyTags.forEach(tag => {
-      updated[tag] = {
-        name: tag,
-        type: 'Proxy',
-        now: '',
-        all: [],
-        history: [],
-        alive: false,
-        udp: false,
-      }
-    })
-
-    // Add all proxy tags to selector and urltest groups
-    Object.keys(updated).forEach((groupName) => {
-      const group = updated[groupName]
-      if (group.type === 'Selector' || group.type === 'URLTest') {
-        if (group.all && Array.isArray(group.all)) {
-          // Add all new proxy tags that don't already exist
-          const newTags = proxyTags.filter(tag => !group.all.includes(tag))
-          if (newTags.length > 0) {
-            group.all = [...group.all, ...newTags]
-          }
-        }
-      }
-    })
-
-    proxies.value = updated
+    proxies.value = addCloudNodeToKernelGroups(proxies.value, node)
   }
 
   return {
@@ -1156,10 +922,10 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     addCloudNodeToGroups,
     getProxyPort,
 
-    onLogs: createCoreWSHandlerRegister(websocketHandlers.logs, onLogsEvents),
-    onMemory: createCoreWSHandlerRegister(websocketHandlers.memory),
-    onTraffic: createCoreWSHandlerRegister(websocketHandlers.traffic),
-    onConnections: createCoreWSHandlerRegister(websocketHandlers.connections),
+    onLogs: coreWebsockets.onLogs,
+    onMemory: coreWebsockets.onMemory,
+    onTraffic: coreWebsockets.onTraffic,
+    onConnections: coreWebsockets.onConnections,
 
     // Deprecated
     startKernel: (...args: any[]) => {
