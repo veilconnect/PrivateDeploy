@@ -17,12 +17,25 @@ import ConnectivityChart from '@/components/ConnectivityChart.vue'
 import LatencyChart from '@/components/LatencyChart.vue'
 import { useModal } from '@/components/Modal'
 
+import {
+  buildNodeProtocolLinks,
+  getDeploymentSteps as getNodeDeploymentSteps,
+  getDeploymentSummary as getNodeDeploymentSummary,
+  hasHysteria,
+  hasShadowsocks,
+  hasTrojan,
+  hasVless,
+  isPublicIPv4,
+  shouldShowDeploymentProgress,
+} from './cloudNodeDisplay'
 import ImportNodesModal from './components/ImportNodesModal.vue'
 import ManualNodeModal from './components/ManualNodeModal.vue'
 import MultiDeployModal from './components/MultiDeployModal.vue'
 import SSHConfigForm from './components/SSHConfigForm.vue'
+import { parseImportedNodes } from './manualNodeParser'
 
 import type { ManualNodeSkipEntry, ManagedCloudNode } from '@/stores/cloud'
+import type { ManualNodeInput } from '@/stores/cloud/types'
 import type { CloudNode, CloudPlan, CloudRegion, RegionLatency } from '@/types/cloud'
 
 const { t } = useI18n()
@@ -32,8 +45,6 @@ const [Modal, modalApi] = useModal({
   minWidth: '52',
   maskClosable: true,
 })
-
-type ManualNodeInput = Parameters<typeof cloudStore.addManualNode>[0]
 
 const form = reactive({
   label: defaultLabel(cloudStore.currentProvider),
@@ -445,286 +456,6 @@ const populateManualFormFromNode = (node: Record<string, any>) => {
   manualForm.vlessShortId = node.vlessShortId || ''
   manualForm.trojanPort = node.trojanPort ? String(node.trojanPort) : ''
   manualForm.trojanPassword = node.trojanPassword || ''
-}
-
-const decodeBase64 = (value: string): string => {
-  try {
-    const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
-    if (typeof atob === 'function') {
-      return atob(padded)
-    }
-    // @ts-expect-error - Buffer is available in Node contexts (build time) and polyfilled in browsers
-    return Buffer.from(padded, 'base64').toString('utf-8')
-  } catch {
-    return ''
-  }
-}
-
-const parseBooleanLike = (value: unknown): boolean | undefined => {
-  if (typeof value === 'boolean') {
-    return value
-  }
-  if (typeof value === 'number') {
-    if (value === 1) return true
-    if (value === 0) return false
-    return undefined
-  }
-  if (typeof value !== 'string') {
-    return undefined
-  }
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) return undefined
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
-  return undefined
-}
-
-const normalizeHost = (host: string) => host.replace(/^\[/, '').replace(/\]$/, '')
-
-const assignIpFields = (host: string): Pick<ManualNodeInput, 'ipv4' | 'ipv6'> => {
-  const normalized = normalizeHost(host)
-  if (!normalized) {
-    return {}
-  }
-  if (normalized.includes(':')) {
-    return { ipv6: normalized }
-  }
-  return { ipv4: normalized }
-}
-
-const parseShadowSocksUrl = (text: string): ManualNodeInput | null => {
-  let payload = text.slice('ss://'.length)
-  let label = ''
-  const hashIndex = payload.indexOf('#')
-  if (hashIndex >= 0) {
-    label = decodeURIComponent(payload.slice(hashIndex + 1))
-    payload = payload.slice(0, hashIndex)
-  }
-  const queryIndex = payload.indexOf('?')
-  if (queryIndex >= 0) {
-    payload = payload.slice(0, queryIndex)
-  }
-  const decoded = decodeBase64(payload)
-  if (!decoded || !decoded.includes('@')) {
-    return null
-  }
-  const [methodPart, hostPart] = decoded.split('@')
-  if (!hostPart) {
-    return null
-  }
-  const [method, password] = methodPart.split(':')
-  const [host, portStr] = hostPart.split(':')
-  const port = toOptionalNumber(portStr || '')
-  if (!method || !password || !host || !port) {
-    return null
-  }
-  const ipFields = assignIpFields(host)
-  const resolvedLabel = label || host
-  return {
-    label: resolvedLabel,
-    ...ipFields,
-    ssPort: port,
-    ssPassword: password,
-  }
-}
-
-const parseTrojanUrl = (text: string): ManualNodeInput | null => {
-  try {
-    const url = new URL(text)
-    const host = url.hostname
-    const port = toOptionalNumber(url.port || '')
-    if (!host || !port) {
-      return null
-    }
-    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
-    const password = url.username
-    const serverName = url.searchParams.get('sni') || url.searchParams.get('peer') || undefined
-    const insecure = parseBooleanLike(url.searchParams.get('allowInsecure') ?? url.searchParams.get('insecure'))
-    if (!password) {
-      return null
-    }
-    const ipFields = assignIpFields(host)
-    return {
-      label,
-      ...ipFields,
-      trojanPort: port,
-      trojanPassword: decodeURIComponent(password),
-      trojanServerName: serverName || undefined,
-      trojanInsecure: insecure,
-    }
-  } catch {
-    return null
-  }
-}
-
-const parseVlessUrl = (text: string): ManualNodeInput | null => {
-  try {
-    const url = new URL(text)
-    const host = url.hostname
-    const port = toOptionalNumber(url.port || '')
-    const uuid = url.username
-    if (!host || !port || !uuid) {
-      return null
-    }
-    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
-    const publicKey = url.searchParams.get('reality-public-key') || url.searchParams.get('pbk') || undefined
-    const shortId = url.searchParams.get('reality-short-id') || url.searchParams.get('sid') || undefined
-    const serverName = url.searchParams.get('sni') || undefined
-    const ipFields = assignIpFields(host)
-    return {
-      label,
-      ...ipFields,
-      vlessPort: port,
-      vlessUUID: decodeURIComponent(uuid),
-      vlessPublicKey: publicKey || undefined,
-      vlessShortId: shortId || undefined,
-      vlessServerName: serverName || undefined,
-    }
-  } catch {
-    return null
-  }
-}
-
-const parseHysteriaUrl = (text: string): ManualNodeInput | null => {
-  try {
-    const url = new URL(text)
-    const host = url.hostname
-    const port = toOptionalNumber(url.port || '')
-    if (!host || !port) {
-      return null
-    }
-    const label = url.hash ? decodeURIComponent(url.hash.slice(1)) : host
-    const password = url.username || url.searchParams.get('auth') || url.searchParams.get('password') || ''
-    const serverName = url.searchParams.get('sni') || undefined
-    const insecure = parseBooleanLike(url.searchParams.get('insecure') ?? url.searchParams.get('allowInsecure'))
-    if (!password) {
-      return null
-    }
-    const ipFields = assignIpFields(host)
-    return {
-      label,
-      ...ipFields,
-      hysteriaPort: port,
-      hysteriaPassword: decodeURIComponent(password),
-      hysteriaServerName: serverName || undefined,
-      hysteriaInsecure: insecure,
-    }
-  } catch {
-    return null
-  }
-}
-
-const parseProtocolUrl = (text: string): ManualNodeInput | null => {
-  const lower = text.toLowerCase()
-  if (lower.startsWith('ss://')) {
-    return parseShadowSocksUrl(text)
-  }
-  if (lower.startsWith('trojan://')) {
-    return parseTrojanUrl(text)
-  }
-  if (lower.startsWith('vless://')) {
-    return parseVlessUrl(text)
-  }
-  if (lower.startsWith('hysteria2://') || lower.startsWith('hy2://')) {
-    return parseHysteriaUrl(text)
-  }
-  return null
-}
-
-const parseProtocolList = (raw: string): ManualNodeInput[] => {
-  const matches = raw.match(/((ss|trojan|vless|hysteria2|hy2):\/\/[\S]+)/gi)
-  if (!matches) {
-    return []
-  }
-  const inputs: ManualNodeInput[] = []
-  for (const entry of matches) {
-    const parsed = parseProtocolUrl(entry.trim())
-    if (parsed) {
-      inputs.push(parsed)
-    }
-  }
-  return inputs
-}
-
-const parseImportedNodes = (raw: string): ManualNodeInput[] => {
-  try {
-    const data = JSON.parse(raw)
-    const entries = Array.isArray(data) ? data : [data]
-    const inputs: ManualNodeInput[] = []
-    for (const item of entries) {
-      if (!item || typeof item !== 'object') continue
-      const record = item as Record<string, any>
-      const label = String(record.label ?? record.name ?? '').trim()
-      if (!label) continue
-      const ipv4 = typeof record.ipv4 === 'string' ? record.ipv4.trim() : ''
-      const ipv6 = typeof record.ipv6 === 'string' ? record.ipv6.trim() : ''
-      const input: ManualNodeInput = {
-        label,
-        ipv4: ipv4 || undefined,
-        ipv6: ipv6 || undefined,
-        region: typeof record.region === 'string' ? record.region : undefined,
-        plan: typeof record.plan === 'string' ? record.plan : undefined,
-        ssPort: toOptionalNumber(String(record.ssPort ?? record.port ?? '')) ?? undefined,
-        ssPassword: typeof record.ssPassword === 'string' && record.ssPassword.trim()
-          ? record.ssPassword.trim()
-          : typeof record.password === 'string' && record.password.trim()
-            ? record.password.trim()
-            : undefined,
-        hysteriaPort: toOptionalNumber(String(record.hysteriaPort ?? '')) ?? undefined,
-        hysteriaPassword:
-          typeof record.hysteriaPassword === 'string' && record.hysteriaPassword.trim()
-            ? record.hysteriaPassword.trim()
-            : undefined,
-        hysteriaServerName:
-          typeof record.hysteriaServerName === 'string' && record.hysteriaServerName.trim()
-            ? record.hysteriaServerName.trim()
-            : typeof record.hysteriaSni === 'string' && record.hysteriaSni.trim()
-              ? record.hysteriaSni.trim()
-              : undefined,
-        hysteriaInsecure: parseBooleanLike(record.hysteriaInsecure),
-        vlessPort: toOptionalNumber(String(record.vlessPort ?? '')) ?? undefined,
-        vlessUUID: typeof record.vlessUUID === 'string' && record.vlessUUID.trim() ? record.vlessUUID.trim() : undefined,
-        vlessPublicKey:
-          typeof record.vlessPublicKey === 'string' && record.vlessPublicKey.trim()
-            ? record.vlessPublicKey.trim()
-            : undefined,
-        vlessShortId:
-          typeof record.vlessShortId === 'string' && record.vlessShortId.trim()
-            ? record.vlessShortId.trim()
-            : undefined,
-        vlessServerName:
-          typeof record.vlessServerName === 'string' && record.vlessServerName.trim()
-            ? record.vlessServerName.trim()
-            : typeof record.vlessSni === 'string' && record.vlessSni.trim()
-              ? record.vlessSni.trim()
-              : undefined,
-        trojanPort: toOptionalNumber(String(record.trojanPort ?? '')) ?? undefined,
-        trojanPassword:
-          typeof record.trojanPassword === 'string' && record.trojanPassword.trim()
-            ? record.trojanPassword.trim()
-            : undefined,
-        trojanServerName:
-          typeof record.trojanServerName === 'string' && record.trojanServerName.trim()
-            ? record.trojanServerName.trim()
-            : typeof record.trojanSni === 'string' && record.trojanSni.trim()
-              ? record.trojanSni.trim()
-              : undefined,
-        trojanInsecure: parseBooleanLike(record.trojanInsecure),
-      }
-      inputs.push(input)
-    }
-    if (inputs.length) {
-      return inputs
-    }
-  } catch {
-    // Fallback to protocol parsing
-  }
-  const protocolInputs = parseProtocolList(raw)
-  if (protocolInputs.length) {
-    return protocolInputs
-  }
-  throw new Error('invalid')
 }
 
 const handleImportSubmit = async () => {
@@ -1685,25 +1416,6 @@ const handleUseNode = async (node: CloudNode | Record<string, any>) => {
   }
 }
 
-const isPublicIPv4 = (ip?: string): boolean => {
-  if (!ip) return false
-  const octets = ip.split('.')
-  if (octets.length !== 4) return false
-
-  const first = parseInt(octets[0], 10)
-  const second = parseInt(octets[1], 10)
-
-  // CGNAT range: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
-  if (first === 100 && second >= 64 && second <= 127) return false
-
-  // Private ranges
-  if (first === 10) return false // 10.0.0.0/8
-  if (first === 192 && second === 168) return false // 192.168.0.0/16
-  if (first === 172 && second >= 16 && second <= 31) return false // 172.16.0.0/12
-
-  return true
-}
-
 const copyValue = async (value: string) => {
   if (!value) return
   try {
@@ -1714,181 +1426,12 @@ const copyValue = async (value: string) => {
   }
 }
 
-type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
-const DefaultHysteriaServerName = 'www.bing.com'
-const DefaultVlessServerName = 'www.microsoft.com'
-const DefaultTrojanServerName = 'www.microsoft.com'
+const getDeploymentSteps = (node: CloudNode | Record<string, any>) => getNodeDeploymentSteps(node, t)
 
-const ensureNode = (node: CloudNode | Record<string, any>): DisplayCloudNode => node as DisplayCloudNode
-
-const resolveServerName = (value: string | undefined, fallback: string) => {
-  const trimmed = value?.trim()
-  return trimmed || fallback
-}
-
-const resolveTLSInsecure = (node: DisplayCloudNode, protocol: 'hysteria' | 'trojan') => {
-  const flag = protocol === 'hysteria' ? node.hysteriaInsecure : node.trojanInsecure
-  if (typeof flag === 'boolean') {
-    return flag
-  }
-  return false
-}
-
-const getPreferredAddress = (node: CloudNode | Record<string, any>): string | undefined => {
-  const target = ensureNode(node)
-  if (target.ipv4 && isPublicIPv4(target.ipv4)) return target.ipv4
-  if (target.ipv6) return target.ipv6
-  return undefined
-}
-
-const wrapHostForUri = (host: string): string => {
-  if (!host.includes(':')) return host
-  return host.startsWith('[') ? host : `[${host}]`
-}
-
-const buildShadowsocksLink = (node: CloudNode | Record<string, any>): string | null => {
-  const target = ensureNode(node)
-  const port = target.ssPort || target.port
-  const password = target.ssPassword || target.password
-  const host = getPreferredAddress(target)
-  if (!port || !password || !host) return null
-  const encoded = btoa(`aes-256-gcm:${password}@${wrapHostForUri(host)}:${port}`)
-  return `ss://${encoded}#${encodeURIComponent(target.label)}`
-}
-
-const buildHysteriaLink = (node: CloudNode | Record<string, any>): string | null => {
-  const target = ensureNode(node)
-  if (!target.hysteriaPort || !target.hysteriaPassword) return null
-  const host = getPreferredAddress(target)
-  if (!host) return null
-  const query = new URLSearchParams({
-    sni: resolveServerName(target.hysteriaServerName, DefaultHysteriaServerName),
-  })
-  if (resolveTLSInsecure(target, 'hysteria')) {
-    query.set('insecure', '1')
-  }
-  return `hysteria2://${encodeURIComponent(target.hysteriaPassword)}@${wrapHostForUri(host)}:${target.hysteriaPort}?${query.toString()}#${encodeURIComponent(target.label)}`
-}
-
-const buildVlessLink = (node: CloudNode | Record<string, any>): string | null => {
-  const target = ensureNode(node)
-  if (!target.vlessPort || !target.vlessUUID || !target.vlessPublicKey || !target.vlessShortId) return null
-  const host = getPreferredAddress(target)
-  if (!host) return null
-  const query = new URLSearchParams({
-    encryption: 'none',
-    flow: 'xtls-rprx-vision',
-    security: 'reality',
-    'reality-public-key': target.vlessPublicKey,
-    'reality-short-id': target.vlessShortId,
-    sni: resolveServerName(target.vlessServerName, DefaultVlessServerName),
-    fp: 'chrome',
-  })
-  return `vless://${target.vlessUUID}@${wrapHostForUri(host)}:${target.vlessPort}?${query.toString()}#${encodeURIComponent(target.label)}`
-}
-
-const buildTrojanLink = (node: CloudNode | Record<string, any>): string | null => {
-  const target = ensureNode(node)
-  if (!target.trojanPort || !target.trojanPassword) return null
-  const host = getPreferredAddress(target)
-  if (!host) return null
-  const query = new URLSearchParams({
-    security: 'tls',
-    sni: resolveServerName(target.trojanServerName, DefaultTrojanServerName),
-  })
-  if (resolveTLSInsecure(target, 'trojan')) {
-    query.set('allowInsecure', '1')
-    query.set('insecure', '1')
-  }
-  return `trojan://${encodeURIComponent(target.trojanPassword)}@${wrapHostForUri(host)}:${target.trojanPort}?${query.toString()}#${encodeURIComponent(target.label)}`
-}
-
-const hasShadowsocks = (node: CloudNode | Record<string, any>): boolean => {
-  const target = ensureNode(node)
-  return Boolean((target.ssPort || target.port) && (target.ssPassword || target.password))
-}
-const hasHysteria = (node: CloudNode | Record<string, any>): boolean => {
-  const target = ensureNode(node)
-  return Boolean(target.hysteriaPort && target.hysteriaPassword)
-}
-const hasVless = (node: CloudNode | Record<string, any>): boolean => {
-  const target = ensureNode(node)
-  return Boolean(target.vlessPort && target.vlessUUID && target.vlessPublicKey && target.vlessShortId)
-}
-const hasTrojan = (node: CloudNode | Record<string, any>): boolean => {
-  const target = ensureNode(node)
-  return Boolean(target.trojanPort && target.trojanPassword)
-}
-
-type DeploymentStepState = 'done' | 'current' | 'pending'
-type DeploymentStep = { label: string; state: DeploymentStepState }
-
-const shouldShowDeploymentProgress = (node: CloudNode | Record<string, any>): boolean => {
-  const target = ensureNode(node)
-  return target.statusText !== 'connected' && target.statusText !== 'error'
-}
-
-const computeDeploymentSteps = (node: CloudNode | Record<string, any>): DeploymentStep[] => {
-  const target = ensureNode(node)
-  const normalizedStatus = (target.status || '').toString().toLowerCase()
-  const instanceReady = ['active', 'running', 'ok', 'started', 'poweron', 'power on', 'power_on'].some((key) =>
-    normalizedStatus.includes(key),
-  )
-  const ipReady = Boolean(isPublicIPv4(target.ipv4) || target.ipv6)
-  const protocolsReady = hasShadowsocks(target) || hasHysteria(target) || hasVless(target) || hasTrojan(target)
-  const applied = target.statusText === 'connected'
-
-  const rawSteps = [
-    { label: t('cloud.progress.submitted'), done: true },
-    { label: t('cloud.progress.provisioning'), done: instanceReady },
-    { label: t('cloud.progress.waitingIp'), done: ipReady },
-    { label: t('cloud.progress.configuring'), done: protocolsReady },
-    { label: t('cloud.progress.ready'), done: applied },
-  ]
-
-  const firstIncomplete = rawSteps.findIndex((step) => !step.done)
-
-  return rawSteps.map((step, index) => {
-    const state: DeploymentStepState =
-      step.done || firstIncomplete === -1
-        ? 'done'
-        : index === firstIncomplete
-          ? 'current'
-          : 'pending'
-    return {
-      label: step.label,
-      state,
-    }
-  })
-}
-
-const getDeploymentSteps = (node: CloudNode | Record<string, any>): DeploymentStep[] => computeDeploymentSteps(node)
-
-const getDeploymentSummary = (node: CloudNode | Record<string, any>): string => {
-  const steps = computeDeploymentSteps(node)
-  const total = steps.length
-  const currentIndex = steps.findIndex((step) => step.state === 'current')
-  const effectiveIndex = currentIndex === -1 ? total - 1 : currentIndex
-  const label: string =
-    steps[effectiveIndex]?.label ??
-    steps[Math.min(steps.length - 1, Math.max(0, effectiveIndex))]?.label ??
-    ''
-  const stepNumber = currentIndex === -1 ? total : currentIndex + 1
-  return t('cloud.progress.summary', {
-    current: stepNumber,
-    total,
-    label,
-  })
-}
+const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeDeploymentSummary(node, t)
 
 const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
-  const node = ensureNode(record)
-  const links = [
-    { label: 'Shadowsocks', url: buildShadowsocksLink(node) },
-    { label: 'Hysteria2', url: buildHysteriaLink(node) },
-    { label: 'VLESS-Reality', url: buildVlessLink(node) },
-    { label: 'Trojan', url: buildTrojanLink(node) },
-  ].filter((item) => item.url) as Array<{ label: string; url: string }>
+  const links = buildNodeProtocolLinks(record)
 
   if (!links.length) {
     message.error(t('cloud.errors.noProtocols'))
