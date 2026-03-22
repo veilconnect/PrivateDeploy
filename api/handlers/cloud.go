@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"privatedeploy/api/models"
 	"privatedeploy/bridge/cloud"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -133,7 +134,16 @@ func (h *CloudHandler) GetConfig(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+	hasAPIKey := strings.TrimSpace(cfg.APIKey) != ""
+	response := gin.H{
+		"provider":      cfg.Provider,
+		"defaultRegion": cfg.DefaultRegion,
+		"defaultPlan":   cfg.DefaultPlan,
+		"extra":         cfg.Extra,
+		"hasApiKey":     hasAPIKey,
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(response))
 }
 
 // SaveConfig saves the configuration for the active provider

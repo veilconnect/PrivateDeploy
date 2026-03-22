@@ -4,6 +4,7 @@ import (
 	"privatedeploy/api/config"
 	"privatedeploy/api/handlers"
 	"privatedeploy/api/middleware"
+	"privatedeploy/bridge"
 	"privatedeploy/bridge/cloud"
 	"time"
 
@@ -18,8 +19,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 
 	// Handlers
 	authHandler := handlers.NewAuthHandler(db, cfg)
-	// Version must match bridge.Env.AppVersion (single source of truth: bridge/bridge.go)
-	systemHandler := handlers.NewSystemHandler("v1.10.1", "/opt/privatedeploy")
+	systemHandler := handlers.NewSystemHandler(bridge.Env.AppVersion, "/opt/privatedeploy")
 	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
 	profileHandler := handlers.NewProfileHandler(db)

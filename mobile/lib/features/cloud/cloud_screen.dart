@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import '../auth/auth_provider.dart';
+import '../auth/login_screen.dart';
 import 'cloud_provider.dart';
-import 'vultr_api.dart';
+import 'cloud_models.dart';
 import '../profiles/profile_provider.dart';
 
 class CloudScreen extends StatefulWidget {
@@ -13,19 +16,44 @@ class CloudScreen extends StatefulWidget {
 }
 
 class _CloudScreenState extends State<CloudScreen> {
+  bool _bootstrapTriggered = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<CloudProvider>();
+      _bootstrapCloudState();
+    });
+  }
+
+  void _bootstrapCloudState() {
+    if (!mounted) {
+      return;
+    }
+
+    final auth = context.read<AuthProvider>();
+    final provider = context.read<CloudProvider>();
+    if (!auth.isAuthenticated || _bootstrapTriggered) {
+      return;
+    }
+
+    _bootstrapTriggered = true;
+    Future<void>(() async {
+      await provider.refreshCloudConfig();
       if (provider.hasApiKey) {
-        provider.loadInstances();
+        await provider.loadInstances();
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    if (!auth.isAuthenticated) {
+      _bootstrapTriggered = false;
+      return _buildLoginRequired(context);
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cloud Nodes'),
@@ -48,6 +76,12 @@ class _CloudScreenState extends State<CloudScreen> {
       ),
       body: Consumer<CloudProvider>(
         builder: (context, provider, _) {
+          if (!_bootstrapTriggered) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _bootstrapCloudState();
+            });
+          }
+
           if (!provider.hasApiKey) {
             return _buildNoApiKey(context);
           }
@@ -88,9 +122,12 @@ class _CloudScreenState extends State<CloudScreen> {
                 children: [
                   Icon(Icons.cloud_off, size: 64.w, color: Colors.grey),
                   SizedBox(height: 16.h),
-                  Text('No cloud nodes', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
+                  Text('No cloud nodes',
+                      style: TextStyle(
+                          fontSize: 20.sp, fontWeight: FontWeight.bold)),
                   SizedBox(height: 8.h),
-                  Text('Deploy your first proxy node', style: TextStyle(fontSize: 16.sp, color: Colors.grey)),
+                  Text('Deploy your first proxy node',
+                      style: TextStyle(fontSize: 16.sp, color: Colors.grey)),
                 ],
               ),
             );
@@ -130,10 +167,11 @@ class _CloudScreenState extends State<CloudScreen> {
           children: [
             Icon(Icons.vpn_key, size: 64.w, color: Colors.grey),
             SizedBox(height: 16.h),
-            Text('Vultr API Key Required', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
+            Text('Cloud API Key Required',
+                style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
             SizedBox(height: 8.h),
             Text(
-              'Enter your Vultr API key to deploy and manage cloud proxy nodes.',
+              'Save your cloud provider API key on the PrivateDeploy server before deploying nodes.',
               style: TextStyle(fontSize: 14.sp, color: Colors.grey),
               textAlign: TextAlign.center,
             ),
@@ -149,7 +187,45 @@ class _CloudScreenState extends State<CloudScreen> {
     );
   }
 
-  Widget _buildInstanceCard(BuildContext context, VultrInstance instance, CloudProvider provider) {
+  Widget _buildLoginRequired(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Cloud Nodes')),
+      body: Center(
+        child: Padding(
+          padding: EdgeInsets.all(32.w),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.lock_outline, size: 64.w, color: Colors.grey),
+              SizedBox(height: 16.h),
+              Text('API Login Required',
+                  style:
+                      TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
+              SizedBox(height: 8.h),
+              Text(
+                'Sign in to your PrivateDeploy API server before managing cloud nodes.',
+                style: TextStyle(fontSize: 14.sp, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 24.h),
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  );
+                },
+                icon: const Icon(Icons.login),
+                label: const Text('Sign In'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstanceCard(
+      BuildContext context, CloudInstance instance, CloudProvider provider) {
     final isActive = instance.isActive;
     final hasIp = instance.hasIp;
     final hasNodeInfo = instance.nodeInfo != null;
@@ -166,14 +242,18 @@ class _CloudScreenState extends State<CloudScreen> {
                 color: Colors.white,
               ),
             ),
-            title: Text(instance.label, style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
+            title: Text(instance.label,
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(height: 4.h),
                 Text('Status: ${instance.status} | Region: ${instance.region}'),
-                if (hasIp) Text('IP: ${instance.mainIp}'),
-                if (hasNodeInfo) Text('Protocols: SS / Hy2 / VLESS / Trojan', style: TextStyle(color: Colors.green[700], fontSize: 12.sp)),
+                if (hasIp) Text('IP: ${instance.ipv4}'),
+                if (hasNodeInfo)
+                  Text('Protocols: SS / Hy2 / VLESS / Trojan',
+                      style:
+                          TextStyle(color: Colors.green[700], fontSize: 12.sp)),
               ],
             ),
           ),
@@ -184,7 +264,8 @@ class _CloudScreenState extends State<CloudScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _importAsProfile(context, instance, provider),
+                      onPressed: () =>
+                          _importAsProfile(context, instance, provider),
                       icon: const Icon(Icons.download, size: 18),
                       label: const Text('Import as Profile'),
                     ),
@@ -215,11 +296,14 @@ class _CloudScreenState extends State<CloudScreen> {
     );
   }
 
-  void _importAsProfile(BuildContext context, VultrInstance instance, CloudProvider cloudProvider) async {
+  void _importAsProfile(BuildContext context, CloudInstance instance,
+      CloudProvider cloudProvider) async {
     final config = cloudProvider.generateNodeConfig(instance);
     if (config == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Node not ready yet'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Node not ready yet'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -233,7 +317,9 @@ class _CloudScreenState extends State<CloudScreen> {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success ? 'Profile created and activated' : 'Failed to create profile'),
+          content: Text(success
+              ? 'Profile created and activated'
+              : 'Failed to create profile'),
           backgroundColor: success ? Colors.green : Colors.red,
         ),
       );
@@ -242,18 +328,18 @@ class _CloudScreenState extends State<CloudScreen> {
 
   void _showApiKeyDialog(BuildContext context) {
     final controller = TextEditingController(
-      text: context.read<CloudProvider>().apiKey ?? '',
+      text: '',
     );
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Vultr API Key'),
+        title: const Text('Cloud API Key'),
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
             labelText: 'API Key',
-            hintText: 'Enter your Vultr API key',
+            hintText: 'Enter your cloud provider API key',
             border: OutlineInputBorder(),
           ),
           maxLines: 1,
@@ -270,13 +356,18 @@ class _CloudScreenState extends State<CloudScreen> {
               final success = await provider.setApiKey(controller.text.trim());
               if (context.mounted) {
                 if (success) {
+                  _bootstrapTriggered = false;
                   provider.loadInstances();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('API key saved'), backgroundColor: Colors.green),
+                    const SnackBar(
+                        content: Text('API key saved on server'),
+                        backgroundColor: Colors.green),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(provider.error ?? 'Invalid key'), backgroundColor: Colors.red),
+                    SnackBar(
+                        content: Text(provider.error ?? 'Invalid key'),
+                        backgroundColor: Colors.red),
                   );
                 }
               }
@@ -321,9 +412,11 @@ class _CloudScreenState extends State<CloudScreen> {
                     decoration: const InputDecoration(labelText: 'Region'),
                     isExpanded: true,
                     items: provider.regions
-                        .map((r) => DropdownMenuItem(value: r.id, child: Text(r.displayName)))
+                        .map((r) => DropdownMenuItem(
+                            value: r.id, child: Text(r.displayName)))
                         .toList(),
-                    onChanged: (value) => setState(() => selectedRegion = value),
+                    onChanged: (value) =>
+                        setState(() => selectedRegion = value),
                   ),
                   SizedBox(height: 16.h),
                   DropdownButtonFormField<String>(
@@ -331,8 +424,11 @@ class _CloudScreenState extends State<CloudScreen> {
                     decoration: const InputDecoration(labelText: 'Plan'),
                     isExpanded: true,
                     items: provider.plans
-                        .where((p) => selectedRegion == null || p.locations.contains(selectedRegion))
-                        .map((p) => DropdownMenuItem(value: p.id, child: Text(p.displayName)))
+                        .where((p) =>
+                            selectedRegion == null ||
+                            p.locations.contains(selectedRegion))
+                        .map((p) => DropdownMenuItem(
+                            value: p.id, child: Text(p.displayName)))
                         .toList(),
                     onChanged: (value) => setState(() => selectedPlan = value),
                   ),
@@ -346,9 +442,13 @@ class _CloudScreenState extends State<CloudScreen> {
               ),
               ElevatedButton(
                 onPressed: () async {
-                  if (labelController.text.isEmpty || selectedRegion == null || selectedPlan == null) {
+                  if (labelController.text.isEmpty ||
+                      selectedRegion == null ||
+                      selectedPlan == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Please fill all fields'), backgroundColor: Colors.orange),
+                      const SnackBar(
+                          content: Text('Please fill all fields'),
+                          backgroundColor: Colors.orange),
                     );
                     return;
                   }
@@ -380,26 +480,31 @@ class _CloudScreenState extends State<CloudScreen> {
     );
   }
 
-  void _confirmDelete(BuildContext context, VultrInstance instance) {
+  void _confirmDelete(BuildContext context, CloudInstance instance) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Node'),
-        content: Text('Delete "${instance.label}"?\n\nThis will destroy the server permanently.'),
+        content: Text(
+            'Delete "${instance.label}"?\n\nThis will destroy the server permanently.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () async {
               Navigator.pop(context);
-              final success = await context.read<CloudProvider>().deleteInstance(instance.id);
+              final success = await context
+                  .read<CloudProvider>()
+                  .deleteInstance(instance.id);
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(success ? 'Node deleted' : 'Failed to delete'),
+                    content:
+                        Text(success ? 'Node deleted' : 'Failed to delete'),
                     backgroundColor: success ? Colors.green : Colors.red,
                   ),
                 );

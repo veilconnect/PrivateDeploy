@@ -51,11 +51,11 @@ Reality parameters (public key + short ID) are stored on the VPS under `/etc/pri
 ## Quality Gate (Local)
 
 ```bash
-go test ./...
-cd api && go test ./...
-cd ../frontend && pnpm run type-check && pnpm run lint:ci
-cd .. && python3 e2e/run_cloud_ui_e2e.py
+./scripts/quality_gate.sh
+python3 e2e/run_cloud_ui_e2e.py
 ```
+
+`quality_gate.sh` excludes the gitignored local `tmp/` scratch package so ad-hoc smoke tools do not break the repository test gate.
 
 The cloud UI regression script always uses an isolated localhost port (`127.0.0.1:4174`) and rejects `7890` to avoid interfering with system proxy settings.
 

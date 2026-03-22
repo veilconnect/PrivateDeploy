@@ -7,7 +7,10 @@ class ApiClient {
   final Dio _dio;
 
   ApiClient(this._dio, {String? baseUrl}) {
-    _dio.options.baseUrl = baseUrl ?? (_dio.options.baseUrl.isNotEmpty ? _dio.options.baseUrl : ApiConstants.baseUrl);
+    _dio.options.baseUrl = baseUrl ??
+        (_dio.options.baseUrl.isNotEmpty
+            ? _dio.options.baseUrl
+            : StorageService.getApiBaseUrl());
     _dio.options.connectTimeout ??= ApiConstants.connectTimeout;
     _dio.options.receiveTimeout ??= ApiConstants.receiveTimeout;
     _dio.options.headers['Content-Type'] = 'application/json';
@@ -98,7 +101,8 @@ class ApiClient {
     return e.message ?? 'Network error';
   }
 
-  Future<Map<String, dynamic>> _get(String path, {Map<String, dynamic>? query}) {
+  Future<Map<String, dynamic>> _get(String path,
+      {Map<String, dynamic>? query}) {
     return _request('GET', path, query: query);
   }
 
@@ -115,16 +119,24 @@ class ApiClient {
   }
 
   // Auth
-  Future<Map<String, dynamic>> login(Map<String, dynamic> body) => _post('/auth/login', data: body);
+  Future<Map<String, dynamic>> login(Map<String, dynamic> body) =>
+      _post('/auth/login', data: body);
   Future<Map<String, dynamic>> refreshToken() => _post('/auth/refresh');
 
   // Cloud
   Future<Map<String, dynamic>> getProviders() => _get('/cloud/providers');
+  Future<Map<String, dynamic>> getActiveProvider() =>
+      _get('/cloud/provider/active');
+  Future<Map<String, dynamic>> setActiveProvider(String provider) =>
+      _post('/cloud/provider/active', data: {'provider': provider});
   Future<Map<String, dynamic>> getCloudConfig() => _get('/cloud/config');
-  Future<Map<String, dynamic>> saveCloudConfig(Map<String, dynamic> config) => _post('/cloud/config', data: config);
+  Future<Map<String, dynamic>> saveCloudConfig(Map<String, dynamic> config) =>
+      _post('/cloud/config', data: config);
   Future<Map<String, dynamic>> getInstances() => _get('/cloud/instances');
-  Future<Map<String, dynamic>> createInstance(Map<String, dynamic> options) => _post('/cloud/instances', data: options);
-  Future<Map<String, dynamic>> deleteInstance(String id) => _delete('/cloud/instances/$id');
+  Future<Map<String, dynamic>> createInstance(Map<String, dynamic> options) =>
+      _post('/cloud/instances', data: options);
+  Future<Map<String, dynamic>> deleteInstance(String id) =>
+      _delete('/cloud/instances/$id');
   Future<Map<String, dynamic>> getRegions() => _get('/cloud/regions');
   Future<Map<String, dynamic>> getPlans({String? region}) =>
       _get('/cloud/plans', query: region == null ? null : {'region': region});
@@ -132,21 +144,30 @@ class ApiClient {
   // Profiles
   Future<Map<String, dynamic>> getProfiles() => _get('/profiles');
   Future<Map<String, dynamic>> getActiveProfile() => _get('/profiles/active');
-  Future<Map<String, dynamic>> createProfile(Map<String, dynamic> profile) => _post('/profiles', data: profile);
-  Future<Map<String, dynamic>> updateProfile(dynamic id, Map<String, dynamic> profile) =>
+  Future<Map<String, dynamic>> createProfile(Map<String, dynamic> profile) =>
+      _post('/profiles', data: profile);
+  Future<Map<String, dynamic>> updateProfile(
+          dynamic id, Map<String, dynamic> profile) =>
       _put('/profiles/$id', data: profile);
-  Future<Map<String, dynamic>> deleteProfile(dynamic id) => _delete('/profiles/$id');
-  Future<Map<String, dynamic>> setActiveProfile(dynamic id) => _put('/profiles/$id/active', data: {});
-  Future<Map<String, dynamic>> updateSubscription(dynamic id) => _put('/profiles/$id/subscription', data: {});
-  Future<Map<String, dynamic>> getProfileContent(dynamic id) => _get('/profiles/$id/content');
-  Future<Map<String, dynamic>> saveProfileContent(dynamic id, Map<String, dynamic> body) =>
+  Future<Map<String, dynamic>> deleteProfile(dynamic id) =>
+      _delete('/profiles/$id');
+  Future<Map<String, dynamic>> setActiveProfile(dynamic id) =>
+      _put('/profiles/$id/active', data: {});
+  Future<Map<String, dynamic>> updateSubscription(dynamic id) =>
+      _put('/profiles/$id/subscription', data: {});
+  Future<Map<String, dynamic>> getProfileContent(dynamic id) =>
+      _get('/profiles/$id/content');
+  Future<Map<String, dynamic>> saveProfileContent(
+          dynamic id, Map<String, dynamic> body) =>
       _put('/profiles/$id/content', data: body);
 
   // Subscriptions
   Future<Map<String, dynamic>> getSubscriptions() => _get('/subscriptions');
-  Future<Map<String, dynamic>> createSubscription(Map<String, dynamic> subscription) =>
+  Future<Map<String, dynamic>> createSubscription(
+          Map<String, dynamic> subscription) =>
       _post('/subscriptions', data: subscription);
-  Future<Map<String, dynamic>> refreshSubscription(dynamic id) => _put('/subscriptions/$id/refresh', data: {});
+  Future<Map<String, dynamic>> refreshSubscription(dynamic id) =>
+      _put('/subscriptions/$id/refresh', data: {});
 
   // System / VPN
   Future<Map<String, dynamic>> getSystemInfo() => _get('/system/info');
@@ -156,19 +177,21 @@ class ApiClient {
   Future<Map<String, dynamic>> stopVpn() => _post('/vpn/stop', data: {});
   Future<Map<String, dynamic>> restartVpn() => _post('/vpn/restart', data: {});
   Future<Map<String, dynamic>> getTrafficStats() => _get('/vpn/stats');
-  Future<Map<String, dynamic>> resetTrafficStats() => _post('/vpn/stats/reset', data: {});
+  Future<Map<String, dynamic>> resetTrafficStats() =>
+      _post('/vpn/stats/reset', data: {});
 }
 
 class DioClient {
   static Dio createDio({String? token}) {
     final dio = Dio(
       BaseOptions(
-        baseUrl: ApiConstants.baseUrl,
+        baseUrl: StorageService.getApiBaseUrl(),
         connectTimeout: ApiConstants.connectTimeout,
         receiveTimeout: ApiConstants.receiveTimeout,
         headers: {
           'Content-Type': 'application/json',
-          if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+          if (token != null && token.isNotEmpty)
+            'Authorization': 'Bearer $token',
         },
       ),
     );

@@ -1,119 +1,191 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+
+import '../../core/network/api_client.dart';
+import '../../core/storage/storage_service.dart';
 import '../../shared/utils/logger.dart';
-import 'vultr_api.dart';
+import 'cloud_models.dart';
 
 class CloudProvider with ChangeNotifier {
-  static const String _boxName = 'cloud';
-  static const String _apiKeyKey = 'vultr_api_key';
-  static const String _nodesKey = 'deployed_nodes';
+  static const _providerName = 'vultr';
 
-  VultrApi? _api;
-  List<VultrInstance> _instances = [];
-  List<VultrRegion> _regions = [];
-  List<VultrPlan> _plans = [];
-  List<DeployedNode> _deployedNodes = [];
+  List<CloudInstance> _instances = [];
+  List<CloudRegion> _regions = [];
+  List<CloudPlan> _plans = [];
   bool _isLoading = false;
+  bool _configLoaded = false;
+  bool _hasApiKey = false;
   String? _error;
-  String? _apiKey;
 
-  List<VultrInstance> get instances => _instances;
-  List<VultrRegion> get regions => _regions;
-  List<VultrPlan> get plans => _plans;
-  List<DeployedNode> get deployedNodes => _deployedNodes;
+  List<CloudInstance> get instances => _instances;
+  List<CloudRegion> get regions => _regions;
+  List<CloudPlan> get plans => _plans;
   bool get isLoading => _isLoading;
+  bool get configLoaded => _configLoaded;
   String? get error => _error;
-  bool get hasApiKey => _apiKey != null && _apiKey!.isNotEmpty;
-  String? get apiKey => _apiKey;
+  bool get hasApiKey => _hasApiKey;
+  bool get isAuthenticated => (StorageService.getToken() ?? '').isNotEmpty;
+  String? get apiKey => null;
 
   CloudProvider() {
     _init();
   }
 
   Future<void> _init() async {
-    if (!Hive.isBoxOpen(_boxName)) {
-      await Hive.openBox(_boxName);
+    if (!isAuthenticated) {
+      _configLoaded = true;
+      notifyListeners();
+      return;
     }
-    _apiKey = Hive.box(_boxName).get(_apiKeyKey) as String?;
-    if (_apiKey != null && _apiKey!.isNotEmpty) {
-      _api = VultrApi(_apiKey!);
-    }
-    _loadDeployedNodes();
+
+    await refreshCloudConfig(notify: false);
     notifyListeners();
   }
 
-  Box get _box => Hive.box(_boxName);
+  ApiClient _apiClient() => ApiClient(DioClient.createDio());
 
-  Future<bool> setApiKey(String key) async {
-    try {
-      final api = VultrApi(key);
-      final valid = await api.verifyApiKey();
-      if (!valid) {
-        _error = 'Invalid API key';
-        notifyListeners();
-        return false;
-      }
-      _apiKey = key;
-      _api = api;
-      await _box.put(_apiKeyKey, key);
+  Future<void> refreshCloudConfig({bool notify = true}) async {
+    if (!isAuthenticated) {
+      _hasApiKey = false;
+      _configLoaded = true;
       _error = null;
-      notifyListeners();
-      return true;
+      if (notify) {
+        notifyListeners();
+      }
+      return;
+    }
+
+    try {
+      final data = _unwrapData(await _apiClient().getCloudConfig());
+      _hasApiKey = data['hasApiKey'] == true;
+      _configLoaded = true;
+      _error = null;
     } catch (e) {
-      _error = 'Failed to verify API key: $e';
+      _hasApiKey = false;
+      _configLoaded = true;
+      _error = 'Failed to load cloud configuration: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Load cloud config error', e);
+    }
+
+    if (notify) {
       notifyListeners();
-      return false;
     }
   }
 
-  Future<void> loadInstances() async {
-    if (_api == null) return;
+  Future<bool> setApiKey(String key) async {
+    if (!isAuthenticated) {
+      _error = 'Please sign in to the PrivateDeploy API first';
+      notifyListeners();
+      return false;
+    }
+
+    if (key.trim().isEmpty) {
+      _error = 'API key cannot be empty';
+      notifyListeners();
+      return false;
+    }
+
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      _instances = await _api!.listInstances();
-      AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
+      _unwrapData(await _apiClient().setActiveProvider(_providerName));
+      _unwrapData(await _apiClient().saveCloudConfig({
+        'provider': _providerName,
+        'apiKey': key.trim(),
+      }));
 
-      // Attach local node info
-      for (final inst in _instances) {
-        final node = _deployedNodes.where((n) => n.instanceId == inst.id).firstOrNull;
-        if (node != null) {
-          inst.nodeInfo = node.nodeInfo;
-        }
-      }
+      await refreshCloudConfig(notify: false);
+      await loadRegions(notify: false);
+      await loadPlans(notify: false);
+      return true;
     } catch (e) {
-      _error = 'Failed to load instances: $e';
-      AppLogger.error('[CloudProvider] Load instances error', e);
+      _error = 'Failed to save API key: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Save API key error', e);
+      return false;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  Future<void> loadRegions() async {
-    if (_api == null) return;
-    try {
-      _regions = await _api!.listRegions();
+  Future<void> loadInstances({bool notify = true}) async {
+    if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
+      return;
+    }
+
+    _isLoading = true;
+    _error = null;
+    if (notify) {
       notifyListeners();
+    }
+
+    try {
+      final data = _unwrapData(await _apiClient().getInstances());
+      final rawInstances = (data['instances'] as List?) ?? const [];
+      _instances = rawInstances
+          .whereType<Map>()
+          .map(
+              (item) => CloudInstance.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
     } catch (e) {
-      _error = 'Failed to load regions: $e';
+      _error = 'Failed to load instances: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Load instances error', e);
+    } finally {
+      _isLoading = false;
+      if (notify) {
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> loadRegions({bool notify = true}) async {
+    if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
+      return;
+    }
+
+    try {
+      final data = _unwrapData(await _apiClient().getRegions());
+      final rawRegions = (data['regions'] as List?) ?? const [];
+      _regions = rawRegions
+          .whereType<Map>()
+          .map((item) => CloudRegion.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      _error = null;
+    } catch (e) {
+      _error = 'Failed to load regions: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Load regions error', e);
+    }
+
+    if (notify) {
       notifyListeners();
     }
   }
 
-  Future<void> loadPlans() async {
-    if (_api == null) return;
+  Future<void> loadPlans({bool notify = true}) async {
+    if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
+      return;
+    }
+
     try {
-      _plans = await _api!.listPlans();
-      // Filter to affordable plans
-      _plans = _plans.where((p) => p.monthlyCost <= 24 && p.monthlyCost > 0).toList();
-      _plans.sort((a, b) => a.monthlyCost.compareTo(b.monthlyCost));
-      notifyListeners();
+      final data = _unwrapData(await _apiClient().getPlans());
+      final rawPlans = (data['plans'] as List?) ?? const [];
+      _plans = rawPlans
+          .whereType<Map>()
+          .map((item) => CloudPlan.fromJson(Map<String, dynamic>.from(item)))
+          .where((plan) => plan.monthlyCost <= 24 && plan.monthlyCost > 0)
+          .toList()
+        ..sort((a, b) => a.monthlyCost.compareTo(b.monthlyCost));
+      _error = null;
     } catch (e) {
-      _error = 'Failed to load plans: $e';
+      _error = 'Failed to load plans: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Load plans error', e);
+    }
+
+    if (notify) {
       notifyListeners();
     }
   }
@@ -123,9 +195,7 @@ class CloudProvider with ChangeNotifier {
     required String plan,
     required String label,
   }) async {
-    if (_api == null) {
-      _error = 'API key not configured';
-      notifyListeners();
+    if (!await _ensureAuthorizedCloudAccess()) {
       return false;
     }
 
@@ -134,29 +204,15 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final instance = await _api!.createInstance(
-        region: region,
-        plan: plan,
-        label: label,
-      );
-
-      // Save node info locally
-      if (instance.nodeInfo != null) {
-        final node = DeployedNode(
-          instanceId: instance.id,
-          label: label,
-          region: region,
-          nodeInfo: instance.nodeInfo!,
-          createdAt: DateTime.now(),
-        );
-        _deployedNodes.add(node);
-        _saveDeployedNodes();
-      }
-
-      await loadInstances();
+      _unwrapData(await _apiClient().createInstance({
+        'label': label,
+        'region': region,
+        'plan': plan,
+      }));
+      await loadInstances(notify: false);
       return true;
     } catch (e) {
-      _error = 'Failed to create instance: $e';
+      _error = 'Failed to create instance: ${_messageFromError(e)}';
       AppLogger.error('[CloudProvider] Create instance error', e);
       return false;
     } finally {
@@ -166,96 +222,155 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<bool> deleteInstance(String id) async {
-    if (_api == null) return false;
+    if (!await _ensureAuthorizedCloudAccess()) {
+      return false;
+    }
+
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
 
     try {
-      await _api!.deleteInstance(id);
-      _deployedNodes.removeWhere((n) => n.instanceId == id);
-      _saveDeployedNodes();
-      await loadInstances();
+      _unwrapData(await _apiClient().deleteInstance(id));
+      _instances = _instances.where((instance) => instance.id != id).toList();
       return true;
     } catch (e) {
-      _error = 'Failed to delete instance: $e';
-      notifyListeners();
+      _error = 'Failed to delete instance: ${_messageFromError(e)}';
+      AppLogger.error('[CloudProvider] Delete instance error', e);
       return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
-  /// Generate sing-box config for a deployed node
-  String? generateNodeConfig(VultrInstance instance) {
-    if (!instance.hasIp || instance.nodeInfo == null) return null;
-    final ip = instance.mainIp!;
+  void reset() {
+    _instances = [];
+    _regions = [];
+    _plans = [];
+    _hasApiKey = false;
+    _configLoaded = false;
+    _error = null;
+    notifyListeners();
+  }
+
+  String? generateNodeConfig(CloudInstance instance) {
+    if (!instance.hasIp || instance.nodeInfo == null) {
+      return null;
+    }
+
+    final ip = instance.ipv4!;
     final info = instance.nodeInfo!;
     final label = instance.label;
-
     final outbounds = <Map<String, dynamic>>[];
     final tags = <String>[];
 
-    // Shadowsocks
-    final ssTag = '$label-SS';
-    outbounds.add({
-      'type': 'shadowsocks',
-      'tag': ssTag,
-      'server': ip,
-      'server_port': info.ssPort,
-      'method': 'aes-256-gcm',
-      'password': info.ssPassword,
-    });
-    tags.add(ssTag);
+    if (info.ssPort > 0 && info.ssPassword.isNotEmpty) {
+      final tag = '$label-SS';
+      outbounds.add({
+        'type': 'shadowsocks',
+        'tag': tag,
+        'server': ip,
+        'server_port': info.ssPort,
+        'method': 'aes-256-gcm',
+        'password': info.ssPassword,
+      });
+      tags.add(tag);
+    }
 
-    // Hysteria2
-    final hyTag = '$label-Hy2';
-    outbounds.add({
-      'type': 'hysteria2',
-      'tag': hyTag,
-      'server': ip,
-      'server_port': info.hyPort,
-      'password': info.hyPassword,
-      'tls': {
-        'enabled': true,
-        'server_name': ip,
-        'insecure': true,
-      },
-    });
-    tags.add(hyTag);
+    if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
+      final tag = '$label-Hy2';
+      outbounds.add({
+        'type': 'hysteria2',
+        'tag': tag,
+        'server': ip,
+        'server_port': info.hyPort,
+        'up_mbps': 100,
+        'down_mbps': 100,
+        'password': info.hyPassword,
+        'tls': {
+          'enabled': true,
+          'server_name': info.hyServerName.isNotEmpty ? info.hyServerName : ip,
+          'insecure': info.hyInsecure ?? true,
+        },
+      });
+      tags.add(tag);
+    }
 
-    // VLESS
-    final vlessTag = '$label-VLESS';
-    outbounds.add({
-      'type': 'vless',
-      'tag': vlessTag,
-      'server': ip,
-      'server_port': info.vlessPort,
-      'uuid': info.vlessUuid,
-      'flow': 'xtls-rprx-vision',
-    });
-    tags.add(vlessTag);
+    if (info.vlessPort > 0 &&
+        info.vlessUuid.isNotEmpty &&
+        info.vlessPublicKey.isNotEmpty &&
+        info.vlessShortId.isNotEmpty) {
+      final tag = '$label-VLESS';
+      final publicKeyUrlSafe = info.vlessPublicKey
+          .replaceAll('+', '-')
+          .replaceAll('/', '_')
+          .replaceAll(RegExp(r'=+$'), '');
 
-    // Trojan
-    final trojanTag = '$label-Trojan';
-    outbounds.add({
-      'type': 'trojan',
-      'tag': trojanTag,
-      'server': ip,
-      'server_port': info.trojanPort,
-      'password': info.trojanPassword,
-      'tls': {
-        'enabled': true,
-        'server_name': ip,
-        'insecure': true,
-      },
-    });
-    tags.add(trojanTag);
+      outbounds.add({
+        'type': 'vless',
+        'tag': tag,
+        'server': ip,
+        'server_port': info.vlessPort,
+        'uuid': info.vlessUuid,
+        'flow': 'xtls-rprx-vision',
+        'tls': {
+          'enabled': true,
+          'server_name': info.vlessServerName.isNotEmpty
+              ? info.vlessServerName
+              : 'www.microsoft.com',
+          'utls': {
+            'enabled': true,
+            'fingerprint': 'chrome',
+          },
+          'reality': {
+            'enabled': true,
+            'public_key': publicKeyUrlSafe,
+            'short_id': info.vlessShortId,
+          },
+        },
+      });
+      tags.add(tag);
+    }
+
+    if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
+      final tag = '$label-Trojan';
+      outbounds.add({
+        'type': 'trojan',
+        'tag': tag,
+        'server': ip,
+        'server_port': info.trojanPort,
+        'password': info.trojanPassword,
+        'tls': {
+          'enabled': true,
+          'server_name':
+              info.trojanServerName.isNotEmpty ? info.trojanServerName : ip,
+          'insecure': info.trojanInsecure ?? true,
+        },
+      });
+      tags.add(tag);
+    }
+
+    if (outbounds.isEmpty) {
+      return null;
+    }
 
     final config = {
       'log': {'level': 'info'},
       'dns': {
         'servers': [
-          {'tag': 'dns-remote', 'address': 'https://8.8.8.8/dns-query', 'detour': 'select'},
+          {
+            'tag': 'dns-remote',
+            'address': 'https://8.8.8.8/dns-query',
+            'detour': 'select'
+          },
           {'tag': 'dns-local', 'address': 'local'},
         ],
         'rules': [
-          {'outbound': ['any'], 'server': 'dns-local'},
+          {
+            'outbound': ['any'],
+            'server': 'dns-local'
+          },
         ],
       },
       'inbounds': [
@@ -292,7 +407,10 @@ class CloudProvider with ChangeNotifier {
       'route': {
         'rules': [
           {'protocol': 'dns', 'outbound': 'dns-out'},
-          {'geoip': ['private'], 'outbound': 'direct'},
+          {
+            'geoip': ['private'],
+            'outbound': 'direct'
+          },
         ],
         'auto_detect_interface': true,
       },
@@ -301,56 +419,71 @@ class CloudProvider with ChangeNotifier {
     return const JsonEncoder.withIndent('  ').convert(config);
   }
 
-  void _loadDeployedNodes() {
-    try {
-      final raw = _box.get(_nodesKey) as String?;
-      if (raw != null) {
-        final list = jsonDecode(raw) as List;
-        _deployedNodes = list.map((j) => DeployedNode.fromJson(j)).toList();
+  Future<bool> _ensureAuthorizedCloudAccess({bool notify = true}) async {
+    if (!isAuthenticated) {
+      _instances = [];
+      _regions = [];
+      _plans = [];
+      _hasApiKey = false;
+      _configLoaded = true;
+      _error = 'Please sign in to the PrivateDeploy API first';
+      if (notify) {
+        notifyListeners();
       }
-    } catch (e) {
-      AppLogger.error('[CloudProvider] Load deployed nodes error', e);
+      return false;
     }
+
+    if (!_configLoaded) {
+      await refreshCloudConfig(notify: false);
+    }
+
+    if (!_hasApiKey) {
+      _error = null;
+      if (notify) {
+        notifyListeners();
+      }
+      return false;
+    }
+
+    return true;
   }
 
-  void _saveDeployedNodes() {
-    try {
-      final json = _deployedNodes.map((n) => n.toJson()).toList();
-      _box.put(_nodesKey, jsonEncode(json));
-    } catch (e) {
-      AppLogger.error('[CloudProvider] Save deployed nodes error', e);
+  Map<String, dynamic> _unwrapData(Map<String, dynamic> response) {
+    if (response['success'] != true) {
+      throw StateError(_messageFromResponse(response));
     }
+
+    final data = response['data'];
+    if (data is Map<String, dynamic>) {
+      return data;
+    }
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return const {};
   }
-}
 
-class DeployedNode {
-  final String instanceId;
-  final String label;
-  final String region;
-  final NodeInfo nodeInfo;
-  final DateTime createdAt;
+  String _messageFromResponse(Map<String, dynamic> response) {
+    final message = response['message'];
+    if (message is String && message.isNotEmpty) {
+      return message;
+    }
 
-  DeployedNode({
-    required this.instanceId,
-    required this.label,
-    required this.region,
-    required this.nodeInfo,
-    required this.createdAt,
-  });
+    final error = response['error'];
+    if (error is Map<String, dynamic>) {
+      final errorMessage = error['message'];
+      if (errorMessage is String && errorMessage.isNotEmpty) {
+        return errorMessage;
+      }
+    }
 
-  Map<String, dynamic> toJson() => {
-    'instance_id': instanceId,
-    'label': label,
-    'region': region,
-    'node_info': nodeInfo.toJson(),
-    'created_at': createdAt.toIso8601String(),
-  };
+    return 'Request failed';
+  }
 
-  factory DeployedNode.fromJson(Map<String, dynamic> json) => DeployedNode(
-    instanceId: json['instance_id'] ?? '',
-    label: json['label'] ?? '',
-    region: json['region'] ?? '',
-    nodeInfo: NodeInfo.fromJson(json['node_info'] ?? {}),
-    createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
-  );
+  String _messageFromError(Object error) {
+    if (error is StateError) {
+      return error.message.toString();
+    }
+    return error.toString();
+  }
 }
