@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-import '../auth/auth_provider.dart';
-import '../auth/login_screen.dart';
 import 'cloud_provider.dart';
 import 'cloud_models.dart';
 import '../profiles/profile_provider.dart';
+import '../../shared/widgets/empty_view.dart';
+import '../../shared/widgets/error_view.dart';
 
 class CloudScreen extends StatefulWidget {
   const CloudScreen({Key? key}) : super(key: key);
@@ -31,9 +31,8 @@ class _CloudScreenState extends State<CloudScreen> {
       return;
     }
 
-    final auth = context.read<AuthProvider>();
     final provider = context.read<CloudProvider>();
-    if (!auth.isAuthenticated || _bootstrapTriggered) {
+    if (_bootstrapTriggered) {
       return;
     }
 
@@ -48,12 +47,6 @@ class _CloudScreenState extends State<CloudScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
-    if (!auth.isAuthenticated) {
-      _bootstrapTriggered = false;
-      return _buildLoginRequired(context);
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cloud Nodes'),
@@ -91,45 +84,17 @@ class _CloudScreenState extends State<CloudScreen> {
           }
 
           if (provider.error != null && provider.instances.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, size: 64.w, color: Colors.red),
-                  SizedBox(height: 16.h),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 24.w),
-                    child: Text(
-                      provider.error!,
-                      style: TextStyle(fontSize: 14.sp),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  SizedBox(height: 24.h),
-                  ElevatedButton(
-                    onPressed: () => provider.loadInstances(),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
+            return ErrorView(
+              message: provider.error!,
+              onRetry: () => provider.loadInstances(),
             );
           }
 
           if (provider.instances.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.cloud_off, size: 64.w, color: Colors.grey),
-                  SizedBox(height: 16.h),
-                  Text('No cloud nodes',
-                      style: TextStyle(
-                          fontSize: 20.sp, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 8.h),
-                  Text('Deploy your first proxy node',
-                      style: TextStyle(fontSize: 16.sp, color: Colors.grey)),
-                ],
-              ),
+            return const EmptyView(
+              icon: Icons.cloud_off,
+              title: 'No cloud nodes',
+              message: 'Deploy your first proxy node',
             );
           }
 
@@ -159,68 +124,12 @@ class _CloudScreenState extends State<CloudScreen> {
   }
 
   Widget _buildNoApiKey(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.all(32.w),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.vpn_key, size: 64.w, color: Colors.grey),
-            SizedBox(height: 16.h),
-            Text('Cloud API Key Required',
-                style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
-            SizedBox(height: 8.h),
-            Text(
-              'Save your cloud provider API key on the PrivateDeploy server before deploying nodes.',
-              style: TextStyle(fontSize: 14.sp, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: 24.h),
-            ElevatedButton.icon(
-              onPressed: () => _showApiKeyDialog(context),
-              icon: const Icon(Icons.key),
-              label: const Text('Set API Key'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLoginRequired(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Cloud Nodes')),
-      body: Center(
-        child: Padding(
-          padding: EdgeInsets.all(32.w),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_outline, size: 64.w, color: Colors.grey),
-              SizedBox(height: 16.h),
-              Text('API Login Required',
-                  style:
-                      TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold)),
-              SizedBox(height: 8.h),
-              Text(
-                'Sign in to your PrivateDeploy API server before managing cloud nodes.',
-                style: TextStyle(fontSize: 14.sp, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 24.h),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  );
-                },
-                icon: const Icon(Icons.login),
-                label: const Text('Sign In'),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return EmptyView(
+      icon: Icons.vpn_key,
+      title: 'Cloud API Key Required',
+      message: 'Save your cloud provider API key before deploying nodes.',
+      onAction: () => _showApiKeyDialog(context),
+      actionLabel: 'Set API Key',
     );
   }
 

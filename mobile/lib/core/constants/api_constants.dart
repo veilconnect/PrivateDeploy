@@ -10,9 +10,6 @@ class ApiConstants {
   );
 
   // Endpoints
-  static const String authLogin = '/auth/login';
-  static const String authRefresh = '/auth/refresh';
-
   static const String cloudProviders = '/cloud/providers';
   static const String cloudConfig = '/cloud/config';
   static const String cloudInstances = '/cloud/instances';
@@ -33,7 +30,6 @@ class ApiConstants {
   static const Duration cloudCreateTimeout = Duration(seconds: 120);
 
   // Storage Keys
-  static const String tokenKey = 'auth_token';
   static const String userKey = 'user_data';
   static const String settingsKey = 'app_settings';
 }

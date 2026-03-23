@@ -4,7 +4,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/storage/storage_service.dart';
-import 'features/auth/auth_provider.dart';
 import 'features/home/home_screen.dart';
 import 'features/profiles/profile_provider.dart';
 import 'features/vpn/vpn_provider.dart';
@@ -29,7 +28,6 @@ class PrivateDeployApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => VpnProvider()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),

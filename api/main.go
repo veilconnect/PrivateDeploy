@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -12,9 +10,7 @@ import (
 	"path/filepath"
 	"privatedeploy/api/config"
 	"privatedeploy/api/handlers"
-	"privatedeploy/api/models"
 	"privatedeploy/api/routes"
-	"privatedeploy/api/utils"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
 	"strings"
@@ -25,8 +21,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const insecureJWTSecret = "privatedeploy-secret-change-me"
-
 func main() {
 	log.Println("🚀 Starting PrivateDeploy API Server...")
 
@@ -34,9 +28,6 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("❌ Failed to load configuration: %v", err)
-	}
-	if err := ensureJWTSecret(cfg); err != nil {
-		log.Fatalf("❌ Security bootstrap failed: %v", err)
 	}
 	log.Printf("📋 Configuration loaded (Port: %s)", cfg.Server.Port)
 
@@ -47,13 +38,8 @@ func main() {
 	}
 	log.Println("✅ Database initialized")
 
-	// Initialize default user
-	if err := initializeDefaultUser(db, cfg.Database.Path); err != nil {
-		log.Fatalf("❌ Failed to initialize default user: %v", err)
-	}
-
 	// Setup WebSocket hub
-	wsHub := handlers.NewWSHub(cfg.JWT.Secret, cfg.CORS.AllowedOrigins)
+	wsHub := handlers.NewWSHub(cfg.CORS.AllowedOrigins)
 	log.Println("✅ WebSocket hub initialized")
 
 	// Setup Cloud Manager
@@ -74,6 +60,7 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("🌐 API Server listening on %s", addr)
 	log.Println("📖 API Documentation: /api/v1/health")
+	log.Println("🔓 Authentication disabled: API operates in local control mode")
 	log.Printf("🔐 CORS allowed origins: %s", strings.Join(cfg.CORS.AllowedOrigins, ","))
 
 	srv := &http.Server{
@@ -104,101 +91,7 @@ func setupDatabase(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Auto migrate
-	if err := db.AutoMigrate(&models.User{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
-	}
-
 	return db, nil
-}
-
-// initializeDefaultUser creates a default admin user if it doesn't exist
-func initializeDefaultUser(db *gorm.DB, dbPath string) error {
-	var count int64
-	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("failed to count users: %w", err)
-	}
-
-	// If users exist, skip initialization
-	if count > 0 {
-		log.Println("ℹ️  Users already exist, skipping default user creation")
-		return nil
-	}
-
-	username := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_USERNAME"))
-	if username == "" {
-		username = "admin"
-	}
-
-	password, found, err := config.LookupEnvOrFile("INITIAL_ADMIN_PASSWORD", "INITIAL_ADMIN_PASSWORD_FILE")
-	if err != nil {
-		return fmt.Errorf("failed to resolve bootstrap admin password: %w", err)
-	}
-	if !found {
-		if !isDevelopmentMode() {
-			return fmt.Errorf("INITIAL_ADMIN_PASSWORD is required when bootstrapping the first admin user outside explicit development mode")
-		}
-		password = generateSecureToken(20)
-		passwordPath, err := writeBootstrapPasswordFile(dbPath, username, password)
-		if err != nil {
-			return fmt.Errorf("failed to persist generated bootstrap password: %w", err)
-		}
-		log.Printf("⚠️  INITIAL_ADMIN_PASSWORD not set; wrote one-time password for %q to %s", username, passwordPath)
-		log.Println("⚠️  Set INITIAL_ADMIN_PASSWORD in environment to avoid generated bootstrap credentials.")
-	}
-
-	hashedPassword, err := utils.HashPassword(password)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	user := models.User{
-		Username: username,
-		Password: hashedPassword,
-	}
-
-	if err := db.Create(&user).Error; err != nil {
-		return fmt.Errorf("failed to create default user: %w", err)
-	}
-
-	log.Printf("✅ Bootstrap user created: %s", username)
-	log.Println("⚠️  Change this password immediately after first login.")
-
-	return nil
-}
-
-func ensureJWTSecret(cfg *config.Config) error {
-	secret := strings.TrimSpace(cfg.JWT.Secret)
-	if secret != "" && secret != insecureJWTSecret {
-		return nil
-	}
-
-	if !isDevelopmentMode() {
-		return fmt.Errorf("JWT_SECRET is required outside explicit development mode and cannot use the default insecure value")
-	}
-
-	cfg.JWT.Secret = generateSecureToken(48)
-	log.Println("⚠️  JWT_SECRET is missing or insecure. Generated an in-memory secret for this process.")
-	log.Println("⚠️  Set JWT_SECRET in environment for stable tokens across restarts.")
-	return nil
-}
-
-func generateSecureToken(length int) string {
-	if length <= 0 {
-		return ""
-	}
-
-	// RawURLEncoding expands 3 bytes into 4 chars. Allocate enough entropy for requested output length.
-	raw := make([]byte, (length*3)/4+4)
-	if _, err := rand.Read(raw); err != nil {
-		panic(fmt.Errorf("failed to generate secure random token: %w", err))
-	}
-
-	token := base64.RawURLEncoding.EncodeToString(raw)
-	if len(token) < length {
-		return token
-	}
-	return token[:length]
 }
 
 // initializeCloudManager sets up the cloud provider manager
@@ -214,39 +107,4 @@ func initializeCloudManager() *cloud.Manager {
 
 	log.Printf("📦 Registered cloud providers: %v", registry.List())
 	return manager
-}
-
-func isProductionMode() bool {
-	for _, key := range []string{"API_ENV", "APP_ENV"} {
-		value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-		if value == "production" || value == "prod" {
-			return true
-		}
-	}
-	return false
-}
-
-func isDevelopmentMode() bool {
-	for _, key := range []string{"API_ENV", "APP_ENV"} {
-		value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-		if value == "development" || value == "dev" || value == "local" || value == "test" {
-			return true
-		}
-	}
-	return false
-}
-
-func writeBootstrapPasswordFile(dbPath, username, password string) (string, error) {
-	outputDir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(outputDir, 0o700); err != nil {
-		return "", err
-	}
-
-	passwordPath := filepath.Join(outputDir, "bootstrap-admin-password.txt")
-	content := fmt.Sprintf("username=%s\npassword=%s\n", username, password)
-	if err := os.WriteFile(passwordPath, []byte(content), 0o600); err != nil {
-		return "", err
-	}
-
-	return passwordPath, nil
 }

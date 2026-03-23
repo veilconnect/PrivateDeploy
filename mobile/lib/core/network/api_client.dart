@@ -122,11 +122,6 @@ class ApiClient {
     return _request('DELETE', path);
   }
 
-  // Auth
-  Future<Map<String, dynamic>> login(Map<String, dynamic> body) =>
-      _post('/auth/login', data: body);
-  Future<Map<String, dynamic>> refreshToken() => _post('/auth/refresh');
-
   // Cloud
   Future<Map<String, dynamic>> getProviders() => _get('/cloud/providers');
   Future<Map<String, dynamic>> getActiveProvider() =>
@@ -191,7 +186,7 @@ class ApiClient {
 }
 
 class DioClient {
-  static Dio createDio({String? token}) {
+  static Dio createDio() {
     final dio = Dio(
       BaseOptions(
         baseUrl: StorageService.getApiBaseUrl(),
@@ -199,23 +194,6 @@ class DioClient {
         receiveTimeout: ApiConstants.receiveTimeout,
         headers: {
           'Content-Type': 'application/json',
-          if (token != null && token.isNotEmpty)
-            'Authorization': 'Bearer $token',
-        },
-      ),
-    );
-
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          final hasAuthHeader = options.headers.containsKey('Authorization');
-          if (!hasAuthHeader) {
-            final storedToken = StorageService.getToken();
-            if (storedToken != null && storedToken.isNotEmpty) {
-              options.headers['Authorization'] = 'Bearer $storedToken';
-            }
-          }
-          handler.next(options);
         },
       ),
     );

@@ -6,7 +6,6 @@ import (
 	"privatedeploy/api/middleware"
 	"privatedeploy/bridge"
 	"privatedeploy/bridge/cloud"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,7 +17,6 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 	router.Use(middleware.CORS(cfg))
 
 	// Handlers
-	authHandler := handlers.NewAuthHandler(db, cfg)
 	systemHandler := handlers.NewSystemHandler(bridge.Env.AppVersion, "/opt/privatedeploy")
 	cloudHandler := handlers.NewCloudHandler(cloudManager)
 
@@ -34,34 +32,17 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		// Health check
 		public.GET("/health", systemHandler.Health)
 
-		// Auth
-		auth := public.Group("/auth")
-		{
-			auth.POST("/login", middleware.LoginRateLimit(5, 15*time.Minute), authHandler.Login)
-		}
-
-		// WebSocket (requires valid token)
+		// WebSocket
 		public.GET("/ws", wsHub.HandleWS)
-	}
-
-	// Protected routes
-	protected := router.Group("/api/v1")
-	protected.Use(middleware.AuthMiddleware(cfg))
-	{
-		// Auth
-		auth := protected.Group("/auth")
-		{
-			auth.POST("/refresh", authHandler.Refresh)
-		}
 
 		// System
-		system := protected.Group("/system")
+		system := public.Group("/system")
 		{
 			system.GET("/info", systemHandler.GetInfo)
 		}
 
 		// Profiles
-		profiles := protected.Group("/profiles")
+		profiles := public.Group("/profiles")
 		{
 			profiles.GET("/active", profileHandler.GetActive)
 			profiles.GET("", profileHandler.List)
@@ -76,7 +57,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		}
 
 		// Subscriptions
-		subscriptions := protected.Group("/subscriptions")
+		subscriptions := public.Group("/subscriptions")
 		{
 			subscriptions.GET("", subscriptionHandler.List)
 			subscriptions.GET("/:id", subscriptionHandler.Get)
@@ -87,7 +68,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		}
 
 		// Cloud
-		cloudGroup := protected.Group("/cloud")
+		cloudGroup := public.Group("/cloud")
 		{
 			cloudGroup.GET("/providers", cloudHandler.ListProviders)
 			cloudGroup.GET("/provider/active", cloudHandler.GetActiveProvider)
@@ -103,7 +84,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 		}
 
 		// VPN
-		vpn := protected.Group("/vpn")
+		vpn := public.Group("/vpn")
 		{
 			vpn.POST("/start", vpnHandler.Start)
 			vpn.POST("/stop", vpnHandler.Stop)

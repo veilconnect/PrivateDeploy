@@ -10,7 +10,6 @@ import (
 // Config holds the application configuration
 type Config struct {
 	Server   ServerConfig
-	JWT      JWTConfig
 	Database DatabaseConfig
 	CORS     CORSConfig
 }
@@ -21,12 +20,6 @@ type ServerConfig struct {
 	Port         string
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
-}
-
-// JWTConfig holds JWT-related configuration
-type JWTConfig struct {
-	Secret     string
-	ExpireTime time.Duration
 }
 
 // DatabaseConfig holds database configuration
@@ -41,13 +34,6 @@ type CORSConfig struct {
 
 // Load loads configuration from environment variables with defaults.
 func Load() (*Config, error) {
-	jwtSecret, found, err := LookupEnvOrFile("JWT_SECRET", "JWT_SECRET_FILE")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		jwtSecret = ""
-	}
 	writeTimeout, err := getEnvDuration("API_WRITE_TIMEOUT", 120*time.Second)
 	if err != nil {
 		return nil, err
@@ -59,10 +45,6 @@ func Load() (*Config, error) {
 			Port:         getEnv("API_PORT", "8443"),
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: writeTimeout,
-		},
-		JWT: JWTConfig{
-			Secret:     jwtSecret,
-			ExpireTime: 24 * time.Hour,
 		},
 		Database: DatabaseConfig{
 			Path: getEnv("DB_PATH", "data/privatedeploy.db"),

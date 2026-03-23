@@ -1,22 +1,16 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/api_constants.dart';
 
 class StorageService {
-  static const _tokenKey = 'auth_token';
   static const _apiBaseUrlKey = 'api_base_url';
 
   static late SharedPreferences _prefs;
-  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
-
   static bool _initialized = false;
-  static String? _tokenCache;
   static String _apiBaseUrlCache = ApiConstants.defaultBaseUrl;
 
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    _tokenCache = await _secureStorage.read(key: _tokenKey);
     _apiBaseUrlCache = _normalizeApiBaseUrl(
       _prefs.getString(_apiBaseUrlKey) ?? ApiConstants.defaultBaseUrl,
     );
@@ -24,21 +18,6 @@ class StorageService {
   }
 
   static bool get isInitialized => _initialized;
-
-  // Token management
-  static Future<void> saveToken(String token) async {
-    _tokenCache = token;
-    await _secureStorage.write(key: _tokenKey, value: token);
-  }
-
-  static String? getToken() {
-    return _tokenCache;
-  }
-
-  static Future<void> clearToken() async {
-    _tokenCache = null;
-    await _secureStorage.delete(key: _tokenKey);
-  }
 
   // API server configuration
   static String getApiBaseUrl() {

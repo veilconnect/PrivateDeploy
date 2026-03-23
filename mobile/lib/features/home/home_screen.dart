@@ -3,8 +3,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/storage/storage_service.dart';
-import '../auth/auth_provider.dart';
-import '../auth/login_screen.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_screen.dart';
 import '../profiles/profile_screen.dart';
@@ -76,40 +74,24 @@ class _HomeScreenState extends State<HomeScreen> {
         Card(
           child: Column(
             children: [
-              Consumer<AuthProvider>(
-                builder: (context, auth, _) {
+              Consumer<CloudProvider>(
+                builder: (context, cloud, _) {
                   return ListTile(
-                    leading: const Icon(Icons.login),
-                    title: const Text('API Authentication'),
+                    leading: const Icon(Icons.vpn_key),
+                    title: const Text('Cloud API Key'),
                     subtitle: Text(
-                      auth.isAuthenticated
-                          ? 'Signed in as ${auth.username ?? 'user'}'
-                          : 'Sign in to use cloud features',
+                      cloud.hasApiKey
+                          ? 'Configured for cloud deployment'
+                          : 'Set an API key before deploying cloud nodes',
                     ),
-                    trailing: auth.isAuthenticated
-                        ? TextButton(
-                            onPressed: () async {
-                              await auth.logout();
-                              if (!mounted) {
-                                return;
-                              }
-                              context.read<CloudProvider>().reset();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Signed out')),
-                              );
-                            },
-                            child: const Text('Logout'),
-                          )
-                        : TextButton(
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => const LoginScreen(),
-                                ),
-                              );
-                            },
-                            child: const Text('Login'),
-                          ),
+                    trailing: TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _selectedIndex = 2;
+                        });
+                      },
+                      child: Text(cloud.hasApiKey ? 'Manage' : 'Set Key'),
+                    ),
                   );
                 },
               ),

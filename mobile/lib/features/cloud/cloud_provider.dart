@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../../core/network/api_client.dart';
-import '../../core/storage/storage_service.dart';
 import '../../shared/utils/logger.dart';
 import 'cloud_models.dart';
 
@@ -25,7 +24,6 @@ class CloudProvider with ChangeNotifier {
   bool get configLoaded => _configLoaded;
   String? get error => _error;
   bool get hasApiKey => _hasApiKey;
-  bool get isAuthenticated => (StorageService.getToken() ?? '').isNotEmpty;
   String? get apiKey => null;
 
   CloudProvider() {
@@ -33,12 +31,6 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<void> _init() async {
-    if (!isAuthenticated) {
-      _configLoaded = true;
-      notifyListeners();
-      return;
-    }
-
     await refreshCloudConfig(notify: false);
     notifyListeners();
   }
@@ -46,16 +38,6 @@ class CloudProvider with ChangeNotifier {
   ApiClient _apiClient() => ApiClient(DioClient.createDio());
 
   Future<void> refreshCloudConfig({bool notify = true}) async {
-    if (!isAuthenticated) {
-      _hasApiKey = false;
-      _configLoaded = true;
-      _error = null;
-      if (notify) {
-        notifyListeners();
-      }
-      return;
-    }
-
     try {
       final data = _unwrapData(await _apiClient().getCloudConfig());
       _hasApiKey = data['hasApiKey'] == true;
@@ -74,12 +56,6 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<bool> setApiKey(String key) async {
-    if (!isAuthenticated) {
-      _error = 'Please sign in to the PrivateDeploy API first';
-      notifyListeners();
-      return false;
-    }
-
     if (key.trim().isEmpty) {
       _error = 'API key cannot be empty';
       notifyListeners();
@@ -420,19 +396,6 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<bool> _ensureAuthorizedCloudAccess({bool notify = true}) async {
-    if (!isAuthenticated) {
-      _instances = [];
-      _regions = [];
-      _plans = [];
-      _hasApiKey = false;
-      _configLoaded = true;
-      _error = 'Please sign in to the PrivateDeploy API first';
-      if (notify) {
-        notifyListeners();
-      }
-      return false;
-    }
-
     if (!_configLoaded) {
       await refreshCloudConfig(notify: false);
     }

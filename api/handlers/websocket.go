@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
-	"privatedeploy/api/utils"
 	"strings"
 	"sync"
 	"time"
@@ -32,19 +31,17 @@ type WSHub struct {
 	broadcast  chan WSMessage
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
-	jwtSecret  string
 	origins    []string
 	mu         sync.RWMutex
 }
 
 // NewWSHub creates a new WebSocket hub
-func NewWSHub(jwtSecret string, allowedOrigins []string) *WSHub {
+func NewWSHub(allowedOrigins []string) *WSHub {
 	hub := &WSHub{
 		clients:    make(map[*websocket.Conn]bool),
 		broadcast:  make(chan WSMessage, 256),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
-		jwtSecret:  jwtSecret,
 		origins:    allowedOrigins,
 	}
 
@@ -108,23 +105,6 @@ func (h *WSHub) HandleWS(c *gin.Context) {
 		return
 	}
 
-	token := extractWebSocketToken(c)
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse(
-			models.ErrUnauthorized,
-			"Missing websocket token",
-		))
-		return
-	}
-
-	if _, err := utils.ValidateToken(token, h.jwtSecret); err != nil {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse(
-			models.ErrInvalidToken,
-			"Invalid or expired websocket token",
-		))
-		return
-	}
-
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -166,24 +146,6 @@ func (h *WSHub) HandleWS(c *gin.Context) {
 			}
 		}
 	}()
-}
-
-func extractWebSocketToken(c *gin.Context) string {
-	if token := strings.TrimSpace(c.Query("token")); token != "" {
-		return token
-	}
-
-	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-	if authHeader == "" {
-		return ""
-	}
-
-	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return ""
-	}
-
-	return strings.TrimSpace(parts[1])
 }
 
 func isWebSocketOriginAllowed(origin string, allowedOrigins []string) bool {
