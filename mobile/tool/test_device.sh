@@ -2,16 +2,56 @@
 # Automated test script for a single device
 # Usage: test_device.sh <device_serial> <output_dir>
 
+set -u
+
 DEVICE="$1"
 OUTDIR="$2"
 PKG="com.privatedeploy.mobile"
 ACTIVITY="$PKG/.MainActivity"
+UI_XML="/sdcard/ui.xml"
 
 mkdir -p "$OUTDIR"
 
 log() { echo "[$DEVICE] $*"; }
 screenshot() { adb -s "$DEVICE" exec-out screencap -p > "$OUTDIR/$1.png" 2>/dev/null; }
 tap() { adb -s "$DEVICE" shell input tap "$1" "$2" 2>/dev/null; }
+press_back() { adb -s "$DEVICE" shell input keyevent KEYCODE_BACK 2>/dev/null; }
+dump_ui() { adb -s "$DEVICE" shell uiautomator dump "$UI_XML" >/dev/null 2>&1 && adb -s "$DEVICE" shell cat "$UI_XML" 2>/dev/null; }
+record_result() { echo "$1=$2" >> "$OUTDIR/results.txt"; }
+app_pid() { adb -s "$DEVICE" shell pidof "$PKG" 2>/dev/null | tr -d '\r'; }
+current_focus() { adb -s "$DEVICE" shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' || true; }
+app_is_foreground() { current_focus | grep -q "$ACTIVITY"; }
+app_is_running() { [ -n "$(app_pid)" ]; }
+
+launch_app() {
+    adb -s "$DEVICE" shell am force-stop "$PKG" 2>/dev/null >/dev/null
+    adb -s "$DEVICE" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 2>/dev/null >/dev/null
+    sleep 3
+}
+
+ensure_foreground() {
+    if app_is_foreground; then
+        return 0
+    fi
+    launch_app
+    app_is_foreground
+}
+
+bounds_center() {
+    echo "$1" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/' | awk '{print int(($1+$3)/2), int(($2+$4)/2)}'
+}
+
+find_bounds() {
+    local pattern="$1"
+    dump_ui | tr '>' '\n' | grep -E "$pattern" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1
+}
+
+tap_bounds() {
+    local bounds="$1"
+    local center
+    center=$(bounds_center "$bounds")
+    tap $(echo "$center" | awk '{print $1}') $(echo "$center" | awk '{print $2}')
+}
 
 # Get device info
 ANDROID_VER=$(adb -s "$DEVICE" shell getprop ro.build.version.release 2>/dev/null)
@@ -25,13 +65,12 @@ sleep 1
 
 # ========== TEST 1: App Launch ==========
 log "TEST 1: App launch"
-adb -s "$DEVICE" shell am start -n "$ACTIVITY" 2>/dev/null > /dev/null
-sleep 4
+launch_app
 screenshot "01_launch"
 
-# Check app is running
-PID=$(adb -s "$DEVICE" shell pidof "$PKG" 2>/dev/null | tr -d '\r')
-if [ -z "$PID" ]; then
+# Check app is running in foreground
+PID=$(app_pid)
+if [ -z "$PID" ] || ! app_is_foreground; then
     log "FAIL: App did not launch"
     echo "TEST1_LAUNCH=FAIL" > "$OUTDIR/results.txt"
     exit 1
@@ -41,74 +80,57 @@ echo "TEST1_LAUNCH=PASS" > "$OUTDIR/results.txt"
 
 # ========== TEST 2: Connect without config ==========
 log "TEST 2: Connect without config"
-# Get Connect button coordinates from UI dump
-adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-CONNECT_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="Connect"' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+ensure_foreground || true
+CONNECT_BOUNDS=$(find_bounds 'content-desc="Connect"')
 
 if [ -n "$CONNECT_BOUNDS" ]; then
-    # Parse bounds [x1,y1][x2,y2] -> center
-    X1=$(echo "$CONNECT_BOUNDS" | grep -o '\[' | head -1; echo "$CONNECT_BOUNDS" | sed 's/.*\[\([0-9]*\),.*/\1/' | head -1)
-    CX=$(echo "$CONNECT_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-    CY=$(echo "$CONNECT_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-    tap "$CX" "$CY"
+    tap_bounds "$CONNECT_BOUNDS"
     sleep 3
     screenshot "02_no_config"
 
-    # Check app still running
-    PID=$(adb -s "$DEVICE" shell pidof "$PKG" 2>/dev/null | tr -d '\r')
-    if [ -z "$PID" ]; then
+    if ! app_is_running || ! app_is_foreground; then
         log "FAIL: App crashed on connect without config"
-        echo "TEST2_NO_CONFIG=FAIL" >> "$OUTDIR/results.txt"
+        record_result "TEST2_NO_CONFIG" "FAIL"
     else
         log "PASS: No crash on connect without config"
-        echo "TEST2_NO_CONFIG=PASS" >> "$OUTDIR/results.txt"
+        record_result "TEST2_NO_CONFIG" "PASS"
     fi
 else
-    log "SKIP: Could not find Connect button"
-    echo "TEST2_NO_CONFIG=SKIP" >> "$OUTDIR/results.txt"
+    log "FAIL: Could not find Connect button on VPN screen"
+    record_result "TEST2_NO_CONFIG" "FAIL"
 fi
 
 # ========== TEST 3: Create profile with invalid config ==========
 log "TEST 3: Create invalid profile"
 
 # Navigate to Profiles tab - find from UI dump
-adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-PROFILES_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="Profiles' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+ensure_foreground || true
+PROFILES_BOUNDS=$(find_bounds 'content-desc="Profiles')
 
 if [ -n "$PROFILES_BOUNDS" ]; then
-    PCX=$(echo "$PROFILES_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-    PCY=$(echo "$PROFILES_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-    tap "$PCX" "$PCY"
+    tap_bounds "$PROFILES_BOUNDS"
     sleep 2
 
     # Find and tap Create Profile button
-    adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-    CREATE_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="Create Profile"' | grep 'Button' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+    CREATE_BOUNDS=$(find_bounds 'content-desc="Create Profile"')
 
     if [ -n "$CREATE_BOUNDS" ]; then
-        CCX=$(echo "$CREATE_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-        CCY=$(echo "$CREATE_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-        tap "$CCX" "$CCY"
+        tap_bounds "$CREATE_BOUNDS"
         sleep 2
 
         # Find Profile Name field and type
-        adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-        NAME_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'hint="Profile Name' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+        NAME_BOUNDS=$(find_bounds 'hint="Profile Name')
 
         if [ -n "$NAME_BOUNDS" ]; then
-            NCX=$(echo "$NAME_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-            NCY=$(echo "$NAME_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-            tap "$NCX" "$NCY"
+            tap_bounds "$NAME_BOUNDS"
             sleep 0.5
             adb -s "$DEVICE" shell input text "test-invalid" 2>/dev/null
             sleep 0.5
 
             # Find config field and type invalid JSON
-            CONFIG_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'hint="sing-box JSON Config' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+            CONFIG_BOUNDS=$(find_bounds 'hint="sing-box JSON Config')
             if [ -n "$CONFIG_BOUNDS" ]; then
-                CFCX=$(echo "$CONFIG_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-                CFCY=$(echo "$CONFIG_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-                tap "$CFCX" "$CFCY"
+                tap_bounds "$CONFIG_BOUNDS"
                 sleep 0.5
                 adb -s "$DEVICE" shell input text 'not-json' 2>/dev/null
                 sleep 0.5
@@ -117,13 +139,10 @@ if [ -n "$PROFILES_BOUNDS" ]; then
             # Dismiss keyboard and tap Create
             adb -s "$DEVICE" shell input keyevent KEYCODE_BACK 2>/dev/null
             sleep 0.5
-            adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-            CREATE_BTN=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="Create"' | grep 'Button' | grep -v "Create Profile" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+            CREATE_BTN=$(find_bounds 'content-desc="Create"|text="Create"')
 
             if [ -n "$CREATE_BTN" ]; then
-                CBCX=$(echo "$CREATE_BTN" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-                CBCY=$(echo "$CREATE_BTN" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-                tap "$CBCX" "$CBCY"
+                tap_bounds "$CREATE_BTN"
                 sleep 2
                 screenshot "03_profile_created"
             fi
@@ -131,46 +150,44 @@ if [ -n "$PROFILES_BOUNDS" ]; then
     fi
 fi
 
+# Best-effort dismiss any open modal before the next screen-level test.
+press_back
+sleep 1
+ensure_foreground || true
+
 # ========== TEST 4: Connect with invalid config ==========
 log "TEST 4: Connect with invalid/no-outbounds config"
 
 # Go to VPN tab
-adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-VPN_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="VPN' | grep 'Tab 1' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+ensure_foreground || true
+VPN_BOUNDS=$(find_bounds 'content-desc="VPN')
 
 if [ -n "$VPN_BOUNDS" ]; then
-    VCX=$(echo "$VPN_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-    VCY=$(echo "$VPN_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-    tap "$VCX" "$VCY"
+    tap_bounds "$VPN_BOUNDS"
     sleep 2
 
     # Tap Connect
-    adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-    CONNECT_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep 'content-desc="Connect"' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+    CONNECT_BOUNDS=$(find_bounds 'content-desc="Connect"')
 
     if [ -n "$CONNECT_BOUNDS" ]; then
-        CX=$(echo "$CONNECT_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-        CY=$(echo "$CONNECT_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-        tap "$CX" "$CY"
+        tap_bounds "$CONNECT_BOUNDS"
         sleep 4
         screenshot "04_invalid_connect"
 
-        # Check app still running
-        PID=$(adb -s "$DEVICE" shell pidof "$PKG" 2>/dev/null | tr -d '\r')
-        if [ -z "$PID" ]; then
+        if ! app_is_running || ! app_is_foreground; then
             log "FAIL: App crashed on connect with invalid config"
-            echo "TEST4_INVALID_CONFIG=FAIL" >> "$OUTDIR/results.txt"
+            record_result "TEST4_INVALID_CONFIG" "FAIL"
         else
             log "PASS: No crash on connect with invalid config"
-            echo "TEST4_INVALID_CONFIG=PASS" >> "$OUTDIR/results.txt"
+            record_result "TEST4_INVALID_CONFIG" "PASS"
         fi
     else
-        log "SKIP: Could not find Connect button"
-        echo "TEST4_INVALID_CONFIG=SKIP" >> "$OUTDIR/results.txt"
+        log "FAIL: Could not find Connect button on VPN screen"
+        record_result "TEST4_INVALID_CONFIG" "FAIL"
     fi
 else
-    log "SKIP: Could not find VPN tab"
-    echo "TEST4_INVALID_CONFIG=SKIP" >> "$OUTDIR/results.txt"
+    log "FAIL: Could not find VPN tab"
+    record_result "TEST4_INVALID_CONFIG" "FAIL"
 fi
 
 # ========== TEST 5: Tab navigation ==========
@@ -178,41 +195,52 @@ log "TEST 5: Tab navigation"
 TABS_OK=true
 
 for TAB_NAME in "Profiles" "Cloud" "Settings" "VPN"; do
-    adb -s "$DEVICE" shell uiautomator dump /sdcard/ui.xml 2>/dev/null > /dev/null
-    TAB_BOUNDS=$(adb -s "$DEVICE" shell cat /sdcard/ui.xml 2>/dev/null | tr '>' '\n' | grep "content-desc=\"$TAB_NAME" | grep 'Tab' | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+    ensure_foreground || true
+    TAB_BOUNDS=$(find_bounds "content-desc=\"$TAB_NAME")
     if [ -n "$TAB_BOUNDS" ]; then
-        TX=$(echo "$TAB_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \3/' | awk '{print int(($1+$2)/2)}')
-        TY=$(echo "$TAB_BOUNDS" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\2 \4/' | awk '{print int(($1+$2)/2)}')
-        tap "$TX" "$TY"
+        tap_bounds "$TAB_BOUNDS"
         sleep 1
     fi
 
-    PID=$(adb -s "$DEVICE" shell pidof "$PKG" 2>/dev/null | tr -d '\r')
-    if [ -z "$PID" ]; then
-        log "FAIL: App crashed on $TAB_NAME tab"
-        TABS_OK=false
-        break
+    if ! app_is_running || ! app_is_foreground; then
+        log "WARN: App lost foreground on $TAB_NAME tab, retrying once"
+        launch_app
+        TAB_BOUNDS=$(find_bounds "content-desc=\"$TAB_NAME")
+        if [ -n "$TAB_BOUNDS" ]; then
+            tap_bounds "$TAB_BOUNDS"
+            sleep 1
+        fi
+
+        if ! app_is_running || ! app_is_foreground; then
+            log "FAIL: App crashed on $TAB_NAME tab"
+            current_focus | while read -r line; do
+                log "  focus: $line"
+            done
+            TABS_OK=false
+            break
+        fi
     fi
 done
 
 screenshot "05_tabs_done"
 if $TABS_OK; then
     log "PASS: All tabs navigable"
-    echo "TEST5_TABS=PASS" >> "$OUTDIR/results.txt"
+    record_result "TEST5_TABS" "PASS"
 else
     log "FAIL: Tab navigation failed"
-    echo "TEST5_TABS=FAIL" >> "$OUTDIR/results.txt"
+    record_result "TEST5_TABS" "FAIL"
 fi
 
 # ========== TEST 6: Check logcat for crashes ==========
 log "TEST 6: Crash check in logcat"
-CRASHES=$(adb -s "$DEVICE" logcat -d 2>/dev/null | grep -c "FATAL EXCEPTION.*$PKG" || echo "0")
+CRASHES=$(adb -s "$DEVICE" logcat -d 2>/dev/null | grep -c "FATAL EXCEPTION.*$PKG" || true)
+CRASHES=$(printf '%s' "$CRASHES" | tail -n 1 | tr -d '\r')
 if [ "$CRASHES" = "0" ]; then
     log "PASS: No FATAL exceptions in logcat"
-    echo "TEST6_LOGCAT=PASS" >> "$OUTDIR/results.txt"
+    record_result "TEST6_LOGCAT" "PASS"
 else
     log "FAIL: Found $CRASHES FATAL exceptions"
-    echo "TEST6_LOGCAT=FAIL" >> "$OUTDIR/results.txt"
+    record_result "TEST6_LOGCAT" "FAIL"
 fi
 
 # Summary
