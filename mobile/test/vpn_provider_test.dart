@@ -121,5 +121,51 @@ void main() {
       expect(vpnProvider.isConnected, true);
       expect(vpnProvider.activeProfile, 'Test');
     });
+
+    test('shows explicit conflict message when another VPN revokes connection',
+        () async {
+      var statusCallCount = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            statusCallCount += 1;
+            if (statusCallCount == 1) {
+              return {
+                'running': true,
+                'status': 'connected',
+                'message': null,
+                'connected_at': 123,
+                'uptime': 5,
+              };
+            }
+            return {
+              'running': false,
+              'status': 'revoked',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 0,
+            };
+          case 'isRunning':
+            return statusCallCount == 1;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+
+      await vpnProvider.loadStatus();
+
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
+    });
   });
 }

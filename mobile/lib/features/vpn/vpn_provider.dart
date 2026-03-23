@@ -4,6 +4,9 @@ import '../../shared/utils/logger.dart';
 import 'dart:async';
 
 class VpnProvider with ChangeNotifier {
+  static const String vpnConflictMessage =
+      'Another VPN app or system VPN interrupted this connection. Disable the other VPN and try again.';
+
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
   VpnStatus _status = VpnStatus.disconnected;
@@ -222,6 +225,8 @@ class VpnProvider with ChangeNotifier {
   }
 
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
+    final previousStatus = _status;
+
     switch (nativeStatus.status) {
       case 'connecting':
         _status = VpnStatus.connecting;
@@ -236,7 +241,9 @@ class VpnProvider with ChangeNotifier {
     }
 
     final message = nativeStatus.message?.trim();
-    if (message != null && message.isNotEmpty) {
+    if (_isVpnConflict(previousStatus, nativeStatus, message)) {
+      _error = vpnConflictMessage;
+    } else if (message != null && message.isNotEmpty) {
       _error = message;
     } else if (nativeStatus.status != 'error' &&
         nativeStatus.status != 'revoked') {
@@ -252,6 +259,24 @@ class VpnProvider with ChangeNotifier {
     if (notify) {
       notifyListeners();
     }
+  }
+
+  bool _isVpnConflict(
+    VpnStatus previousStatus,
+    VpnNativeStatus nativeStatus,
+    String? message,
+  ) {
+    if (nativeStatus.status == 'revoked' &&
+        previousStatus == VpnStatus.connected) {
+      return true;
+    }
+
+    if (previousStatus != VpnStatus.connected) {
+      return false;
+    }
+
+    final normalizedMessage = message?.toLowerCase();
+    return normalizedMessage?.contains('permission revoked') == true;
   }
 
   @override

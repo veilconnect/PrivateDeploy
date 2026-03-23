@@ -30,6 +30,7 @@ class ApiConstants {
   // Timeouts
   static const Duration connectTimeout = Duration(seconds: 30);
   static const Duration receiveTimeout = Duration(seconds: 30);
+  static const Duration cloudCreateTimeout = Duration(seconds: 120);
 
   // Storage Keys
   static const String tokenKey = 'auth_token';

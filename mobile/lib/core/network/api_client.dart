@@ -21,13 +21,17 @@ class ApiClient {
     String path, {
     dynamic data,
     Map<String, dynamic>? query,
+    Duration? receiveTimeout,
   }) async {
     try {
       final response = await _dio.request<dynamic>(
         path,
         data: data,
         queryParameters: query,
-        options: Options(method: method),
+        options: Options(
+          method: method,
+          receiveTimeout: receiveTimeout,
+        ),
       );
       return _normalizeResponse(response.data);
     } on DioException catch (e) {
@@ -134,7 +138,12 @@ class ApiClient {
       _post('/cloud/config', data: config);
   Future<Map<String, dynamic>> getInstances() => _get('/cloud/instances');
   Future<Map<String, dynamic>> createInstance(Map<String, dynamic> options) =>
-      _post('/cloud/instances', data: options);
+      _request(
+        'POST',
+        '/cloud/instances',
+        data: options,
+        receiveTimeout: ApiConstants.cloudCreateTimeout,
+      );
   Future<Map<String, dynamic>> deleteInstance(String id) =>
       _delete('/cloud/instances/$id');
   Future<Map<String, dynamic>> getRegions() => _get('/cloud/regions');

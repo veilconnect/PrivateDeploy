@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../shared/utils/logger.dart';
@@ -11,6 +12,7 @@ class ProfileProvider with ChangeNotifier {
   Profile? _activeProfile;
   bool _isLoading = false;
   String? _error;
+  late final Future<void> _initialization;
 
   List<Profile> get profiles => _profiles;
   Profile? get activeProfile => _activeProfile;
@@ -18,38 +20,62 @@ class ProfileProvider with ChangeNotifier {
   String? get error => _error;
 
   ProfileProvider() {
-    _init();
+    _initialization = _init();
   }
 
   Future<void> _init() async {
-    if (!Hive.isBoxOpen(_boxName)) {
-      await Hive.openBox(_boxName);
-    }
-    await loadProfiles();
-    await loadActiveProfile();
+    await _openBoxIfNeeded();
+    _loadProfilesFromBox();
+    _loadActiveProfileFromBox();
   }
 
   Box get _box => Hive.box(_boxName);
 
+  Future<void> _openBoxIfNeeded() async {
+    if (!Hive.isBoxOpen(_boxName)) {
+      await Hive.openBox(_boxName);
+    }
+  }
+
+  Future<void> _ensureInitialized() async {
+    await _initialization;
+    await _openBoxIfNeeded();
+  }
+
+  void _loadProfilesFromBox() {
+    final keys = _box.keys.where((k) => k != _activeKey).toList();
+    _profiles = [];
+    for (final key in keys) {
+      final raw = _box.get(key);
+      if (raw is String) {
+        try {
+          final json = jsonDecode(raw) as Map<String, dynamic>;
+          _profiles.add(Profile.fromJson(json));
+        } catch (_) {}
+      }
+    }
+    _profiles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  void _loadActiveProfileFromBox() {
+    final activeId = _box.get(_activeKey) as String?;
+    if (activeId != null) {
+      _activeProfile = _profiles.where((p) => p.id == activeId).firstOrNull;
+    } else {
+      _activeProfile = null;
+    }
+  }
+
   Future<void> loadProfiles() async {
+    await _ensureInitialized();
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final keys = _box.keys.where((k) => k != _activeKey).toList();
-      _profiles = [];
-      for (final key in keys) {
-        final raw = _box.get(key);
-        if (raw is String) {
-          try {
-            final json = jsonDecode(raw) as Map<String, dynamic>;
-            _profiles.add(Profile.fromJson(json));
-          } catch (_) {}
-        }
-      }
-      _profiles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      AppLogger.info('[ProfileProvider] Loaded ${_profiles.length} profiles from local storage');
+      _loadProfilesFromBox();
+      AppLogger.info(
+          '[ProfileProvider] Loaded ${_profiles.length} profiles from local storage');
     } catch (e) {
       _error = 'Failed to load profiles: ${e.toString()}';
       AppLogger.error('[ProfileProvider] Load error', e);
@@ -60,11 +86,9 @@ class ProfileProvider with ChangeNotifier {
   }
 
   Future<void> loadActiveProfile() async {
+    await _ensureInitialized();
     try {
-      final activeId = _box.get(_activeKey) as String?;
-      if (activeId != null) {
-        _activeProfile = _profiles.where((p) => p.id == activeId).firstOrNull;
-      }
+      _loadActiveProfileFromBox();
       notifyListeners();
     } catch (e) {
       AppLogger.error('[ProfileProvider] Failed to load active profile', e);
@@ -76,6 +100,7 @@ class ProfileProvider with ChangeNotifier {
     String? subscriptionUrl,
     String? content,
   }) async {
+    await _ensureInitialized();
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -93,6 +118,7 @@ class ProfileProvider with ChangeNotifier {
       );
 
       await _box.put(id, jsonEncode(profile.toJson()));
+      await _box.flush();
       await loadProfiles();
 
       // Auto-activate if first profile
@@ -100,9 +126,11 @@ class ProfileProvider with ChangeNotifier {
         await activateProfile(id);
       }
 
+      AppLogger.info('[ProfileProvider] Created profile $id (${profile.name})');
       return true;
     } catch (e) {
       _error = 'Failed to create profile: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Create error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -115,6 +143,7 @@ class ProfileProvider with ChangeNotifier {
     String? name,
     String? subscriptionUrl,
   }) async {
+    await _ensureInitialized();
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -133,11 +162,13 @@ class ProfileProvider with ChangeNotifier {
       );
 
       await _box.put(id, jsonEncode(updated.toJson()));
+      await _box.flush();
       await loadProfiles();
       await loadActiveProfile();
       return true;
     } catch (e) {
       _error = 'Failed to update profile: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Update error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -146,21 +177,25 @@ class ProfileProvider with ChangeNotifier {
   }
 
   Future<bool> deleteProfile(String id) async {
+    await _ensureInitialized();
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
       await _box.delete(id);
+      await _box.flush();
       _profiles.removeWhere((p) => p.id == id);
       if (_activeProfile?.id == id) {
         _activeProfile = null;
         await _box.delete(_activeKey);
+        await _box.flush();
       }
       notifyListeners();
       return true;
     } catch (e) {
       _error = 'Failed to delete profile: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Delete error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -169,19 +204,24 @@ class ProfileProvider with ChangeNotifier {
   }
 
   Future<bool> activateProfile(String id) async {
+    await _ensureInitialized();
     try {
       await _box.put(_activeKey, id);
+      await _box.flush();
       _activeProfile = _profiles.where((p) => p.id == id).firstOrNull;
-      _profiles = _profiles.map((p) => p.copyWith(isActive: p.id == id)).toList();
+      _profiles =
+          _profiles.map((p) => p.copyWith(isActive: p.id == id)).toList();
       notifyListeners();
       return true;
     } catch (e) {
       _error = 'Failed to activate profile: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Activate error', e);
       return false;
     }
   }
 
   Future<String?> getProfileContent(String id) async {
+    await _ensureInitialized();
     try {
       final raw = _box.get(id) as String?;
       if (raw != null) {
@@ -196,6 +236,7 @@ class ProfileProvider with ChangeNotifier {
   }
 
   Future<bool> saveProfileContent(String id, String content) async {
+    await _ensureInitialized();
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -212,10 +253,12 @@ class ProfileProvider with ChangeNotifier {
         updatedAt: DateTime.now(),
       );
       await _box.put(id, jsonEncode(updated.toJson()));
+      await _box.flush();
       await loadProfiles();
       return true;
     } catch (e) {
       _error = 'Failed to save profile content: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Save content error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -245,24 +288,88 @@ class ProfileProvider with ChangeNotifier {
       if (decoded is! Map<String, dynamic>) {
         return content;
       }
+      var changed = false;
       final inbounds = decoded['inbounds'];
-      if (inbounds is! List) {
-        return content;
+      if (inbounds is List) {
+        for (final inbound in inbounds) {
+          if (inbound is! Map<String, dynamic>) {
+            continue;
+          }
+          if (inbound['type']?.toString() != 'tun') {
+            continue;
+          }
+
+          final stack = inbound['stack']?.toString().trim();
+          if (stack == null || stack.isEmpty || stack == 'system') {
+            inbound['stack'] = 'gvisor';
+            changed = true;
+          }
+        }
       }
 
-      var changed = false;
-      for (final inbound in inbounds) {
-        if (inbound is! Map<String, dynamic>) {
-          continue;
-        }
-        if (inbound['type']?.toString() != 'tun') {
-          continue;
-        }
-
-        final stack = inbound['stack']?.toString().trim();
-        if (stack == null || stack.isEmpty || stack == 'system') {
-          inbound['stack'] = 'gvisor';
+      final unsupportedTags = <String>{};
+      final outbounds = decoded['outbounds'];
+      if (outbounds is List) {
+        outbounds.removeWhere((outbound) {
+          if (outbound is! Map<String, dynamic>) {
+            return false;
+          }
+          if (!_isUnsupportedAndroidOutbound(outbound)) {
+            return false;
+          }
+          final tag = outbound['tag']?.toString();
+          if (tag != null && tag.isNotEmpty) {
+            unsupportedTags.add(tag);
+          }
           changed = true;
+          return true;
+        });
+
+        while (unsupportedTags.isNotEmpty) {
+          var passChanged = false;
+          outbounds.removeWhere((outbound) {
+            if (outbound is! Map<String, dynamic>) {
+              return false;
+            }
+            final refs = outbound['outbounds'];
+            if (refs is! List) {
+              return false;
+            }
+
+            final before = refs.length;
+            refs.removeWhere(
+                (value) => unsupportedTags.contains(value?.toString()));
+            if (refs.length != before) {
+              changed = true;
+              passChanged = true;
+            }
+
+            final defaultTag = outbound['default']?.toString();
+            if (refs.isNotEmpty &&
+                defaultTag != null &&
+                defaultTag.isNotEmpty &&
+                !refs.any((value) => value?.toString() == defaultTag)) {
+              outbound['default'] = refs.first.toString();
+              changed = true;
+              passChanged = true;
+            }
+
+            if (refs.isNotEmpty) {
+              return false;
+            }
+
+            final tag = outbound['tag']?.toString();
+            if (tag != null && tag.isNotEmpty) {
+              unsupportedTags.add(tag);
+            }
+            changed = true;
+            passChanged = true;
+            return true;
+          });
+
+          if (!passChanged) {
+            break;
+          }
         }
       }
 
@@ -272,6 +379,61 @@ class ProfileProvider with ChangeNotifier {
       return const JsonEncoder.withIndent('  ').convert(decoded);
     } catch (_) {
       return content;
+    }
+  }
+
+  static bool _isUnsupportedAndroidOutbound(Map<String, dynamic> outbound) {
+    final type = outbound['type']?.toString();
+    if (type == 'hysteria2') {
+      return true;
+    }
+    if (type != 'vless') {
+      return false;
+    }
+
+    final tls = outbound['tls'];
+    if (tls is! Map) {
+      return false;
+    }
+
+    return _isFeatureEnabled(tls['utls']) || _isFeatureEnabled(tls['reality']);
+  }
+
+  static bool _isFeatureEnabled(dynamic value) {
+    if (value is Map) {
+      final enabled = value['enabled'];
+      if (enabled is bool) {
+        return enabled;
+      }
+      return enabled?.toString().toLowerCase() == 'true';
+    }
+    return false;
+  }
+
+  /// Import a profile from a JSON file on device storage
+  Future<bool> importFromFile(String filePath, {String? name}) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        _error = 'File not found: $filePath';
+        notifyListeners();
+        return false;
+      }
+      final content = await file.readAsString();
+      // Validate JSON
+      final decoded = jsonDecode(content);
+      if (decoded is! Map<String, dynamic>) {
+        _error = 'Invalid config: not a JSON object';
+        notifyListeners();
+        return false;
+      }
+      final profileName =
+          name ?? 'Imported ${DateTime.now().toString().substring(0, 16)}';
+      return await createProfile(name: profileName, content: content);
+    } catch (e) {
+      _error = 'Failed to import from file: $e';
+      notifyListeners();
+      return false;
     }
   }
 
@@ -347,7 +509,8 @@ class Profile {
       updatedAt: parseDate(json['updated_at']) ??
           parseDate(json['updatedAt']) ??
           DateTime.now(),
-      lastUpdated: parseDate(json['last_updated']) ?? parseDate(json['lastUpdated']),
+      lastUpdated:
+          parseDate(json['last_updated']) ?? parseDate(json['lastUpdated']),
     );
   }
 
