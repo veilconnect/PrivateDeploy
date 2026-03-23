@@ -108,7 +108,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             ACTION_UPDATE_CONFIG -> updateConfig(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
             ACTION_RESET_STATS -> resetStats()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startVpn(config: String) {
@@ -118,6 +118,23 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
         if (config.isBlank()) {
             broadcastError("VPN config is empty")
+            return
+        }
+
+        // Pre-validate config JSON structure before passing to Go runtime
+        try {
+            val json = JSONObject(config)
+            if (!json.has("outbounds")) {
+                broadcastError("Invalid config: missing \"outbounds\" section")
+                return
+            }
+            val outbounds = json.optJSONArray("outbounds")
+            if (outbounds == null || outbounds.length() == 0) {
+                broadcastError("Invalid config: \"outbounds\" is empty")
+                return
+            }
+        } catch (e: Exception) {
+            broadcastError("Invalid config: not valid JSON - ${e.message}")
             return
         }
 
@@ -132,7 +149,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 isRunning = true
                 broadcastStatus("connected", null)
                 Log.i(TAG, "VPN started successfully")
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Failed to start VPN", e)
                 cleanupTunnel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -177,7 +194,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 isRunning = true
                 broadcastStatus("connected", null)
                 Log.i(TAG, "VPN restarted successfully")
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Failed to restart VPN", e)
                 cleanupTunnel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -329,6 +346,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun broadcastStatus(status: String, message: String?) {
         sendBroadcast(Intent(ACTION_VPN_STATUS).apply {
+            setPackage(packageName)
             putExtra("status", status)
             putExtra("message", message)
         })

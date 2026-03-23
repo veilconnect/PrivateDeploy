@@ -276,6 +276,7 @@ MOCK_BRIDGE_JS = r"""
 
   const getCurrentProvider = () => state.provider;
   const getCurrentProviderNodes = () => state.nodes[getCurrentProvider()] || [];
+  const getCurrentProviderMeta = () => state.providerMeta[getCurrentProvider()] || state.providerMeta.vultr;
 
   const makeNode = (options, provider) => {
     const suffix = state.cloudCounter++;
@@ -399,6 +400,7 @@ MOCK_BRIDGE_JS = r"""
 
     // Cloud config/provider
     GetCloudConfig: async () => ok(state.configs[getCurrentProvider()] || state.configs.vultr),
+    GetCloudConfigTyped: async () => clone(state.configs[getCurrentProvider()] || state.configs.vultr),
     SaveCloudConfig: async (payload) => {
       try {
         const parsed = JSON.parse(payload || '{}');
@@ -415,8 +417,22 @@ MOCK_BRIDGE_JS = r"""
       }
       return ok('saved');
     },
+    SaveCloudConfigTyped: async (payload) => {
+      const parsed = payload && typeof payload === 'object' ? payload : {};
+      const provider = parsed.provider || getCurrentProvider();
+      const existing = state.configs[provider] || {};
+      state.configs[provider] = {
+        provider,
+        apiKey: String(parsed.apiKey ?? existing.apiKey ?? ''),
+        defaultRegion: String(parsed.defaultRegion ?? existing.defaultRegion ?? ''),
+        defaultPlan: String(parsed.defaultPlan ?? existing.defaultPlan ?? ''),
+        extra: typeof parsed.extra === 'object' && parsed.extra ? parsed.extra : (existing.extra || {}),
+      };
+    },
     ListCloudProviders: async () => ok(Object.values(state.providerMeta)),
-    GetCloudProvider: async () => ok(state.providerMeta[getCurrentProvider()] || state.providerMeta.vultr),
+    ListCloudProvidersTyped: async () => clone(Object.values(state.providerMeta)),
+    GetCloudProvider: async () => ok(getCurrentProviderMeta()),
+    GetCloudProviderTyped: async () => clone(getCurrentProviderMeta()),
     SetCloudProvider: async (provider) => {
       const target = String(provider || '').toLowerCase();
       if (!state.providerMeta[target]) {
@@ -425,17 +441,32 @@ MOCK_BRIDGE_JS = r"""
       state.provider = target;
       return ok('switched');
     },
+    SetCloudProviderTyped: async (provider) => {
+      const target = String(provider || '').toLowerCase();
+      if (!state.providerMeta[target]) {
+        throw new Error(`unknown provider: ${provider}`);
+      }
+      state.provider = target;
+      return clone(state.providerMeta[target]);
+    },
 
     // Cloud metadata
     ListCloudRegions: async () => ok(state.regions[getCurrentProvider()] || []),
+    ListCloudRegionsTyped: async () => clone(state.regions[getCurrentProvider()] || []),
     ListCloudPlans: async () => ok(state.plans[getCurrentProvider()] || []),
+    ListCloudPlansTyped: async () => clone(state.plans[getCurrentProvider()] || []),
     ListCloudAvailability: async (region) => {
       const current = state.availability[getCurrentProvider()] || {};
       return ok(current[String(region || '')] || []);
     },
+    ListCloudAvailabilityTyped: async (region) => {
+      const current = state.availability[getCurrentProvider()] || {};
+      return clone(current[String(region || '')] || []);
+    },
 
     // Cloud instances
     ListCloudInstances: async () => ok(clone(getCurrentProviderNodes())),
+    ListCloudInstancesTyped: async () => clone(getCurrentProviderNodes()),
     CreateCloudInstance: async (payload) => {
       let options = {};
       try {
@@ -447,6 +478,12 @@ MOCK_BRIDGE_JS = r"""
       const node = makeNode(options, provider);
       state.nodes[provider] = [node, ...(state.nodes[provider] || [])];
       return ok(node);
+    },
+    CreateCloudInstanceTyped: async (options) => {
+      const provider = getCurrentProvider();
+      const node = makeNode(options || {}, provider);
+      state.nodes[provider] = [node, ...(state.nodes[provider] || [])];
+      return clone(node);
     },
     CreateMultipleCloudInstances: async (payload) => {
       let items = [];
@@ -467,12 +504,31 @@ MOCK_BRIDGE_JS = r"""
       });
       return ok(results);
     },
+    CreateMultipleCloudInstancesTyped: async (payload) => {
+      const items = Array.isArray(payload) ? payload : [];
+      const provider = getCurrentProvider();
+      const results = items.map((item, index) => {
+        const node = makeNode(item || {}, provider);
+        state.nodes[provider] = [node, ...(state.nodes[provider] || [])];
+        return {
+          id: node.instanceId || `idx-${index}`,
+          success: true,
+        };
+      });
+      return clone(results);
+    },
     DestroyCloudInstance: async (instanceId) => {
       const id = String(instanceId || '');
       const provider = getCurrentProvider();
       const before = state.nodes[provider] || [];
       state.nodes[provider] = before.filter((node) => node.instanceId !== id);
       return ok('destroyed');
+    },
+    DestroyCloudInstanceTyped: async (instanceId) => {
+      const id = String(instanceId || '');
+      const provider = getCurrentProvider();
+      const before = state.nodes[provider] || [];
+      state.nodes[provider] = before.filter((node) => node.instanceId !== id);
     },
 
     // Cloud testing
@@ -515,6 +571,11 @@ MOCK_BRIDGE_JS = r"""
     GetHealthStatus: async () => ok('[]'),
     CleanInvalidCloudNodes: async () => ok(''),
     TestSSHConnection: async () => ok('{}'),
+    TestSSHConnectionTyped: async () => ({
+      os: 'ubuntu',
+      arch: 'amd64',
+      memoryMB: 2048,
+    }),
 
     // Kernel/system helpers
     GetAvailablePort: async () => ok('20123'),
@@ -880,7 +941,8 @@ def close_active_modal_if_any(page) -> None:
 
 
 def ensure_cloud_page_loaded(page, base_url: str) -> None:
-    page.goto(f"{base_url}/#/subscriptions", wait_until="domcontentloaded", timeout=60000)
+    cloud_url = f"{base_url}/#/settings?tab=cloud"
+    page.goto(cloud_url, wait_until="domcontentloaded", timeout=60000)
 
     # First navigation may be redirected to the onboarding wizard by router guard.
     wizard_skip = page.locator("button", has_text=re.compile(r"(跳过向导，直接进入|Skip\\s+wizard)", re.IGNORECASE)).first
@@ -891,8 +953,8 @@ def ensure_cloud_page_loaded(page, base_url: str) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    if "/#/wizard" in page.url:
-        page.goto(f"{base_url}/#/subscriptions", wait_until="domcontentloaded", timeout=60000)
+    if "/#/wizard" in page.url or "tab=cloud" not in page.url:
+        page.goto(cloud_url, wait_until="domcontentloaded", timeout=60000)
 
     page.wait_for_selector(
         "div.cloud-view, button:has-text('创建并部署'), button:has-text('Create & Deploy')",
@@ -1015,7 +1077,7 @@ def run_regression(base_url: str, artifacts_dir: Path, headed: bool) -> Regressi
         page.on("console", on_console)
 
         ensure_cloud_page_loaded(page, base_url)
-        steps.append("open_subscriptions_page")
+        steps.append("open_cloud_page")
 
         # Search/filter interaction
         search_input = page.locator(

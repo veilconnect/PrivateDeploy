@@ -31,7 +31,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         private const val METHOD_CHANNEL = "com.privatedeploy.vpn/native"
         private const val EVENT_CHANNEL = "com.privatedeploy.vpn/events"
         private const val VPN_REQUEST_CODE = 100
-        private const val START_TIMEOUT_MS = 15000L
+        private const val START_TIMEOUT_MS = 30000L
     }
 
     private lateinit var methodChannel: MethodChannel
@@ -169,6 +169,19 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         val config = call.argument<String>("config") ?: ""
         if (config.isBlank()) {
             result.error("INVALID_CONFIG", "VPN config is empty", null)
+            return
+        }
+
+        // Pre-validate config JSON structure
+        try {
+            val json = org.json.JSONObject(config)
+            val outbounds = json.optJSONArray("outbounds")
+            if (outbounds == null || outbounds.length() == 0) {
+                result.error("INVALID_CONFIG", "Invalid config: missing or empty \"outbounds\" section", null)
+                return
+            }
+        } catch (e: Exception) {
+            result.error("INVALID_CONFIG", "Invalid config: not valid JSON - ${e.message}", null)
             return
         }
 

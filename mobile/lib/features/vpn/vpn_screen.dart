@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
@@ -435,6 +436,24 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
     );
   }
 
+  String? _validateSingboxConfig(String configJson) {
+    try {
+      final decoded = jsonDecode(configJson);
+      if (decoded is! Map<String, dynamic>) {
+        return 'Invalid config: not a JSON object';
+      }
+      final outbounds = decoded['outbounds'];
+      if (outbounds is! List || outbounds.isEmpty) {
+        return 'Invalid config: missing or empty "outbounds" section';
+      }
+      return null;
+    } on FormatException {
+      return 'Invalid config: not valid JSON';
+    } catch (e) {
+      return 'Invalid config: $e';
+    }
+  }
+
   Future<void> _handleConnect(VpnProvider provider) async {
     final profileProvider = context.read<ProfileProvider>();
     final activeProfile = profileProvider.activeProfile;
@@ -446,6 +465,18 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
             content: Text(
                 'Please create and activate a profile with sing-box config first'),
             backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    final configError = _validateSingboxConfig(configJson);
+    if (configError != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(configError),
+            backgroundColor: Colors.red,
           ),
         );
       }

@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../core/storage/storage_service.dart';
 import 'auth_provider.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -11,9 +13,44 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const String _usernameStorageKey = 'auth_username';
+  static const String _debugPassword =
+      String.fromEnvironment('PRIVATEDEPLOY_DEBUG_PASSWORD');
+
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _debugAutoLoginTriggered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final storedUsername = StorageService.getString(_usernameStorageKey);
+    if (storedUsername != null && storedUsername.isNotEmpty) {
+      _usernameController.text = storedUsername;
+    }
+    if (_shouldUseDebugPassword()) {
+      _passwordController.text = _debugPassword;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _debugAutoLoginTriggered) {
+          return;
+        }
+        _debugAutoLoginTriggered = true;
+        _handleLogin();
+      });
+    }
+  }
+
+  bool _shouldUseDebugPassword() {
+    if (!kDebugMode || _debugPassword.isEmpty) {
+      return false;
+    }
+    if (_usernameController.text.trim().isEmpty) {
+      return false;
+    }
+    final baseUrl = StorageService.getApiBaseUrl();
+    return baseUrl.contains('127.0.0.1') || baseUrl.contains('10.0.2.2');
+  }
 
   @override
   void dispose() {
