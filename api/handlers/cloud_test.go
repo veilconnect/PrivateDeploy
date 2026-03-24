@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"privatedeploy/bridge/cloud"
@@ -13,12 +14,24 @@ import (
 )
 
 type fakeCloudProvider struct {
-	cfg *cloud.ProviderConfig
+	name        string
+	displayName string
+	cfg         *cloud.ProviderConfig
 }
 
-func (p *fakeCloudProvider) Name() string { return "vultr" }
+func (p *fakeCloudProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "vultr"
+}
 
-func (p *fakeCloudProvider) DisplayName() string { return "Vultr" }
+func (p *fakeCloudProvider) DisplayName() string {
+	if p.displayName != "" {
+		return p.displayName
+	}
+	return "Vultr"
+}
 
 func (p *fakeCloudProvider) LoadConfig() (*cloud.ProviderConfig, error) { return p.cfg, nil }
 
@@ -112,5 +125,64 @@ func TestCloudHandlerGetConfigRedactsAPIKey(t *testing.T) {
 
 	if data["defaultRegion"] != "nrt" {
 		t.Fatalf("expected defaultRegion to be preserved, got %#v", data["defaultRegion"])
+	}
+}
+
+func TestCloudHandlerListProvidersFiltersExperimentalProviders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	registry := cloud.NewRegistry()
+	registry.Register("vultr", &fakeCloudProvider{name: "vultr", displayName: "Vultr"})
+	registry.Register("oracle", &fakeCloudProvider{name: "oracle", displayName: "Oracle Cloud"})
+
+	manager := cloud.NewManager(context.Background(), registry)
+	router := gin.New()
+	handler := NewCloudHandler(manager)
+	router.GET("/cloud/providers", handler.ListProviders)
+
+	req := httptest.NewRequest(http.MethodGet, "/cloud/providers", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object payload, got %#v", payload["data"])
+	}
+	providers, ok := data["providers"].([]any)
+	if !ok {
+		t.Fatalf("expected providers array, got %#v", data["providers"])
+	}
+	if len(providers) != 1 {
+		t.Fatalf("expected only public providers to be exposed, got %#v", providers)
+	}
+}
+
+func TestCloudHandlerSetActiveProviderRejectsExperimentalProviders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	registry := cloud.NewRegistry()
+	registry.Register("oracle", &fakeCloudProvider{name: "oracle", displayName: "Oracle Cloud"})
+
+	manager := cloud.NewManager(context.Background(), registry)
+	router := gin.New()
+	handler := NewCloudHandler(manager)
+	router.POST("/cloud/provider/active", handler.SetActiveProvider)
+
+	req := httptest.NewRequest(http.MethodPost, "/cloud/provider/active", strings.NewReader(`{"provider":"oracle"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", recorder.Code, recorder.Body.String())
 	}
 }

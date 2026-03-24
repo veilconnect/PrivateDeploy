@@ -14,6 +14,8 @@ class VpnProvider with ChangeNotifier {
   TrafficStats _stats = TrafficStats.zero();
   bool _isLoading = false;
   String? _error;
+  bool _isSupported = true;
+  String? _unsupportedReason;
   Timer? _statsTimer;
   StreamSubscription? _statusSub;
   StreamSubscription? _statsSub;
@@ -24,12 +26,25 @@ class VpnProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isConnected => _status == VpnStatus.connected;
+  bool get isSupported => _isSupported;
+  String? get unsupportedReason => _unsupportedReason;
 
   VpnProvider();
 
   Future<void> initialize() async {
     try {
       await _nativeService.initialize();
+
+      final capabilities = await _nativeService.getCapabilities();
+      _isSupported = capabilities.supported;
+      _unsupportedReason = capabilities.reason;
+      if (!_isSupported) {
+        _status = VpnStatus.disconnected;
+        _error = _unsupportedReason;
+        _stopStatsPolling();
+        notifyListeners();
+        return;
+      }
 
       _statusSub = _nativeService.statusStream.listen((nativeStatus) {
         _applyNativeStatus(nativeStatus);
@@ -56,6 +71,13 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<void> loadStatus() async {
+    if (!_isSupported) {
+      _status = VpnStatus.disconnected;
+      _error = _unsupportedReason;
+      _stopStatsPolling();
+      notifyListeners();
+      return;
+    }
     try {
       final nativeStatus = await _nativeService.getStatus();
       if (nativeStatus != null) {
@@ -79,6 +101,11 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<bool> connect({String? configJson, String? profileName}) async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      notifyListeners();
+      return false;
+    }
     _isLoading = true;
     _error = null;
     _status = VpnStatus.connecting;
@@ -120,6 +147,11 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<bool> disconnect() async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      notifyListeners();
+      return false;
+    }
     _isLoading = true;
     _error = null;
     _status = VpnStatus.disconnecting;
@@ -147,6 +179,11 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<bool> restart() async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      notifyListeners();
+      return false;
+    }
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -177,6 +214,9 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<void> loadStats() async {
+    if (!_isSupported) {
+      return;
+    }
     try {
       final nativeStats = await _nativeService.getStats();
       if (nativeStats != null) {
@@ -195,6 +235,11 @@ class VpnProvider with ChangeNotifier {
   }
 
   Future<bool> resetStats() async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      notifyListeners();
+      return false;
+    }
     try {
       final success = await _nativeService.resetStats();
       if (success) {

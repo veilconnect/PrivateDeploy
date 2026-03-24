@@ -51,6 +51,8 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             stopVpn(result)
         case "restartVpn":
             restartVpn(result)
+        case "getCapabilities":
+            getCapabilities(result)
         case "isRunning":
             isRunning(result)
         case "getStatus":
@@ -68,6 +70,20 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    private func getCapabilities(_ result: @escaping FlutterResult) {
+#if canImport(VPNCore)
+        result([
+            "supported": true,
+            "reason": NSNull(),
+        ])
+#else
+        result([
+            "supported": false,
+            "reason": Self.unsupportedMessage,
+        ])
+#endif
     }
 
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/defaults"
 	sshprovider "privatedeploy/bridge/cloud/providers/ssh"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -26,6 +27,9 @@ func (a *App) ListCloudProvidersTyped() ([]CloudProviderInfo, error) {
 	providers := make([]CloudProviderInfo, 0, len(providerNames))
 
 	for _, name := range providerNames {
+		if !defaults.IsPublicProvider(name) {
+			continue
+		}
 		provider, err := a.CloudManager.GetProvider(name)
 		if err != nil {
 			log.Printf("[CloudBridge] Warning: Failed to get provider %s: %v", name, err)
@@ -62,6 +66,10 @@ func (a *App) ListCloudProviders() FlagResult {
 func (a *App) SetCloudProviderTyped(providerName string) (*CloudProviderInfo, error) {
 	log.Printf("[CloudBridge] SetCloudProviderTyped called with: %s", providerName)
 
+	if !defaults.IsPublicProvider(providerName) {
+		return nil, fmt.Errorf("provider %s is experimental and not available in this build", providerName)
+	}
+
 	if err := a.CloudManager.SetActiveProvider(providerName); err != nil {
 		return nil, err
 	}
@@ -91,6 +99,9 @@ func (a *App) GetCloudProviderTyped() (*CloudProviderInfo, error) {
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
 		return nil, err
+	}
+	if !defaults.IsPublicProvider(provider.Name()) {
+		return nil, fmt.Errorf("provider %s is experimental and not exposed in this build", provider.Name())
 	}
 
 	info := &CloudProviderInfo{

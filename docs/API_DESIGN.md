@@ -4,8 +4,11 @@
 
 **Base URL:** `https://api.privatedeploy.local:8443`
 **版本:** v1
-**认证方式:** JWT Token
+**认证方式:** 无登录，本地 / 内网控制
 **数据格式:** JSON
+
+> 注意：当前 standalone API 已移除 `/api/v1/auth/*` 和 `/api/v1/vpn/*`。
+> 本文档中旧的认证 / VPN 控制章节仅代表历史设计，不代表当前构建能力。
 
 ---
 
@@ -390,6 +393,8 @@ Response:
 
 ## 🔌 VPN 控制
 
+> 已过时：standalone API 当前不提供设备级 VPN 控制接口。
+
 ### 启动 VPN
 ```http
 POST /api/v1/vpn/start
@@ -456,7 +461,7 @@ Response:
 
 ### 连接
 ```
-ws://api.privatedeploy.local:8443/ws?token=<jwt_token>
+ws://api.privatedeploy.local:8443/ws
 ```
 
 ### 事件类型

@@ -145,6 +145,29 @@ class VpnNativeService {
     }
   }
 
+  /// 获取原生 VPN 能力
+  Future<VpnNativeCapabilities> getCapabilities() async {
+    try {
+      _clearLastError();
+      final result = await _methodChannel.invokeMethod<Map>('getCapabilities');
+      if (result != null) {
+        return VpnNativeCapabilities.fromJson(
+            Map<String, dynamic>.from(result));
+      }
+    } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to get native VPN capabilities');
+      AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
+    } catch (e) {
+      _recordLastError('Failed to get VPN capabilities: $e');
+      AppLogger.error('[VpnNativeService] Failed to get capabilities', e);
+    }
+
+    return const VpnNativeCapabilities(
+      supported: false,
+      reason: 'Native VPN capability is unavailable',
+    );
+  }
+
   /// 获取 VPN 状态
   Future<VpnNativeStatus?> getStatus() async {
     try {
@@ -319,6 +342,25 @@ class VpnNativeService {
     await _statusController.close();
     await _statsController.close();
     _instance = null;
+  }
+}
+
+class VpnNativeCapabilities {
+  final bool supported;
+  final String? reason;
+
+  const VpnNativeCapabilities({
+    required this.supported,
+    this.reason,
+  });
+
+  factory VpnNativeCapabilities.fromJson(Map<String, dynamic> json) {
+    final supported = json['supported'] == true;
+    final reason = json['reason']?.toString();
+    return VpnNativeCapabilities(
+      supported: supported,
+      reason: reason == null || reason.isEmpty ? null : reason,
+    );
   }
 }
 

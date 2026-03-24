@@ -151,6 +151,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "startVpn" -> startVpn(call, result)
             "stopVpn" -> stopVpn(result)
             "restartVpn" -> restartVpn(result)
+            "getCapabilities" -> getCapabilities(result)
             "isRunning" -> isRunning(result)
             "getStatus" -> getStatus(result)
             "getStats" -> getStats(result)
@@ -160,6 +161,15 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "requestPermission" -> requestPermission(result)
             else -> result.notImplemented()
         }
+    }
+
+    private fun getCapabilities(result: MethodChannel.Result) {
+        result.success(
+            mapOf(
+                "supported" to true,
+                "reason" to null,
+            )
+        )
     }
 
     /**

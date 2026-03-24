@@ -22,9 +22,6 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 
 	profileHandler := handlers.NewProfileHandler(db)
 	subscriptionHandler := handlers.NewSubscriptionHandler(db)
-	vpnHandler := handlers.NewVPNHandler(
-		handlers.NewUnsupportedVPNManager("the standalone API server does not embed a device-level VPN runtime"),
-	)
 
 	// Public routes
 	public := router.Group("/api/v1")
@@ -83,15 +80,5 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 			cloudGroup.GET("/availability", cloudHandler.ListAvailability)
 		}
 
-		// VPN
-		vpn := public.Group("/vpn")
-		{
-			vpn.POST("/start", vpnHandler.Start)
-			vpn.POST("/stop", vpnHandler.Stop)
-			vpn.POST("/restart", vpnHandler.Restart)
-			vpn.POST("/stats/reset", vpnHandler.ResetStats)
-			vpn.GET("/status", vpnHandler.GetStatus)
-			vpn.GET("/stats", vpnHandler.GetStats)
-		}
 	}
 }

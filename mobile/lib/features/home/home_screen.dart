@@ -108,6 +108,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('VPN Status'),
                 subtitle: Consumer<VpnProvider>(
                   builder: (context, vpn, _) {
+                    if (!vpn.isSupported) {
+                      return Text(
+                          vpn.unsupportedReason ?? 'Unavailable on this build');
+                    }
                     return Text(vpn.isConnected ? 'Connected' : 'Disconnected');
                   },
                 ),

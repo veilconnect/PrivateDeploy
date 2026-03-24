@@ -47,7 +47,7 @@ go build -o privatedeploy-api
 ## 🔓 认证模式
 
 - 当前 API 运行在无登录模式下。
-- 只要能够访问这台 API 主机，就可以直接调用 `/profiles`、`/subscriptions`、`/cloud`、`/vpn`、`/system`。
+- 只要能够访问这台 API 主机，就可以直接调用 `/profiles`、`/subscriptions`、`/cloud`、`/system`。
 - 推荐只在本机、局域网或受信任内网中使用，不要直接暴露到公网。
 
 ## 📖 API 文档
@@ -58,7 +58,8 @@ go build -o privatedeploy-api
 
 - API 会返回 `hasApiKey`，用于告诉客户端当前激活 provider 是否已经在服务端安全存储了 API key。
 - 实际 API key 不会在 `GET /api/v1/cloud/config` 响应中回传给客户端。
-- 当前 standalone API 默认激活 provider 为 `vultr`，也支持切换到其他已注册 provider。
+- 当前 standalone API 只对外暴露正式支持的 provider：`vultr`、`digitalocean`、`ssh`。
+- 默认激活 provider 为 `vultr`。
 
 ### 健康检查
 
@@ -80,17 +81,18 @@ api/
 ├── config/              # 配置
 │   └── config.go
 ├── handlers/            # HTTP 处理器
-│   ├── auth.go
-│   └── system.go
+│   ├── cloud.go
+│   ├── profile.go
+│   ├── subscription.go
+│   ├── system.go
+│   └── websocket.go
 ├── middleware/          # 中间件
-│   └── auth.go
+│   └── cors.go
 ├── models/              # 数据模型
-│   ├── auth.go
 │   └── response.go
 ├── routes/              # 路由配置
 │   └── routes.go
 └── utils/               # 工具函数
-    ├── jwt.go
     └── password.go
 ```
 
@@ -110,17 +112,14 @@ go test ./...
 
 ### 当前状态
 - [x] 基础 HTTP 服务器
-- [x] JWT 认证
-- [x] 用户登录/Token 刷新
 - [x] 系统信息接口
 - [x] 云服务商管理 API
 - [x] Profiles / Subscriptions CRUD API
 - [x] WebSocket 连接入口
-- [x] 登录限流
 - [ ] Swagger / OpenAPI 自动文档
 
 ### 已知限制
-- standalone API 的 `/vpn/*` 路由是占位控制面，不内嵌设备级 VPN runtime。
+- standalone API 不提供 `/vpn/*` 设备级控制接口。
 - HTTPS 终止、反向代理和外网暴露策略应由部署环境负责。
 
 ### 后续方向
@@ -131,12 +130,9 @@ go test ./...
 
 ## 🔒 安全
 
-- ✅ JWT Token 认证
-- ✅ 密码 bcrypt 加密
 - ✅ CORS 支持
 - ✅ 请求参数验证
-- ✅ 登录限流
-- ✅ 开发 / 生产模式下的密钥策略分离
+- ✅ 本地 / 内网优先的无登录控制模式
 - 🔄 HTTPS 支持 (待实现)
 - 🔄 更细粒度的全局 Rate Limiting (待实现)
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"privatedeploy/api/models"
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/defaults"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,9 @@ func (h *CloudHandler) ListProviders(c *gin.Context) {
 
 	result := make([]ProviderInfo, 0, len(providerNames))
 	for _, name := range providerNames {
+		if !defaults.IsPublicProvider(name) {
+			continue
+		}
 		provider, err := h.manager.GetProvider(name)
 		if err != nil {
 			log.Printf("[CloudHandler] Warning: Failed to get provider %s: %v", name, err)
@@ -66,6 +70,13 @@ func (h *CloudHandler) GetActiveProvider(c *gin.Context) {
 		))
 		return
 	}
+	if !defaults.IsPublicProvider(provider.Name()) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse(
+			models.ErrNotFound,
+			"Active provider is not a public production provider",
+		))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"name":        provider.Name(),
@@ -88,6 +99,14 @@ func (h *CloudHandler) SetActiveProvider(c *gin.Context) {
 	}
 
 	log.Printf("[CloudHandler] SetActiveProvider: %s", req.Provider)
+
+	if !defaults.IsPublicProvider(req.Provider) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(
+			models.ErrValidationError,
+			"Provider is experimental and not available in this build",
+		))
+		return
+	}
 
 	if err := h.manager.SetActiveProvider(req.Provider); err != nil {
 		log.Printf("[CloudHandler] ERROR: Failed to set provider: %v", err)

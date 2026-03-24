@@ -41,16 +41,30 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
       appBar: AppBar(
         title: const Text('VPN Control'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              context.read<VpnProvider>().loadStatus();
+          Consumer<VpnProvider>(
+            builder: (context, provider, _) {
+              if (!provider.isSupported) {
+                return const SizedBox.shrink();
+              }
+              return IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () {
+                  context.read<VpnProvider>().loadStatus();
+                },
+              );
             },
           ),
         ],
       ),
       body: Consumer<VpnProvider>(
         builder: (context, provider, _) {
+          if (!provider.isSupported) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.all(24.w),
+              child: _buildUnsupportedState(provider),
+            );
+          }
           return RefreshIndicator(
             onRefresh: () => provider.loadStatus(),
             child: SingleChildScrollView(
@@ -106,6 +120,57 @@ class _VpnScreenState extends State<VpnScreen> with TickerProviderStateMixin {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildUnsupportedState(VpnProvider provider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(24.w),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.orange, size: 28.w),
+                SizedBox(width: 12.w),
+                Expanded(
+                  child: Text(
+                    'Native VPN unavailable',
+                    style: TextStyle(
+                      fontSize: 20.sp,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 12.h),
+            Text(
+              provider.unsupportedReason ??
+                  'This build does not include a usable native VPN runtime.',
+              style: TextStyle(
+                fontSize: 14.sp,
+                height: 1.5,
+                color: Colors.grey[700],
+              ),
+            ),
+            SizedBox(height: 12.h),
+            Text(
+              'You can still manage profiles and cloud nodes on this device, but native VPN connect/disconnect is disabled for this build.',
+              style: TextStyle(
+                fontSize: 13.sp,
+                height: 1.5,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -191,3 +191,63 @@ func TestGetFastestCloudRegionUsesCloudLatencyTester(t *testing.T) {
 		t.Fatalf("unexpected fastest region result: %+v", latency)
 	}
 }
+
+type mockNamedProvider struct {
+	name        string
+	displayName string
+}
+
+func (m *mockNamedProvider) Name() string        { return m.name }
+func (m *mockNamedProvider) DisplayName() string { return m.displayName }
+func (m *mockNamedProvider) LoadConfig() (*cloud.ProviderConfig, error) {
+	return &cloud.ProviderConfig{Provider: m.name}, nil
+}
+func (m *mockNamedProvider) SaveConfig(config *cloud.ProviderConfig) error           { return nil }
+func (m *mockNamedProvider) ValidateConfig(config *cloud.ProviderConfig) error       { return nil }
+func (m *mockNamedProvider) ListRegions(ctx context.Context) ([]cloud.Region, error) { return nil, nil }
+func (m *mockNamedProvider) ListPlans(ctx context.Context, region string) ([]cloud.Plan, error) {
+	return nil, nil
+}
+func (m *mockNamedProvider) ListAvailability(ctx context.Context, region string) ([]string, error) {
+	return nil, nil
+}
+func (m *mockNamedProvider) ListInstances(ctx context.Context) ([]cloud.Instance, error) {
+	return nil, nil
+}
+func (m *mockNamedProvider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+	return nil, nil
+}
+func (m *mockNamedProvider) DestroyInstance(ctx context.Context, instanceID string) error { return nil }
+func (m *mockNamedProvider) GetInstance(ctx context.Context, instanceID string) (*cloud.Instance, error) {
+	return nil, nil
+}
+
+func TestListCloudProvidersTypedFiltersExperimentalProviders(t *testing.T) {
+	registry := cloud.NewRegistry()
+	registry.Register("vultr", &mockNamedProvider{name: "vultr", displayName: "Vultr"})
+	registry.Register("oracle", &mockNamedProvider{name: "oracle", displayName: "Oracle Cloud"})
+
+	manager := cloud.NewManager(context.Background(), registry)
+	app := &App{CloudManager: manager}
+
+	providers, err := app.ListCloudProvidersTyped()
+	if err != nil {
+		t.Fatalf("ListCloudProvidersTyped() error = %v", err)
+	}
+
+	if len(providers) != 1 || providers[0].Name != "vultr" {
+		t.Fatalf("expected only public providers, got %+v", providers)
+	}
+}
+
+func TestSetCloudProviderTypedRejectsExperimentalProvider(t *testing.T) {
+	registry := cloud.NewRegistry()
+	registry.Register("oracle", &mockNamedProvider{name: "oracle", displayName: "Oracle Cloud"})
+
+	manager := cloud.NewManager(context.Background(), registry)
+	app := &App{CloudManager: manager}
+
+	if _, err := app.SetCloudProviderTyped("oracle"); err == nil {
+		t.Fatal("expected experimental provider to be rejected")
+	}
+}

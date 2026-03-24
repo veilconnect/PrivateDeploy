@@ -167,5 +167,30 @@ void main() {
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });
+
+    test('initializes unsupported native VPN capability explicitly', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getCapabilities':
+            return {
+              'supported': false,
+              'reason': 'iOS VPN core is not available in this build.',
+            };
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.initialize();
+
+      expect(vpnProvider.isSupported, false);
+      expect(
+        vpnProvider.unsupportedReason,
+        'iOS VPN core is not available in this build.',
+      );
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.error, 'iOS VPN core is not available in this build.');
+    });
   });
 }
