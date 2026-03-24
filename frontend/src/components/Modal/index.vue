@@ -19,6 +19,7 @@ export interface Props {
   submit?: boolean
   cancelText?: string
   submitText?: string
+  submitDisabled?: boolean
   maskClosable?: boolean
   class?: string
   toolbar?: {
@@ -56,6 +57,7 @@ const props = withDefaults(defineProps<Props>(), {
   submit: true,
   cancelText: 'common.cancel',
   submitText: 'common.save',
+  submitDisabled: false,
   maskClosable: false,
   toolbar: () => ({
     maximize: true,
@@ -246,7 +248,7 @@ onUnmounted(() => {
               </Button>
             </slot>
             <slot name="submit">
-              <Button v-if="submit" @click="handleSubmit" :loading="submitLoading" type="primary">
+              <Button v-if="submit" @click="handleSubmit" :loading="submitLoading" :disabled="submitDisabled" type="primary">
                 {{ t(submitText) }}
               </Button>
             </slot>

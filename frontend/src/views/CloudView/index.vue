@@ -70,6 +70,10 @@ const showLatencyResults = ref(false)
 // SSH deploy state
 const isSSHProvider = computed(() => cloudStore.currentProvider === 'ssh')
 const showMultiDeployModal = ref(false)
+const multiDeployModalRef = ref<{
+  canDeploy: boolean
+  handleDeploy: () => Promise<unknown[] | null>
+} | null>(null)
 
 const handleSSHDeploy = async (extra: Record<string, string>) => {
   try {
@@ -81,10 +85,17 @@ const handleSSHDeploy = async (extra: Record<string, string>) => {
   }
 }
 
-const handleMultiDeployDone = async () => {
-  showMultiDeployModal.value = false
+const multiDeploySubmitDisabled = computed(() => !(multiDeployModalRef.value?.canDeploy ?? false))
+
+const handleMultiDeploySubmit = async () => {
+  const results = await multiDeployModalRef.value?.handleDeploy()
+  if (!results) {
+    return false
+  }
+
   await cloudStore.refreshInstances(true)
   message.success('批量部署完成')
+  return true
 }
 
 const providerOptions = computed(() =>
@@ -805,13 +816,18 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
   <Modal />
 
   <!-- Multi-Deploy Modal -->
-  <Modal v-if="showMultiDeployModal" @close="showMultiDeployModal = false">
+  <Modal
+    v-if="showMultiDeployModal"
+    v-model:open="showMultiDeployModal"
+    submit-text="部署所选节点"
+    :submit-disabled="multiDeploySubmitDisabled"
+    :on-ok="handleMultiDeploySubmit"
+  >
     <template #title>批量部署节点</template>
     <MultiDeployModal
+      ref="multiDeployModalRef"
       :regions="cloudStore.regions"
       :latency-results="cloudStore.latencyTestResults"
-      @close="showMultiDeployModal = false"
-      @done="handleMultiDeployDone"
     />
   </Modal>
 

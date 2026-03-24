@@ -14,7 +14,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'close'): void
   (event: 'done', results: MultiDeployResult[]): void
 }>()
 
@@ -68,8 +67,10 @@ const autoRecommend = () => {
   selectedRegions.value = picks
 }
 
-const handleDeploy = async () => {
-  if (selectedCount.value === 0) return
+const canDeploy = computed(() => selectedCount.value > 0 && !deploying.value)
+
+const handleDeploy = async (): Promise<MultiDeployResult[] | null> => {
+  if (!canDeploy.value) return null
   deploying.value = true
   progress.value = new Map()
   results.value = []
@@ -93,12 +94,20 @@ const handleDeploy = async () => {
   try {
     results.value = await CreateMultipleCloudInstances(configs)
     emit('done', results.value)
+    return results.value
   } catch (err: any) {
     logError('[MultiDeploy] Error:', err)
+    return null
   } finally {
     deploying.value = false
   }
 }
+
+defineExpose({
+  canDeploy,
+  deploying,
+  handleDeploy,
+})
 
 const statusColor = (status: DeployProgressStatus) => {
   switch (status) {
@@ -148,7 +157,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="multi-deploy-modal flex flex-col gap-4 max-h-[70vh] overflow-auto">
+  <div class="multi-deploy-modal flex flex-col gap-2 max-h-[70vh] overflow-hidden">
     <!-- Region selection -->
     <div class="flex items-center justify-between">
       <h3 class="text-sm font-semibold">选择部署区域</h3>
@@ -157,7 +166,7 @@ onUnmounted(() => {
       </Button>
     </div>
 
-    <div class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-24 md:max-h-40 overflow-y-auto pr-1">
       <label
         v-for="region in sortedRegions"
         :key="region.id"
@@ -181,7 +190,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Plan selection -->
-    <div class="form-field" v-if="cloudStore.plans?.length">
+    <div class="form-field shrink-0" v-if="cloudStore.plans?.length">
       <label class="form-label text-xs">套餐</label>
       <select v-model="plan" class="w-full px-3 py-1.5 text-sm border rounded bg-canvas">
         <option value="">默认</option>
@@ -192,7 +201,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Deploy progress -->
-    <div v-if="progress.size > 0" class="flex flex-col gap-2">
+    <div v-if="progress.size > 0" class="flex flex-col gap-2 max-h-20 overflow-y-auto shrink-0">
       <div
         v-for="[idx, p] of progress"
         :key="idx"
@@ -204,17 +213,10 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Actions -->
-    <div class="flex gap-3 justify-end">
-      <Button @click="$emit('close')">取消</Button>
-      <Button
-        type="primary"
-        :disabled="selectedCount === 0 || deploying"
-        :loading="deploying"
-        @click="handleDeploy"
-      >
-        {{ deploying ? '部署中...' : `部署 ${selectedCount} 个节点` }}
-      </Button>
+    <div class="shrink-0 border-t border-secondary/50 pt-2">
+      <div class="text-xs opacity-60">
+        已选择 {{ selectedCount }} 个区域
+      </div>
     </div>
   </div>
 </template>
