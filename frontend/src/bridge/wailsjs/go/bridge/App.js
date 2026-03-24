@@ -58,6 +58,10 @@ export function ExitApp() {
   return window['go']['bridge']['App']['ExitApp']();
 }
 
+export function ExportCloudBackup(arg1) {
+  return window['go']['bridge']['App']['ExportCloudBackup'](arg1);
+}
+
 export function FileExists(arg1) {
   return window['go']['bridge']['App']['FileExists'](arg1);
 }
@@ -100,6 +104,10 @@ export function GetInterfaces() {
 
 export function GetLoadBalancerStatus() {
   return window['go']['bridge']['App']['GetLoadBalancerStatus']();
+}
+
+export function ImportCloudBackup() {
+  return window['go']['bridge']['App']['ImportCloudBackup']();
 }
 
 export function IsStartup() {

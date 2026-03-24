@@ -24,6 +24,7 @@ router.beforeEach(async (to, _from, next) => {
     if (!cloudStore.configLoaded) {
       await cloudStore.loadConfig().catch(() => {})
     }
+    await cloudStore.refreshInstances(true).catch(() => {})
 
     // Check if user has no API key and no instances
     const hasConfig = cloudStore.config.apiKey?.trim()

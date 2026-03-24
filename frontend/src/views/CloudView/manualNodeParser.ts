@@ -55,6 +55,33 @@ const assignIpFields = (host: string): Partial<Pick<ManualNodeInput, 'ipv4' | 'i
   return { ipv4: normalized }
 }
 
+const splitCredentialPair = (value: string): { method: string; password: string } | null => {
+  const separator = value.indexOf(':')
+  if (separator <= 0) {
+    return null
+  }
+  const method = value.slice(0, separator).trim()
+  const password = value.slice(separator + 1).trim()
+  if (!method || !password) {
+    return null
+  }
+  return { method, password }
+}
+
+const parseEndpoint = (value: string): { host: string; port: number } | null => {
+  try {
+    const url = new URL(`ss://${value}`)
+    const host = url.hostname
+    const port = toOptionalPort(url.port || '')
+    if (!host || !port) {
+      return null
+    }
+    return { host, port }
+  } catch {
+    return null
+  }
+}
+
 const parseShadowSocksUrl = (text: string): ManualNodeInput | null => {
   let payload = text.slice('ss://'.length)
   let label = ''
@@ -70,28 +97,32 @@ const parseShadowSocksUrl = (text: string): ManualNodeInput | null => {
     payload = payload.slice(0, queryIndex)
   }
 
-  const decoded = decodeBase64(payload)
-  if (!decoded || !decoded.includes('@')) {
-    return null
+  let credentials: { method: string; password: string } | null = null
+  let endpoint: { host: string; port: number } | null = null
+
+  if (payload.includes('@')) {
+    const [encodedCredentials, hostPart] = payload.split('@')
+    const decodedCredentials = decodeBase64(encodedCredentials)
+    credentials = decodedCredentials ? splitCredentialPair(decodedCredentials) : null
+    endpoint = hostPart ? parseEndpoint(hostPart) : null
+  } else {
+    const decoded = decodeBase64(payload)
+    if (decoded && decoded.includes('@')) {
+      const [decodedCredentials, hostPart] = decoded.split('@')
+      credentials = splitCredentialPair(decodedCredentials)
+      endpoint = hostPart ? parseEndpoint(hostPart) : null
+    }
   }
 
-  const [methodPart, hostPart] = decoded.split('@')
-  if (!hostPart) {
-    return null
-  }
-
-  const [method, password] = methodPart.split(':')
-  const [host, portStr] = hostPart.split(':')
-  const port = toOptionalPort(portStr || '')
-  if (!method || !password || !host || !port) {
+  if (!credentials || !endpoint) {
     return null
   }
 
   return {
-    label: label || host,
-    ...assignIpFields(host),
-    ssPort: port,
-    ssPassword: password,
+    label: label || endpoint.host,
+    ...assignIpFields(endpoint.host),
+    ssPort: endpoint.port,
+    ssPassword: credentials.password,
   }
 }
 

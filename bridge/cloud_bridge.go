@@ -392,12 +392,7 @@ func (a *App) TestCloudRegionLatency(regionCode string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	// Check if provider supports latency testing (currently only Vultr)
-	type LatencyTester interface {
-		TestRegionLatency(ctx context.Context, regionCode string) (interface{}, error)
-	}
-
-	tester, ok := provider.(LatencyTester)
+	tester, ok := provider.(cloud.LatencyTester)
 	if !ok {
 		errMsg := "latency testing not supported for this provider"
 		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
@@ -431,12 +426,7 @@ func (a *App) TestAllCloudRegions() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	// Check if provider supports latency testing
-	type LatencyTester interface {
-		TestAllRegions(ctx context.Context) (interface{}, error)
-	}
-
-	tester, ok := provider.(LatencyTester)
+	tester, ok := provider.(cloud.LatencyTester)
 	if !ok {
 		errMsg := "latency testing not supported for this provider"
 		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())
@@ -470,12 +460,7 @@ func (a *App) GetFastestCloudRegion() FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	// Check if provider supports latency testing
-	type LatencyTester interface {
-		GetFastestRegion(ctx context.Context) (interface{}, error)
-	}
-
-	tester, ok := provider.(LatencyTester)
+	tester, ok := provider.(cloud.LatencyTester)
 	if !ok {
 		errMsg := "latency testing not supported for this provider"
 		log.Printf("[CloudBridge] ERROR: %s (provider=%s)", errMsg, provider.Name())

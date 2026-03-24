@@ -241,12 +241,6 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   const providerRequiresApiKey = () => currentProvider.value !== 'ssh'
 
   const refreshInstances = async (silent = false, force = false) => {
-    if (providerRequiresApiKey() && (!config.apiKey || config.apiKey.trim() === '')) {
-      instances.value = []
-      instancesUpdatedAt.value = Date.now()
-      return
-    }
-
     if (!force && isInstancesCacheValid() && instances.value.length > 0) {
       logInfo('[CloudStore] Using cached instances data')
       return

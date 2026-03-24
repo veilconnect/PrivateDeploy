@@ -565,14 +565,17 @@ func (p *Provider) ListAvailability(ctx context.Context, region string) ([]strin
 
 // ListInstances returns all Vultr instances
 func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) {
+	records, recordsErr := p.loadNodeRecords()
 	if _, err := p.ensureConfig(); err != nil {
+		if recordsErr == nil && len(records) > 0 {
+			return recordsToInstances(records), nil
+		}
 		return nil, err
 	}
 
 	res, err := p.apiRequest(ctx, http.MethodGet, "/instances", nil)
 	if err != nil {
-		records, loadErr := p.loadNodeRecords()
-		if loadErr != nil || len(records) == 0 {
+		if recordsErr != nil || len(records) == 0 {
 			return nil, err
 		}
 		return recordsToInstances(records), nil
@@ -582,16 +585,14 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		Instances []vultrInstance `json:"instances"`
 	}
 	if err := p.parseResponse(res, &payload); err != nil {
-		records, loadErr := p.loadNodeRecords()
-		if loadErr != nil || len(records) == 0 {
+		if recordsErr != nil || len(records) == 0 {
 			return nil, err
 		}
 		return recordsToInstances(records), nil
 	}
 
-	records, err := p.loadNodeRecords()
-	if err != nil {
-		return nil, err
+	if recordsErr != nil {
+		return nil, recordsErr
 	}
 
 	dirty := false

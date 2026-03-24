@@ -80,7 +80,7 @@ export const useProfilesStore = defineStore('profiles', () => {
       }
     })
 
-    const dirs = await ReadDir('data/.cache')
+    const dirs = (await ignoredError(ReadDir, 'data/.cache')) || []
     const backupProfiles = dirs.find((file) => file.name === 'profiles-backup.yaml')
     if (backupProfiles) {
       const txt = await ReadFile('data/.cache/profiles-backup.yaml')

@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -47,6 +48,12 @@ func main() {
 		appIcon = linuxTrayIcon
 	}
 
+	frontendAssets, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to mount embedded frontend assets: %v\n", err)
+		os.Exit(1)
+	}
+
 	app := bridge.CreateApp(assets)
 	trayStart := func() {}
 	if !linuxMinimalShell && os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
@@ -81,7 +88,7 @@ func main() {
 	}
 
 	// Create application with options
-	err := runWailsWithRecovery(&options.App{
+	err = runWailsWithRecovery(&options.App{
 		MinWidth:         600,
 		MinHeight:        400,
 		DisableResize:    false,
@@ -116,7 +123,7 @@ func main() {
 			WebviewGpuPolicy:    linux.WebviewGpuPolicy(bridge.Config.WebviewGpuPolicy),
 		},
 		AssetServer: &assetserver.Options{
-			Assets:     assets,
+			Assets:     frontendAssets,
 			Middleware: bridge.RollingRelease,
 		},
 		SingleInstanceLock: singleInstanceLock,
@@ -197,6 +204,8 @@ func validateLinuxDisplay() error {
 		return nil
 	}
 
+	xAuthority := ensureXAuthorityEnv()
+
 	if socketPath := x11SocketPath(display); socketPath != "" {
 		conn, err := net.DialTimeout("unix", socketPath, 1200*time.Millisecond)
 		if err != nil {
@@ -211,6 +220,9 @@ func validateLinuxDisplay() error {
 
 	cmd := exec.Command("xdpyinfo")
 	cmd.Env = append(os.Environ(), "DISPLAY="+display)
+	if xAuthority != "" {
+		cmd.Env = append(cmd.Env, "XAUTHORITY="+xAuthority)
+	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		detail := strings.TrimSpace(string(output))
 		if detail == "" {
@@ -223,6 +235,25 @@ func validateLinuxDisplay() error {
 	}
 
 	return nil
+}
+
+func ensureXAuthorityEnv() string {
+	if value := strings.TrimSpace(os.Getenv("XAUTHORITY")); value != "" {
+		return value
+	}
+
+	homeDir := strings.TrimSpace(os.Getenv("HOME"))
+	if homeDir == "" {
+		return ""
+	}
+
+	candidate := filepath.Join(homeDir, ".Xauthority")
+	if _, err := os.Stat(candidate); err != nil {
+		return ""
+	}
+
+	_ = os.Setenv("XAUTHORITY", candidate)
+	return candidate
 }
 
 func x11SocketPath(display string) string {

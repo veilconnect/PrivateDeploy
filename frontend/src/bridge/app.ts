@@ -36,6 +36,14 @@ export const SaveCloudConfig = async (config: CloudConfig): Promise<void> => {
   await App.SaveCloudConfigTyped(config as any)
 }
 
+export const ExportCloudBackup = async (content: string): Promise<string> => {
+  return await App.ExportCloudBackup(content)
+}
+
+export const ImportCloudBackup = async (): Promise<string> => {
+  return await App.ImportCloudBackup()
+}
+
 export const ListCloudProviders = async (): Promise<Array<{ name: string; displayName: string }>> => {
   return await App.ListCloudProvidersTyped() as Array<{ name: string; displayName: string }>
 }

@@ -1,5 +1,6 @@
+import { ExportCloudBackup, ImportCloudBackup } from '@/bridge'
 import { message } from '@/utils'
-import { createBackup, downloadBackup, parseBackup } from '@/utils/backup'
+import { createBackup, parseBackup } from '@/utils/backup'
 
 import type { CloudConfig } from '@/types/cloud'
 
@@ -28,7 +29,10 @@ export const useCloudViewBackup = ({
       const backupString = await createBackup({
         cloudConfig: cloudStore.config,
       })
-      downloadBackup(backupString)
+      const path = await ExportCloudBackup(backupString)
+      if (!path) {
+        return
+      }
       message.success(translate('cloud.backup.exported'))
     } catch (error) {
       message.error(translate('cloud.backup.exportFailed'))
@@ -38,36 +42,20 @@ export const useCloudViewBackup = ({
 
   const handleRestoreConfig = async () => {
     try {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = '.json'
-      input.onchange = async (event) => {
-        const file = (event.target as HTMLInputElement).files?.[0]
-        if (!file) {
-          return
-        }
-
-        const reader = new FileReader()
-        reader.onload = async (loadEvent) => {
-          try {
-            const backupString = loadEvent.target?.result as string
-            const backup = parseBackup(backupString)
-
-            if (backup.cloudConfig) {
-              cloudStore.config = backup.cloudConfig
-              await cloudStore.saveConfig()
-            }
-
-            message.success(translate('cloud.backup.imported'))
-            await fetchMeta()
-          } catch (error) {
-            message.error(translate('cloud.backup.importFailed'))
-            handleError(error)
-          }
-        }
-        reader.readAsText(file)
+      const backupString = await ImportCloudBackup()
+      if (!backupString) {
+        return
       }
-      input.click()
+
+      const backup = parseBackup(backupString)
+
+      if (backup.cloudConfig) {
+        Object.assign(cloudStore.config, backup.cloudConfig)
+        await cloudStore.saveConfig()
+      }
+
+      message.success(translate('cloud.backup.imported'))
+      await fetchMeta()
     } catch (error) {
       message.error(translate('cloud.backup.importFailed'))
       handleError(error)

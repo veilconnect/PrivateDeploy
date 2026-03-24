@@ -36,6 +36,38 @@ const revealMainWindow = async () => {
   WindowUnminimise()
 }
 
+const showStartupError = (error: unknown) => {
+  hasError.value = true
+  console.error('[App] Startup failed:', error)
+  message.error(error instanceof Error ? error.message : String(error))
+}
+
+const maybePromptSystemProxyPolicy = async () => {
+  if (!envStore.capabilities.systemProxySupported || appSettings.app.systemProxyPolicyInitialized) {
+    return
+  }
+
+  const enableAutoProxy = await confirm(
+    'settings.systemProxy.firstLaunchTitle',
+    'settings.systemProxy.firstLaunchMessage',
+    {
+      type: 'text',
+      okText: 'common.enable',
+      cancelText: 'common.disable',
+    },
+  )
+    .then(() => true)
+    .catch(() => false)
+
+  appSettings.app.autoSetSystemProxy = enableAutoProxy
+  appSettings.app.systemProxyPolicyInitialized = true
+  message.info(
+    enableAutoProxy
+      ? 'settings.systemProxy.firstLaunchEnabled'
+      : 'settings.systemProxy.firstLaunchDisabled',
+  )
+}
+
 EventsOn('onLaunchApp', async (args: string[]) => {
   const url = new URL(args[0])
   if (url.pathname.startsWith('//import-remote-profile')) {
@@ -73,57 +105,34 @@ window.addEventListener('keydown', (e) => {
   }
 })
 
-envStore.setupEnv().then(async () => {
-  const showError = (err: string) => {
-    hasError.value = true
-    message.error(err)
-  }
-
-  await appSettings.setupAppSettings()
-  await subscribesStore.setupSubscribes()
-  await rulesetsStore.setupRulesets()
-  await profilesStore.setupProfiles()
-  await ensureBuiltinPresets()
-  await pluginsStore.setupPlugins()
-
-  if (envStore.capabilities.systemProxySupported && !appSettings.app.systemProxyPolicyInitialized) {
-    const enableAutoProxy = await confirm(
-      'settings.systemProxy.firstLaunchTitle',
-      'settings.systemProxy.firstLaunchMessage',
-      {
-        type: 'text',
-        okText: 'common.enable',
-        cancelText: 'common.disable',
-      },
-    )
-      .then(() => true)
-      .catch(() => false)
-
-    appSettings.app.autoSetSystemProxy = enableAutoProxy
-    appSettings.app.systemProxyPolicyInitialized = true
-    message.info(
-      enableAutoProxy
-        ? 'settings.systemProxy.firstLaunchEnabled'
-        : 'settings.systemProxy.firstLaunchDisabled',
-    )
-  }
-
-  const startTime = performance.now()
-  percent.value = 20
-  if (await IsStartup()) {
-    await pluginsStore.onStartupTrigger().catch(showError)
-  }
-
-  percent.value = 40
-  await pluginsStore.onReadyTrigger().catch(showError)
-
-  // Auto-apply cloud nodes on startup
-  percent.value = 60
+const bootstrapApp = async () => {
   let autoApplyPromise: Promise<void> | undefined
+
   try {
-    await cloudStore.loadConfig()
-    if (cloudStore.config.apiKey) {
-      await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
+    await envStore.setupEnv()
+    await appSettings.setupAppSettings()
+    await subscribesStore.setupSubscribes()
+    await rulesetsStore.setupRulesets()
+    await profilesStore.setupProfiles()
+    await ensureBuiltinPresets()
+    await pluginsStore.setupPlugins()
+
+    const startTime = performance.now()
+    percent.value = 20
+    if (await IsStartup()) {
+      await pluginsStore.onStartupTrigger().catch(showStartupError)
+    }
+
+    percent.value = 40
+    await pluginsStore.onReadyTrigger().catch(showStartupError)
+
+    // Auto-apply cloud nodes on startup
+    percent.value = 60
+    try {
+      await cloudStore.loadConfig()
+      if (cloudStore.config.apiKey) {
+        await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
+      }
       autoApplyPromise = cloudStore
         .refreshInstances(true)
         .then(() => cloudStore.applyAllNodesToProfile())
@@ -131,29 +140,42 @@ envStore.setupEnv().then(async () => {
         .catch((error) => {
           console.error('[App] Failed to auto-apply cloud nodes:', error)
         })
+    } catch (error) {
+      console.error('[App] Failed to prepare cloud data:', error)
     }
+
+    const duration = performance.now() - startTime
+    percent.value = duration < 500 ? 80 : 100
+    await sleep(Math.max(0, 1000 - duration))
   } catch (error) {
-    console.error('[App] Failed to prepare cloud data:', error)
-  }
+    showStartupError(error)
+  } finally {
+    loading.value = false
+    percent.value = 100
 
-  const duration = performance.now() - startTime
-  percent.value = duration < 500 ? 80 : 100
+    await revealMainWindow().catch((error) => {
+      console.error('[App] Failed to reveal main window:', error)
+    })
 
-  await sleep(Math.max(0, 1000 - duration))
+    await kernelApiStore.updateCoreState().catch((error) => {
+      console.error('[App] Failed to update core state:', error)
+    })
 
-  loading.value = false
-  await revealMainWindow()
-  await kernelApiStore.updateCoreState()
-
-  percent.value = 100
-  try {
-    if (!kernelApiStore.running && autoApplyPromise) {
-      await autoApplyPromise
+    if (!hasError.value) {
+      await maybePromptSystemProxyPolicy()
     }
-  } catch (error) {
-    console.error('[App] Failed while waiting cloud auto-apply:', error)
+
+    try {
+      if (!kernelApiStore.running && autoApplyPromise) {
+        await autoApplyPromise
+      }
+    } catch (error) {
+      console.error('[App] Failed while waiting cloud auto-apply:', error)
+    }
   }
-})
+}
+
+bootstrapApp()
 </script>
 
 <template>

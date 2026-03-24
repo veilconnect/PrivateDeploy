@@ -119,7 +119,7 @@ export const useCloudViewActions = ({
       return `${index + 1}. ${node.label} (${region})\n   Score: ${score}/100\n   Reachability: ${antiBlockingScore ?? 'N/A'}/100\n   IP: ${ipv4}\n   ${reasons.join(', ')}`
     }).join('\n\n')
 
-    console.log('=== Recommended Nodes ===\n' + recommendationText)
+    logInfo('=== Recommended Nodes ===\n' + recommendationText)
     message.success(translate('cloud.recommendations.title') + ': Check console for details')
   }
 

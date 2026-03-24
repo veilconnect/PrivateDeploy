@@ -7,17 +7,12 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"privatedeploy/bridge/cloud"
 )
 
 // RegionLatency 区域延迟测试结果
-type RegionLatency struct {
-	Code    string  `json:"code"`    // 区域代码 (nrt, fra, lax...)
-	Name    string  `json:"name"`    // 区域名称 (Tokyo, Frankfurt...)
-	IP      string  `json:"ip"`      // 测试IP
-	Latency float64 `json:"latency"` // 平均延迟(毫秒)
-	Loss    float64 `json:"loss"`    // 丢包率 (0-100)
-	Status  string  `json:"status"`  // ok, timeout, error
-}
+type RegionLatency = cloud.RegionLatency
 
 // 预设的测试IP映射表
 var testIPMap = map[string]struct {

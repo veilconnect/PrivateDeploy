@@ -164,16 +164,33 @@ func createMacOSSymlink() {
 
 func resolveBasePath(osName, exePath string) string {
 	exeDir := filepath.Dir(exePath)
-	if osName != "linux" || !isLinuxSystemInstallPath(exeDir) {
-		return exeDir
+	switch osName {
+	case "linux":
+		if !isLinuxSystemInstallPath(exeDir) {
+			return exeDir
+		}
+
+		homeDir, err := os.UserHomeDir()
+		if err != nil || homeDir == "" {
+			return exeDir
+		}
+
+		return filepath.Join(homeDir, ".local", "share", "PrivateDeploy")
+	case "windows":
+		if !isWindowsSystemInstallPath(exeDir) {
+			return exeDir
+		}
+
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			return filepath.Join(localAppData, "PrivateDeploy")
+		}
+
+		if userConfigDir, err := os.UserConfigDir(); err == nil && userConfigDir != "" {
+			return filepath.Join(userConfigDir, "PrivateDeploy")
+		}
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil || homeDir == "" {
-		return exeDir
-	}
-
-	return filepath.Join(homeDir, ".local", "share", "PrivateDeploy")
+	return exeDir
 }
 
 func isLinuxSystemInstallPath(exeDir string) bool {
@@ -187,6 +204,26 @@ func isLinuxSystemInstallPath(exeDir string) bool {
 
 	for _, candidate := range candidates {
 		if exeDir == candidate || strings.HasPrefix(exeDir, candidate+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isWindowsSystemInstallPath(exeDir string) bool {
+	candidates := []string{
+		strings.TrimSpace(os.Getenv("ProgramFiles")),
+		strings.TrimSpace(os.Getenv("ProgramFiles(x86)")),
+		strings.TrimSpace(os.Getenv("ProgramW6432")),
+	}
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		cleanCandidate := filepath.Clean(candidate)
+		if exeDir == cleanCandidate || strings.HasPrefix(exeDir, cleanCandidate+string(filepath.Separator)) {
 			return true
 		}
 	}

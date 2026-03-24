@@ -4,6 +4,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 import { useCloudStore } from '@/stores'
 import { logError } from '@/utils/logger'
+import { parseImportedNodes } from '@/views/CloudView/manualNodeParser'
 
 const props = defineProps<{
   config: Record<string, any>
@@ -124,8 +125,11 @@ const runDeploy = async () => {
       updateStep(3, 'running')
       progressMessage.value = '正在导入节点...'
 
-      const lines = (props.config.importText as string).split('\n').filter(l => l.trim())
-      await cloudStore.addManualNodes(lines.map((line: string) => ({ label: `imported-${Date.now()}`, raw: line })))
+      const inputs = parseImportedNodes(props.config.importText as string)
+      if (!inputs.length) {
+        throw new Error('manual-import-invalid')
+      }
+      await cloudStore.addManualNodes(inputs)
 
       updateStep(3, 'done')
       updateStep(4, 'done')

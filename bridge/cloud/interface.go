@@ -32,6 +32,13 @@ type CloudProvider interface {
 	GetInstance(ctx context.Context, instanceID string) (*Instance, error)
 }
 
+// LatencyTester is implemented by providers that can benchmark regions.
+type LatencyTester interface {
+	TestRegionLatency(ctx context.Context, regionCode string) (*RegionLatency, error)
+	TestAllRegions(ctx context.Context) ([]*RegionLatency, error)
+	GetFastestRegion(ctx context.Context) (*RegionLatency, error)
+}
+
 // ProviderConfig holds provider-specific configuration
 type ProviderConfig struct {
 	Provider      string            `json:"provider"`         // "vultr", "digitalocean", etc.
@@ -47,6 +54,16 @@ type Region struct {
 	City      string `json:"city"`      // City name
 	Country   string `json:"country"`   // Country name
 	Continent string `json:"continent"` // Continent name
+}
+
+// RegionLatency represents measured network quality for a region.
+type RegionLatency struct {
+	Code    string  `json:"code"`    // Region code (nrt, fra, lax...)
+	Name    string  `json:"name"`    // Human-readable region name
+	IP      string  `json:"ip"`      // Probe IP
+	Latency float64 `json:"latency"` // Average latency in milliseconds
+	Loss    float64 `json:"loss"`    // Packet loss percentage (0-100)
+	Status  string  `json:"status"`  // ok, timeout, error
 }
 
 // Plan represents an instance type/size

@@ -325,6 +325,7 @@ const generateDns = (
     }),
     rules: dns.rules.flatMap((rule) => {
       const extra: Recordable = _generateRule(rule, rule_set, inbounds)
+      extra.action = rule.action
       if (rule.type === RuleType.Inline && rule.payload.includes('__is_fake_ip')) {
         if (!dns.servers.find((v) => v.type === DnsServer.FakeIP)) {
           return []

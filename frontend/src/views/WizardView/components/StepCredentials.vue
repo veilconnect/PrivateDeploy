@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, watch } from 'vue'
 
 import { TestSSHConnection, SaveCloudConfig, SetCloudProvider } from '@/bridge'
 import { useCloudStore } from '@/stores'
@@ -35,6 +35,7 @@ const cloudProvider = ref<CloudProvider>('vultr')
 const apiKey = ref('')
 const cloudValidating = ref(false)
 const cloudValid = ref(false)
+const cloudValidationResult = ref<{ success: boolean; message: string } | null>(null)
 
 const fallbackCloudProviderOptions: Array<{ label: string; value: CloudProvider }> = [
   { label: 'Vultr', value: 'vultr' },
@@ -59,7 +60,7 @@ const canProceed = computed(() => {
     return sshTestResult.value?.success === true
   }
   if (props.method === 'cloud') {
-    return apiKey.value.trim().length > 0
+    return cloudValid.value
   }
   if (props.method === 'manual') {
     return manualImportText.value.trim().length > 0
@@ -71,6 +72,20 @@ onMounted(async () => {
   if (props.method !== 'cloud') return
   try {
     await cloudStore.loadProviders()
+    await cloudStore.loadConfig().catch(() => undefined)
+
+    if (cloudStore.config.provider && cloudProviderOptions.value.some((item) => item.value === cloudStore.config.provider)) {
+      cloudProvider.value = cloudStore.config.provider
+    }
+
+    if (cloudStore.config.apiKey?.trim()) {
+      apiKey.value = cloudStore.config.apiKey
+      cloudValid.value = true
+      cloudValidationResult.value = { success: true, message: '已加载本地保存的 API Key' }
+      await cloudStore.fetchRegions().catch(() => undefined)
+      await cloudStore.fetchPlans().catch(() => undefined)
+    }
+
     const candidates = cloudProviderOptions.value
     if (!candidates.some((item) => item.value === cloudProvider.value) && candidates.length > 0) {
       cloudProvider.value = candidates[0].value
@@ -99,7 +114,7 @@ const handleSSHTest = async () => {
     await TestSSHConnection(extra)
     sshTestResult.value = { success: true }
   } catch (err: any) {
-    sshTestResult.value = { success: false, error: err.message }
+    sshTestResult.value = { success: false, error: err?.message || String(err) || '连接测试失败，请检查 SSH 信息。' }
   } finally {
     sshTesting.value = false
   }
@@ -107,6 +122,7 @@ const handleSSHTest = async () => {
 
 const handleCloudValidate = async () => {
   cloudValidating.value = true
+  cloudValidationResult.value = null
   try {
     await SetCloudProvider(cloudProvider.value)
     const cfg = {
@@ -118,13 +134,26 @@ const handleCloudValidate = async () => {
     await cloudStore.loadConfig()
     await cloudStore.fetchRegions()
     await cloudStore.fetchPlans()
+    cloudValidationResult.value = { success: true, message: 'API Key 验证成功，区域和套餐已刷新。' }
   } catch (err: any) {
     cloudValid.value = false
+    cloudValidationResult.value = {
+      success: false,
+      message: err?.message || 'API Key 验证失败，请检查权限和网络连接。',
+    }
     logError('[Wizard] Cloud validate failed:', err)
   } finally {
     cloudValidating.value = false
   }
 }
+
+watch([cloudProvider, apiKey], ([nextProvider, nextApiKey], [prevProvider, prevApiKey]) => {
+  if (nextProvider === prevProvider && nextApiKey === prevApiKey) {
+    return
+  }
+  cloudValid.value = false
+  cloudValidationResult.value = null
+})
 
 const handleNext = () => {
   if (props.method === 'ssh') {
@@ -222,6 +251,15 @@ const handleNext = () => {
         <Button :loading="cloudValidating" @click="handleCloudValidate" type="link">
           {{ cloudValidating ? '验证中...' : '验证 API Key' }}
         </Button>
+        <div
+          v-if="cloudValidationResult"
+          class="px-3 py-2 text-sm rounded"
+          :class="cloudValidationResult.success
+            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+            : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'"
+        >
+          {{ cloudValidationResult.message }}
+        </div>
       </div>
     </template>
 

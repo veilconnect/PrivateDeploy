@@ -318,10 +318,10 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
 </script>
 
 <template>
-  <div class="cloud-view grid gap-16">
-    <Card>
+  <div class="cloud-view grid gap-16 min-w-0">
+    <Card class="min-w-0">
       <template #title>
-        <div class="flex items-center gap-8">
+        <div class="flex flex-wrap items-center gap-8">
           <span>{{ t('cloud.credentials.title') }}</span>
           <span v-if="!isOnline" class="text-12 px-8 py-2 rounded bg-yellow-500/20 text-yellow-600">
             {{ t('cloud.offline.indicator') }}
@@ -339,16 +339,18 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
             auto-size
             aria-labelledby="cloud-provider-label"
           />
-          <template v-if="!isSSHProvider">
-            <Input
-              v-model="cloudStore.config.apiKey"
-              type="password"
-              :show-password="true"
-              :auto-size="true"
-              :placeholder="t('cloud.credentials.placeholder')"
-              class="flex-1 min-w-240"
-              aria-label="API Key"
-            />
+        </div>
+        <div v-if="!isSSHProvider" class="flex flex-col gap-8">
+          <Input
+            v-model="cloudStore.config.apiKey"
+            type="password"
+            :show-password="true"
+            :auto-size="true"
+            :placeholder="t('cloud.credentials.placeholder')"
+            class="w-full"
+            aria-label="API Key"
+          />
+          <div class="flex flex-wrap items-center gap-8">
             <Button
               @click="handleSaveConfig"
               type="primary"
@@ -378,7 +380,7 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
             >
               {{ t('cloud.backup.import') }}
             </Button>
-          </template>
+          </div>
         </div>
         <!-- SSH Config Form (replaces API key for SSH provider) -->
         <SSHConfigForm v-if="isSSHProvider" @deploy="handleSSHDeploy" />
@@ -388,31 +390,37 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
       </div>
     </Card>
 
-    <Card v-if="!isSSHProvider" :title="t('cloud.create.title')">
+    <Card v-if="!isSSHProvider" :title="t('cloud.create.title')" class="min-w-0">
       <div class="flex flex-col gap-12 py-8">
         <div class="flex flex-wrap items-center gap-8">
-          <Select
-            v-model="form.region"
-            :options="regionOptions"
-            :placeholder="t('cloud.create.regionPlaceholder')"
-            auto-size
-            :disabled="!regionOptions.length"
-          />
-          <Select
-            v-model="form.plan"
-            :options="planOptions"
-            :placeholder="t('cloud.create.planPlaceholder')"
-            auto-size
-            :disabled="!planOptions.length"
-          />
-          <Input
-            v-model="form.label"
-            :auto-size="true"
-            :placeholder="t('cloud.create.labelPlaceholder')"
-            class="flex-1 min-w-200"
-          />
+          <div class="min-w-180 flex-1">
+            <Select
+              v-model="form.region"
+              :options="regionOptions"
+              :placeholder="t('cloud.create.regionPlaceholder')"
+              :disabled="!regionOptions.length"
+              auto-size
+            />
+          </div>
+          <div class="min-w-320 flex-[2]">
+            <Select
+              v-model="form.plan"
+              :options="planOptions"
+              :placeholder="t('cloud.create.planPlaceholder')"
+              :disabled="!planOptions.length"
+              auto-size
+            />
+          </div>
+          <div class="min-w-220 flex-1">
+            <Input
+              v-model="form.label"
+              :auto-size="true"
+              :placeholder="t('cloud.create.labelPlaceholder')"
+              class="w-full"
+            />
+          </div>
         </div>
-        <div class="flex items-center gap-8">
+        <div class="flex flex-wrap items-center gap-8">
           <Button
             @click="handleDeploy"
             type="primary"
@@ -493,7 +501,7 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
 
     <!-- Multi-Deploy section handled in modal below -->
 
-    <Card :title="t('cloud.nodes.title')">
+    <Card :title="t('cloud.nodes.title')" class="min-w-0">
       <div class="flex flex-col gap-12 py-8">
         <div
           v-if="cloudStore.loadingInstances || lastInstancesUpdateRelative"
@@ -651,6 +659,7 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
         </div>
 
         <div v-else class="py-8">
+          <div class="min-w-0 max-w-full overflow-x-auto">
           <Table :columns="columns" :data-source="tableData" :menu="tableContextMenu" @row-click="(record: any) => toggleNodeSelection(record.instanceId)">
             <template #selection="{ record }">
               <div class="flex items-center justify-center" @click.stop>
@@ -808,6 +817,7 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
             </div>
           </template>
         </Table>
+          </div>
         </div>
       </div>
     </Card>

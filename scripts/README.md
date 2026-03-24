@@ -11,6 +11,7 @@
 | `build-linux-packages.sh` | Linux | 生成 DEB 和 RPM 软件包 | `.deb` 和 `.rpm` |
 | `build-macos-dmg.sh` | macOS | 生成 macOS DMG 安装镜像 | `.dmg` 镜像 |
 | `protocol_speed_compare.py` | Linux/macOS | 按协议测速（SS/HY2/VLESS/Trojan，基于 sing-box + curl） | `output/benchmarks/protocol_speed_compare_*.{json,tsv}` |
+| `local_gui_vultr_smoke.sh` | Linux | 在隔离 Xvfb 会话里通过桌面 GUI 真实创建 1 台 Vultr 节点、验端口并销毁 | `output/gui-smoke/<run-id>/` |
 
 ## 快速使用
 
@@ -38,6 +39,9 @@
 
 # 协议测速（默认读取 data/cloud/vultr-nodes.json）
 python3 scripts/protocol_speed_compare.py --rounds 3
+
+# 本机 GUI 真部署 smoke（默认读取 /tmp/vultr_api_key.txt）
+./scripts/local_gui_vultr_smoke.sh
 ```
 
 ## 前置要求
@@ -59,6 +63,9 @@ sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
 # 打包工具
 sudo apt-get install ruby ruby-dev rubygems build-essential
 sudo gem install fpm
+
+# 本机 GUI smoke 额外依赖
+sudo apt-get install xvfb xdotool imagemagick jq curl
 ```
 
 ### macOS 特定

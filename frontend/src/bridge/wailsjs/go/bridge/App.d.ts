@@ -32,6 +32,8 @@ export function ExecBackground(arg1:string,arg2:Array<string>,arg3:string,arg4:s
 
 export function ExitApp():Promise<void>;
 
+export function ExportCloudBackup(arg1:string):Promise<string>;
+
 export function FileExists(arg1:string):Promise<bridge.FlagResult>;
 
 export function GetAvailablePort():Promise<number>;
@@ -53,6 +55,8 @@ export function GetHealthStatus():Promise<bridge.FlagResult>;
 export function GetInterfaces():Promise<bridge.FlagResult>;
 
 export function GetLoadBalancerStatus():Promise<bridge.FlagResult>;
+
+export function ImportCloudBackup():Promise<string>;
 
 export function IsStartup():Promise<boolean>;
 
