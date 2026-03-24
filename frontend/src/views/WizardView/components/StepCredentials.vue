@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { TestSSHConnection, SaveCloudConfig, SetCloudProvider } from '@/bridge'
 import { useCloudStore } from '@/stores'
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const cloudStore = useCloudStore()
+const { t } = useI18n()
 
 // SSH form
 const sshForm = reactive({
@@ -80,10 +82,25 @@ onMounted(async () => {
 
     if (cloudStore.config.apiKey?.trim()) {
       apiKey.value = cloudStore.config.apiKey
-      cloudValid.value = true
-      cloudValidationResult.value = { success: true, message: '已加载本地保存的 API Key' }
-      await cloudStore.fetchRegions().catch(() => undefined)
-      await cloudStore.fetchPlans().catch(() => undefined)
+      try {
+        await cloudStore.fetchRegions().catch(() => undefined)
+        await cloudStore.fetchPlans().catch(() => undefined)
+        await cloudStore.refreshInstances(true, true)
+        cloudValid.value = true
+        cloudValidationResult.value = {
+          success: true,
+          message: cloudStore.instances.length > 0
+            ? t('cloud.credentials.loadedSavedKeyWithNodes', { count: cloudStore.instances.length })
+            : t('cloud.credentials.loadedSavedKeyEmpty'),
+        }
+      } catch (err) {
+        cloudValid.value = false
+        cloudValidationResult.value = {
+          success: false,
+          message: err instanceof Error ? err.message : String(err),
+        }
+        logError('[Wizard] load saved cloud config failed:', err)
+      }
     }
 
     const candidates = cloudProviderOptions.value
@@ -130,11 +147,17 @@ const handleCloudValidate = async () => {
       apiKey: apiKey.value,
     }
     await SaveCloudConfig(cfg)
-    cloudValid.value = true
     await cloudStore.loadConfig()
     await cloudStore.fetchRegions()
     await cloudStore.fetchPlans()
-    cloudValidationResult.value = { success: true, message: 'API Key 验证成功，区域和套餐已刷新。' }
+    await cloudStore.refreshInstances(true, true)
+    cloudValid.value = true
+    cloudValidationResult.value = {
+      success: true,
+      message: cloudStore.instances.length > 0
+        ? t('cloud.credentials.validatedWithNodes', { count: cloudStore.instances.length })
+        : t('cloud.credentials.validatedEmpty'),
+    }
   } catch (err: any) {
     cloudValid.value = false
     cloudValidationResult.value = {

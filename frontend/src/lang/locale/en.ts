@@ -330,6 +330,12 @@ export default {
       placeholder: 'Enter your API key',
       save: 'Save Credentials',
       syncMeta: 'Reload regions & plans',
+      syncedNodes: 'Synced {count} deployed node(s).',
+      syncedNodesEmpty: 'No deployed nodes were found for this account.',
+      validatedWithNodes: 'API key verified. Synced {count} deployed node(s) and refreshed regions and plans.',
+      validatedEmpty: 'API key verified. No deployed nodes were found; regions and plans were refreshed.',
+      loadedSavedKeyWithNodes: 'Loaded the saved API key and synced {count} deployed node(s).',
+      loadedSavedKeyEmpty: 'Loaded the saved API key. No deployed nodes were found for this account.',
       hint: 'The API key is kept on this device. Provide a key with deployment permissions.',
     },
     create: {

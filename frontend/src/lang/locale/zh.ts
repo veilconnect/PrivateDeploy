@@ -331,6 +331,12 @@ export default {
       placeholder: '请输入 API Key',
       save: '保存密钥',
       syncMeta: '刷新区域和套餐',
+      syncedNodes: '已同步 {count} 个已部署节点。',
+      syncedNodesEmpty: '当前账号下未发现已部署节点。',
+      validatedWithNodes: 'API Key 验证成功，已同步 {count} 个已部署节点，区域和套餐已刷新。',
+      validatedEmpty: 'API Key 验证成功，未发现已部署节点，区域和套餐已刷新。',
+      loadedSavedKeyWithNodes: '已加载本地保存的 API Key，并同步 {count} 个已部署节点。',
+      loadedSavedKeyEmpty: '已加载本地保存的 API Key，当前账号下未发现已部署节点。',
       hint: 'API Key 仅保存在本地，用于自动创建云服务器。',
     },
     create: {

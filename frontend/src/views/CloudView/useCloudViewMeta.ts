@@ -17,6 +17,7 @@ type DeployFormState = {
 type CloudStoreLike = {
   regions: Array<{ id: string }>
   plans: Array<{ id: string }>
+  instances: Array<unknown>
   availability: Record<string, string[]>
   config: {
     apiKey: string
@@ -206,12 +207,18 @@ export const useCloudViewMeta = ({
   }
 
   const fetchMeta = async () => {
+    return fetchMetaWithOptions()
+  }
+
+  const fetchMetaWithOptions = async (options?: { forceInstances?: boolean }) => {
     try {
       await Promise.all([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
-      await cloudStore.refreshInstances(true)
+      await cloudStore.refreshInstances(true, options?.forceInstances ?? false)
       await applyDefaults()
+      return cloudStore.instances.length
     } catch (error) {
       handleError(error)
+      return 0
     }
   }
 
@@ -225,7 +232,7 @@ export const useCloudViewMeta = ({
       form.label = defaultCloudLabel(cloudStore.currentProvider)
 
       if (hasApiKey.value) {
-        await fetchMeta()
+        await fetchMetaWithOptions({ forceInstances: true })
       }
 
       await applyDefaults()
@@ -242,8 +249,12 @@ export const useCloudViewMeta = ({
     }
     try {
       await cloudStore.saveConfig()
-      message.success('common.success')
-      await fetchMeta()
+      const count = await fetchMetaWithOptions({ forceInstances: true })
+      message.info(
+        count > 0
+          ? translate('cloud.credentials.syncedNodes', { count })
+          : translate('cloud.credentials.syncedNodesEmpty'),
+      )
     } catch (error) {
       handleError(error)
     }
@@ -340,7 +351,7 @@ export const useCloudViewMeta = ({
       if (cloudStore.config.apiKey) {
         await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
 
-        cloudStore.refreshInstances(true).catch((error) => {
+        cloudStore.refreshInstances(true, true).catch((error) => {
           logError('[CloudView] Initial refresh failed:', error)
         })
 
@@ -349,7 +360,7 @@ export const useCloudViewMeta = ({
         }
         refreshIntervalId = window.setInterval(() => {
           if (cloudStore.config.apiKey) {
-            cloudStore.refreshInstances(true).catch((error) => {
+            cloudStore.refreshInstances(true, false).catch((error) => {
               logError('[CloudView] Background refresh failed:', error)
             })
           }
