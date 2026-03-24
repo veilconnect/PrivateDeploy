@@ -9,6 +9,7 @@ import {
   type ProtocolHealthMap,
 } from './cloud/constants'
 import { hasUsableAddress } from './cloud/helpers'
+import { createCloudHistory } from './cloud/history'
 import { createInstanceSync } from './cloud/instanceSync'
 import { createCloudLoadBalance } from './cloud/loadBalance'
 import { createManualImport } from './cloud/manualImport'
@@ -18,12 +19,12 @@ import { useKernelApiStore } from './kernelApi'
 import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
 
-import type { ManagedCloudNode } from './cloud/types'
+import type { ManagedCloudNode, NodeHistoryMap } from './cloud/types'
 import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
 
 // Re-export types for backward compatibility
 export type { ManagedCloudNode } from './cloud/types'
-export type { ManualNodeSkipEntry } from './cloud/types'
+export type { ManualNodeSkipEntry, NodeHistoryMap } from './cloud/types'
 
 export const useCloudStore = defineStore('cloud', () => {
   // Multi-cloud provider management
@@ -63,6 +64,8 @@ export const useCloudStore = defineStore('cloud', () => {
   const manualNodes = shallowRef<ManagedCloudNode[]>([])
   const protocolHealthLoaded = ref(false)
   const protocolHealth = shallowRef<ProtocolHealthMap>({})
+  const nodeHistoryLoaded = ref(false)
+  const nodeHistory = shallowRef<NodeHistoryMap>({})
 
   const subscribesStore = useSubscribesStore()
   const profilesStore = useProfilesStore()
@@ -191,6 +194,19 @@ export const useCloudStore = defineStore('cloud', () => {
     )
   }
 
+  // ─── Node History ───────────────────────────────────────────────────────────
+
+  const historyModule = createCloudHistory({
+    nodeHistory,
+    nodeHistoryLoaded,
+  })
+
+  const {
+    loadNodeHistory,
+    recordConnectivitySample,
+    recordSpeedSample,
+  } = historyModule
+
   // ─── Instance Sync ───────────────────────────────────────────────────────────
 
   const instanceSyncModule = createInstanceSync({
@@ -213,6 +229,9 @@ export const useCloudStore = defineStore('cloud', () => {
     removeSubscriptionForNode,
     applyNodeToProfile,
     applyAllNodesToProfile,
+    loadNodeHistory,
+    recordConnectivitySample,
+    recordSpeedSample,
     loadManualNodes,
     syncManualNodesIntoInstances,
     saveManualNodes: manualImport.saveManualNodes,
@@ -314,6 +333,8 @@ export const useCloudStore = defineStore('cloud', () => {
     kernelApi: kernelApiStore,
   })
 
+  void loadNodeHistory()
+
   return {
     // Multi-cloud
     availableProviders,
@@ -331,6 +352,7 @@ export const useCloudStore = defineStore('cloud', () => {
     regions,
     plans,
     instances,
+    nodeHistory,
     availability,
     hasReadyInstances,
     // Loading states
@@ -371,6 +393,7 @@ export const useCloudStore = defineStore('cloud', () => {
     addManualNodes,
     updateManualNode,
     loadManualNodes,
+    loadNodeHistory,
     instancesUpdatedAt,
     // Load balance
     loadBalanceEnabled,

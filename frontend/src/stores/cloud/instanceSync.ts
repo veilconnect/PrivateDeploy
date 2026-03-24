@@ -118,6 +118,16 @@ export type InstanceSyncDeps = {
   removeSubscriptionForNode: (instanceId: string) => Promise<void>
   applyNodeToProfile: (node: CloudNode, profileId?: string) => Promise<string | undefined>
   applyAllNodesToProfile: () => Promise<string[]>
+  loadNodeHistory: () => Promise<unknown>
+  recordConnectivitySample: (
+    instanceId: string,
+    status: import('@/types/cloud').ConnectivityStatus,
+    result?: ConnectivityResult,
+  ) => Promise<void>
+  recordSpeedSample: (
+    instanceId: string,
+    sample: { speedMbps?: number; status: 'ok' | 'timeout' | 'error' },
+  ) => Promise<void>
   loadManualNodes: () => Promise<ManagedCloudNode[]>
   syncManualNodesIntoInstances: () => void
   saveManualNodes: (...args: any[]) => any
@@ -145,6 +155,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     removeSubscriptionForNode,
     applyNodeToProfile,
     applyAllNodesToProfile,
+    loadNodeHistory,
     loadManualNodes,
     syncManualNodesIntoInstances,
     saveManualNodes,
@@ -268,6 +279,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       loadingInstances.value = true
     }
     try {
+      await loadNodeHistory()
       const rawNodes = await retryWithBackoff(
         () => ListCloudInstances(),
         'ListCloudInstances',
@@ -305,6 +317,9 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         return {
           ...node,
           statusText,
+          ...(prev?.connectivityStatus ? { connectivityStatus: prev.connectivityStatus } : {}),
+          ...(prev?.connectivityTesting ? { connectivityTesting: prev.connectivityTesting } : {}),
+          ...(prev?.lastConnectivityResult ? { lastConnectivityResult: prev.lastConnectivityResult } : {}),
           // Preserve speed test data across refreshes
           ...(prev?.speedMs !== undefined ? { speedMs: prev.speedMs } : {}),
           ...(prev?.speedMbps !== undefined ? { speedMbps: prev.speedMbps } : {}),
@@ -744,6 +759,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       node.connectivityStatus = result.status
       node.lastConnectivityResult = result
       node.connectivityTesting = false
+      await deps.recordConnectivitySample(instanceId, result.status, result)
       await updateProtocolHealthFromConnectivity(node, result)
 
       if (result.status === 'blocked') {
@@ -755,6 +771,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       logError('[CloudStore] Connectivity test failed:', error)
       node.connectivityStatus = 'unknown'
       node.connectivityTesting = false
+      await deps.recordConnectivitySample(instanceId, 'unknown')
 
       notifications.error(
         'Connectivity Test Failed',
@@ -821,8 +838,13 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
       logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
       patchNode(instanceId, { speedMbps: mbps, speedTesting: false })
+      await deps.recordSpeedSample(instanceId, {
+        speedMbps: result.status === 'ok' ? mbps : undefined,
+        status: result.status === 'ok' ? 'ok' : 'error',
+      })
     } catch {
       patchNode(instanceId, { speedMbps: -1, speedTesting: false })
+      await deps.recordSpeedSample(instanceId, { status: 'timeout' })
     }
   }
 
@@ -848,8 +870,13 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
         logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
         patchNode(node.instanceId, { speedMbps: mbps, speedTesting: false })
+        await deps.recordSpeedSample(node.instanceId, {
+          speedMbps: result.status === 'ok' ? mbps : undefined,
+          status: result.status === 'ok' ? 'ok' : 'error',
+        })
       } catch {
         patchNode(node.instanceId, { speedMbps: -1, speedTesting: false })
+        await deps.recordSpeedSample(node.instanceId, { status: 'timeout' })
       }
     }
 
@@ -885,6 +912,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       const probe = buildConnectivityProbe(node)
       const result = await TestConnectivity(testIP, probe)
       node.lastConnectivityResult = result
+      await deps.recordConnectivitySample(node.instanceId, result.status, result)
       await updateProtocolHealthFromConnectivity(node, result)
 
       if (result.status === 'reachable') {
@@ -913,6 +941,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     } catch (error) {
       logError('[CloudStore] Verification failed for:', node.label, error)
       node.connectivityStatus = 'unknown'
+      await deps.recordConnectivitySample(node.instanceId, 'unknown')
       return false
     } finally {
       instances.value = instances.value.map((n) =>

@@ -3,9 +3,9 @@
     <div class="chart-header">
       <span class="chart-title">{{ title }}</span>
       <span v-if="hasData" class="chart-stats">
-        <span class="stat">Avg: {{ avgLatency }}ms</span>
-        <span class="stat">Min: {{ minLatency }}ms</span>
-        <span class="stat">Max: {{ maxLatency }}ms</span>
+        <span class="stat">Avg: {{ avgLatency }}{{ unit }}</span>
+        <span class="stat">Min: {{ minLatency }}{{ unit }}</span>
+        <span class="stat">Max: {{ maxLatency }}{{ unit }}</span>
       </span>
     </div>
     <svg :width="width" :height="height" class="chart-svg">
@@ -28,7 +28,7 @@
         font-size="10"
         fill="#8c8c8c"
       >
-        {{ Math.round(maxLatencyValue) }}ms
+        {{ Math.round(maxLatencyValue) }}{{ unit }}
       </text>
       <text
         :x="5"
@@ -36,7 +36,7 @@
         font-size="10"
         fill="#8c8c8c"
       >
-        {{ Math.round(minLatencyValue) }}ms
+        {{ Math.round(minLatencyValue) }}{{ unit }}
       </text>
 
       <!-- Latency line path -->
@@ -68,7 +68,7 @@
         :fill="getLatencyColor(dataPoints[index].latency)"
         class="latency-point"
       >
-        <title>{{ formatTimestamp(dataPoints[index].timestamp) }}: {{ dataPoints[index].latency.toFixed(1) }}ms</title>
+        <title>{{ formatTimestamp(dataPoints[index].timestamp) }}: {{ dataPoints[index].latency.toFixed(1) }}{{ unit }}</title>
       </circle>
     </svg>
     <div class="chart-footer">
@@ -88,12 +88,14 @@ interface Props {
   data: LatencyDataPoint[]
   width?: number
   height?: number
+  unit?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: 'Latency History',
   width: 300,
   height: 60,
+  unit: 'ms',
 })
 
 const dataPoints = computed(() => props.data)

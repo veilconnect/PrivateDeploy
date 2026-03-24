@@ -269,6 +269,10 @@ const {
 
 const {
   closeChartsModal,
+  chartCurrentStatusKey,
+  chartCurrentStatusLabel,
+  chartEndpointStatuses,
+  chartLatestSpeedLabel,
   connectivityChartData,
   handleViewCharts,
   latencyChartData,
@@ -711,6 +715,14 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
                 <div v-if="record.speedTesting" class="text-secondary text-12">
                   {{ t('cloud.speed.testing') }}
                 </div>
+                <div v-else-if="record.speedMbps != null" class="flex items-center gap-4">
+                  <Tag
+                    :color="record.speedMbps < 0 ? 'red' : record.speedMbps > 50 ? 'green' : record.speedMbps > 10 ? 'cyan' : 'red'"
+                    size="small"
+                  >
+                    {{ record.speedMbps < 0 ? t('cloud.speed.timeout') : t('cloud.speed.mbps', { speed: record.speedMbps }) }}
+                  </Tag>
+                </div>
                 <div v-else-if="record.speedMs != null" class="flex items-center gap-4">
                   <Tag
                     :color="record.speedMs < 0 ? 'red' : record.speedMs < 200 ? 'green' : record.speedMs < 500 ? 'cyan' : 'red'"
@@ -842,26 +854,67 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
   </Modal>
 
   <!-- Charts Modal -->
-  <Modal v-if="showChartsModal" @close="closeChartsModal">
+  <Modal
+    v-if="showChartsModal"
+    v-model:open="showChartsModal"
+    :footer="false"
+    :after-close="() => closeChartsModal()"
+  >
     <template #title>
       {{ t('cloud.charts.title', { label: viewingChartNode?.label || '' }) }}
     </template>
     <div v-if="viewingChartNode" class="charts-modal-content">
+      <div class="chart-summary-grid">
+        <div class="chart-summary-card">
+          <span class="chart-summary-label">{{ t('cloud.charts.currentStatus') }}</span>
+          <Tag :color="getConnectivityColor(chartCurrentStatusKey)">
+            {{ chartCurrentStatusLabel }}
+          </Tag>
+        </div>
+        <div class="chart-summary-card">
+          <span class="chart-summary-label">{{ t('cloud.charts.latestSpeed') }}</span>
+          <Tag :color="viewingChartNode.speedMbps != null ? (viewingChartNode.speedMbps < 0 ? 'red' : viewingChartNode.speedMbps > 50 ? 'green' : viewingChartNode.speedMbps > 10 ? 'cyan' : 'red') : 'default'">
+            {{ chartLatestSpeedLabel }}
+          </Tag>
+        </div>
+      </div>
       <div class="chart-section">
         <ConnectivityChart
           :title="t('cloud.charts.connectivity')"
           :data="connectivityChartData"
           :width="600"
           :height="80"
+          :show-uptime="false"
         />
+        <div class="chart-caption">{{ t('cloud.charts.connectivityWindow') }}</div>
       </div>
       <div class="chart-section">
+        <div class="chart-section-title">{{ t('cloud.charts.endpointStatus') }}</div>
+        <div v-if="chartEndpointStatuses.length" class="endpoint-status-list">
+          <div v-for="endpoint in chartEndpointStatuses" :key="endpoint.key" class="endpoint-status-item">
+            <span class="endpoint-label">{{ endpoint.label }}</span>
+            <Tag :color="endpoint.status === 'open' ? 'green' : endpoint.status === 'open_or_filtered' ? 'cyan' : endpoint.status === 'closed' ? 'red' : 'default'">
+              {{ endpoint.status }}
+            </Tag>
+          </div>
+        </div>
+        <div v-else class="chart-empty-state">
+          {{ t('cloud.charts.noMeasurement') }}
+        </div>
+      </div>
+      <div class="chart-section">
+        <div class="chart-section-title">{{ t('cloud.charts.speedHistory') }}</div>
         <LatencyChart
-          :title="t('cloud.charts.latency')"
+          v-if="latencyChartData.length"
+          :title="t('cloud.charts.speedHistory')"
           :data="latencyChartData"
           :width="600"
           :height="120"
+          unit="Mbps"
         />
+        <div v-else class="chart-empty-state">
+          {{ t('cloud.charts.noHistory') }}
+        </div>
       </div>
       <div class="chart-note">
         <span>{{ t('cloud.charts.note') }}</span>
@@ -1024,10 +1077,67 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
   padding: 16px 0;
 }
 
+.chart-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.chart-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--divider-color);
+  border-radius: 4px;
+  background: var(--bg-content-color);
+}
+
+.chart-summary-label {
+  font-size: 12px;
+  color: var(--text-secondary-color);
+}
+
 .chart-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   border: 1px solid var(--divider-color);
   border-radius: 4px;
   overflow: hidden;
+  padding: 12px;
+}
+
+.chart-section-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart-caption,
+.chart-empty-state {
+  font-size: 12px;
+  color: var(--text-secondary-color);
+}
+
+.endpoint-status-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.endpoint-status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+.endpoint-label {
+  font-size: 12px;
 }
 
 .chart-note {

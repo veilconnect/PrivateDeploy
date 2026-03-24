@@ -17,6 +17,26 @@ export type ManagedCloudNode = CloudNode & {
   speedTesting?: boolean
 }
 
+export type NodeConnectivityHistoryEntry = {
+  timestamp: number
+  status: ConnectivityStatus
+  targetStatus?: Record<string, string>
+  portsOpen?: Record<string, boolean>
+}
+
+export type NodeSpeedHistoryEntry = {
+  timestamp: number
+  speedMbps?: number
+  status: 'ok' | 'timeout' | 'error'
+}
+
+export type NodeHistoryRecord = {
+  connectivity: NodeConnectivityHistoryEntry[]
+  speed: NodeSpeedHistoryEntry[]
+}
+
+export type NodeHistoryMap = Record<string, NodeHistoryRecord>
+
 export type CloudSubscriptionEntry = IProxy & {
   instanceId: string
   managedExclude: string

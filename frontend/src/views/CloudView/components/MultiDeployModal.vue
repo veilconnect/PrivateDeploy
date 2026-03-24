@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { CreateMultipleCloudInstances } from '@/bridge'
 import { useCloudStore } from '@/stores'
 import { logError } from '@/utils/logger'
+
+import { formatPlan } from '../cloudViewPresentation'
 
 import type { CloudRegion, DeployProgress, DeployProgressStatus, MultiDeployResult } from '@/types/cloud'
 
@@ -18,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const cloudStore = useCloudStore()
+const { t } = useI18n()
 
 const selectedRegions = ref<Set<string>>(new Set())
 const plan = ref('')
@@ -195,7 +199,7 @@ onUnmounted(() => {
       <select v-model="plan" class="w-full px-3 py-1.5 text-sm border rounded bg-canvas">
         <option value="">默认</option>
         <option v-for="p in cloudStore.plans" :key="p.id" :value="p.id">
-          {{ p.description || p.id }} — ${{ p.monthlyCost }}/mo
+          {{ formatPlan(p, t) }}
         </option>
       </select>
     </div>

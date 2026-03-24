@@ -463,6 +463,8 @@ export default {
       ram: 'RAM',
       disk: 'SSD',
       bandwidth: 'BW',
+      modeLight: 'Light mode (SS only)',
+      modeFull: 'Full mode (multi-protocol)',
       monthly: '/mo',
     },
     protocol: {
@@ -535,9 +537,15 @@ export default {
     charts: {
       view: 'View Charts',
       title: 'Analytics: {label}',
-      connectivity: 'Connectivity Status (24h)',
-      latency: 'Latency History (24h)',
-      note: 'Note: Chart data is simulated for demonstration. Production version will track real historical data.',
+      connectivity: 'Connectivity History',
+      speedHistory: 'Speed Test History',
+      currentStatus: 'Current Status',
+      latestSpeed: 'Latest Speed Test',
+      endpointStatus: 'Protocol Probe Results',
+      connectivityWindow: 'Shows real connectivity samples from the last 24 hours.',
+      noMeasurement: 'No real measurement available yet',
+      noHistory: 'No real history data available yet',
+      note: 'Only real measurements are shown here. Node history is stored locally and new samples will continue to accumulate.',
     },
     search: {
       placeholder: 'Search by name, IP, or region...',

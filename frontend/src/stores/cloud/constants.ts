@@ -97,6 +97,7 @@ export const CloudSmartProbeURLSecondary = 'https://www.cloudflare.com/cdn-cgi/t
 
 export const manualNodesPath = 'data/cloud/manual-nodes.json'
 export const protocolHealthPath = 'data/cloud/protocol-health.json'
+export const nodeHistoryPath = 'data/cloud/node-history.json'
 
 // ─── Cache TTL ───────────────────────────────────────────────────────────────
 
@@ -107,3 +108,7 @@ export const CACHE_TTL = {
   instancesBackground: 5 * 60 * 1000, // 5 minutes
   latency: 24 * 60 * 60 * 1000,       // 24 hours
 } as const
+
+export const NODE_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000
+export const NODE_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+export const NODE_HISTORY_MAX_SAMPLES = 512

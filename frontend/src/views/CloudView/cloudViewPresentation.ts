@@ -176,6 +176,14 @@ export const formatPlan = (plan: CloudPlan, translate: TranslateFn): string => {
     `${bandwidth} ${translate('cloud.format.bandwidth')}`,
   ]
 
+  if (ramValue > 0) {
+    meta.push(
+      ramValue <= 600
+        ? translate('cloud.format.modeLight')
+        : translate('cloud.format.modeFull'),
+    )
+  }
+
   const monthlyCost = plan.monthlyCost || planRecord.monthly_cost
   if (monthlyCost && monthlyCost > 0 && Number.isFinite(monthlyCost)) {
     meta.push(`$${monthlyCost.toFixed(2)}${translate('cloud.format.monthly')}`)

@@ -1,18 +1,21 @@
 import { EventsOff, EventsOn } from '@wails/runtime/runtime'
-import { computed, onMounted, onUnmounted, ref, type ComputedRef } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, type ComputedRef } from 'vue'
 
+import { NODE_HISTORY_WINDOW_MS } from '@/stores/cloud/constants'
 import { message } from '@/utils'
 import { checkAllNodesHealth, getHealthSummary, scheduleHealthChecks } from '@/utils/healthCheck'
 import { logInfo } from '@/utils/logger'
 import { initOfflineMode } from '@/utils/offline'
-import { generateMockConnectivityHistory, type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
+import { type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
 
-import type { ManagedCloudNode } from '@/stores/cloud'
+import type { ManagedCloudNode, NodeHistoryMap } from '@/stores/cloud'
+import type { ConnectivityResult } from '@/types/cloud'
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
 type CloudStoreLike = {
   instances: ManagedCloudNode[]
+  nodeHistory: NodeHistoryMap
   refreshInstances: (silent?: boolean, force?: boolean) => Promise<unknown>
 }
 
@@ -21,6 +24,62 @@ type UseCloudViewMonitoringDeps = {
   tableData: ComputedRef<ManagedCloudNode[]>
   translate: TranslateFn
   handleTestAllSpeed: () => void | Promise<unknown>
+}
+
+type ChartEndpointStatus = {
+  key: string
+  label: string
+  status: string
+}
+
+const endpointLabelMap: Record<string, string> = {
+  'shadowsocks-tcp': 'SS TCP',
+  'shadowsocks-udp': 'SS UDP',
+  hysteria2: 'Hysteria2',
+  'vless-reality': 'VLESS Reality',
+  trojan: 'Trojan',
+}
+
+const buildEndpointStatuses = (result?: ConnectivityResult): ChartEndpointStatus[] => {
+  if (!result) {
+    return []
+  }
+
+  const targetStatus = result.targetStatus || {}
+  const targetEntries = Object.entries(targetStatus)
+  if (targetEntries.length > 0) {
+    return targetEntries.map(([key, status]) => ({
+      key,
+      label: endpointLabelMap[key] || key,
+      status,
+    }))
+  }
+
+  return Object.entries(result.portsOpen || {}).map(([key, open]) => ({
+    key,
+    label: `Port ${key}`,
+    status: open ? 'open' : 'closed',
+  }))
+}
+
+const getRecentNodeHistory = (
+  history: NodeHistoryMap,
+  instanceId: string,
+  now: number = Date.now(),
+) => {
+  const record = history[instanceId]
+  if (!record) {
+    return {
+      connectivity: [],
+      speed: [],
+    }
+  }
+
+  const cutoff = now - NODE_HISTORY_WINDOW_MS
+  return {
+    connectivity: (record.connectivity || []).filter((entry) => entry.timestamp >= cutoff),
+    speed: (record.speed || []).filter((entry) => entry.timestamp >= cutoff),
+  }
 }
 
 export const useCloudViewMonitoring = ({
@@ -48,32 +107,110 @@ export const useCloudViewMonitoring = ({
     viewingChartNode.value = null
   }
 
-  const connectivityChartData = computed<ConnectivityDataPoint[]>(() => {
-    if (!viewingChartNode.value) return []
+  watch(showChartsModal, (open) => {
+    if (!open) {
+      viewingChartNode.value = null
+    }
+  })
 
-    return generateMockConnectivityHistory(
-      viewingChartNode.value.connectivityStatus || 'unknown',
-      24,
-    )
+  const connectivityChartData = computed<ConnectivityDataPoint[]>(() => {
+    const node = viewingChartNode.value
+    if (!node) return []
+
+    const recent = getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId)
+    if (recent.connectivity.length > 0) {
+      return recent.connectivity.map((entry) => ({
+        timestamp: entry.timestamp,
+        status: entry.status,
+      }))
+    }
+
+    const status = node.lastConnectivityResult?.status || node.connectivityStatus
+    return status
+      ? [{
+          timestamp: Date.now(),
+          status,
+        }]
+      : []
   })
 
   const latencyChartData = computed<LatencyDataPoint[]>(() => {
-    if (!viewingChartNode.value) return []
-
-    const data: LatencyDataPoint[] = []
-    const now = Date.now()
-    const interval = (24 * 60 * 60 * 1000) / 48
-    const baseLatency = 100
-
-    for (let i = 0; i < 48; i++) {
-      const variance = (Math.random() - 0.5) * 40
-      data.push({
-        timestamp: now - (48 - i) * interval,
-        latency: Math.max(0, baseLatency + variance),
-      })
+    const node = viewingChartNode.value
+    if (!node) {
+      return []
     }
 
-    return data
+    return getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).speed
+      .filter((entry) => entry.status === 'ok' && typeof entry.speedMbps === 'number')
+      .map((entry) => ({
+        timestamp: entry.timestamp,
+        latency: entry.speedMbps!,
+      }))
+  })
+
+  const chartCurrentStatusLabel = computed(() => {
+    return translate(`cloud.connectivity.${chartCurrentStatusKey.value}`)
+  })
+
+  const chartCurrentStatusKey = computed(() => {
+    const node = viewingChartNode.value
+    if (!node) {
+      return 'unknown'
+    }
+
+    const connectivityHistory = getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).connectivity
+    const latestConnectivity = connectivityHistory[connectivityHistory.length - 1]
+    return node.lastConnectivityResult?.status || node.connectivityStatus || latestConnectivity?.status || 'unknown'
+  })
+
+  const chartLatestSpeedLabel = computed(() => {
+    const node = viewingChartNode.value
+    if (!node) {
+      return translate('cloud.charts.noMeasurement')
+    }
+    if (node.speedTesting) {
+      return translate('cloud.speed.testing')
+    }
+    if (typeof node.speedMbps === 'number') {
+      return node.speedMbps < 0
+        ? translate('cloud.speed.timeout')
+        : translate('cloud.speed.mbps', { speed: node.speedMbps })
+    }
+    if (typeof node.speedMs === 'number') {
+      return node.speedMs < 0
+        ? translate('cloud.speed.timeout')
+        : translate('cloud.speed.ms', { ms: node.speedMs })
+    }
+
+    const speedHistory = getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).speed
+    const latestSpeedEntry = speedHistory[speedHistory.length - 1]
+    if (latestSpeedEntry?.status === 'ok' && typeof latestSpeedEntry.speedMbps === 'number') {
+      return translate('cloud.speed.mbps', { speed: latestSpeedEntry.speedMbps })
+    }
+    if (latestSpeedEntry?.status === 'timeout') {
+      return translate('cloud.speed.timeout')
+    }
+
+    return translate('cloud.charts.noMeasurement')
+  })
+
+  const chartEndpointStatuses = computed<ChartEndpointStatus[]>(() => {
+    const node = viewingChartNode.value
+    if (!node) {
+      return []
+    }
+
+    const connectivityHistory = getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).connectivity
+    const lastHistoryEntry = connectivityHistory[connectivityHistory.length - 1]
+    return buildEndpointStatuses(node.lastConnectivityResult || (
+      lastHistoryEntry ? {
+        ip: node.ipv4 || node.ipv6 || '',
+        icmpReachable: lastHistoryEntry.status === 'reachable',
+        portsOpen: lastHistoryEntry.portsOpen || {},
+        targetStatus: lastHistoryEntry.targetStatus,
+        status: lastHistoryEntry.status,
+      } as ConnectivityResult : undefined
+    ))
   })
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -173,6 +310,10 @@ export const useCloudViewMonitoring = ({
 
   return {
     closeChartsModal,
+    chartCurrentStatusKey,
+    chartCurrentStatusLabel,
+    chartEndpointStatuses,
+    chartLatestSpeedLabel,
     connectivityChartData,
     handleViewCharts,
     latencyChartData,

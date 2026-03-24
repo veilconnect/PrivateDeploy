@@ -464,6 +464,8 @@ export default {
       ram: '内存',
       disk: '硬盘',
       bandwidth: '带宽',
+      modeLight: '轻量模式（仅 SS）',
+      modeFull: '完整模式（多协议）',
       monthly: '月付',
     },
     protocol: {
@@ -536,9 +538,15 @@ export default {
     charts: {
       view: '查看图表',
       title: '{label} 数据分析',
-      connectivity: '连接状态（24小时）',
-      latency: '延迟历史（24小时）',
-      note: '注意：图表数据为演示模拟数据。生产版本将追踪真实历史数据。',
+      connectivity: '连通性历史',
+      speedHistory: '测速历史',
+      currentStatus: '当前状态',
+      latestSpeed: '最近测速',
+      endpointStatus: '协议探测结果',
+      connectivityWindow: '展示最近 24 小时内的真实连通性采样。',
+      noMeasurement: '暂无真实采样结果',
+      noHistory: '暂无真实历史数据',
+      note: '这里只展示真实采样结果。节点历史数据保存在本地，后续采样会持续追加。',
     },
     search: {
       placeholder: '按名称、IP 或区域搜索...',
