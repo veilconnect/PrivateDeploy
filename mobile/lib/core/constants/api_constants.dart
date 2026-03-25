@@ -1,13 +1,30 @@
 class ApiConstants {
-  // Base URLs
-  static const String defaultBaseUrl = String.fromEnvironment(
+  static const String _overrideBaseUrl = String.fromEnvironment(
     'PRIVATEDEPLOY_API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8443/api/v1',
+    defaultValue: '',
   );
-  static const String defaultWsUrl = String.fromEnvironment(
+  static const String _overrideWsUrl = String.fromEnvironment(
     'PRIVATEDEPLOY_WS_URL',
-    defaultValue: 'ws://10.0.2.2:8443/api/v1/ws',
+    defaultValue: '',
   );
+
+  // Base URL defaults for a real phone: localhost is the only sane fallback.
+  // If you run API on Android emulator host, pass --dart-define=PRIVATEDEPLOY_API_BASE_URL.
+  static const String _defaultBaseUrl = 'http://127.0.0.1:8443/api/v1';
+  static const String _defaultWsUrl = 'ws://127.0.0.1:8443/api/v1/ws';
+
+  static String get defaultBaseUrl =>
+      _normalizeUrl(_isSet(_overrideBaseUrl) ? _overrideBaseUrl : _defaultBaseUrl);
+  static String get defaultWsUrl =>
+      _normalizeUrl(_isSet(_overrideWsUrl) ? _overrideWsUrl : _defaultWsUrl);
+
+  static bool _isSet(String value) {
+    return value.trim().isNotEmpty;
+  }
+
+  static String _normalizeUrl(String value) {
+    return value.trim().replaceFirst(RegExp(r'/+$'), '');
+  }
 
   // Endpoints
   static const String cloudProviders = '/cloud/providers';

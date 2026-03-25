@@ -236,54 +236,82 @@ class _CloudScreenState extends State<CloudScreen> {
   }
 
   void _showApiKeyDialog(BuildContext context) {
+    final provider = context.read<CloudProvider>();
     final controller = TextEditingController(
-      text: '',
+      text: provider.apiKey ?? '',
     );
+    bool isSaving = false;
+    String? dialogError;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cloud API Key'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'API Key',
-            hintText: 'Enter your cloud provider API key',
-            border: OutlineInputBorder(),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Cloud API Key'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: 'API Key',
+                  hintText: 'Enter your cloud provider API key',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 1,
+                enabled: !isSaving,
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  dialogError!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ],
+            ],
           ),
-          maxLines: 1,
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      setState(() {
+                        isSaving = true;
+                        dialogError = null;
+                      });
+
+                      final success = await provider.setApiKey(controller.text.trim());
+                      if (context.mounted) {
+                        if (success) {
+                          Navigator.pop(context);
+                          _bootstrapTriggered = false;
+                          provider.loadInstances();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('API key saved and verified'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else {
+                          setState(() {
+                            dialogError = provider.error;
+                          });
+                          setState(() {
+                            isSaving = false;
+                          });
+                        }
+                      }
+                    },
+              child: isSaving
+                  ? const Text('Verifying...')
+                  : const Text('Verify & Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final provider = context.read<CloudProvider>();
-              final success = await provider.setApiKey(controller.text.trim());
-              if (context.mounted) {
-                if (success) {
-                  _bootstrapTriggered = false;
-                  provider.loadInstances();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('API key saved on device'),
-                        backgroundColor: Colors.green),
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text(provider.error ?? 'Invalid key'),
-                        backgroundColor: Colors.red),
-                  );
-                }
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }

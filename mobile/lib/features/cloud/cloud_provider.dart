@@ -188,8 +188,10 @@ class CloudProvider with ChangeNotifier {
       await loadPlans(notify: false);
       return true;
     } catch (e) {
+      if (!_shouldKeepApiKeyOnError(e)) {
+        await _clearApiKey();
+      }
       _error = 'Failed to save API key: ${_messageFromError(e)}';
-      await _clearApiKey();
       AppLogger.error('[CloudProvider] Save API key error', e);
       return false;
     } finally {
@@ -701,6 +703,39 @@ class CloudProvider with ChangeNotifier {
       return error.message.toString();
     }
     return error.toString();
+  }
+
+  bool _shouldKeepApiKeyOnError(Object error) {
+    final message = _messageFromError(error).toLowerCase();
+    const authIndicators = [
+      '401',
+      '403',
+      'permission denied',
+      'forbidden',
+      'unauthorized',
+      'invalid api key',
+    ];
+    const transientIndicators = [
+      'timeout',
+      'connection failed',
+      'connection refused',
+      'socket exception',
+      'failed host lookup',
+      'failed to connect',
+      'network is unreachable',
+      'operation canceled',
+      'certificate',
+    ];
+
+    if (authIndicators.any((needle) => message.contains(needle))) {
+      return false;
+    }
+
+    if (transientIndicators.any((needle) => message.contains(needle))) {
+      return true;
+    }
+
+    return false;
   }
 
   int _intValue(Map<String, dynamic> json, List<String> keys) {

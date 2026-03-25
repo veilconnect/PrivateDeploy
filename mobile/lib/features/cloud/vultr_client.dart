@@ -5,8 +5,9 @@ import 'package:dio/dio.dart';
 
 class VultrCloudClient {
   static const String baseUrl = 'https://api.vultr.com/v2';
-  static const Duration _connectTimeout = Duration(seconds: 30);
+  static const Duration _connectTimeout = Duration(seconds: 15);
   static const Duration _receiveTimeout = Duration(seconds: 90);
+  static const Duration _validationTimeout = Duration(seconds: 12);
 
   final Dio _dio;
 
@@ -66,7 +67,7 @@ class VultrCloudClient {
   }
 
   Future<Map<String, dynamic>> validateApiKey() {
-    return listRegions();
+    return _requestJson('GET', '/account', timeout: _validationTimeout);
   }
 
   Future<Map<String, dynamic>> getPlanById(String planId) async {
@@ -84,12 +85,22 @@ class VultrCloudClient {
     String method,
     String path, {
     dynamic data,
+    Duration? timeout,
   }) async {
+    final previousConnectTimeout = _dio.options.connectTimeout;
+    if (timeout != null) {
+      _dio.options.connectTimeout = timeout;
+    }
+
     try {
       final response = await _dio.request<dynamic>(
         path,
         data: data,
-        options: Options(method: method),
+        options: Options(
+          method: method,
+          receiveTimeout: timeout ?? _receiveTimeout,
+          sendTimeout: timeout ?? _receiveTimeout,
+        ),
       );
       final normalized = response.data;
       if (response.statusCode != null &&
@@ -111,6 +122,10 @@ class VultrCloudClient {
     } on DioException catch (error) {
       final message = _extractDioErrorMessage(error);
       throw StateError(message);
+    } finally {
+      if (timeout != null) {
+        _dio.options.connectTimeout = previousConnectTimeout;
+      }
     }
   }
 
