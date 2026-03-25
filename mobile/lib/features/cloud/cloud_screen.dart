@@ -269,7 +269,7 @@ class _CloudScreenState extends State<CloudScreen> {
                   provider.loadInstances();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                        content: Text('API key saved on server'),
+                        content: Text('API key saved on device'),
                         backgroundColor: Colors.green),
                   );
                 } else {

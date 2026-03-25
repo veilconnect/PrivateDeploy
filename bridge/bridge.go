@@ -218,12 +218,24 @@ func isWindowsSystemInstallPath(exeDir string) bool {
 		strings.TrimSpace(os.Getenv("ProgramW6432")),
 	}
 
+	normalize := func(path string) string {
+		path = strings.ToLower(strings.TrimSpace(filepath.Clean(path)))
+		path = strings.ReplaceAll(path, `\`, `/`)
+		// Windows installers and scheduled launches may surface 8.3 short paths.
+		// Normalize the common Program Files prefixes so system installs still
+		// resolve to LOCALAPPDATA instead of writing into the install directory.
+		path = strings.ReplaceAll(path, `/progra~1`, `/program files`)
+		path = strings.ReplaceAll(path, `/progra~2`, `/program files (x86)`)
+		return path
+	}
+
+	cleanExeDir := normalize(exeDir)
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
-		cleanCandidate := filepath.Clean(candidate)
-		if exeDir == cleanCandidate || strings.HasPrefix(exeDir, cleanCandidate+string(filepath.Separator)) {
+		cleanCandidate := normalize(candidate)
+		if cleanExeDir == cleanCandidate || strings.HasPrefix(cleanExeDir, cleanCandidate+"/") {
 			return true
 		}
 	}

@@ -1,13 +1,15 @@
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 
-import '../../core/network/api_client.dart';
 import '../../shared/utils/logger.dart';
+import '../../core/storage/storage_service.dart';
 import 'cloud_models.dart';
+import 'vultr_client.dart';
 
 class CloudProvider with ChangeNotifier {
   static const _providerName = 'vultr';
+  static const String _apiKeyStorageKey = 'mobile_cloud_vultr_api_key';
+  static const String _nodeRecordsStorageKey = 'mobile_cloud_vultr_nodes';
 
   List<CloudInstance> _instances = [];
   List<CloudRegion> _regions = [];
@@ -16,6 +18,9 @@ class CloudProvider with ChangeNotifier {
   bool _configLoaded = false;
   bool _hasApiKey = false;
   String? _error;
+  String? _apiKey;
+  final String _selectedProfile = PortProfileAllocator.randomProfile;
+  Map<String, _VultrNodeRecord> _nodeRecords = {};
 
   List<CloudInstance> get instances => _instances;
   List<CloudRegion> get regions => _regions;
@@ -24,25 +29,129 @@ class CloudProvider with ChangeNotifier {
   bool get configLoaded => _configLoaded;
   String? get error => _error;
   bool get hasApiKey => _hasApiKey;
-  String? get apiKey => null;
+  String? get apiKey => _apiKey;
+  bool get isConfigured => _hasApiKey && _configLoaded;
+  String get providerName => _providerName;
 
   CloudProvider() {
     _init();
   }
 
   Future<void> _init() async {
+    await _initializeStorage();
     await refreshCloudConfig(notify: false);
+    await _loadNodeRecords();
     notifyListeners();
   }
 
-  ApiClient _apiClient() => ApiClient(DioClient.createDio());
+  Future<void> _initializeStorage() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+  }
+
+  Future<VultrCloudClient> _cloudClient() async {
+    final key = await _getStoredApiKey();
+    if (key == null || key.isEmpty) {
+      throw StateError('Vultr API key is not configured');
+    }
+    return VultrCloudClient(key);
+  }
+
+  Future<String?> _getStoredApiKey() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    _apiKey = StorageService.getString(_apiKeyStorageKey);
+    return _apiKey?.trim();
+  }
+
+  Future<void> _saveApiKey(String key) async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    _apiKey = key.trim();
+    await StorageService.saveString(_apiKeyStorageKey, _apiKey!);
+  }
+
+  Future<void> _clearApiKey() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    _apiKey = null;
+    await StorageService.remove(_apiKeyStorageKey);
+  }
+
+  Future<Map<String, _VultrNodeRecord>> _loadNodeRecords() async {
+    await _initializeStorage();
+    final raw = StorageService.getString(_nodeRecordsStorageKey);
+    if (raw == null || raw.isEmpty) {
+      _nodeRecords = {};
+      return {};
+    }
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final output = <String, _VultrNodeRecord>{};
+        for (final entry in decoded.entries) {
+          final id = entry.key.toString();
+          if (entry.value is Map) {
+            output[id] = _VultrNodeRecord.fromJson(
+                id, Map<String, dynamic>.from(entry.value as Map));
+          }
+        }
+        _nodeRecords = output;
+        return output;
+      }
+    } catch (e) {
+      AppLogger.error('[CloudProvider] Failed to parse local node records', e);
+    }
+
+    _nodeRecords = {};
+    return {};
+  }
+
+  Future<void> _saveNodeRecords() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    final payload = <String, dynamic>{};
+    for (final item in _nodeRecords.entries) {
+      payload[item.key] = item.value.toJson();
+    }
+    await StorageService.saveString(
+        _nodeRecordsStorageKey, jsonEncode(payload));
+  }
+
+  Future<void> _updateNodeRecord(
+    String instanceId,
+    Map<String, dynamic> updates,
+  ) async {
+    final existing =
+        _nodeRecords[instanceId] ?? _VultrNodeRecord(instanceId: instanceId);
+    _nodeRecords[instanceId] = existing.copyWithJson(updates);
+    await _saveNodeRecords();
+  }
 
   Future<void> refreshCloudConfig({bool notify = true}) async {
     try {
-      final data = _unwrapData(await _apiClient().getCloudConfig());
-      _hasApiKey = data['hasApiKey'] == true;
-      _configLoaded = true;
+      final key = await _getStoredApiKey();
+      if (key == null || key.isEmpty) {
+        _hasApiKey = false;
+        _configLoaded = true;
+        _error = null;
+        if (notify) {
+          notifyListeners();
+        }
+        return;
+      }
+
+      final client = await _cloudClient();
+      await client.validateApiKey();
+      _hasApiKey = true;
       _error = null;
+      _configLoaded = true;
     } catch (e) {
       _hasApiKey = false;
       _configLoaded = true;
@@ -67,18 +176,20 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _unwrapData(await _apiClient().setActiveProvider(_providerName));
-      _unwrapData(await _apiClient().saveCloudConfig({
-        'provider': _providerName,
-        'apiKey': key.trim(),
-      }));
+      final normalizedKey = key.trim();
+      await _saveApiKey(normalizedKey);
 
+      final client = await _cloudClient();
+      await client.validateApiKey();
+
+      await _loadNodeRecords();
       await refreshCloudConfig(notify: false);
       await loadRegions(notify: false);
       await loadPlans(notify: false);
       return true;
     } catch (e) {
       _error = 'Failed to save API key: ${_messageFromError(e)}';
+      await _clearApiKey();
       AppLogger.error('[CloudProvider] Save API key error', e);
       return false;
     } finally {
@@ -99,13 +210,54 @@ class CloudProvider with ChangeNotifier {
     }
 
     try {
-      final data = _unwrapData(await _apiClient().getInstances());
+      final client = await _cloudClient();
+      final data = await client.listInstances();
       final rawInstances = (data['instances'] as List?) ?? const [];
-      _instances = rawInstances
-          .whereType<Map>()
-          .map(
-              (item) => CloudInstance.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
+      final knownRecords = await _loadNodeRecords();
+      final parsed = <CloudInstance>[];
+
+      for (final item in rawInstances.whereType<Map<String, dynamic>>()) {
+        final source = Map<String, dynamic>.from(item);
+        final id = source['id']?.toString() ?? '';
+        final record = id.isNotEmpty ? knownRecords[id] : null;
+        if (record == null) {
+          parsed.add(CloudInstance.fromJson(source));
+          continue;
+        }
+
+        final merged = Map<String, dynamic>.from(source)
+          ..addAll(record.toMergeableJson());
+        final instance = CloudInstance.fromJson(merged);
+        parsed.add(instance);
+      }
+
+      if (parsed.isEmpty && knownRecords.isNotEmpty) {
+        parsed.addAll(knownRecords.values
+            .where((r) => r.instanceId.isNotEmpty)
+            .map((record) => record.toCloudInstance()));
+      }
+
+      _instances = parsed;
+      _instances.sort(
+        (a, b) =>
+            (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)),
+      );
+
+      for (final item in _instances) {
+        if (item.id.isNotEmpty) {
+          final record = knownRecords[item.id];
+          if (record != null) {
+            await _updateNodeRecord(item.id, {
+              'label': item.label,
+              'region': item.region,
+              'ipv4': item.ipv4 ?? record.ipv4,
+              'ipv6': item.ipv6 ?? record.ipv6,
+              'plan': item.plan,
+            });
+          }
+        }
+      }
+
       AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
     } catch (e) {
       _error = 'Failed to load instances: ${_messageFromError(e)}';
@@ -124,7 +276,8 @@ class CloudProvider with ChangeNotifier {
     }
 
     try {
-      final data = _unwrapData(await _apiClient().getRegions());
+      final client = await _cloudClient();
+      final data = await client.listRegions();
       final rawRegions = (data['regions'] as List?) ?? const [];
       _regions = rawRegions
           .whereType<Map>()
@@ -147,7 +300,8 @@ class CloudProvider with ChangeNotifier {
     }
 
     try {
-      final data = _unwrapData(await _apiClient().getPlans());
+      final client = await _cloudClient();
+      final data = await client.listPlans();
       final rawPlans = (data['plans'] as List?) ?? const [];
       _plans = rawPlans
           .whereType<Map>()
@@ -180,11 +334,80 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _unwrapData(await _apiClient().createInstance({
-        'label': label,
-        'region': region,
+      final client = await _cloudClient();
+      final ports =
+          PortProfileAllocator.allocatePorts(profile: _selectedProfile);
+      final ssPort = ports[0];
+      final ssPassword = PortProfileAllocator.generatePassword(22);
+      final planInfo = await client.getPlanById(plan);
+      final planRam = _intValue(planInfo, const ['ram', 'memory', 'memory_mb']);
+
+      final osIds = await _preferredOsIds(client);
+      if (osIds.isEmpty) {
+        throw StateError('No supported OS image found in Vultr account');
+      }
+
+      final script = PortProfileAllocator.lightweightScript(
+        ssPort: ssPort,
+        ssPassword: ssPassword,
+      );
+      Map<String, dynamic>? instancePayload;
+      StateError? lastError;
+
+      for (final osId in osIds) {
+        try {
+          final response = await client.createInstance(
+            region: region,
+            plan: plan,
+            label: label,
+            osId: osId,
+            ssPort: ssPort,
+            ssPassword: ssPassword,
+            userData: script,
+          );
+          final raw = response['instance'] ?? response;
+          if (raw is Map<String, dynamic>) {
+            instancePayload = Map<String, dynamic>.from(raw);
+          }
+          if (instancePayload != null) {
+            break;
+          }
+        } catch (e) {
+          if (e is StateError) {
+            lastError = e;
+            continue;
+          }
+          rethrow;
+        }
+      }
+
+      if (instancePayload == null) {
+        throw lastError ?? StateError('Failed to create instance');
+      }
+
+      final instanceId = instancePayload['id']?.toString();
+      if (instanceId == null || instanceId.isEmpty) {
+        throw StateError('Invalid instance response: missing instance id');
+      }
+
+      final createdAt = instancePayload['created_at']?.toString() ??
+          instancePayload['createdAt']?.toString() ??
+          DateTime.now().toUtc().toIso8601String();
+
+      await _updateNodeRecord(instanceId, {
         'plan': plan,
-      }));
+        'region': region,
+        'label': label,
+        'planRam': planRam,
+        'osId': osIds.first,
+        'ssPort': ssPort,
+        'ssPassword': ssPassword,
+        'createdAt': createdAt,
+        'ipv4': instancePayload['main_ip'] ?? '',
+        'ipv6': instancePayload['v6_main_ip'] ?? '',
+        'instanceId': instanceId,
+      });
+      await _loadNodeRecords();
       await loadInstances(notify: false);
       return true;
     } catch (e) {
@@ -207,7 +430,10 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _unwrapData(await _apiClient().deleteInstance(id));
+      final client = await _cloudClient();
+      await client.deleteInstance(id);
+      _nodeRecords.remove(id);
+      await _saveNodeRecords();
       _instances = _instances.where((instance) => instance.id != id).toList();
       return true;
     } catch (e) {
@@ -226,7 +452,9 @@ class CloudProvider with ChangeNotifier {
     _plans = [];
     _hasApiKey = false;
     _configLoaded = false;
+    _apiKey = null;
     _error = null;
+    _nodeRecords = {};
     notifyListeners();
   }
 
@@ -411,36 +639,61 @@ class CloudProvider with ChangeNotifier {
     return true;
   }
 
-  Map<String, dynamic> _unwrapData(Map<String, dynamic> response) {
-    if (response['success'] != true) {
-      throw StateError(_messageFromResponse(response));
+  Future<List<int>> _preferredOsIds(VultrCloudClient client) async {
+    final osData = await client.getOperatingSystems();
+    final list = (osData['os'] as List?) ?? const [];
+
+    final oses = list
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
+
+    final matches = <int>[];
+    final pushUnique = (int osId) {
+      if (!matches.contains(osId)) {
+        matches.add(osId);
+      }
+    };
+
+    bool matchesCondition(String text, String expected) {
+      return text.toLowerCase().contains(expected.toLowerCase());
     }
 
-    final data = response['data'];
-    if (data is Map<String, dynamic>) {
-      return data;
-    }
-    if (data is Map) {
-      return Map<String, dynamic>.from(data);
-    }
-    return const {};
-  }
+    for (final os in oses) {
+      final name = (os['name'] ?? '').toString();
+      final family = (os['family'] ?? '').toString();
+      final id = _intValue(os, const ['id']);
+      if (_stringIsEmpty(name) || id <= 0) {
+        continue;
+      }
 
-  String _messageFromResponse(Map<String, dynamic> response) {
-    final message = response['message'];
-    if (message is String && message.isNotEmpty) {
-      return message;
-    }
-
-    final error = response['error'];
-    if (error is Map<String, dynamic>) {
-      final errorMessage = error['message'];
-      if (errorMessage is String && errorMessage.isNotEmpty) {
-        return errorMessage;
+      if (matchesCondition(name, 'debian') && matchesCondition(name, '11')) {
+        pushUnique(id);
+      }
+      if (matchesCondition(family, 'ubuntu') &&
+          matchesCondition(name, '20.04')) {
+        pushUnique(id);
+      }
+      if (matchesCondition(family, 'debian')) {
+        pushUnique(id);
+      }
+      if (matchesCondition(family, 'ubuntu')) {
+        pushUnique(id);
       }
     }
 
-    return 'Request failed';
+    if (matches.isNotEmpty) {
+      return matches;
+    }
+
+    for (final os in oses) {
+      final id = _intValue(os, const ['id']);
+      if (id > 0) {
+        pushUnique(id);
+      }
+    }
+
+    return matches;
   }
 
   String _messageFromError(Object error) {
@@ -448,5 +701,256 @@ class CloudProvider with ChangeNotifier {
       return error.message.toString();
     }
     return error.toString();
+  }
+
+  int _intValue(Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value is int) {
+        return value;
+      }
+      if (value is num) {
+        return value.toInt();
+      }
+      if (value != null) {
+        final parsed = int.tryParse(value.toString());
+        if (parsed != null) {
+          return parsed;
+        }
+      }
+    }
+    return 0;
+  }
+
+  bool _stringIsEmpty(String? value) {
+    return value == null || value.trim().isEmpty;
+  }
+}
+
+class _VultrNodeRecord {
+  final String instanceId;
+  final String label;
+  final String region;
+  final String plan;
+  final int osId;
+  final int ssPort;
+  final String ssPassword;
+  final int hyPort;
+  final String hyPassword;
+  final String hyServerName;
+  final int vlessPort;
+  final String vlessUuid;
+  final String vlessPublicKey;
+  final String vlessShortId;
+  final String vlessServerName;
+  final int trojanPort;
+  final String trojanPassword;
+  final String trojanServerName;
+  final String ipv4;
+  final String ipv6;
+  final String createdAt;
+  final String portProfile;
+  final int planRam;
+
+  _VultrNodeRecord({
+    required this.instanceId,
+    this.label = '',
+    this.region = '',
+    this.plan = '',
+    this.osId = 0,
+    this.ssPort = 0,
+    this.ssPassword = '',
+    this.hyPort = 0,
+    this.hyPassword = '',
+    this.hyServerName = '',
+    this.vlessPort = 0,
+    this.vlessUuid = '',
+    this.vlessPublicKey = '',
+    this.vlessShortId = '',
+    this.vlessServerName = '',
+    this.trojanPort = 0,
+    this.trojanPassword = '',
+    this.trojanServerName = '',
+    this.ipv4 = '',
+    this.ipv6 = '',
+    this.createdAt = '',
+    this.portProfile = PortProfileAllocator.randomProfile,
+    this.planRam = 0,
+  });
+
+  CloudInstance toCloudInstance() {
+    return CloudInstance(
+      id: instanceId,
+      provider: 'vultr',
+      label: label,
+      status: 'unknown',
+      region: region,
+      plan: plan,
+      ipv4: _stringOrNull(ipv4),
+      ipv6: _stringOrNull(ipv6),
+      createdAt: _parseTime(createdAt),
+      nodeInfo: NodeInfo(
+        ssPort: ssPort,
+        ssPassword: ssPassword,
+        hyPort: hyPort,
+        hyPassword: hyPassword,
+        hyServerName: hyServerName,
+        hyInsecure: true,
+        vlessPort: vlessPort,
+        vlessUuid: vlessUuid,
+        vlessPublicKey: vlessPublicKey,
+        vlessShortId: vlessShortId,
+        vlessServerName: vlessServerName,
+        trojanPort: trojanPort,
+        trojanPassword: trojanPassword,
+        trojanServerName: trojanServerName,
+        trojanInsecure: true,
+      ),
+    );
+  }
+
+  _VultrNodeRecord copyWithJson(Map<String, dynamic> values) {
+    return _VultrNodeRecord(
+      instanceId: instanceId,
+      label: (values['label'] ?? label).toString(),
+      region: (values['region'] ?? region).toString(),
+      plan: (values['plan'] ?? plan).toString(),
+      osId: _toInt(values['osId'], defaultValue: osId),
+      ssPort: _toInt(values['ssPort'], defaultValue: ssPort),
+      ssPassword: (values['ssPassword'] ?? ssPassword).toString(),
+      hyPort: _toInt(values['hyPort'], defaultValue: hyPort),
+      hyPassword: (values['hyPassword'] ?? hyPassword).toString(),
+      hyServerName: (values['hysteriaServerName'] ?? hyServerName).toString(),
+      vlessPort: _toInt(values['vlessPort'], defaultValue: vlessPort),
+      vlessUuid: (values['vlessUUID'] ?? vlessUuid).toString(),
+      vlessPublicKey: (values['vlessPublicKey'] ?? vlessPublicKey).toString(),
+      vlessShortId: (values['vlessShortId'] ?? vlessShortId).toString(),
+      vlessServerName:
+          (values['vlessServerName'] ?? vlessServerName).toString(),
+      trojanPort: _toInt(values['trojanPort'], defaultValue: trojanPort),
+      trojanPassword: (values['trojanPassword'] ?? trojanPassword).toString(),
+      trojanServerName:
+          (values['trojanServerName'] ?? trojanServerName).toString(),
+      ipv4: (values['ipv4'] ?? ipv4).toString(),
+      ipv6: (values['ipv6'] ?? ipv6).toString(),
+      createdAt: (values['createdAt'] ?? createdAt).toString(),
+      portProfile: (values['portProfile'] ?? portProfile).toString(),
+      planRam: _toInt(values['planRam'], defaultValue: planRam),
+    );
+  }
+
+  Map<String, dynamic> toMergeableJson() {
+    return {
+      'id': instanceId,
+      'provider': 'vultr',
+      'label': label,
+      'region': region,
+      'plan': plan,
+      'main_ip': _stringOrNull(ipv4),
+      'v6_main_ip': _stringOrNull(ipv6),
+      'createdAt': createdAt,
+      'ssPort': ssPort,
+      'ssPassword': ssPassword,
+      'hysteriaPort': hyPort,
+      'hysteriaPassword': hyPassword,
+      'hysteriaServerName': hyServerName,
+      'vlessPort': vlessPort,
+      'vlessUUID': vlessUuid,
+      'vlessPublicKey': vlessPublicKey,
+      'vlessShortId': vlessShortId,
+      'vlessServerName': vlessServerName,
+      'trojanPort': trojanPort,
+      'trojanPassword': trojanPassword,
+      'trojanServerName': trojanServerName,
+    };
+  }
+
+  Map<String, dynamic> toJson() => {
+        'instanceId': instanceId,
+        'label': label,
+        'region': region,
+        'plan': plan,
+        'osId': osId,
+        'ssPort': ssPort,
+        'ssPassword': ssPassword,
+        'hyPort': hyPort,
+        'hyPassword': hyPassword,
+        'hysteriaServerName': hyServerName,
+        'vlessPort': vlessPort,
+        'vlessUUID': vlessUuid,
+        'vlessPublicKey': vlessPublicKey,
+        'vlessShortId': vlessShortId,
+        'vlessServerName': vlessServerName,
+        'trojanPort': trojanPort,
+        'trojanPassword': trojanPassword,
+        'trojanServerName': trojanServerName,
+        'ipv4': ipv4,
+        'ipv6': ipv6,
+        'createdAt': createdAt,
+        'portProfile': portProfile,
+        'planRam': planRam,
+      };
+
+  static _VultrNodeRecord fromJson(
+    String instanceId,
+    Map<String, dynamic> json,
+  ) {
+    return _VultrNodeRecord(
+      instanceId: instanceId,
+      label: (json['label'] ?? '').toString(),
+      region: (json['region'] ?? '').toString(),
+      plan: (json['plan'] ?? '').toString(),
+      osId: _toInt(json['osId']),
+      ssPort: _toInt(json['ssPort']),
+      ssPassword: (json['ssPassword'] ?? '').toString(),
+      hyPort: _toInt(json['hyPort']),
+      hyPassword: (json['hyPassword'] ?? '').toString(),
+      hyServerName: (json['hysteriaServerName'] ?? '').toString(),
+      vlessPort: _toInt(json['vlessPort']),
+      vlessUuid: (json['vlessUUID'] ?? '').toString(),
+      vlessPublicKey: (json['vlessPublicKey'] ?? '').toString(),
+      vlessShortId: (json['vlessShortId'] ?? '').toString(),
+      vlessServerName: (json['vlessServerName'] ?? '').toString(),
+      trojanPort: _toInt(json['trojanPort']),
+      trojanPassword: (json['trojanPassword'] ?? '').toString(),
+      trojanServerName: (json['trojanServerName'] ?? '').toString(),
+      ipv4: (json['ipv4'] ?? '').toString(),
+      ipv6: (json['ipv6'] ?? '').toString(),
+      createdAt: (json['createdAt'] ?? '').toString(),
+      portProfile: (json['portProfile'] ?? PortProfileAllocator.randomProfile)
+          .toString(),
+      planRam: _toInt(json['planRam']),
+    );
+  }
+
+  static int _toInt(dynamic value, {int defaultValue = 0}) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value) ?? defaultValue;
+    }
+    return defaultValue;
+  }
+
+  static String? _stringOrNull(String value) {
+    if (value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
+
+  static DateTime? _parseTime(String value) {
+    if (value.isEmpty) {
+      return null;
+    }
+    try {
+      return DateTime.parse(value);
+    } catch (_) {
+      return null;
+    }
   }
 }

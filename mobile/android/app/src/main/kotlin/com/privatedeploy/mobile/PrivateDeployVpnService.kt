@@ -303,13 +303,31 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     private fun statusMap(): Map<String, Any?> {
-        return parseJsonMap(vpnCore?.getStatus()) ?: mapOf(
-            "running" to isRunning,
-            "status" to if (isRunning) "connected" else "disconnected",
-            "message" to null,
-            "connected_at" to 0,
-            "uptime" to 0
-        )
+        val parsedStatus = parseJsonMap(vpnCore?.getStatus())?.toMutableMap()
+        if (parsedStatus == null) {
+            return mapOf(
+                "running" to isRunning,
+                "status" to if (isRunning) "connected" else "disconnected",
+                "message" to null,
+                "connected_at" to 0,
+                "uptime" to 0
+            )
+        }
+
+        val normalizedRunning = parseBooleanValue(parsedStatus["running"], isRunning)
+        parsedStatus["running"] = normalizedRunning
+        val statusValue = parsedStatus["status"]?.toString()?.trim()?.lowercase()
+        parsedStatus["status"] = when {
+            !statusValue.isNullOrBlank() -> statusValue
+            normalizedRunning -> "connected"
+            else -> "disconnected"
+        }
+
+        if (parsedStatus["status"] == "connected") {
+            parsedStatus["running"] = true
+        }
+
+        return parsedStatus
     }
 
     private fun statsMap(): Map<String, Any?> {
@@ -342,6 +360,22 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
         }
         return result
+    }
+
+    private fun parseBooleanValue(value: Any?, fallback: Boolean): Boolean {
+        if (value == null) {
+            return fallback
+        }
+        return when (value) {
+            is Boolean -> value
+            is Number -> value.toInt() != 0
+            is String -> when (value.trim().lowercase()) {
+                "true", "1", "yes", "y" -> true
+                "false", "0", "no", "n" -> false
+                else -> fallback
+            }
+            else -> fallback
+        }
     }
 
     private fun broadcastStatus(status: String, message: String?) {

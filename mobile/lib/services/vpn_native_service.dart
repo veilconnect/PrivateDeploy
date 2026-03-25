@@ -381,9 +381,11 @@ class VpnNativeStatus {
   });
 
   factory VpnNativeStatus.fromJson(Map<String, dynamic> json) {
-    final running = json['running'] == true;
-    final status =
-        (json['status'] ?? (running ? 'connected' : 'disconnected')).toString();
+    final running = _toBool(json['running'], defaultValue: false);
+    final status = (json['status'] ?? (running ? 'connected' : 'disconnected'))
+        .toString()
+        .toLowerCase()
+        .trim();
     final message = json['message']?.toString();
 
     return VpnNativeStatus(
@@ -404,6 +406,28 @@ class VpnNativeStatus {
       'uptime': uptime,
     };
   }
+}
+
+bool _toBool(dynamic value, {required bool defaultValue}) {
+  if (value == null) {
+    return defaultValue;
+  }
+  if (value is bool) {
+    return value;
+  }
+  if (value is num) {
+    return value != 0;
+  }
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1' || normalized == 'yes') {
+      return true;
+    }
+    if (normalized == 'false' || normalized == '0' || normalized == 'no') {
+      return false;
+    }
+  }
+  return defaultValue;
 }
 
 /// VPN 流量统计

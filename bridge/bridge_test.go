@@ -124,6 +124,21 @@ func TestResolveBasePathUsesLocalAppDataForWindowsSystemInstall(t *testing.T) {
 	}
 }
 
+func TestResolveBasePathUsesLocalAppDataForWindowsShortSystemInstallPath(t *testing.T) {
+	localAppData := t.TempDir()
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("ProgramFiles", `C:/Program Files`)
+	t.Setenv("ProgramFiles(x86)", `C:/Program Files (x86)`)
+	t.Setenv("ProgramW6432", `C:/Program Files`)
+
+	got := resolveBasePath("windows", `C:/PROGRA~1/PrivateDeploy/PrivateDeploy.exe`)
+	want := filepath.Join(localAppData, "PrivateDeploy")
+
+	if got != want {
+		t.Fatalf("resolveBasePath() = %q, want %q", got, want)
+	}
+}
+
 func TestResolveBasePathKeepsPortableWindowsExecutableDir(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("ProgramFiles", `C:/Program Files`)

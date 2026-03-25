@@ -122,6 +122,67 @@ void main() {
       expect(vpnProvider.activeProfile, 'Test');
     });
 
+    test(
+        'treats connected status as connected even when running field is malformed',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': '0',
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isConnected, true);
+    });
+
+    test('maps unknown status to running signal when connected state is set',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': '1',
+              'status': 'running',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isConnected, true);
+    });
+
     test('shows explicit conflict message when another VPN revokes connection',
         () async {
       var statusCallCount = 0;

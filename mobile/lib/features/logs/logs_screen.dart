@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-import '../../core/network/api_client.dart';
-
 class LogsScreen extends StatefulWidget {
   const LogsScreen({Key? key}) : super(key: key);
 
@@ -12,9 +10,9 @@ class LogsScreen extends StatefulWidget {
 
 class _LogsScreenState extends State<LogsScreen> {
   final List<LogEntry> _logs = [];
+  final _scrollController = ScrollController();
   bool _loading = false;
   String _filter = 'all';
-  final _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -30,29 +28,47 @@ class _LogsScreenState extends State<LogsScreen> {
 
   Future<void> _loadLogs() async {
     setState(() => _loading = true);
-    try {
-      // Fetch logs from API
-      final client = ApiClient();
-      final response = await client.get('/api/v1/logs?level=$_filter&limit=100');
-      if (response != null && response is List) {
-        setState(() {
-          _logs.clear();
-          _logs.addAll(response.map((e) => LogEntry.fromJson(e)).toList());
-        });
-      }
-    } catch (e) {
-      // Generate sample logs for offline mode
-      setState(() {
-        _logs.clear();
-        _logs.add(LogEntry(
-          timestamp: DateTime.now(),
-          level: 'info',
-          message: 'Log viewer ready (API not connected)',
-        ));
-      });
-    } finally {
-      setState(() => _loading = false);
+
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final all = _generateOfflineLogs(_filter);
+
+    setState(() {
+      _logs
+        ..clear()
+        ..addAll(all);
+      _loading = false;
+    });
+  }
+
+  List<LogEntry> _generateOfflineLogs(String filter) {
+    final now = DateTime.now();
+    final base = [
+      LogEntry(
+        timestamp: now.subtract(const Duration(seconds: 4)),
+        level: 'info',
+        message: 'App started in mobile standalone mode',
+      ),
+      LogEntry(
+        timestamp: now.subtract(const Duration(seconds: 3)),
+        level: 'warn',
+        message: 'System dashboard metrics require backend endpoint',
+      ),
+      LogEntry(
+        timestamp: now.subtract(const Duration(seconds: 2)),
+        level: 'info',
+        message: 'Cloud nodes are managed via direct Vultr API key only',
+      ),
+      LogEntry(
+        timestamp: now,
+        level: 'error',
+        message: 'No backend logs available in standalone mode',
+      ),
+    ];
+
+    if (filter == 'all') {
+      return base;
     }
+    return base.where((item) => item.level == filter).toList();
   }
 
   @override
@@ -91,9 +107,11 @@ class _LogsScreenState extends State<LogsScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.article_outlined, size: 48.sp, color: Colors.grey),
+                      Icon(Icons.article_outlined,
+                          size: 48.sp, color: Colors.grey),
                       SizedBox(height: 8.h),
-                      const Text('No logs', style: TextStyle(color: Colors.grey)),
+                      const Text('No logs',
+                          style: TextStyle(color: Colors.grey)),
                     ],
                   ),
                 )
@@ -143,13 +161,9 @@ class LogEntry {
   final String level;
   final String message;
 
-  LogEntry({required this.timestamp, required this.level, required this.message});
-
-  factory LogEntry.fromJson(Map<String, dynamic> json) {
-    return LogEntry(
-      timestamp: DateTime.tryParse(json['timestamp'] ?? '') ?? DateTime.now(),
-      level: json['level'] ?? 'info',
-      message: json['message'] ?? '',
-    );
-  }
+  LogEntry({
+    required this.timestamp,
+    required this.level,
+    required this.message,
+  });
 }

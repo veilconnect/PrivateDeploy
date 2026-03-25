@@ -271,17 +271,28 @@ class VpnProvider with ChangeNotifier {
 
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
     final previousStatus = _status;
+    final normalizedStatus = nativeStatus.status.toLowerCase();
+    final hasRunningSignal =
+        nativeStatus.running || normalizedStatus == 'connected';
 
-    switch (nativeStatus.status) {
+    switch (normalizedStatus) {
       case 'connecting':
         _status = VpnStatus.connecting;
         break;
       case 'disconnecting':
         _status = VpnStatus.disconnecting;
         break;
+      case 'connected':
+        _status = VpnStatus.connected;
+        break;
+      case 'error':
+      case 'revoked':
+      case 'disconnected':
+        _status = VpnStatus.disconnected;
+        break;
       default:
         _status =
-            nativeStatus.running ? VpnStatus.connected : VpnStatus.disconnected;
+            hasRunningSignal ? VpnStatus.connected : VpnStatus.disconnected;
         break;
     }
 

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/storage/storage_service.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_screen.dart';
 import '../profiles/profile_screen.dart';
@@ -97,13 +96,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.dns),
-                title: const Text('API Server'),
-                subtitle: Text(StorageService.getApiBaseUrl()),
-                onTap: () => _showApiServerDialog(),
-              ),
-              const Divider(height: 1),
-              ListTile(
                 leading: const Icon(Icons.vpn_key),
                 title: const Text('VPN Status'),
                 subtitle: Consumer<VpnProvider>(
@@ -134,69 +126,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  Future<void> _showApiServerDialog() async {
-    final controller = TextEditingController(
-      text: StorageService.getApiBaseUrl(),
-    );
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('API Server'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Base URL',
-            hintText: 'http://10.0.2.2:8443/api/v1',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              await StorageService.clearApiBaseUrl();
-              if (!dialogContext.mounted) {
-                return;
-              }
-              Navigator.pop(dialogContext);
-              if (!mounted) {
-                return;
-              }
-              context.read<CloudProvider>().reset();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('API server reset to default')),
-              );
-              setState(() {});
-            },
-            child: const Text('Reset'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              await StorageService.saveApiBaseUrl(controller.text);
-              if (!dialogContext.mounted) {
-                return;
-              }
-              Navigator.pop(dialogContext);
-              if (!mounted) {
-                return;
-              }
-              context.read<CloudProvider>().reset();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('API server updated')),
-              );
-              setState(() {});
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
     );
   }
 }

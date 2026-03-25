@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/network/api_client.dart';
 import '../../core/storage/storage_service.dart';
 import '../cloud/cloud_provider.dart';
 
@@ -33,25 +32,27 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Padding(
             padding: EdgeInsets.all(16.w),
-            child: Text('Server', style: Theme.of(context).textTheme.titleMedium),
+            child:
+                Text('Server', style: Theme.of(context).textTheme.titleMedium),
           ),
           Consumer<CloudProvider>(
             builder: (context, cloud, _) {
-              final config = cloud.config;
+              final maskApiKey = cloud.apiKey;
               return Column(
                 children: [
                   ListTile(
                     leading: const Icon(Icons.link),
-                    title: const Text('API Endpoint'),
-                    subtitle: Text(config?.apiUrl ?? 'Not configured'),
+                    title: const Text('Cloud Access'),
+                    subtitle:
+                        const Text('Directly calls Vultr API from this device'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _showEndpointDialog(context, cloud),
+                    onTap: () {},
                   ),
                   ListTile(
                     leading: const Icon(Icons.vpn_key),
                     title: const Text('API Key'),
-                    subtitle: Text(config?.apiKey != null && config!.apiKey.isNotEmpty
-                        ? '${config.apiKey.substring(0, 8)}...'
+                    subtitle: Text(maskApiKey != null && maskApiKey.isNotEmpty
+                        ? '${maskApiKey.substring(0, 8)}...'
                         : 'Not set'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _showApiKeyDialog(context, cloud),
@@ -59,7 +60,7 @@ class SettingsScreen extends StatelessWidget {
                   ListTile(
                     leading: const Icon(Icons.cloud_outlined),
                     title: const Text('Cloud Provider'),
-                    subtitle: Text(config?.provider ?? 'vultr'),
+                    subtitle: Text(cloud.providerName),
                   ),
                 ],
               );
@@ -91,7 +92,10 @@ class SettingsScreen extends StatelessWidget {
             leading: const Icon(Icons.delete_outline),
             title: const Text('Clear Cache'),
             onTap: () async {
-              await StorageService().clearAll();
+              await StorageService.remove('api_base_url');
+              await StorageService.remove('mobile_cloud_vultr_api_key');
+              await StorageService.remove('mobile_cloud_vultr_nodes');
+              context.read<CloudProvider>().reset();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Cache cleared')),
@@ -111,7 +115,8 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Padding(
             padding: EdgeInsets.all(16.w),
-            child: Text('About', style: Theme.of(context).textTheme.titleMedium),
+            child:
+                Text('About', style: Theme.of(context).textTheme.titleMedium),
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
@@ -122,33 +127,6 @@ class SettingsScreen extends StatelessWidget {
             leading: Icon(Icons.code),
             title: Text('PrivateDeploy'),
             subtitle: Text('Multi-protocol proxy deployment tool'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showEndpointDialog(BuildContext context, CloudProvider cloud) {
-    final controller = TextEditingController(text: cloud.config?.apiUrl ?? '');
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('API Endpoint'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'http://192.168.1.100:8443',
-            labelText: 'Server URL',
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              cloud.updateEndpoint(controller.text.trim());
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save'),
           ),
         ],
       ),
@@ -170,10 +148,11 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
             onPressed: () {
-              cloud.updateApiKey(controller.text.trim());
+              cloud.setApiKey(controller.text.trim());
               Navigator.pop(ctx);
             },
             child: const Text('Save'),
