@@ -35,6 +35,21 @@ class CloudProvider with ChangeNotifier {
   bool get isConfigured => _hasApiKey && _configLoaded;
   String get providerName => _providerName;
 
+  @visibleForTesting
+  static String normalizeInstanceLabel(String? raw, {DateTime? now}) {
+    final trimmed = raw?.trim() ?? '';
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+
+    final ts = (now ?? DateTime.now().toUtc());
+    String two(int value) => value.toString().padLeft(2, '0');
+    final compact =
+        '${ts.year.toString().substring(2)}${two(ts.month)}${two(ts.day)}'
+        '${two(ts.hour)}${two(ts.minute)}${two(ts.second)}';
+    return 'node-$compact';
+  }
+
   CloudProvider() {
     _init();
   }
@@ -356,6 +371,7 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final resolvedLabel = normalizeInstanceLabel(label);
       final client = await _cloudClient();
       final planInfo = await client.getPlanById(plan);
       final planRam = _intValue(planInfo, const ['ram', 'memory', 'memory_mb']);
@@ -376,7 +392,7 @@ class CloudProvider with ChangeNotifier {
           final response = await client.createInstance(
             region: region,
             plan: plan,
-            label: label,
+            label: resolvedLabel,
             osId: osId,
             userData: deployment.userData,
           );
@@ -413,7 +429,7 @@ class CloudProvider with ChangeNotifier {
         ...deployment.nodeRecord,
         'plan': plan,
         'region': region,
-        'label': label,
+        'label': resolvedLabel,
         'osId': osIds.first,
         'createdAt': createdAt,
         'ipv4': instancePayload['main_ip'] ?? '',

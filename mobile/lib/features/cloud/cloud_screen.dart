@@ -339,8 +339,8 @@ class _CloudScreenState extends State<CloudScreen> {
                   TextField(
                     controller: labelController,
                     decoration: const InputDecoration(
-                      labelText: 'Node Name',
-                      hintText: 'e.g. Tokyo-1',
+                      labelText: 'Node Name (Optional)',
+                      hintText: 'Auto-generate if left blank',
                     ),
                   ),
                   SizedBox(height: 16.h),
@@ -379,12 +379,10 @@ class _CloudScreenState extends State<CloudScreen> {
               ),
               ElevatedButton(
                 onPressed: () async {
-                  if (labelController.text.isEmpty ||
-                      selectedRegion == null ||
-                      selectedPlan == null) {
+                  if (selectedRegion == null || selectedPlan == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                          content: Text('Please fill all fields'),
+                          content: Text('Please select region and plan'),
                           backgroundColor: Colors.orange),
                     );
                     return;
