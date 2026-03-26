@@ -4,7 +4,7 @@
 #
 # 功能：
 # - 编译 Go 代码为 Android AAR 库
-# - 默认输出面向真机的精简 ABI 集合
+# - 默认输出覆盖真机和 x86_64 模拟器
 # - 自动复制到 Android 项目
 
 set -e
@@ -69,7 +69,7 @@ echo ""
 OUTPUT_DIR="../android/app/libs"
 OUTPUT_FILE="vpncore.aar"
 PACKAGE_NAME="com.privatedeploy.mobile.vpncore"
-TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm}"
+TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm,android/amd64}"
 LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w}"
 TRIMPATH="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TRIMPATH:-true}"
 TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
