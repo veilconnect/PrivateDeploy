@@ -18,6 +18,9 @@ class ProfileProvider with ChangeNotifier {
   Profile? get activeProfile => _activeProfile;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  Profile? getProfileByName(String name) {
+    return _profiles.where((p) => p.name == name).firstOrNull;
+  }
 
   ProfileProvider() {
     _initialization = _init();
@@ -200,6 +203,49 @@ class ProfileProvider with ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<bool> deleteProfileByName(String name) async {
+    await _ensureInitialized();
+    final profile = getProfileByName(name);
+    if (profile == null) {
+      return true;
+    }
+    return deleteProfile(profile.id);
+  }
+
+  Future<int> pruneMissingCloudProfiles(
+      Set<String> existingCloudProfileNames) async {
+    await _ensureInitialized();
+    final staleProfiles = _profiles
+        .where(
+          (profile) =>
+              profile.name.startsWith('Cloud: ') &&
+              !existingCloudProfileNames.contains(profile.name),
+        )
+        .toList();
+    if (staleProfiles.isEmpty) {
+      return 0;
+    }
+
+    final staleIds = staleProfiles.map((profile) => profile.id).toSet();
+    try {
+      await _box.deleteAll(staleIds);
+      await _box.flush();
+      _profiles.removeWhere((profile) => staleIds.contains(profile.id));
+      if (_activeProfile != null && staleIds.contains(_activeProfile!.id)) {
+        _activeProfile = null;
+        await _box.delete(_activeKey);
+        await _box.flush();
+      }
+      notifyListeners();
+      return staleProfiles.length;
+    } catch (e) {
+      _error = 'Failed to remove stale cloud profiles: ${e.toString()}';
+      AppLogger.error('[ProfileProvider] Prune stale cloud profiles error', e);
+      notifyListeners();
+      return 0;
     }
   }
 

@@ -98,13 +98,14 @@ class SettingsScreen extends StatelessWidget {
             padding: EdgeInsets.all(16.w),
             child: Text('App', style: Theme.of(context).textTheme.titleMedium),
           ),
-          SwitchListTile(
-            secondary: const Icon(Icons.dark_mode),
-            title: const Text('Dark Mode'),
-            value: Theme.of(context).brightness == Brightness.dark,
-            onChanged: (_) {
-              // Theme toggle would be handled by a theme provider
-            },
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('Theme'),
+            subtitle: Text(
+              Theme.of(context).brightness == Brightness.dark
+                  ? 'Using system dark theme'
+                  : 'Using system light theme',
+            ),
           ),
           ListTile(
             leading: const Icon(Icons.vpn_lock_outlined),
@@ -165,30 +166,75 @@ class SettingsScreen extends StatelessWidget {
   }
 
   void _showApiKeyDialog(BuildContext context, CloudProvider cloud) {
-    final controller = TextEditingController();
+    final controller = TextEditingController(text: cloud.apiKey ?? '');
+    var saving = false;
+    String? dialogError;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('API Key'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          decoration: const InputDecoration(
-            hintText: 'Paste your Vultr API key',
-            labelText: 'API Key',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('API Key'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                obscureText: true,
+                enabled: !saving,
+                decoration: InputDecoration(
+                  hintText: 'Paste your Vultr API key',
+                  labelText: 'API Key',
+                  errorText: dialogError,
+                ),
+              ),
+            ],
           ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      setState(() {
+                        saving = true;
+                        dialogError = null;
+                      });
+
+                      final success = await cloud.setApiKey(controller.text.trim());
+                      if (!ctx.mounted) {
+                        return;
+                      }
+
+                      if (success) {
+                        await cloud.loadInstances(notify: false);
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('API key saved and verified'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      } else {
+                        setState(() {
+                          saving = false;
+                          dialogError = cloud.error ?? 'Failed to save API key';
+                        });
+                      }
+                    },
+              child: saving
+                  ? const Text('Verifying...')
+                  : const Text('Verify & Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              cloud.setApiKey(controller.text.trim());
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }

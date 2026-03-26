@@ -250,5 +250,47 @@ void main() {
       expect(boxFile.existsSync(), isTrue);
       expect(boxFile.lengthSync(), greaterThan(0));
     });
+
+    test('deleteProfileByName clears the active cloud profile', () async {
+      final provider = ProfileProvider();
+
+      await provider.createProfile(
+        name: 'Cloud: fra-smoke',
+        content: '{"outbounds":[]}',
+      );
+
+      final deleted = await provider.deleteProfileByName('Cloud: fra-smoke');
+
+      expect(deleted, isTrue);
+      expect(provider.profiles, isEmpty);
+      expect(provider.activeProfile, isNull);
+    });
+
+    test(
+        'pruneMissingCloudProfiles removes stale cloud profiles and clears active',
+        () async {
+      final provider = ProfileProvider();
+
+      await provider.createProfile(
+        name: 'Cloud: missing-node',
+        content: '{"outbounds":[]}',
+      );
+      await provider.createProfile(
+        name: 'Cloud: keep-node',
+        content: '{"outbounds":[]}',
+      );
+      final keepProfile = provider.getProfileByName('Cloud: keep-node');
+      expect(keepProfile, isNotNull);
+      await provider.activateProfile(keepProfile!.id);
+
+      final removed = await provider.pruneMissingCloudProfiles({
+        'Cloud: keep-node',
+      });
+
+      expect(removed, 1);
+      expect(provider.getProfileByName('Cloud: missing-node'), isNull);
+      expect(provider.getProfileByName('Cloud: keep-node'), isNotNull);
+      expect(provider.activeProfile?.name, 'Cloud: keep-node');
+    });
   });
 }
