@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
 import 'cloud_models.dart';
+import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 
 class CloudProvider with ChangeNotifier {
@@ -62,7 +63,15 @@ class CloudProvider with ChangeNotifier {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _apiKey = StorageService.getString(_apiKeyStorageKey);
+    _apiKey = await StorageService.getSecureString(_apiKeyStorageKey);
+    if (_apiKey == null || _apiKey!.isEmpty) {
+      final legacy = StorageService.getString(_apiKeyStorageKey);
+      if (legacy != null && legacy.trim().isNotEmpty) {
+        _apiKey = legacy.trim();
+        await StorageService.saveSecureString(_apiKeyStorageKey, _apiKey!);
+        await StorageService.remove(_apiKeyStorageKey);
+      }
+    }
     return _apiKey?.trim();
   }
 
@@ -71,7 +80,8 @@ class CloudProvider with ChangeNotifier {
       await StorageService.init();
     }
     _apiKey = key.trim();
-    await StorageService.saveString(_apiKeyStorageKey, _apiKey!);
+    await StorageService.saveSecureString(_apiKeyStorageKey, _apiKey!);
+    await StorageService.remove(_apiKeyStorageKey);
   }
 
   Future<void> _clearApiKey() async {
@@ -79,12 +89,21 @@ class CloudProvider with ChangeNotifier {
       await StorageService.init();
     }
     _apiKey = null;
+    await StorageService.removeSecure(_apiKeyStorageKey);
     await StorageService.remove(_apiKeyStorageKey);
   }
 
   Future<Map<String, _VultrNodeRecord>> _loadNodeRecords() async {
     await _initializeStorage();
-    final raw = StorageService.getString(_nodeRecordsStorageKey);
+    var raw = await StorageService.getSecureString(_nodeRecordsStorageKey);
+    if (raw == null || raw.isEmpty) {
+      final legacy = StorageService.getString(_nodeRecordsStorageKey);
+      if (legacy != null && legacy.isNotEmpty) {
+        raw = legacy;
+        await StorageService.saveSecureString(_nodeRecordsStorageKey, legacy);
+        await StorageService.remove(_nodeRecordsStorageKey);
+      }
+    }
     if (raw == null || raw.isEmpty) {
       _nodeRecords = {};
       return {};
@@ -120,8 +139,9 @@ class CloudProvider with ChangeNotifier {
     for (final item in _nodeRecords.entries) {
       payload[item.key] = item.value.toJson();
     }
-    await StorageService.saveString(
+    await StorageService.saveSecureString(
         _nodeRecordsStorageKey, jsonEncode(payload));
+    await StorageService.remove(_nodeRecordsStorageKey);
   }
 
   Future<void> _updateNodeRecord(
@@ -218,7 +238,7 @@ class CloudProvider with ChangeNotifier {
       final knownRecords = await _loadNodeRecords();
       final parsed = <CloudInstance>[];
 
-      for (final item in rawInstances.whereType<Map<String, dynamic>>()) {
+      for (final item in rawInstances.whereType<Map>()) {
         final source = Map<String, dynamic>.from(item);
         final id = source['id']?.toString() ?? '';
         final record = id.isNotEmpty ? knownRecords[id] : null;
@@ -229,8 +249,7 @@ class CloudProvider with ChangeNotifier {
 
         final merged = Map<String, dynamic>.from(source)
           ..addAll(record.toMergeableJson());
-        final instance = CloudInstance.fromJson(merged);
-        parsed.add(instance);
+        parsed.add(CloudInstance.fromJson(merged));
       }
 
       if (parsed.isEmpty && knownRecords.isNotEmpty) {
@@ -337,22 +356,17 @@ class CloudProvider with ChangeNotifier {
 
     try {
       final client = await _cloudClient();
-      final ports =
-          PortProfileAllocator.allocatePorts(profile: _selectedProfile);
-      final ssPort = ports[0];
-      final ssPassword = PortProfileAllocator.generatePassword(22);
       final planInfo = await client.getPlanById(plan);
       final planRam = _intValue(planInfo, const ['ram', 'memory', 'memory_mb']);
+      final deployment = await VultrDeploymentBuilder.build(
+        planRam: planRam,
+        portProfile: _selectedProfile,
+      );
 
       final osIds = await _preferredOsIds(client);
       if (osIds.isEmpty) {
         throw StateError('No supported OS image found in Vultr account');
       }
-
-      final script = PortProfileAllocator.lightweightScript(
-        ssPort: ssPort,
-        ssPassword: ssPassword,
-      );
       Map<String, dynamic>? instancePayload;
       StateError? lastError;
 
@@ -363,9 +377,7 @@ class CloudProvider with ChangeNotifier {
             plan: plan,
             label: label,
             osId: osId,
-            ssPort: ssPort,
-            ssPassword: ssPassword,
-            userData: script,
+            userData: deployment.userData,
           );
           final raw = response['instance'] ?? response;
           if (raw is Map<String, dynamic>) {
@@ -397,13 +409,11 @@ class CloudProvider with ChangeNotifier {
           DateTime.now().toUtc().toIso8601String();
 
       await _updateNodeRecord(instanceId, {
+        ...deployment.nodeRecord,
         'plan': plan,
         'region': region,
         'label': label,
-        'planRam': planRam,
         'osId': osIds.first,
-        'ssPort': ssPort,
-        'ssPassword': ssPassword,
         'createdAt': createdAt,
         'ipv4': instancePayload['main_ip'] ?? '',
         'ipv6': instancePayload['v6_main_ip'] ?? '',
@@ -875,15 +885,9 @@ class _VultrNodeRecord {
   }
 
   Map<String, dynamic> toMergeableJson() {
-    return {
+    final result = <String, dynamic>{
       'id': instanceId,
       'provider': 'vultr',
-      'label': label,
-      'region': region,
-      'plan': plan,
-      'main_ip': _stringOrNull(ipv4),
-      'v6_main_ip': _stringOrNull(ipv6),
-      'createdAt': createdAt,
       'ssPort': ssPort,
       'ssPassword': ssPassword,
       'hysteriaPort': hyPort,
@@ -898,6 +902,27 @@ class _VultrNodeRecord {
       'trojanPassword': trojanPassword,
       'trojanServerName': trojanServerName,
     };
+
+    if (label.isNotEmpty) {
+      result['label'] = label;
+    }
+    if (region.isNotEmpty) {
+      result['region'] = region;
+    }
+    if (plan.isNotEmpty) {
+      result['plan'] = plan;
+    }
+    if (ipv4.isNotEmpty && ipv4 != '0.0.0.0') {
+      result['main_ip'] = ipv4;
+    }
+    if (ipv6.isNotEmpty) {
+      result['v6_main_ip'] = ipv6;
+    }
+    if (createdAt.isNotEmpty) {
+      result['createdAt'] = createdAt;
+    }
+
+    return result;
   }
 
   Map<String, dynamic> toJson() => {

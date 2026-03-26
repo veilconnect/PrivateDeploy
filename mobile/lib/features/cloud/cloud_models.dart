@@ -32,7 +32,7 @@ class CloudInstance {
       status: _stringValue(json, const ['status'], fallback: 'unknown'),
       region: _stringValue(json, const ['region']),
       plan: _stringValue(json, const ['plan']),
-      ipv4: _optionalStringValue(json, const ['ipv4', 'main_ip']),
+      ipv4: _optionalPublicIpValue(json, const ['ipv4', 'main_ip']),
       ipv6: _optionalStringValue(json, const ['ipv6', 'v6_main_ip']),
       createdAt: _parseDate(json['createdAt'] ?? json['date_created']),
       nodeInfo: nodeInfo.isUsable ? nodeInfo : null,
@@ -191,6 +191,14 @@ String _stringValue(
 String? _optionalStringValue(Map<String, dynamic> json, List<String> keys) {
   final value = _stringValue(json, keys);
   return value.isEmpty ? null : value;
+}
+
+String? _optionalPublicIpValue(Map<String, dynamic> json, List<String> keys) {
+  final value = _optionalStringValue(json, keys);
+  if (value == null || value == '0.0.0.0') {
+    return null;
+  }
+  return value;
 }
 
 int _intValue(Map<String, dynamic> json, List<String> keys) {

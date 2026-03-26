@@ -50,8 +50,6 @@ class VultrCloudClient {
     required String plan,
     required String label,
     required int osId,
-    required int ssPort,
-    required String ssPassword,
     required String userData,
   }) async {
     final body = {
@@ -132,7 +130,12 @@ class VultrCloudClient {
   String _extractDioErrorMessage(DioException error) {
     final response = error.response?.data;
     if (response is Map<String, dynamic>) {
-      final message = response['error']?['message'] ?? response['message'];
+      final rawError = response['error'];
+      if (rawError is String && rawError.isNotEmpty) {
+        return rawError;
+      }
+      final message =
+          (rawError is Map ? rawError['message'] : null) ?? response['message'];
       if (message is String && message.isNotEmpty) {
         return message;
       }

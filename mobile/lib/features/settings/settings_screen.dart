@@ -92,7 +92,8 @@ class SettingsScreen extends StatelessWidget {
             leading: const Icon(Icons.delete_outline),
             title: const Text('Clear Cache'),
             onTap: () async {
-              await StorageService.remove('api_base_url');
+              await StorageService.removeSecure('mobile_cloud_vultr_api_key');
+              await StorageService.removeSecure('mobile_cloud_vultr_nodes');
               await StorageService.remove('mobile_cloud_vultr_api_key');
               await StorageService.remove('mobile_cloud_vultr_nodes');
               context.read<CloudProvider>().reset();
