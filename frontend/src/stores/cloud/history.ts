@@ -149,6 +149,18 @@ export function createCloudHistory(deps: CloudHistoryDeps) {
     void saveNodeHistory().catch(() => {})
   }
 
+  const clearNodeHistory = async (instanceId?: string) => {
+    await loadNodeHistory()
+    if (instanceId && instanceId.length > 0) {
+      const nextHistory = { ...nodeHistory.value }
+      delete nextHistory[instanceId]
+      nodeHistory.value = nextHistory
+    } else {
+      nodeHistory.value = {}
+    }
+    await saveNodeHistoryImmediate()
+  }
+
   const recordConnectivitySample = async (
     instanceId: string,
     status: ConnectivityStatus,
@@ -179,6 +191,7 @@ export function createCloudHistory(deps: CloudHistoryDeps) {
 
   return {
     loadNodeHistory,
+    clearNodeHistory,
     recordConnectivitySample,
     recordSpeedSample,
     saveNodeHistory,

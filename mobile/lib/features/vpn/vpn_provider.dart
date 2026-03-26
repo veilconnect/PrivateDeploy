@@ -1,9 +1,12 @@
-import 'package:flutter/foundation.dart';
-import '../../services/vpn_native_service.dart';
-import '../../shared/utils/logger.dart';
 import 'dart:async';
 
-class VpnProvider with ChangeNotifier {
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+
+import '../../services/vpn_native_service.dart';
+import '../../shared/utils/logger.dart';
+
+class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
       'Another VPN app or system VPN interrupted this connection. Disable the other VPN and try again.';
 
@@ -19,6 +22,9 @@ class VpnProvider with ChangeNotifier {
   Timer? _statsTimer;
   StreamSubscription? _statusSub;
   StreamSubscription? _statsSub;
+  Future<void>? _initializeTask;
+  bool _initialized = false;
+  bool _disposed = false;
 
   VpnStatus get status => _status;
   String? get activeProfile => _activeProfile;
@@ -29,9 +35,26 @@ class VpnProvider with ChangeNotifier {
   bool get isSupported => _isSupported;
   String? get unsupportedReason => _unsupportedReason;
 
-  VpnProvider();
+  VpnProvider() {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   Future<void> initialize() async {
+    if (_initialized) {
+      await loadStatus();
+      return;
+    }
+    if (_initializeTask != null) {
+      await _initializeTask;
+      return;
+    }
+
+    _initializeTask = _initializeInternal();
+    await _initializeTask;
+  }
+
+  Future<void> _initializeInternal() async {
+    var initializedNow = false;
     try {
       await _nativeService.initialize();
 
@@ -42,10 +65,13 @@ class VpnProvider with ChangeNotifier {
         _status = VpnStatus.disconnected;
         _error = _unsupportedReason;
         _stopStatsPolling();
-        notifyListeners();
+        initializedNow = true;
+        _safeNotifyListeners();
         return;
       }
 
+      await _statusSub?.cancel();
+      await _statsSub?.cancel();
       _statusSub = _nativeService.statusStream.listen((nativeStatus) {
         _applyNativeStatus(nativeStatus);
       });
@@ -58,10 +84,14 @@ class VpnProvider with ChangeNotifier {
           downloadSpeed: nativeStats.downloadSpeed.toDouble(),
           connectionTime: Duration.zero,
         );
-        notifyListeners();
+        _safeNotifyListeners();
       });
+      initializedNow = true;
     } catch (e) {
       AppLogger.error('[VpnProvider] Initialize error', e);
+    } finally {
+      _initialized = initializedNow;
+      _initializeTask = null;
     }
 
     await loadStatus();
@@ -75,7 +105,7 @@ class VpnProvider with ChangeNotifier {
       _status = VpnStatus.disconnected;
       _error = _unsupportedReason;
       _stopStatsPolling();
-      notifyListeners();
+      _safeNotifyListeners();
       return;
     }
     try {
@@ -92,24 +122,24 @@ class VpnProvider with ChangeNotifier {
           _stopStatsPolling();
         }
       }
-      notifyListeners();
+      _safeNotifyListeners();
     } catch (e) {
       _error = 'Failed to load status: ${e.toString()}';
       AppLogger.error('[VpnProvider] Load status error', e);
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
   Future<bool> connect({String? configJson, String? profileName}) async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
-      notifyListeners();
+      _safeNotifyListeners();
       return false;
     }
     _isLoading = true;
     _error = null;
     _status = VpnStatus.connecting;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final config = configJson ?? '{}';
@@ -142,20 +172,20 @@ class VpnProvider with ChangeNotifier {
       return false;
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
   Future<bool> disconnect() async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
-      notifyListeners();
+      _safeNotifyListeners();
       return false;
     }
     _isLoading = true;
     _error = null;
     _status = VpnStatus.disconnecting;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final success = await _nativeService.stopVpn();
@@ -174,19 +204,19 @@ class VpnProvider with ChangeNotifier {
       return false;
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
   Future<bool> restart() async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
-      notifyListeners();
+      _safeNotifyListeners();
       return false;
     }
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final success = await _nativeService.restartVpn();
@@ -209,7 +239,7 @@ class VpnProvider with ChangeNotifier {
       return false;
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
@@ -227,7 +257,7 @@ class VpnProvider with ChangeNotifier {
           downloadSpeed: nativeStats.downloadSpeed.toDouble(),
           connectionTime: Duration.zero,
         );
-        notifyListeners();
+        _safeNotifyListeners();
       }
     } catch (e) {
       AppLogger.error('[VpnProvider] Failed to load stats', e);
@@ -237,14 +267,14 @@ class VpnProvider with ChangeNotifier {
   Future<bool> resetStats() async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
-      notifyListeners();
+      _safeNotifyListeners();
       return false;
     }
     try {
       final success = await _nativeService.resetStats();
       if (success) {
         _stats = TrafficStats.zero();
-        notifyListeners();
+        _safeNotifyListeners();
       } else {
         _error = _nativeService.lastError ?? 'Failed to reset stats';
       }
@@ -313,7 +343,20 @@ class VpnProvider with ChangeNotifier {
     }
 
     if (notify) {
+      _safeNotifyListeners();
+    }
+  }
+
+  void _safeNotifyListeners() {
+    if (!_disposed) {
       notifyListeners();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(loadStatus());
     }
   }
 
@@ -337,6 +380,8 @@ class VpnProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _stopStatsPolling();
     _statusSub?.cancel();
     _statsSub?.cancel();

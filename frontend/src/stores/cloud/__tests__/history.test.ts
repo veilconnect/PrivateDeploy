@@ -74,4 +74,35 @@ describe('cloud history', () => {
       status: 'ok',
     })
   })
+
+  it('can clear history for a single node and persist removal', async () => {
+    bridgeMocks.readFile.mockResolvedValue(JSON.stringify({
+      'node-1': {
+        connectivity: [{ timestamp: Date.now(), status: 'reachable' }],
+        speed: [{ timestamp: Date.now(), speedMbps: 12.3, status: 'ok' }],
+      },
+      'node-2': {
+        connectivity: [{ timestamp: Date.now(), status: 'blocked' }],
+        speed: [],
+      },
+    }))
+    bridgeMocks.writeFile.mockResolvedValue(undefined)
+
+    const nodeHistory = shallowRef({})
+    const nodeHistoryLoaded = ref(false)
+    const history = createCloudHistory({
+      nodeHistory,
+      nodeHistoryLoaded,
+    })
+
+    await history.clearNodeHistory('node-1')
+
+    expect(nodeHistory.value['node-1']).toBeUndefined()
+    expect(nodeHistory.value['node-2']).toBeTruthy()
+
+    const [, writtenPayload] = bridgeMocks.writeFile.mock.calls.at(-1)!
+    const persisted = JSON.parse(writtenPayload)
+    expect(persisted['node-1']).toBeUndefined()
+    expect(persisted['node-2']).toBeTruthy()
+  })
 })

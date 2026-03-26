@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
+import 'cloud_backup.dart';
 import 'cloud_models.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
@@ -467,6 +468,75 @@ class CloudProvider with ChangeNotifier {
     _apiKey = null;
     _error = null;
     _nodeRecords = {};
+    notifyListeners();
+  }
+
+  Future<void> clearLocalCloudData() async {
+    await _clearApiKey();
+    _nodeRecords = {};
+    await StorageService.removeSecure(_nodeRecordsStorageKey);
+    await StorageService.remove(_nodeRecordsStorageKey);
+    reset();
+  }
+
+  Future<String> exportBackupJson() async {
+    final key = await _getStoredApiKey();
+    final records = await _loadNodeRecords();
+    final payload = <String, dynamic>{};
+    for (final entry in records.entries) {
+      payload[entry.key] = entry.value.toJson();
+    }
+    return createCloudBackupJson(
+      provider: _providerName,
+      apiKey: key,
+      nodeRecords: payload,
+    );
+  }
+
+  Future<void> importBackupJson(String raw) async {
+    final backup = parseCloudBackupJson(
+      raw,
+      expectedProvider: _providerName,
+    );
+
+    if (backup.apiKey != null && backup.apiKey!.isNotEmpty) {
+      await _saveApiKey(backup.apiKey!);
+    }
+
+    final importedRecords = <String, _VultrNodeRecord>{};
+    for (final entry in backup.nodeRecords.entries) {
+      if (entry.value is! Map) {
+        throw FormatException(
+          'Backup node record "${entry.key}" is not a JSON object',
+        );
+      }
+      importedRecords[entry.key] = _VultrNodeRecord.fromJson(
+        entry.key,
+        Map<String, dynamic>.from(entry.value as Map),
+      );
+    }
+
+    _nodeRecords = importedRecords;
+    await _saveNodeRecords();
+    _instances = [];
+    _regions = [];
+    _plans = [];
+    _error = null;
+    _configLoaded = false;
+    await refreshCloudConfig(notify: false);
+    if (_hasApiKey) {
+      await loadRegions(notify: false);
+      await loadPlans(notify: false);
+      await loadInstances(notify: false);
+    } else if (importedRecords.isNotEmpty) {
+      _instances = importedRecords.values
+          .map((record) => record.toCloudInstance())
+          .toList()
+        ..sort(
+          (a, b) => (b.createdAt ?? DateTime(0))
+              .compareTo(a.createdAt ?? DateTime(0)),
+        );
+    }
     notifyListeners();
   }
 

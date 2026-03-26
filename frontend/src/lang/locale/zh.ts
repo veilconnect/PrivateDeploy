@@ -538,6 +538,11 @@ export default {
     charts: {
       view: '查看图表',
       title: '{label} 数据分析',
+      export: '导出历史',
+      exported: '节点历史已导出',
+      clear: '清空历史',
+      cleared: '节点历史已清空',
+      clearConfirm: '是否清空 {label} 的本地历史？这不会删除节点。',
       connectivity: '连通性历史',
       speedHistory: '测速历史',
       currentStatus: '当前状态',
@@ -546,7 +551,7 @@ export default {
       connectivityWindow: '展示最近 24 小时内的真实连通性采样。',
       noMeasurement: '暂无真实采样结果',
       noHistory: '暂无真实历史数据',
-      note: '这里只展示真实采样结果。节点历史数据保存在本地，后续采样会持续追加。',
+      note: '这里只展示真实采样结果。节点历史数据最多在本地保留 {days} 天，后续采样会持续追加。',
     },
     search: {
       placeholder: '按名称、IP 或区域搜索...',

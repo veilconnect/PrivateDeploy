@@ -2,8 +2,9 @@
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { TestAllCloudRegions } from '@/bridge'
+import { ExportCloudBackup, TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
+import { NODE_HISTORY_RETENTION_MS } from '@/stores/cloud/constants'
 import { formatDate, formatRelativeTime, message } from '@/utils'
 import { logError } from '@/utils/logger'
 import { isOnline } from '@/utils/offline'
@@ -319,6 +320,55 @@ const handleDeploy = async () => {
 const getDeploymentSteps = (node: CloudNode | Record<string, any>) => getNodeDeploymentSteps(node, t)
 
 const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeDeploymentSummary(node, t)
+
+const nodeHistoryRetentionDays = Math.round(NODE_HISTORY_RETENTION_MS / (24 * 60 * 60 * 1000))
+
+const handleExportChartHistory = async () => {
+  if (!viewingChartNode.value) {
+    return
+  }
+
+  try {
+    const instanceId = viewingChartNode.value.instanceId
+    const history = cloudStore.nodeHistory[instanceId] || { connectivity: [], speed: [] }
+    const path = await ExportCloudBackup(JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      retentionDays: nodeHistoryRetentionDays,
+      node: {
+        instanceId,
+        label: viewingChartNode.value.label,
+        region: viewingChartNode.value.region,
+        plan: viewingChartNode.value.plan,
+        ipv4: viewingChartNode.value.ipv4 || '',
+        ipv6: viewingChartNode.value.ipv6 || '',
+      },
+      history,
+    }, null, 2))
+    if (!path) {
+      return
+    }
+    message.success(t('cloud.charts.exported'))
+  } catch (error) {
+    handleError(error)
+  }
+}
+
+const handleClearChartHistory = async () => {
+  if (!viewingChartNode.value) {
+    return
+  }
+  if (!window.confirm(t('cloud.charts.clearConfirm', { label: viewingChartNode.value.label }))) {
+    return
+  }
+
+  try {
+    await cloudStore.clearNodeHistory(viewingChartNode.value.instanceId)
+    message.success(t('cloud.charts.cleared'))
+  } catch (error) {
+    handleError(error)
+  }
+}
 </script>
 
 <template>
@@ -864,6 +914,14 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
       {{ t('cloud.charts.title', { label: viewingChartNode?.label || '' }) }}
     </template>
     <div v-if="viewingChartNode" class="charts-modal-content">
+      <div class="chart-toolbar">
+        <Button @click="handleExportChartHistory" type="link">
+          {{ t('cloud.charts.export') }}
+        </Button>
+        <Button @click="handleClearChartHistory" type="link">
+          {{ t('cloud.charts.clear') }}
+        </Button>
+      </div>
       <div class="chart-summary-grid">
         <div class="chart-summary-card">
           <span class="chart-summary-label">{{ t('cloud.charts.currentStatus') }}</span>
@@ -917,7 +975,7 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
         </div>
       </div>
       <div class="chart-note">
-        <span>{{ t('cloud.charts.note') }}</span>
+        <span>{{ t('cloud.charts.note', { days: nodeHistoryRetentionDays }) }}</span>
       </div>
     </div>
   </Modal>
@@ -1075,6 +1133,12 @@ const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeD
   flex-direction: column;
   gap: 16px;
   padding: 16px 0;
+}
+
+.chart-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .chart-summary-grid {

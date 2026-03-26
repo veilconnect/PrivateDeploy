@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:privatedeploy_mobile/services/vpn_native_service.dart';
@@ -252,6 +253,45 @@ void main() {
       );
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.error, 'iOS VPN core is not available in this build.');
+    });
+
+    test('initialize is idempotent and refreshes status on resume', () async {
+      var capabilitiesCalls = 0;
+      var statusCalls = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getCapabilities':
+            capabilitiesCalls += 1;
+            return {
+              'supported': true,
+              'reason': null,
+            };
+          case 'getStatus':
+            statusCalls += 1;
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.initialize();
+      await vpnProvider.initialize();
+      vpnProvider.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(capabilitiesCalls, 1);
+      expect(statusCalls, greaterThanOrEqualTo(2));
+      expect(vpnProvider.status, VpnStatus.connected);
     });
   });
 }

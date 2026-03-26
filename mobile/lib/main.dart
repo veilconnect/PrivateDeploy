@@ -29,7 +29,7 @@ class PrivateDeployApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
-        ChangeNotifierProvider(create: (_) => VpnProvider()),
+        ChangeNotifierProvider(create: (_) => VpnProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
       ],
       child: ScreenUtilInit(

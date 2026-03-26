@@ -203,6 +203,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
   const {
     loadNodeHistory,
+    clearNodeHistory,
     recordConnectivitySample,
     recordSpeedSample,
   } = historyModule
@@ -394,6 +395,7 @@ export const useCloudStore = defineStore('cloud', () => {
     updateManualNode,
     loadManualNodes,
     loadNodeHistory,
+    clearNodeHistory,
     instancesUpdatedAt,
     // Load balance
     loadBalanceEnabled,

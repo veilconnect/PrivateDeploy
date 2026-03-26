@@ -537,6 +537,11 @@ export default {
     charts: {
       view: 'View Charts',
       title: 'Analytics: {label}',
+      export: 'Export History',
+      exported: 'Node history exported',
+      clear: 'Clear History',
+      cleared: 'Node history cleared',
+      clearConfirm: 'Clear local history for {label}? This does not delete the node.',
       connectivity: 'Connectivity History',
       speedHistory: 'Speed Test History',
       currentStatus: 'Current Status',
@@ -545,7 +550,7 @@ export default {
       connectivityWindow: 'Shows real connectivity samples from the last 24 hours.',
       noMeasurement: 'No real measurement available yet',
       noHistory: 'No real history data available yet',
-      note: 'Only real measurements are shown here. Node history is stored locally and new samples will continue to accumulate.',
+      note: 'Only real measurements are shown here. Node history is stored locally for up to {days} days and new samples will continue to accumulate.',
     },
     search: {
       placeholder: 'Search by name, IP, or region...',
