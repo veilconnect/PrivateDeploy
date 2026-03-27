@@ -146,7 +146,12 @@ class _NodesScreenState extends State<NodesScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.all(16.w),
               children: [
-                _buildVpnSection(context, vpnProvider, profileProvider),
+                _buildVpnSection(
+                  context,
+                  vpnProvider,
+                  profileProvider,
+                  cloudProvider,
+                ),
                 if (vpnProvider.error != null) ...[
                   SizedBox(height: 12.h),
                   _buildInlineInfoCard(
@@ -224,6 +229,7 @@ class _NodesScreenState extends State<NodesScreen> {
     BuildContext context,
     VpnProvider vpnProvider,
     ProfileProvider profileProvider,
+    CloudProvider cloudProvider,
   ) {
     final statusColor = _statusColor(vpnProvider.status);
     final selectedProfile = profileProvider.activeProfile?.name;
@@ -271,7 +277,7 @@ class _NodesScreenState extends State<NodesScreen> {
                       Text(
                         selectedProfile != null
                             ? 'Selected node: $selectedProfile'
-                            : 'Choose a node or local profile below before connecting.',
+                            : _connectionHint(cloudProvider),
                         style:
                             TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
                       ),
@@ -614,6 +620,10 @@ class _NodesScreenState extends State<NodesScreen> {
               children: [
                 _buildChip(instance.isActive ? 'ACTIVE' : 'PROVISIONING',
                     instance.isActive ? Colors.green : Colors.orange),
+                if (instance.isActive &&
+                    instance.hasIp &&
+                    instance.nodeInfo == null)
+                  _buildChip('LOCAL CREDS MISSING', Colors.deepOrange),
                 if (linkedProfile != null)
                   _buildChip(
                     isSelected ? 'IN USE' : 'SYNCED',
@@ -623,6 +633,17 @@ class _NodesScreenState extends State<NodesScreen> {
                   _buildChip('SS / Hy2 / VLESS / Trojan', Colors.indigo),
               ],
             ),
+            if (instance.isActive && instance.hasIp && instance.nodeInfo == null)
+              Padding(
+                padding: EdgeInsets.only(top: 10.h),
+                child: Text(
+                  'This server was found in your Vultr account, but this phone does not have its connection credentials yet. Restore a cloud backup or deploy/use a node from this device first.',
+                  style: TextStyle(
+                    fontSize: 12.sp,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ),
             if (isReady) ...[
               SizedBox(height: 14.h),
               FilledButton.icon(
@@ -795,6 +816,77 @@ class _NodesScreenState extends State<NodesScreen> {
       case VpnStatus.disconnected:
         return 'Disconnected';
     }
+  }
+
+  String _connectionHint(CloudProvider cloudProvider) {
+    final readyCloudNodes = _connectableCloudInstances(cloudProvider);
+    if (readyCloudNodes.length == 1) {
+      return 'Tap Connect to use your ready cloud node automatically.';
+    }
+    if (readyCloudNodes.length > 1) {
+      return 'Tap Connect to choose one of your ready cloud nodes, or select a local profile below.';
+    }
+    if (cloudProvider.instances.isNotEmpty) {
+      return 'Cloud nodes are visible, but this device still needs their local credentials before it can connect.';
+    }
+    return 'Choose a node or local profile below before connecting.';
+  }
+
+  List<CloudInstance> _connectableCloudInstances(CloudProvider cloudProvider) {
+    return cloudProvider.instances
+        .where((instance) =>
+            instance.isActive && instance.hasIp && instance.nodeInfo != null)
+        .toList();
+  }
+
+  Future<CloudInstance?> _pickCloudNodeForConnect(
+    BuildContext context,
+    List<CloudInstance> candidates,
+  ) {
+    return showModalBottomSheet<CloudInstance>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 16.h),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Choose a cloud node',
+                  style: TextStyle(
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 6.h),
+                Text(
+                  'Connect needs one active node. Pick which cloud node to use now.',
+                  style: TextStyle(
+                    fontSize: 13.sp,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                SizedBox(height: 12.h),
+                ...candidates.map(
+                  (instance) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.cloud_done, color: Colors.green),
+                    title: Text(instance.label),
+                    subtitle: Text(
+                      '${instance.region}${instance.ipv4 != null ? ' • ${instance.ipv4}' : ''}',
+                    ),
+                    onTap: () => Navigator.of(sheetContext).pop(instance),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _useCloudNode(
@@ -1570,9 +1662,28 @@ class _NodesScreenState extends State<NodesScreen> {
     final activeProfile = profileProvider.activeProfile;
     final configJson = profileProvider.getActiveConfigJson();
     if (configJson == null || configJson.isEmpty) {
+      final cloudProvider = context.read<CloudProvider>();
+      final readyCloudNodes = _connectableCloudInstances(cloudProvider);
+      if (readyCloudNodes.length == 1) {
+        await _useCloudNode(context, readyCloudNodes.first, cloudProvider);
+        return;
+      }
+      if (readyCloudNodes.length > 1) {
+        final selectedNode =
+            await _pickCloudNodeForConnect(context, readyCloudNodes);
+        if (selectedNode != null && context.mounted) {
+          await _useCloudNode(context, selectedNode, cloudProvider);
+        }
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Choose or create a node/profile first'),
+        SnackBar(
+          content: Text(
+            cloudProvider.instances.isNotEmpty
+                ? 'These cloud nodes are visible, but this device does not have their connection credentials yet. Restore a cloud backup or deploy/use a node from this device first.'
+                : 'No ready node selected yet. Choose a cloud node below or create/import a profile first.',
+          ),
           backgroundColor: Colors.orange,
         ),
       );

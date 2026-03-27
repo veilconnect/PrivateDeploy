@@ -613,6 +613,13 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			dirty = true
 		}
 
+		if shouldRecoverNodeRecord(record) {
+			if recovered, ok := p.recoverNodeRecordForInstance(ctx, inst, record); ok {
+				record = recovered
+				dirty = true
+			}
+		}
+
 		if inst.MainIP != "" && record.IPv4 != inst.MainIP {
 			record.IPv4 = inst.MainIP
 			dirty = true

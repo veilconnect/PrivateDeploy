@@ -37,6 +37,22 @@ class VultrCloudClient {
     return _requestJson('GET', '/instances');
   }
 
+  Future<String?> getInstanceUserData(String instanceId) async {
+    final response = await _requestJson('GET', '/instances/$instanceId/user-data');
+    final rawUserData = response['user_data'];
+    if (rawUserData is String && rawUserData.isNotEmpty) {
+      return utf8.decode(base64Decode(rawUserData));
+    }
+    if (rawUserData is Map) {
+      final encoded = rawUserData['data']?.toString();
+      if (encoded == null || encoded.isEmpty) {
+        return null;
+      }
+      return utf8.decode(base64Decode(encoded));
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>> deleteInstance(String instanceId) async {
     return _requestJson('DELETE', '/instances/$instanceId');
   }

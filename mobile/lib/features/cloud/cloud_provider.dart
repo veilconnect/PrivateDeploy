@@ -7,6 +7,7 @@ import 'cloud_backup.dart';
 import 'cloud_models.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
+import 'vultr_user_data_recovery.dart';
 
 class CloudProvider with ChangeNotifier {
   static const _providerName = 'vultr';
@@ -252,12 +253,35 @@ class CloudProvider with ChangeNotifier {
       final data = await client.listInstances();
       final rawInstances = (data['instances'] as List?) ?? const [];
       final knownRecords = await _loadNodeRecords();
+      var recordsChanged = false;
       final parsed = <CloudInstance>[];
 
       for (final item in rawInstances.whereType<Map>()) {
         final source = Map<String, dynamic>.from(item);
         final id = source['id']?.toString() ?? '';
-        final record = id.isNotEmpty ? knownRecords[id] : null;
+        var record = id.isNotEmpty ? knownRecords[id] : null;
+        if (id.isNotEmpty && _shouldRecoverNodeRecord(record)) {
+          final recovered = await _recoverNodeRecordFromUserData(
+            client: client,
+            instanceId: id,
+            label: source['label']?.toString() ?? '',
+            region: source['region']?.toString() ?? '',
+            plan: source['plan']?.toString() ?? '',
+            ipv4: source['main_ip']?.toString() ?? '',
+            ipv6: source['v6_main_ip']?.toString() ?? '',
+            createdAt: source['date_created']?.toString() ??
+                source['created_at']?.toString() ??
+                source['createdAt']?.toString() ??
+                '',
+            existing: record,
+          );
+          if (recovered != null) {
+            record = recovered;
+            knownRecords[id] = recovered;
+            recordsChanged = true;
+          }
+        }
+
         if (record == null) {
           parsed.add(CloudInstance.fromJson(source));
           continue;
@@ -284,15 +308,25 @@ class CloudProvider with ChangeNotifier {
         if (item.id.isNotEmpty) {
           final record = knownRecords[item.id];
           if (record != null) {
-            await _updateNodeRecord(item.id, {
+            final updated = record.copyWithJson({
               'label': item.label,
               'region': item.region,
               'ipv4': item.ipv4 ?? record.ipv4,
               'ipv6': item.ipv6 ?? record.ipv6,
               'plan': item.plan,
+              'createdAt': item.createdAt?.toIso8601String() ?? record.createdAt,
             });
+            if (updated.toJson().toString() != record.toJson().toString()) {
+              knownRecords[item.id] = updated;
+              recordsChanged = true;
+            }
           }
         }
+      }
+
+      if (recordsChanged) {
+        _nodeRecords = knownRecords;
+        await _saveNodeRecords();
       }
 
       AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
@@ -304,6 +338,51 @@ class CloudProvider with ChangeNotifier {
       if (notify) {
         notifyListeners();
       }
+    }
+  }
+
+  bool _shouldRecoverNodeRecord(_VultrNodeRecord? record) {
+    return record == null || record.ssPort <= 0 || record.ssPassword.isEmpty;
+  }
+
+  Future<_VultrNodeRecord?> _recoverNodeRecordFromUserData({
+    required VultrCloudClient client,
+    required String instanceId,
+    required String label,
+    required String region,
+    required String plan,
+    required String ipv4,
+    required String ipv6,
+    required String createdAt,
+    required _VultrNodeRecord? existing,
+  }) async {
+    try {
+      final userData = await client.getInstanceUserData(instanceId);
+      if (userData == null || userData.trim().isEmpty) {
+        return null;
+      }
+
+      final recovered = recoverVultrNodeRecordFromUserData(userData);
+      if (recovered == null || !recovered.isUsable) {
+        return null;
+      }
+
+      final base = existing ?? _VultrNodeRecord(instanceId: instanceId);
+      return base.copyWithJson({
+        ...recovered.toNodeRecordJson(),
+        'instanceId': instanceId,
+        'label': label,
+        'region': region,
+        'plan': plan,
+        'ipv4': ipv4,
+        'ipv6': ipv6,
+        'createdAt': createdAt,
+      });
+    } catch (e) {
+      AppLogger.warning(
+        '[CloudProvider] Failed to recover node credentials for $instanceId: ${e.toString()}',
+      );
+      return null;
     }
   }
 

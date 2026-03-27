@@ -64,5 +64,49 @@ void main() {
       expect(plans, hasLength(1));
       expect((plans.first as Map)['id'], 'vc2-1c-1gb');
     });
+
+    test('decodes nested instance user-data payload', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'user_data': {
+            'data': base64Encode(utf8.encode('#!/bin/bash\necho nested')),
+          },
+        }));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = VultrCloudClient('test-key', dio: dio);
+
+      final userData = await client.getInstanceUserData('instance-1');
+
+      expect(userData, '#!/bin/bash\necho nested');
+    });
+
+    test('decodes string instance user-data payload', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'user_data': base64Encode(utf8.encode('#!/bin/bash\necho string')),
+        }));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = VultrCloudClient('test-key', dio: dio);
+
+      final userData = await client.getInstanceUserData('instance-2');
+
+      expect(userData, '#!/bin/bash\necho string');
+    });
   });
 }
