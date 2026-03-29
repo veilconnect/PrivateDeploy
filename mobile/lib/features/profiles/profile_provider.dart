@@ -1,8 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+
 import '../../shared/utils/logger.dart';
+import 'profile_config_normalizer.dart';
+import 'profile_model.dart';
+
+export 'profile_model.dart';
 
 class ProfileProvider with ChangeNotifier {
   static const String _boxName = 'profiles';
@@ -380,135 +386,10 @@ class ProfileProvider with ChangeNotifier {
     String content, {
     TargetPlatform? targetPlatform,
   }) {
-    if ((targetPlatform ?? defaultTargetPlatform) != TargetPlatform.android) {
-      return content;
-    }
-
-    try {
-      final decoded = jsonDecode(content);
-      if (decoded is! Map<String, dynamic>) {
-        return content;
-      }
-      var changed = false;
-      final inbounds = decoded['inbounds'];
-      if (inbounds is List) {
-        for (final inbound in inbounds) {
-          if (inbound is! Map<String, dynamic>) {
-            continue;
-          }
-          if (inbound['type']?.toString() != 'tun') {
-            continue;
-          }
-
-          final stack = inbound['stack']?.toString().trim();
-          if (stack == null || stack.isEmpty || stack == 'system') {
-            inbound['stack'] = 'gvisor';
-            changed = true;
-          }
-        }
-      }
-
-      final unsupportedTags = <String>{};
-      final outbounds = decoded['outbounds'];
-      if (outbounds is List) {
-        outbounds.removeWhere((outbound) {
-          if (outbound is! Map<String, dynamic>) {
-            return false;
-          }
-          if (!_isUnsupportedAndroidOutbound(outbound)) {
-            return false;
-          }
-          final tag = outbound['tag']?.toString();
-          if (tag != null && tag.isNotEmpty) {
-            unsupportedTags.add(tag);
-          }
-          changed = true;
-          return true;
-        });
-
-        while (unsupportedTags.isNotEmpty) {
-          var passChanged = false;
-          outbounds.removeWhere((outbound) {
-            if (outbound is! Map<String, dynamic>) {
-              return false;
-            }
-            final refs = outbound['outbounds'];
-            if (refs is! List) {
-              return false;
-            }
-
-            final before = refs.length;
-            refs.removeWhere(
-                (value) => unsupportedTags.contains(value?.toString()));
-            if (refs.length != before) {
-              changed = true;
-              passChanged = true;
-            }
-
-            final defaultTag = outbound['default']?.toString();
-            if (refs.isNotEmpty &&
-                defaultTag != null &&
-                defaultTag.isNotEmpty &&
-                !refs.any((value) => value?.toString() == defaultTag)) {
-              outbound['default'] = refs.first.toString();
-              changed = true;
-              passChanged = true;
-            }
-
-            if (refs.isNotEmpty) {
-              return false;
-            }
-
-            final tag = outbound['tag']?.toString();
-            if (tag != null && tag.isNotEmpty) {
-              unsupportedTags.add(tag);
-            }
-            changed = true;
-            passChanged = true;
-            return true;
-          });
-
-          if (!passChanged) {
-            break;
-          }
-        }
-      }
-
-      if (!changed) {
-        return content;
-      }
-      return const JsonEncoder.withIndent('  ').convert(decoded);
-    } catch (_) {
-      return content;
-    }
-  }
-
-  static bool _isUnsupportedAndroidOutbound(Map<String, dynamic> outbound) {
-    final type = outbound['type']?.toString();
-    if (type == 'hysteria2') {
-      return true;
-    }
-    if (type != 'vless') {
-      return false;
-    }
-
-    final tls = outbound['tls'];
-    if (tls is! Map) {
-      return false;
-    }
-
-    return _isFeatureEnabled(tls['utls']) || _isFeatureEnabled(tls['reality']);
-  }
-
-  static bool _isFeatureEnabled(dynamic value) {
-    if (value is Map) {
-      final enabled = value['enabled'];
-      if (enabled is bool) {
-        return enabled;
-      }
-      return enabled?.toString().toLowerCase() == 'true';
-    }
-    return false;
+    return normalizeProfileConfigForCurrentPlatform(
+      content,
+      targetPlatform: targetPlatform,
+    );
   }
 
   /// Import a profile from a JSON file on device storage
@@ -542,89 +423,5 @@ class ProfileProvider with ChangeNotifier {
     _error = 'Subscription update requires network. Please update manually.';
     notifyListeners();
     return false;
-  }
-}
-
-class Profile {
-  final String id;
-  final String name;
-  final String? subscriptionUrl;
-  final String? content;
-  final bool isActive;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final DateTime? lastUpdated;
-
-  Profile({
-    required this.id,
-    required this.name,
-    this.subscriptionUrl,
-    this.content,
-    required this.isActive,
-    required this.createdAt,
-    required this.updatedAt,
-    this.lastUpdated,
-  });
-
-  Profile copyWith({
-    String? id,
-    String? name,
-    String? subscriptionUrl,
-    String? content,
-    bool? isActive,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    DateTime? lastUpdated,
-  }) {
-    return Profile(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      subscriptionUrl: subscriptionUrl ?? this.subscriptionUrl,
-      content: content ?? this.content,
-      isActive: isActive ?? this.isActive,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      lastUpdated: lastUpdated ?? this.lastUpdated,
-    );
-  }
-
-  factory Profile.fromJson(Map<String, dynamic> json) {
-    DateTime? parseDate(dynamic value) {
-      if (value == null) return null;
-      if (value is DateTime) return value;
-      if (value is String && value.isNotEmpty) {
-        return DateTime.tryParse(value);
-      }
-      return null;
-    }
-
-    return Profile(
-      id: (json['id'] ?? '').toString(),
-      name: json['name'] ?? '',
-      subscriptionUrl: json['subscription_url'] ?? json['subscriptionUrl'],
-      content: json['content'],
-      isActive: (json['is_active'] ?? json['active'] ?? false) == true,
-      createdAt: parseDate(json['created_at']) ??
-          parseDate(json['createdAt']) ??
-          DateTime.now(),
-      updatedAt: parseDate(json['updated_at']) ??
-          parseDate(json['updatedAt']) ??
-          DateTime.now(),
-      lastUpdated:
-          parseDate(json['last_updated']) ?? parseDate(json['lastUpdated']),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'subscription_url': subscriptionUrl,
-      'content': content,
-      'is_active': isActive,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-      'last_updated': lastUpdated?.toIso8601String(),
-    };
   }
 }

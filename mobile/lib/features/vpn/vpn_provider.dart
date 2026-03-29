@@ -4,6 +4,10 @@ import 'package:flutter/widgets.dart';
 
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
+import 'vpn_models.dart';
+import 'vpn_status_helpers.dart';
+
+export 'vpn_models.dart';
 
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
@@ -76,13 +80,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       });
 
       _statsSub = _nativeService.statsStream.listen((nativeStats) {
-        _stats = TrafficStats(
-          uploadBytes: nativeStats.uploadBytes,
-          downloadBytes: nativeStats.downloadBytes,
-          uploadSpeed: nativeStats.uploadSpeed.toDouble(),
-          downloadSpeed: nativeStats.downloadSpeed.toDouble(),
-          connectionTime: Duration.zero,
-        );
+        _stats = trafficStatsFromNative(nativeStats);
         _safeNotifyListeners();
       });
       initializedNow = true;
@@ -249,13 +247,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     try {
       final nativeStats = await _nativeService.getStats();
       if (nativeStats != null) {
-        _stats = TrafficStats(
-          uploadBytes: nativeStats.uploadBytes,
-          downloadBytes: nativeStats.downloadBytes,
-          uploadSpeed: nativeStats.uploadSpeed.toDouble(),
-          downloadSpeed: nativeStats.downloadSpeed.toDouble(),
-          connectionTime: Duration.zero,
-        );
+        _stats = trafficStatsFromNative(nativeStats);
         _safeNotifyListeners();
       }
     } catch (e) {
@@ -300,33 +292,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
     final previousStatus = _status;
-    final normalizedStatus = nativeStatus.status.toLowerCase();
-    final hasRunningSignal =
-        nativeStatus.running || normalizedStatus == 'connected';
-
-    switch (normalizedStatus) {
-      case 'connecting':
-        _status = VpnStatus.connecting;
-        break;
-      case 'disconnecting':
-        _status = VpnStatus.disconnecting;
-        break;
-      case 'connected':
-        _status = VpnStatus.connected;
-        break;
-      case 'error':
-      case 'revoked':
-      case 'disconnected':
-        _status = VpnStatus.disconnected;
-        break;
-      default:
-        _status =
-            hasRunningSignal ? VpnStatus.connected : VpnStatus.disconnected;
-        break;
-    }
+    _status = vpnStatusFromNative(nativeStatus);
 
     final message = nativeStatus.message?.trim();
-    if (_isVpnConflict(previousStatus, nativeStatus, message)) {
+    if (isVpnConflictTransition(
+      previousStatus: previousStatus,
+      nativeStatus: nativeStatus,
+      message: message,
+    )) {
       _error = vpnConflictMessage;
     } else if (message != null && message.isNotEmpty) {
       _error = message;
@@ -359,24 +332,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
-  bool _isVpnConflict(
-    VpnStatus previousStatus,
-    VpnNativeStatus nativeStatus,
-    String? message,
-  ) {
-    if (nativeStatus.status == 'revoked' &&
-        previousStatus == VpnStatus.connected) {
-      return true;
-    }
-
-    if (previousStatus != VpnStatus.connected) {
-      return false;
-    }
-
-    final normalizedMessage = message?.toLowerCase();
-    return normalizedMessage?.contains('permission revoked') == true;
-  }
-
   @override
   void dispose() {
     _disposed = true;
@@ -385,73 +340,5 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _statusSub?.cancel();
     _statsSub?.cancel();
     super.dispose();
-  }
-}
-
-enum VpnStatus {
-  disconnected,
-  connecting,
-  connected,
-  disconnecting,
-}
-
-class TrafficStats {
-  final int uploadBytes;
-  final int downloadBytes;
-  final double uploadSpeed;
-  final double downloadSpeed;
-  final Duration connectionTime;
-
-  TrafficStats({
-    required this.uploadBytes,
-    required this.downloadBytes,
-    required this.uploadSpeed,
-    required this.downloadSpeed,
-    required this.connectionTime,
-  });
-
-  factory TrafficStats.zero() {
-    return TrafficStats(
-      uploadBytes: 0,
-      downloadBytes: 0,
-      uploadSpeed: 0,
-      downloadSpeed: 0,
-      connectionTime: Duration.zero,
-    );
-  }
-
-  int get totalBytes => uploadBytes + downloadBytes;
-
-  String get uploadFormatted => _formatBytes(uploadBytes);
-  String get downloadFormatted => _formatBytes(downloadBytes);
-  String get totalFormatted => _formatBytes(totalBytes);
-  String get uploadSpeedFormatted => '${_formatBytes(uploadSpeed.toInt())}/s';
-  String get downloadSpeedFormatted =>
-      '${_formatBytes(downloadSpeed.toInt())}/s';
-
-  String get connectionTimeFormatted {
-    final hours = connectionTime.inHours;
-    final minutes = connectionTime.inMinutes % 60;
-    final seconds = connectionTime.inSeconds % 60;
-
-    if (hours > 0) {
-      return '${hours}h ${minutes}m ${seconds}s';
-    } else if (minutes > 0) {
-      return '${minutes}m ${seconds}s';
-    } else {
-      return '${seconds}s';
-    }
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) {
-      return '$bytes B';
-    } else if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(2)} KB';
-    } else if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-    } else {
-      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-    }
   }
 }

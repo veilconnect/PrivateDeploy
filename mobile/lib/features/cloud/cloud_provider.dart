@@ -4,7 +4,11 @@ import 'package:flutter/foundation.dart';
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
 import 'cloud_backup.dart';
+import 'cloud_node_config_builder.dart';
+import 'cloud_node_record.dart';
 import 'cloud_models.dart';
+import 'cloud_provider_utils.dart';
+import 'cloud_provider_validation.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
@@ -23,7 +27,7 @@ class CloudProvider with ChangeNotifier {
   String? _error;
   String? _apiKey;
   final String _selectedProfile = PortProfileAllocator.randomProfile;
-  Map<String, _VultrNodeRecord> _nodeRecords = {};
+  Map<String, VultrNodeRecord> _nodeRecords = {};
 
   List<CloudInstance> get instances => _instances;
   List<CloudRegion> get regions => _regions;
@@ -38,17 +42,7 @@ class CloudProvider with ChangeNotifier {
 
   @visibleForTesting
   static String normalizeInstanceLabel(String? raw, {DateTime? now}) {
-    final trimmed = raw?.trim() ?? '';
-    if (trimmed.isNotEmpty) {
-      return trimmed;
-    }
-
-    final ts = (now ?? DateTime.now().toUtc());
-    String two(int value) => value.toString().padLeft(2, '0');
-    final compact =
-        '${ts.year.toString().substring(2)}${two(ts.month)}${two(ts.day)}'
-        '${two(ts.hour)}${two(ts.minute)}${two(ts.second)}';
-    return 'node-$compact';
+    return normalizeCloudInstanceLabel(raw, now: now);
   }
 
   @visibleForTesting
@@ -58,20 +52,12 @@ class CloudProvider with ChangeNotifier {
     required List<CloudRegion> regions,
     required List<CloudPlan> plans,
   }) {
-    final regionExists = regions.any((candidate) => candidate.id == region);
-    if (!regionExists) {
-      return 'Selected region is unavailable';
-    }
-
-    final selectedPlan =
-        plans.where((candidate) => candidate.id == plan).firstOrNull;
-    if (selectedPlan == null) {
-      return 'Selected plan is unavailable';
-    }
-    if (!selectedPlan.locations.contains(region)) {
-      return 'Selected plan is not available in the chosen region';
-    }
-    return null;
+    return validateCloudDeploymentSelection(
+      region: region,
+      plan: plan,
+      regions: regions,
+      plans: plans,
+    );
   }
 
   CloudProvider() {
@@ -133,7 +119,7 @@ class CloudProvider with ChangeNotifier {
     await StorageService.remove(_apiKeyStorageKey);
   }
 
-  Future<Map<String, _VultrNodeRecord>> _loadNodeRecords() async {
+  Future<Map<String, VultrNodeRecord>> _loadNodeRecords() async {
     await _initializeStorage();
     var raw = await StorageService.getSecureString(_nodeRecordsStorageKey);
     if (raw == null || raw.isEmpty) {
@@ -152,11 +138,11 @@ class CloudProvider with ChangeNotifier {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        final output = <String, _VultrNodeRecord>{};
+        final output = <String, VultrNodeRecord>{};
         for (final entry in decoded.entries) {
           final id = entry.key.toString();
           if (entry.value is Map) {
-            output[id] = _VultrNodeRecord.fromJson(
+            output[id] = VultrNodeRecord.fromJson(
                 id, Map<String, dynamic>.from(entry.value as Map));
           }
         }
@@ -189,7 +175,7 @@ class CloudProvider with ChangeNotifier {
     Map<String, dynamic> updates,
   ) async {
     final existing =
-        _nodeRecords[instanceId] ?? _VultrNodeRecord(instanceId: instanceId);
+        _nodeRecords[instanceId] ?? VultrNodeRecord(instanceId: instanceId);
     _nodeRecords[instanceId] = existing.copyWithJson(updates);
     await _saveNodeRecords();
   }
@@ -215,7 +201,8 @@ class CloudProvider with ChangeNotifier {
     } catch (e) {
       _hasApiKey = false;
       _configLoaded = true;
-      _error = 'Failed to load cloud configuration: ${_messageFromError(e)}';
+      _error =
+          'Failed to load cloud configuration: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load cloud config error', e);
     }
 
@@ -248,10 +235,10 @@ class CloudProvider with ChangeNotifier {
       await loadPlans(notify: false);
       return true;
     } catch (e) {
-      if (!_shouldKeepApiKeyOnError(e)) {
+      if (!shouldKeepCloudApiKeyOnError(e)) {
         await _clearApiKey();
       }
-      _error = 'Failed to save API key: ${_messageFromError(e)}';
+      _error = 'Failed to save API key: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Save API key error', e);
       return false;
     } finally {
@@ -337,7 +324,8 @@ class CloudProvider with ChangeNotifier {
               'ipv4': item.ipv4 ?? record.ipv4,
               'ipv6': item.ipv6 ?? record.ipv6,
               'plan': item.plan,
-              'createdAt': item.createdAt?.toIso8601String() ?? record.createdAt,
+              'createdAt':
+                  item.createdAt?.toIso8601String() ?? record.createdAt,
             });
             if (updated.toJson().toString() != record.toJson().toString()) {
               knownRecords[item.id] = updated;
@@ -354,7 +342,7 @@ class CloudProvider with ChangeNotifier {
 
       AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
     } catch (e) {
-      _error = 'Failed to load instances: ${_messageFromError(e)}';
+      _error = 'Failed to load instances: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load instances error', e);
     } finally {
       _isLoading = false;
@@ -364,11 +352,11 @@ class CloudProvider with ChangeNotifier {
     }
   }
 
-  bool _shouldRecoverNodeRecord(_VultrNodeRecord? record) {
+  bool _shouldRecoverNodeRecord(VultrNodeRecord? record) {
     return record == null || record.ssPort <= 0 || record.ssPassword.isEmpty;
   }
 
-  Future<_VultrNodeRecord?> _recoverNodeRecordFromUserData({
+  Future<VultrNodeRecord?> _recoverNodeRecordFromUserData({
     required VultrCloudClient client,
     required String instanceId,
     required String label,
@@ -377,7 +365,7 @@ class CloudProvider with ChangeNotifier {
     required String ipv4,
     required String ipv6,
     required String createdAt,
-    required _VultrNodeRecord? existing,
+    required VultrNodeRecord? existing,
   }) async {
     try {
       final userData = await client.getInstanceUserData(instanceId);
@@ -390,7 +378,7 @@ class CloudProvider with ChangeNotifier {
         return null;
       }
 
-      final base = existing ?? _VultrNodeRecord(instanceId: instanceId);
+      final base = existing ?? VultrNodeRecord(instanceId: instanceId);
       return base.copyWithJson({
         ...recovered.toNodeRecordJson(),
         'instanceId': instanceId,
@@ -424,7 +412,7 @@ class CloudProvider with ChangeNotifier {
           .toList();
       _error = null;
     } catch (e) {
-      _error = 'Failed to load regions: ${_messageFromError(e)}';
+      _error = 'Failed to load regions: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load regions error', e);
     }
 
@@ -450,7 +438,7 @@ class CloudProvider with ChangeNotifier {
         ..sort((a, b) => a.monthlyCost.compareTo(b.monthlyCost));
       _error = null;
     } catch (e) {
-      _error = 'Failed to load plans: ${_messageFromError(e)}';
+      _error = 'Failed to load plans: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load plans error', e);
     }
 
@@ -487,13 +475,14 @@ class CloudProvider with ChangeNotifier {
 
       final client = await _cloudClient();
       final planInfo = await client.getPlanById(plan);
-      final planRam = _intValue(planInfo, const ['ram', 'memory', 'memory_mb']);
+      final planRam =
+          cloudJsonIntValue(planInfo, const ['ram', 'memory', 'memory_mb']);
       final deployment = await VultrDeploymentBuilder.build(
         planRam: planRam,
         portProfile: _selectedProfile,
       );
 
-      final osIds = await _preferredOsIds(client);
+      final osIds = preferredCloudOsIds(await client.getOperatingSystems());
       if (osIds.isEmpty) {
         throw StateError('No supported OS image found in Vultr account');
       }
@@ -553,7 +542,7 @@ class CloudProvider with ChangeNotifier {
       await loadInstances(notify: false);
       return true;
     } catch (e) {
-      _error = 'Failed to create instance: ${_messageFromError(e)}';
+      _error = 'Failed to create instance: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Create instance error', e);
       return false;
     } finally {
@@ -579,7 +568,7 @@ class CloudProvider with ChangeNotifier {
       _instances = _instances.where((instance) => instance.id != id).toList();
       return true;
     } catch (e) {
-      _error = 'Failed to delete instance: ${_messageFromError(e)}';
+      _error = 'Failed to delete instance: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Delete instance error', e);
       return false;
     } finally {
@@ -632,14 +621,14 @@ class CloudProvider with ChangeNotifier {
       await _saveApiKey(backup.apiKey!);
     }
 
-    final importedRecords = <String, _VultrNodeRecord>{};
+    final importedRecords = <String, VultrNodeRecord>{};
     for (final entry in backup.nodeRecords.entries) {
       if (entry.value is! Map) {
         throw FormatException(
           'Backup node record "${entry.key}" is not a JSON object',
         );
       }
-      importedRecords[entry.key] = _VultrNodeRecord.fromJson(
+      importedRecords[entry.key] = VultrNodeRecord.fromJson(
         entry.key,
         Map<String, dynamic>.from(entry.value as Map),
       );
@@ -670,168 +659,7 @@ class CloudProvider with ChangeNotifier {
   }
 
   String? generateNodeConfig(CloudInstance instance) {
-    if (!instance.hasIp || instance.nodeInfo == null) {
-      return null;
-    }
-
-    final ip = instance.ipv4!;
-    final info = instance.nodeInfo!;
-    final label = instance.label;
-    final outbounds = <Map<String, dynamic>>[];
-    final tags = <String>[];
-
-    if (info.ssPort > 0 && info.ssPassword.isNotEmpty) {
-      final tag = '$label-SS';
-      outbounds.add({
-        'type': 'shadowsocks',
-        'tag': tag,
-        'server': ip,
-        'server_port': info.ssPort,
-        'method': 'aes-256-gcm',
-        'password': info.ssPassword,
-      });
-      tags.add(tag);
-    }
-
-    if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
-      final tag = '$label-Hy2';
-      outbounds.add({
-        'type': 'hysteria2',
-        'tag': tag,
-        'server': ip,
-        'server_port': info.hyPort,
-        'up_mbps': 100,
-        'down_mbps': 100,
-        'password': info.hyPassword,
-        'tls': {
-          'enabled': true,
-          'server_name': info.hyServerName.isNotEmpty ? info.hyServerName : ip,
-          'insecure': info.hyInsecure ?? true,
-        },
-      });
-      tags.add(tag);
-    }
-
-    if (info.vlessPort > 0 &&
-        info.vlessUuid.isNotEmpty &&
-        info.vlessPublicKey.isNotEmpty &&
-        info.vlessShortId.isNotEmpty) {
-      final tag = '$label-VLESS';
-      final publicKeyUrlSafe = info.vlessPublicKey
-          .replaceAll('+', '-')
-          .replaceAll('/', '_')
-          .replaceAll(RegExp(r'=+$'), '');
-
-      outbounds.add({
-        'type': 'vless',
-        'tag': tag,
-        'server': ip,
-        'server_port': info.vlessPort,
-        'uuid': info.vlessUuid,
-        'flow': 'xtls-rprx-vision',
-        'tls': {
-          'enabled': true,
-          'server_name': info.vlessServerName.isNotEmpty
-              ? info.vlessServerName
-              : 'www.microsoft.com',
-          'utls': {
-            'enabled': true,
-            'fingerprint': 'chrome',
-          },
-          'reality': {
-            'enabled': true,
-            'public_key': publicKeyUrlSafe,
-            'short_id': info.vlessShortId,
-          },
-        },
-      });
-      tags.add(tag);
-    }
-
-    if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
-      final tag = '$label-Trojan';
-      outbounds.add({
-        'type': 'trojan',
-        'tag': tag,
-        'server': ip,
-        'server_port': info.trojanPort,
-        'password': info.trojanPassword,
-        'tls': {
-          'enabled': true,
-          'server_name':
-              info.trojanServerName.isNotEmpty ? info.trojanServerName : ip,
-          'insecure': info.trojanInsecure ?? true,
-        },
-      });
-      tags.add(tag);
-    }
-
-    if (outbounds.isEmpty) {
-      return null;
-    }
-
-    final config = {
-      'log': {'level': 'info'},
-      'dns': {
-        'servers': [
-          {
-            'tag': 'dns-remote',
-            'address': 'https://8.8.8.8/dns-query',
-            'detour': 'select'
-          },
-          {'tag': 'dns-local', 'address': 'local'},
-        ],
-        'rules': [
-          {
-            'outbound': ['any'],
-            'server': 'dns-local'
-          },
-        ],
-      },
-      'inbounds': [
-        {
-          'type': 'tun',
-          'tag': 'tun-in',
-          'interface_name': 'tun0',
-          'inet4_address': '172.19.0.1/30',
-          'auto_route': true,
-          'strict_route': true,
-          'stack': 'system',
-          'sniff': true,
-        },
-      ],
-      'outbounds': [
-        {
-          'type': 'selector',
-          'tag': 'select',
-          'outbounds': ['auto', ...tags],
-          'default': 'auto',
-        },
-        {
-          'type': 'urltest',
-          'tag': 'auto',
-          'outbounds': tags,
-          'url': 'https://www.gstatic.com/generate_204',
-          'interval': '5m',
-        },
-        ...outbounds,
-        {'type': 'direct', 'tag': 'direct'},
-        {'type': 'dns', 'tag': 'dns-out'},
-        {'type': 'block', 'tag': 'block'},
-      ],
-      'route': {
-        'rules': [
-          {'protocol': 'dns', 'outbound': 'dns-out'},
-          {
-            'geoip': ['private'],
-            'outbound': 'direct'
-          },
-        ],
-        'auto_detect_interface': true,
-      },
-    };
-
-    return const JsonEncoder.withIndent('  ').convert(config);
+    return buildCloudNodeConfig(instance);
   }
 
   Future<bool> _ensureAuthorizedCloudAccess({bool notify = true}) async {
@@ -848,368 +676,5 @@ class CloudProvider with ChangeNotifier {
     }
 
     return true;
-  }
-
-  Future<List<int>> _preferredOsIds(VultrCloudClient client) async {
-    final osData = await client.getOperatingSystems();
-    final list = (osData['os'] as List?) ?? const [];
-
-    final oses = list
-        .whereType<Map>()
-        .map((item) => item.cast<String, dynamic>())
-        .toList();
-
-    final matches = <int>[];
-    final pushUnique = (int osId) {
-      if (!matches.contains(osId)) {
-        matches.add(osId);
-      }
-    };
-
-    bool matchesCondition(String text, String expected) {
-      return text.toLowerCase().contains(expected.toLowerCase());
-    }
-
-    for (final os in oses) {
-      final name = (os['name'] ?? '').toString();
-      final family = (os['family'] ?? '').toString();
-      final id = _intValue(os, const ['id']);
-      if (_stringIsEmpty(name) || id <= 0) {
-        continue;
-      }
-
-      if (matchesCondition(name, 'debian') && matchesCondition(name, '11')) {
-        pushUnique(id);
-      }
-      if (matchesCondition(family, 'ubuntu') &&
-          matchesCondition(name, '20.04')) {
-        pushUnique(id);
-      }
-      if (matchesCondition(family, 'debian')) {
-        pushUnique(id);
-      }
-      if (matchesCondition(family, 'ubuntu')) {
-        pushUnique(id);
-      }
-    }
-
-    if (matches.isNotEmpty) {
-      return matches;
-    }
-
-    for (final os in oses) {
-      final id = _intValue(os, const ['id']);
-      if (id > 0) {
-        pushUnique(id);
-      }
-    }
-
-    return matches;
-  }
-
-  String _messageFromError(Object error) {
-    if (error is StateError) {
-      return error.message.toString();
-    }
-    return error.toString();
-  }
-
-  bool _shouldKeepApiKeyOnError(Object error) {
-    final message = _messageFromError(error).toLowerCase();
-    const authIndicators = [
-      '401',
-      '403',
-      'permission denied',
-      'forbidden',
-      'unauthorized',
-      'invalid api key',
-    ];
-    const transientIndicators = [
-      'timeout',
-      'connection failed',
-      'connection refused',
-      'socket exception',
-      'failed host lookup',
-      'failed to connect',
-      'network is unreachable',
-      'operation canceled',
-      'certificate',
-    ];
-
-    if (authIndicators.any((needle) => message.contains(needle))) {
-      return false;
-    }
-
-    if (transientIndicators.any((needle) => message.contains(needle))) {
-      return true;
-    }
-
-    return false;
-  }
-
-  int _intValue(Map<String, dynamic> json, List<String> keys) {
-    for (final key in keys) {
-      final value = json[key];
-      if (value is int) {
-        return value;
-      }
-      if (value is num) {
-        return value.toInt();
-      }
-      if (value != null) {
-        final parsed = int.tryParse(value.toString());
-        if (parsed != null) {
-          return parsed;
-        }
-      }
-    }
-    return 0;
-  }
-
-  bool _stringIsEmpty(String? value) {
-    return value == null || value.trim().isEmpty;
-  }
-}
-
-class _VultrNodeRecord {
-  final String instanceId;
-  final String label;
-  final String region;
-  final String plan;
-  final int osId;
-  final int ssPort;
-  final String ssPassword;
-  final int hyPort;
-  final String hyPassword;
-  final String hyServerName;
-  final int vlessPort;
-  final String vlessUuid;
-  final String vlessPublicKey;
-  final String vlessShortId;
-  final String vlessServerName;
-  final int trojanPort;
-  final String trojanPassword;
-  final String trojanServerName;
-  final String ipv4;
-  final String ipv6;
-  final String createdAt;
-  final String portProfile;
-  final int planRam;
-
-  _VultrNodeRecord({
-    required this.instanceId,
-    this.label = '',
-    this.region = '',
-    this.plan = '',
-    this.osId = 0,
-    this.ssPort = 0,
-    this.ssPassword = '',
-    this.hyPort = 0,
-    this.hyPassword = '',
-    this.hyServerName = '',
-    this.vlessPort = 0,
-    this.vlessUuid = '',
-    this.vlessPublicKey = '',
-    this.vlessShortId = '',
-    this.vlessServerName = '',
-    this.trojanPort = 0,
-    this.trojanPassword = '',
-    this.trojanServerName = '',
-    this.ipv4 = '',
-    this.ipv6 = '',
-    this.createdAt = '',
-    this.portProfile = PortProfileAllocator.randomProfile,
-    this.planRam = 0,
-  });
-
-  CloudInstance toCloudInstance() {
-    return CloudInstance(
-      id: instanceId,
-      provider: 'vultr',
-      label: label,
-      status: 'unknown',
-      region: region,
-      plan: plan,
-      ipv4: _stringOrNull(ipv4),
-      ipv6: _stringOrNull(ipv6),
-      createdAt: _parseTime(createdAt),
-      nodeInfo: NodeInfo(
-        ssPort: ssPort,
-        ssPassword: ssPassword,
-        hyPort: hyPort,
-        hyPassword: hyPassword,
-        hyServerName: hyServerName,
-        hyInsecure: true,
-        vlessPort: vlessPort,
-        vlessUuid: vlessUuid,
-        vlessPublicKey: vlessPublicKey,
-        vlessShortId: vlessShortId,
-        vlessServerName: vlessServerName,
-        trojanPort: trojanPort,
-        trojanPassword: trojanPassword,
-        trojanServerName: trojanServerName,
-        trojanInsecure: true,
-      ),
-    );
-  }
-
-  _VultrNodeRecord copyWithJson(Map<String, dynamic> values) {
-    return _VultrNodeRecord(
-      instanceId: instanceId,
-      label: (values['label'] ?? label).toString(),
-      region: (values['region'] ?? region).toString(),
-      plan: (values['plan'] ?? plan).toString(),
-      osId: _toInt(values['osId'], defaultValue: osId),
-      ssPort: _toInt(values['ssPort'], defaultValue: ssPort),
-      ssPassword: (values['ssPassword'] ?? ssPassword).toString(),
-      hyPort: _toInt(values['hyPort'], defaultValue: hyPort),
-      hyPassword: (values['hyPassword'] ?? hyPassword).toString(),
-      hyServerName: (values['hysteriaServerName'] ?? hyServerName).toString(),
-      vlessPort: _toInt(values['vlessPort'], defaultValue: vlessPort),
-      vlessUuid: (values['vlessUUID'] ?? vlessUuid).toString(),
-      vlessPublicKey: (values['vlessPublicKey'] ?? vlessPublicKey).toString(),
-      vlessShortId: (values['vlessShortId'] ?? vlessShortId).toString(),
-      vlessServerName:
-          (values['vlessServerName'] ?? vlessServerName).toString(),
-      trojanPort: _toInt(values['trojanPort'], defaultValue: trojanPort),
-      trojanPassword: (values['trojanPassword'] ?? trojanPassword).toString(),
-      trojanServerName:
-          (values['trojanServerName'] ?? trojanServerName).toString(),
-      ipv4: (values['ipv4'] ?? ipv4).toString(),
-      ipv6: (values['ipv6'] ?? ipv6).toString(),
-      createdAt: (values['createdAt'] ?? createdAt).toString(),
-      portProfile: (values['portProfile'] ?? portProfile).toString(),
-      planRam: _toInt(values['planRam'], defaultValue: planRam),
-    );
-  }
-
-  Map<String, dynamic> toMergeableJson() {
-    final result = <String, dynamic>{
-      'id': instanceId,
-      'provider': 'vultr',
-      'ssPort': ssPort,
-      'ssPassword': ssPassword,
-      'hysteriaPort': hyPort,
-      'hysteriaPassword': hyPassword,
-      'hysteriaServerName': hyServerName,
-      'vlessPort': vlessPort,
-      'vlessUUID': vlessUuid,
-      'vlessPublicKey': vlessPublicKey,
-      'vlessShortId': vlessShortId,
-      'vlessServerName': vlessServerName,
-      'trojanPort': trojanPort,
-      'trojanPassword': trojanPassword,
-      'trojanServerName': trojanServerName,
-    };
-
-    if (label.isNotEmpty) {
-      result['label'] = label;
-    }
-    if (region.isNotEmpty) {
-      result['region'] = region;
-    }
-    if (plan.isNotEmpty) {
-      result['plan'] = plan;
-    }
-    if (ipv4.isNotEmpty && ipv4 != '0.0.0.0') {
-      result['main_ip'] = ipv4;
-    }
-    if (ipv6.isNotEmpty) {
-      result['v6_main_ip'] = ipv6;
-    }
-    if (createdAt.isNotEmpty) {
-      result['createdAt'] = createdAt;
-    }
-
-    return result;
-  }
-
-  Map<String, dynamic> toJson() => {
-        'instanceId': instanceId,
-        'label': label,
-        'region': region,
-        'plan': plan,
-        'osId': osId,
-        'ssPort': ssPort,
-        'ssPassword': ssPassword,
-        'hyPort': hyPort,
-        'hyPassword': hyPassword,
-        'hysteriaServerName': hyServerName,
-        'vlessPort': vlessPort,
-        'vlessUUID': vlessUuid,
-        'vlessPublicKey': vlessPublicKey,
-        'vlessShortId': vlessShortId,
-        'vlessServerName': vlessServerName,
-        'trojanPort': trojanPort,
-        'trojanPassword': trojanPassword,
-        'trojanServerName': trojanServerName,
-        'ipv4': ipv4,
-        'ipv6': ipv6,
-        'createdAt': createdAt,
-        'portProfile': portProfile,
-        'planRam': planRam,
-      };
-
-  static _VultrNodeRecord fromJson(
-    String instanceId,
-    Map<String, dynamic> json,
-  ) {
-    return _VultrNodeRecord(
-      instanceId: instanceId,
-      label: (json['label'] ?? '').toString(),
-      region: (json['region'] ?? '').toString(),
-      plan: (json['plan'] ?? '').toString(),
-      osId: _toInt(json['osId']),
-      ssPort: _toInt(json['ssPort']),
-      ssPassword: (json['ssPassword'] ?? '').toString(),
-      hyPort: _toInt(json['hyPort']),
-      hyPassword: (json['hyPassword'] ?? '').toString(),
-      hyServerName: (json['hysteriaServerName'] ?? '').toString(),
-      vlessPort: _toInt(json['vlessPort']),
-      vlessUuid: (json['vlessUUID'] ?? '').toString(),
-      vlessPublicKey: (json['vlessPublicKey'] ?? '').toString(),
-      vlessShortId: (json['vlessShortId'] ?? '').toString(),
-      vlessServerName: (json['vlessServerName'] ?? '').toString(),
-      trojanPort: _toInt(json['trojanPort']),
-      trojanPassword: (json['trojanPassword'] ?? '').toString(),
-      trojanServerName: (json['trojanServerName'] ?? '').toString(),
-      ipv4: (json['ipv4'] ?? '').toString(),
-      ipv6: (json['ipv6'] ?? '').toString(),
-      createdAt: (json['createdAt'] ?? '').toString(),
-      portProfile: (json['portProfile'] ?? PortProfileAllocator.randomProfile)
-          .toString(),
-      planRam: _toInt(json['planRam']),
-    );
-  }
-
-  static int _toInt(dynamic value, {int defaultValue = 0}) {
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value) ?? defaultValue;
-    }
-    return defaultValue;
-  }
-
-  static String? _stringOrNull(String value) {
-    if (value.isEmpty) {
-      return null;
-    }
-    return value;
-  }
-
-  static DateTime? _parseTime(String value) {
-    if (value.isEmpty) {
-      return null;
-    }
-    try {
-      return DateTime.parse(value);
-    } catch (_) {
-      return null;
-    }
   }
 }
