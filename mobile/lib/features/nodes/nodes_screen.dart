@@ -3,11 +3,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../../shared/widgets/loading_indicator.dart';
+import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/node_detail_screen.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_profile_actions.dart';
 import 'nodes_sections.dart';
+import 'nodes_screen_fab.dart';
 import 'nodes_vpn_actions.dart';
 import 'nodes_widgets.dart';
 import '../profiles/profile_content_screen.dart';
@@ -39,27 +41,24 @@ class _NodesScreenState extends State<NodesScreen> {
     }
 
     _bootstrapTriggered = true;
-    final cloudProvider = context.read<CloudProvider>();
-    final profileProvider = context.read<ProfileProvider>();
-    final vpnProvider = context.read<VpnProvider>();
-
-    await profileProvider.loadProfiles();
-    await vpnProvider.initialize();
-    await cloudProvider.refreshCloudConfig();
-    if (cloudProvider.hasApiKey) {
-      await cloudProvider.loadInstances();
-      await _reconcileCloudProfiles(
-          cloudProvider, profileProvider, vpnProvider);
-    }
+    await _syncWorkspaceState(initializeVpn: true);
   }
 
   Future<void> _refreshAll(BuildContext context) async {
+    await _syncWorkspaceState(initializeVpn: false);
+  }
+
+  Future<void> _syncWorkspaceState({required bool initializeVpn}) async {
     final cloudProvider = context.read<CloudProvider>();
     final profileProvider = context.read<ProfileProvider>();
     final vpnProvider = context.read<VpnProvider>();
 
     await profileProvider.loadProfiles();
-    await vpnProvider.loadStatus();
+    if (initializeVpn) {
+      await vpnProvider.initialize();
+    } else {
+      await vpnProvider.loadStatus();
+    }
     await cloudProvider.refreshCloudConfig();
     if (cloudProvider.hasApiKey) {
       await cloudProvider.loadInstances();
@@ -92,6 +91,162 @@ class _NodesScreenState extends State<NodesScreen> {
     await profileProvider.pruneMissingCloudProfiles(existingCloudProfiles);
   }
 
+  Future<void> _refreshAfterCloudApiKeySaved() async {
+    _bootstrapTriggered = false;
+    await _refreshAll(context);
+  }
+
+  Future<void> _showCloudApiKeyDialog(CloudProvider cloudProvider) {
+    return showCloudApiKeyFlow(
+      context: context,
+      cloudProvider: cloudProvider,
+      onSaved: _refreshAfterCloudApiKeySaved,
+    );
+  }
+
+  Future<void> _showCreateCloudNodeDialog(CloudProvider cloudProvider) {
+    return showCreateCloudNodeFlow(
+      context: context,
+      cloudProvider: cloudProvider,
+    );
+  }
+
+  Future<void> _useCloudNode(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    CloudInstance instance,
+  ) {
+    return useCloudNodeAndConnect(
+      context: context,
+      instance: instance,
+      cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+    );
+  }
+
+  Future<void> _handleConnect(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) {
+    return handleNodesConnect(
+      context: context,
+      vpnProvider: vpnProvider,
+      profileProvider: profileProvider,
+      cloudProvider: cloudProvider,
+      onUseCloudNode: (instance) => _useCloudNode(
+        cloudProvider,
+        profileProvider,
+        vpnProvider,
+        instance,
+      ),
+    );
+  }
+
+  Future<void> _handleRestart(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) {
+    return handleNodesRestart(
+      context: context,
+      vpnProvider: vpnProvider,
+      profileProvider: profileProvider,
+      cloudProvider: cloudProvider,
+      onUseCloudNode: (instance) => _useCloudNode(
+        cloudProvider,
+        profileProvider,
+        vpnProvider,
+        instance,
+      ),
+    );
+  }
+
+  Future<void> _openCloudNodeDetails(CloudInstance instance) {
+    return Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NodeDetailScreen(node: instance),
+      ),
+    );
+  }
+
+  Future<void> _deleteCloudNode(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    CloudInstance instance,
+  ) {
+    return confirmDeleteCloudNode(
+      context: context,
+      cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+      instance: instance,
+    );
+  }
+
+  Future<void> _activateProfile(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    Profile profile,
+  ) {
+    return activateProfileAndConnect(
+      context: context,
+      profile: profile,
+      profileProvider: profileProvider,
+      cloudProvider: cloudProvider,
+      vpnProvider: vpnProvider,
+    );
+  }
+
+  Future<void> _renameProfile(
+    ProfileProvider profileProvider,
+    Profile profile,
+  ) {
+    return showRenameProfileFlow(
+      context: context,
+      profile: profile,
+      profileProvider: profileProvider,
+    );
+  }
+
+  Future<void> _deleteProfile(
+    ProfileProvider profileProvider,
+    Profile profile,
+  ) {
+    return confirmDeleteProfile(
+      context: context,
+      profileProvider: profileProvider,
+      profile: profile,
+    );
+  }
+
+  Future<void> _showImportProfileDialog() {
+    return showImportProfileFlow(
+      context: context,
+      profileProvider: context.read<ProfileProvider>(),
+    );
+  }
+
+  Future<void> _showCreateProfileDialog() {
+    return showCreateProfileFlow(
+      context: context,
+      profileProvider: context.read<ProfileProvider>(),
+    );
+  }
+
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const SettingsScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -100,14 +255,7 @@ class _NodesScreenState extends State<NodesScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.key),
-            onPressed: () => showCloudApiKeyFlow(
-              context: context,
-              cloudProvider: context.read<CloudProvider>(),
-              onSaved: () async {
-                _bootstrapTriggered = false;
-                await _refreshAll(context);
-              },
-            ),
+            onPressed: () => _showCloudApiKeyDialog(context.read<CloudProvider>()),
             tooltip: 'Cloud API Key',
           ),
           IconButton(
@@ -117,13 +265,7 @@ class _NodesScreenState extends State<NodesScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const SettingsScreen(),
-                ),
-              );
-            },
+            onPressed: _openSettings,
             tooltip: 'Settings',
           ),
         ],
@@ -157,36 +299,14 @@ class _NodesScreenState extends State<NodesScreen> {
                   vpnProvider: vpnProvider,
                   profileProvider: profileProvider,
                   cloudProvider: cloudProvider,
-                  onConnect: () => handleNodesConnect(
-                    context: context,
-                    vpnProvider: vpnProvider,
-                    profileProvider: profileProvider,
-                    cloudProvider: cloudProvider,
-                    onUseCloudNode: (instance) => useCloudNodeAndConnect(
-                      context: context,
-                      instance: instance,
-                      cloudProvider: cloudProvider,
-                      profileProvider: profileProvider,
-                      vpnProvider: vpnProvider,
-                    ),
-                  ),
+                  onConnect: () =>
+                      _handleConnect(cloudProvider, profileProvider, vpnProvider),
                   onDisconnect: () => handleNodesDisconnect(
                     context: context,
                     vpnProvider: vpnProvider,
                   ),
-                  onRestart: () => handleNodesRestart(
-                    context: context,
-                    vpnProvider: vpnProvider,
-                    profileProvider: profileProvider,
-                    cloudProvider: cloudProvider,
-                    onUseCloudNode: (instance) => useCloudNodeAndConnect(
-                      context: context,
-                      instance: instance,
-                      cloudProvider: cloudProvider,
-                      profileProvider: profileProvider,
-                      vpnProvider: vpnProvider,
-                    ),
-                  ),
+                  onRestart: () =>
+                      _handleRestart(cloudProvider, profileProvider, vpnProvider),
                 ),
                 if (vpnProvider.error != null) ...[
                   SizedBox(height: 12.h),
@@ -201,40 +321,21 @@ class _NodesScreenState extends State<NodesScreen> {
                   cloudProvider: cloudProvider,
                   profileProvider: profileProvider,
                   vpnProvider: vpnProvider,
-                  onConfigureApiKey: () => showCloudApiKeyFlow(
-                    context: context,
-                    cloudProvider: cloudProvider,
-                    onSaved: () async {
-                      _bootstrapTriggered = false;
-                      await _refreshAll(context);
-                    },
-                  ),
+                  onConfigureApiKey: () => _showCloudApiKeyDialog(cloudProvider),
                   onRetryLoad: cloudProvider.loadInstances,
-                  onCreateCloudNode: () => showCreateCloudNodeFlow(
-                    context: context,
-                    cloudProvider: cloudProvider,
+                  onCreateCloudNode: () => _showCreateCloudNodeDialog(cloudProvider),
+                  onViewDetails: _openCloudNodeDetails,
+                  onDeleteCloudNode: (instance) => _deleteCloudNode(
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                    instance,
                   ),
-                  onViewDetails: (instance) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => NodeDetailScreen(node: instance),
-                      ),
-                    );
-                  },
-                  onDeleteCloudNode: (instance) => confirmDeleteCloudNode(
-                    context: context,
-                    cloudProvider: cloudProvider,
-                    profileProvider: profileProvider,
-                    vpnProvider: vpnProvider,
-                    instance: instance,
-                  ),
-                  onUseCloudNode: (instance) => useCloudNodeAndConnect(
-                    context: context,
-                    instance: instance,
-                    cloudProvider: cloudProvider,
-                    profileProvider: profileProvider,
-                    vpnProvider: vpnProvider,
+                  onUseCloudNode: (instance) => _useCloudNode(
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                    instance,
                   ),
                 ),
                 if (localProfiles.isNotEmpty) ...[
@@ -242,24 +343,15 @@ class _NodesScreenState extends State<NodesScreen> {
                   NodesManualProfilesSection(
                     profiles: localProfiles,
                     activeProfileId: profileProvider.activeProfile?.id,
-                    onActivate: (profile) => activateProfileAndConnect(
-                      context: context,
-                      profile: profile,
-                      profileProvider: profileProvider,
-                      cloudProvider: cloudProvider,
-                      vpnProvider: vpnProvider,
+                    onActivate: (profile) => _activateProfile(
+                      cloudProvider,
+                      profileProvider,
+                      vpnProvider,
+                      profile,
                     ),
                     onView: (profile) => _viewProfileContent(context, profile),
-                    onEdit: (profile) => showRenameProfileFlow(
-                      context: context,
-                      profile: profile,
-                      profileProvider: profileProvider,
-                    ),
-                    onDelete: (profile) => confirmDeleteProfile(
-                      context: context,
-                      profileProvider: profileProvider,
-                      profile: profile,
-                    ),
+                    onEdit: (profile) => _renameProfile(profileProvider, profile),
+                    onDelete: (profile) => _deleteProfile(profileProvider, profile),
                   ),
                 ],
               ],
@@ -269,37 +361,11 @@ class _NodesScreenState extends State<NodesScreen> {
       ),
       floatingActionButton: Consumer<CloudProvider>(
         builder: (context, cloudProvider, _) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (cloudProvider.hasApiKey)
-                FloatingActionButton.small(
-                  heroTag: 'deploy_node',
-                  onPressed: () => showCreateCloudNodeFlow(
-                    context: context,
-                    cloudProvider: cloudProvider,
-                  ),
-                  child: const Icon(Icons.cloud_upload),
-                ),
-              if (cloudProvider.hasApiKey) SizedBox(height: 8.h),
-              FloatingActionButton.small(
-                heroTag: 'import_profile',
-                onPressed: () => showImportProfileFlow(
-                  context: context,
-                  profileProvider: context.read<ProfileProvider>(),
-                ),
-                child: const Icon(Icons.link),
-              ),
-              SizedBox(height: 8.h),
-              FloatingActionButton(
-                heroTag: 'create_profile',
-                onPressed: () => showCreateProfileFlow(
-                  context: context,
-                  profileProvider: context.read<ProfileProvider>(),
-                ),
-                child: const Icon(Icons.add),
-              ),
-            ],
+          return NodesScreenFab(
+            showDeployNode: cloudProvider.hasApiKey,
+            onDeployNode: () => _showCreateCloudNodeDialog(cloudProvider),
+            onImportProfile: _showImportProfileDialog,
+            onCreateProfile: _showCreateProfileDialog,
           );
         },
       ),
