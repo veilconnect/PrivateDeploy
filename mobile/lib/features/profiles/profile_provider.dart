@@ -7,6 +7,7 @@ import '../../shared/utils/logger.dart';
 class ProfileProvider with ChangeNotifier {
   static const String _boxName = 'profiles';
   static const String _activeKey = 'active_profile_id';
+  static const String cloudManagedProfilePrefix = 'Cloud: ';
 
   List<Profile> _profiles = [];
   Profile? _activeProfile;
@@ -18,8 +19,35 @@ class ProfileProvider with ChangeNotifier {
   Profile? get activeProfile => _activeProfile;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  static bool isCloudManagedProfileName(String name) {
+    return name.startsWith(cloudManagedProfilePrefix);
+  }
+
   Profile? getProfileByName(String name) {
     return _profiles.where((p) => p.name == name).firstOrNull;
+  }
+
+  String? validateProfileName(
+    String name, {
+    String? excludeId,
+    bool allowReservedPrefix = false,
+  }) {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      return 'Profile name cannot be empty';
+    }
+    if (!allowReservedPrefix && isCloudManagedProfileName(trimmedName)) {
+      return 'Profile names cannot start with "$cloudManagedProfilePrefix"';
+    }
+
+    final hasDuplicate = _profiles.any(
+      (profile) => profile.id != excludeId && profile.name == trimmedName,
+    );
+    if (hasDuplicate) {
+      return 'A profile with this name already exists';
+    }
+    return null;
   }
 
   ProfileProvider() {
@@ -102,8 +130,20 @@ class ProfileProvider with ChangeNotifier {
     required String name,
     String? subscriptionUrl,
     String? content,
+    bool allowReservedPrefix = false,
   }) async {
     await _ensureInitialized();
+    final normalizedName = name.trim();
+    final validationError = validateProfileName(
+      normalizedName,
+      allowReservedPrefix: allowReservedPrefix,
+    );
+    if (validationError != null) {
+      _error = validationError;
+      notifyListeners();
+      return false;
+    }
+
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -112,7 +152,7 @@ class ProfileProvider with ChangeNotifier {
       final id = DateTime.now().millisecondsSinceEpoch.toString();
       final profile = Profile(
         id: id,
-        name: name,
+        name: normalizedName,
         subscriptionUrl: subscriptionUrl,
         content: content ?? '',
         isActive: false,
@@ -145,8 +185,23 @@ class ProfileProvider with ChangeNotifier {
     required String id,
     String? name,
     String? subscriptionUrl,
+    bool allowReservedPrefix = false,
   }) async {
     await _ensureInitialized();
+    final normalizedName = name?.trim();
+    if (normalizedName != null) {
+      final validationError = validateProfileName(
+        normalizedName,
+        excludeId: id,
+        allowReservedPrefix: allowReservedPrefix,
+      );
+      if (validationError != null) {
+        _error = validationError;
+        notifyListeners();
+        return false;
+      }
+    }
+
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -159,7 +214,7 @@ class ProfileProvider with ChangeNotifier {
       }
 
       final updated = existing.copyWith(
-        name: name,
+        name: normalizedName,
         subscriptionUrl: subscriptionUrl,
         updatedAt: DateTime.now(),
       );
@@ -221,7 +276,7 @@ class ProfileProvider with ChangeNotifier {
     final staleProfiles = _profiles
         .where(
           (profile) =>
-              profile.name.startsWith('Cloud: ') &&
+              isCloudManagedProfileName(profile.name) &&
               !existingCloudProfileNames.contains(profile.name),
         )
         .toList();

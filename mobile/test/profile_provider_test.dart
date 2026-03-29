@@ -240,6 +240,7 @@ void main() {
       final success = await provider.createProfile(
         name: 'Cloud: sgp-smoke',
         content: '{"outbounds":[]}',
+        allowReservedPrefix: true,
       );
 
       expect(success, isTrue);
@@ -257,6 +258,7 @@ void main() {
       await provider.createProfile(
         name: 'Cloud: fra-smoke',
         content: '{"outbounds":[]}',
+        allowReservedPrefix: true,
       );
 
       final deleted = await provider.deleteProfileByName('Cloud: fra-smoke');
@@ -274,10 +276,12 @@ void main() {
       await provider.createProfile(
         name: 'Cloud: missing-node',
         content: '{"outbounds":[]}',
+        allowReservedPrefix: true,
       );
       await provider.createProfile(
         name: 'Cloud: keep-node',
         content: '{"outbounds":[]}',
+        allowReservedPrefix: true,
       );
       final keepProfile = provider.getProfileByName('Cloud: keep-node');
       expect(keepProfile, isNotNull);
@@ -291,6 +295,63 @@ void main() {
       expect(provider.getProfileByName('Cloud: missing-node'), isNull);
       expect(provider.getProfileByName('Cloud: keep-node'), isNotNull);
       expect(provider.activeProfile?.name, 'Cloud: keep-node');
+    });
+
+    test('createProfile rejects reserved cloud prefix by default', () async {
+      final provider = ProfileProvider();
+
+      final success = await provider.createProfile(
+        name: 'Cloud: manual-node',
+        content: '{"outbounds":[]}',
+      );
+
+      expect(success, isFalse);
+      expect(
+        provider.error,
+        'Profile names cannot start with "${ProfileProvider.cloudManagedProfilePrefix}"',
+      );
+      expect(provider.profiles, isEmpty);
+    });
+
+    test('createProfile rejects duplicate names after trimming', () async {
+      final provider = ProfileProvider();
+
+      final first = await provider.createProfile(
+        name: 'Manual A',
+        content: '{"outbounds":[]}',
+      );
+      final second = await provider.createProfile(
+        name: '  Manual A  ',
+        content: '{"outbounds":[]}',
+      );
+
+      expect(first, isTrue);
+      expect(second, isFalse);
+      expect(provider.error, 'A profile with this name already exists');
+      expect(provider.profiles, hasLength(1));
+    });
+
+    test('updateProfile rejects duplicate names', () async {
+      final provider = ProfileProvider();
+
+      await provider.createProfile(
+        name: 'Manual A',
+        content: '{"outbounds":[]}',
+      );
+      await provider.createProfile(
+        name: 'Manual B',
+        content: '{"outbounds":[]}',
+      );
+      final profile = provider.getProfileByName('Manual B');
+
+      final success = await provider.updateProfile(
+        id: profile!.id,
+        name: ' Manual A ',
+      );
+
+      expect(success, isFalse);
+      expect(provider.error, 'A profile with this name already exists');
+      expect(provider.getProfileByName('Manual B'), isNotNull);
     });
   });
 }

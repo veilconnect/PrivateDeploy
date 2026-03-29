@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../cloud/cloud_provider.dart';
@@ -38,7 +39,6 @@ class SettingsScreen extends StatelessWidget {
           ),
           Consumer<CloudProvider>(
             builder: (context, cloud, _) {
-              final maskApiKey = cloud.apiKey;
               return Column(
                 children: [
                   ListTile(
@@ -50,9 +50,7 @@ class SettingsScreen extends StatelessWidget {
                   ListTile(
                     leading: const Icon(Icons.vpn_key),
                     title: const Text('API Key'),
-                    subtitle: Text(maskApiKey != null && maskApiKey.isNotEmpty
-                        ? '${maskApiKey.substring(0, 8)}...'
-                        : 'Not set'),
+                    subtitle: Text(_maskedApiKey(cloud.apiKey)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _showApiKeyDialog(context, cloud),
                   ),
@@ -150,10 +148,20 @@ class SettingsScreen extends StatelessWidget {
             child:
                 Text('About', style: Theme.of(context).textTheme.titleMedium),
           ),
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('Version'),
-            subtitle: Text('1.10.1'),
+          FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (context, snapshot) {
+              final versionText = snapshot.hasData
+                  ? '${snapshot.data!.version} (${snapshot.data!.buildNumber})'
+                  : snapshot.hasError
+                      ? 'Unavailable'
+                      : 'Loading...';
+              return ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('Version'),
+                subtitle: Text(versionText),
+              );
+            },
           ),
           const ListTile(
             leading: Icon(Icons.code),
@@ -163,6 +171,15 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _maskedApiKey(String? apiKey) {
+    final trimmed = apiKey?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return 'Not set';
+    }
+    final visibleLength = trimmed.length < 8 ? trimmed.length : 8;
+    return '${trimmed.substring(0, visibleLength)}...';
   }
 
   void _showApiKeyDialog(BuildContext context, CloudProvider cloud) {
@@ -276,17 +293,17 @@ class SettingsScreen extends StatelessWidget {
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: payload));
-              if (ctx.mounted) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(content: Text('Backup copied again')),
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+            FilledButton.tonal(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: payload));
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Backup copied again')),
                 );
               }
             },
@@ -339,11 +356,11 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(
+            OutlinedButton(
               onPressed: restoring ? null : () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
+              child: const Text('Close'),
             ),
-            TextButton(
+            FilledButton.tonal(
               onPressed: restoring
                   ? null
                   : () async {

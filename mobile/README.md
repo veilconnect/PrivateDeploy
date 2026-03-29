@@ -1,333 +1,136 @@
-# PrivateDeploy Mobile App (Flutter)
+# PrivateDeploy Mobile
 
-PrivateDeploy 的移动端应用，支持 Android 和 iOS 平台。
+PrivateDeploy 的 Flutter 移动端，当前重点是把“在手机上直接管理和使用自建节点”这条链路做完整。
 
-## 📱 功能特性
+## 当前状态
 
-- ✅ VPN 连接管理
-- ✅ 云服务器管理（Vultr/DigitalOcean）
-- ✅ 配置文件管理
-- ✅ 订阅管理
-- ✅ 实时流量统计
-- ✅ 规则集管理
-- ✅ 多语言支持（中文/英文）
+- 主入口是一个工作台页，聚合 VPN 状态、云节点和本地配置。
+- Android 原生 VPN 通路已接入，可直接连接、断开、重启并读取基础流量统计。
+- iOS 工程、插件和 `VPNExtension` 已存在，但原生 VPN 需要在构建时额外嵌入 `VPNCore.framework`。
+- `flutter analyze` 和 `flutter test` 当前均通过。
 
-## 🛠️ 技术栈
+## 已实现能力
 
-- **Framework:** Flutter 3.x
-- **State Management:** Provider / Riverpod
-- **Network:** Dio + Retrofit
-- **Storage:** Hive (NoSQL) + SharedPreferences
-- **WebSocket:** web_socket_channel
-- **VPN Core:** sing-box (via gomobile)
+- VPN 连接管理
+  - 连接、断开、重启
+  - 连接状态与基础流量统计
+  - 原生能力探测和不支持提示
+- Vultr 云节点管理
+  - 保存并校验 API Key
+  - 拉取地域、套餐、实例列表
+  - 在手机端直接创建和删除节点
+  - 将节点信息转换为本地可用的 sing-box 配置
+- 配置文件管理
+  - 创建本地配置
+  - 编辑和查看配置内容
+  - 激活、删除本地配置
+- 订阅导入
+  - 从 URL 拉取订阅
+  - 解析常见代理 URI / 响应内容并转成 sing-box 配置
+- 云备份
+  - 导出 API Key 和本地保存的节点记录
+  - 从备份 JSON 恢复
+- 节点详情
+  - 查看 Shadowsocks / Hysteria2 / VLESS / Trojan 参数
+  - 复制单项参数和整组链接
 
-## 📦 环境要求
+## 尚未落地或尚未产品化的部分
 
-### 必需
+- 移动端 DigitalOcean 流程
+- 独立的规则集管理页面
+- 完整的多语言 UI 接入
+- 图表、通知等依赖对应的产品功能
+- 更细的页面拆分和导航结构
 
-- Flutter SDK 3.19.0+
-- Dart 3.3.0+
-- Android Studio (for Android)
-- Xcode 15.0+ (for iOS, macOS only)
+## 技术栈
 
-### Android 开发
-- Android SDK 21+ (Android 5.0+)
-- Java 11+
-- Kotlin 1.9+
+- Flutter + Material 3
+- `provider` 状态管理
+- `dio` 网络请求
+- `hive` + `shared_preferences` + `flutter_secure_storage` 本地存储
+- Flutter Platform Channel + 原生 Android/iOS VPN 插件
 
-### iOS 开发
-- iOS 12.0+
-- CocoaPods
-- Swift 5.0+
+## 目录概览
 
-## 🚀 快速开始
-
-### 1. 安装 Flutter
-
-```bash
-# macOS/Linux
-git clone https://github.com/flutter/flutter.git -b stable
-export PATH="$PATH:`pwd`/flutter/bin"
-
-# 或使用包管理器
-# macOS
-brew install flutter
-
-# Ubuntu
-snap install flutter --classic
-
-# 验证安装
-flutter doctor
+```text
+mobile/
+├── android/
+├── ios/
+├── lib/
+│   ├── main.dart
+│   ├── core/
+│   │   ├── storage/
+│   │   └── subscription/
+│   ├── features/
+│   │   ├── cloud/
+│   │   ├── home/
+│   │   ├── nodes/
+│   │   ├── profiles/
+│   │   ├── settings/
+│   │   └── vpn/
+│   ├── services/
+│   └── shared/
+└── test/
 ```
 
-### 2. 创建 Flutter 项目
+## 开发要求
 
-```bash
-cd /home/user/PrivateDeploy
-flutter create mobile --org com.privatedeploy --platforms android,ios
+- Flutter 3.x
+- Dart 3.x
+- Android Studio / Android SDK
+- Xcode 15+（仅 iOS）
 
-# 或使用我们的初始化脚本
-./init-mobile.sh
-```
+本仓库当前在本地用 Flutter `3.35.7` 验证过。
 
-### 3. 安装依赖
+## 常用命令
 
 ```bash
 cd mobile
-flutter pub get
+/home/user/flutter/bin/flutter pub get
+/home/user/flutter/bin/flutter analyze
+/home/user/flutter/bin/flutter test
+/home/user/flutter/bin/flutter run
 ```
 
-### 4. 运行应用
+Android Release 示例：
 
 ```bash
-# Android 模拟器/设备
-flutter run
-
-# iOS 模拟器/设备 (macOS only)
-flutter run -d ios
-
-# 查看可用设备
-flutter devices
+cd mobile
+/home/user/flutter/bin/flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 ```
 
-## 📁 项目结构
-
-```
-mobile/
-├── android/              # Android 原生代码
-├── ios/                  # iOS 原生代码
-├── lib/                  # Flutter 代码
-│   ├── main.dart         # 应用入口
-│   ├── app.dart          # 应用配置
-│   ├── core/             # 核心功能
-│   │   ├── network/      # 网络层
-│   │   │   ├── api_client.dart
-│   │   │   ├── dio_client.dart
-│   │   │   └── interceptors/
-│   │   ├── storage/      # 存储层
-│   │   │   ├── hive_service.dart
-│   │   │   └── prefs_service.dart
-│   │   ├── vpn/          # VPN 核心
-│   │   │   ├── vpn_service.dart
-│   │   │   └── sing_box_wrapper.dart
-│   │   └── constants/    # 常量
-│   │       ├── api_constants.dart
-│   │       └── app_constants.dart
-│   ├── features/         # 功能模块
-│   │   ├── auth/         # 认证
-│   │   │   ├── data/
-│   │   │   ├── domain/
-│   │   │   └── presentation/
-│   │   ├── home/         # 首页
-│   │   ├── cloud/        # 云管理
-│   │   ├── profile/      # 配置管理
-│   │   ├── subscription/ # 订阅管理
-│   │   └── settings/     # 设置
-│   └── shared/           # 共享组件
-│       ├── widgets/      # 通用组件
-│       ├── utils/        # 工具函数
-│       └── models/       # 数据模型
-├── test/                 # 测试
-├── assets/               # 资源文件
-│   ├── images/
-│   └── i18n/             # 国际化
-└── pubspec.yaml          # 依赖配置
-```
-
-## 📚 核心依赖
-
-```yaml
-dependencies:
-  # 核心
-  flutter:
-    sdk: flutter
-  cupertino_icons: ^1.0.6
-
-  # UI
-  flutter_screenutil: ^5.9.0
-  flutter_svg: ^2.0.10
-
-  # 状态管理
-  provider: ^6.1.2
-
-  # 网络
-  dio: ^5.4.2
-  retrofit: ^4.1.0
-  web_socket_channel: ^2.4.0
-
-  # 存储
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
-  shared_preferences: ^2.2.3
-
-  # VPN
-  flutter_vpn: ^1.0.0  # 或自定义 Platform Channel
-
-  # 其他
-  intl: ^0.18.1
-  logger: ^2.3.0
-  path_provider: ^2.1.3
-  permission_handler: ^11.3.1
-```
-
-## 🔧 配置
-
-### API 端点配置
-
-编辑 `lib/core/constants/api_constants.dart`：
-
-```dart
-class ApiConstants {
-  static const String baseUrl = 'http://10.0.2.2:8443'; // Android 模拟器
-  // static const String baseUrl = 'http://localhost:8443'; // iOS 模拟器
-  // static const String baseUrl = 'https://your-api.com'; // 生产环境
-
-  static const String wsUrl = 'ws://10.0.2.2:8443/api/v1/ws';
-}
-```
-
-### Android 权限
-
-编辑 `android/app/src/main/AndroidManifest.xml`：
-
-```xml
-<uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-```
-
-### iOS 权限
-
-编辑 `ios/Runner/Info.plist`：
-
-```xml
-<key>NSAppTransportSecurity</key>
-<dict>
-    <key>NSAllowsArbitraryLoads</key>
-    <true/>
-</dict>
-```
-
-添加 Network Extension 权限（需要在 Xcode 中配置）。
-
-## 🧪 测试
-
-```bash
-# 运行所有测试
-flutter test
-
-# 运行集成测试
-flutter drive --target=test_driver/app.dart
-
-# 代码覆盖率
-flutter test --coverage
-```
-
-## 📦 构建
+## 平台说明
 
 ### Android
 
-```bash
-# Debug APK（体积大，仅用于本地调试）
-flutter build apk --debug
-
-# 推荐：按 ABI 拆分的 Release APK（仅输出真机架构，安装包最小）
-flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
-
-# 输出示例：
-# build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-# build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-
-# 通用 Release APK（单文件更方便，但体积更大）
-flutter build apk --release
-
-# Release Bundle (for Google Play)
-flutter build appbundle --release
-```
+- VPN Service 位于 `android/app/src/main/kotlin/com/privatedeploy/mobile/`
+- Debug 构建允许明文流量，主 manifest 默认不再全局开启明文流量
+- Release 构建签名可通过 `key.properties` 或环境变量注入
 
 ### iOS
 
-```bash
-# Debug
-flutter build ios --debug
+- `Runner/VpnPlugin.swift` 和 `VPNExtension/PacketTunnelProvider.swift` 已接入
+- 若未嵌入 `VPNCore.framework`，应用会显示原生 VPN 不可用，而不是假装可连
+- 需要正确配置 App Group、Network Extension 和签名能力
 
-# Release
-flutter build ios --release
-
-# 构建 IPA (需要 Xcode)
-flutter build ipa --release
-```
-
-## 🎯 开发任务
-
-### Phase 1: 基础架构（Week 4-5）
-- [ ] Flutter 项目初始化
-- [ ] 配置依赖和项目结构
-- [ ] 实现 API 客户端
-- [ ] 实现本地存储
-- [ ] 创建基础 UI 主题
-
-### Phase 2: 核心功能（Week 7-14）
-- [ ] 认证功能
-- [ ] 首页 UI
-- [ ] 云服务器管理
-- [ ] 配置文件管理
-- [ ] VPN 连接功能
-
-### Phase 3: 高级功能（Week 15-18）
-- [ ] 订阅管理
-- [ ] 规则集管理
-- [ ] 流量统计图表
-- [ ] 通知系统
-- [ ] 多语言支持
-
-### Phase 4: 优化发布（Week 19-24）
-- [ ] 性能优化
-- [ ] UI/UX 优化
-- [ ] 测试
-- [ ] 应用商店上架
-
-## 🐛 常见问题
-
-### Flutter Doctor 报错
+## 测试
 
 ```bash
-flutter doctor
-# 按照提示安装缺失的依赖
+cd mobile
+/home/user/flutter/bin/flutter analyze
+/home/user/flutter/bin/flutter test
 ```
 
-### Android 许可证问题
+当前测试主要覆盖：
 
-```bash
-flutter doctor --android-licenses
-```
+- network provider 状态流转
+- Profile 存储与配置归一化
+- Vultr client 请求和错误处理
+- 订阅解析器
+- 云备份与恢复逻辑
 
-### iOS CocoaPods 问题
+## 已知改进方向
 
-```bash
-cd ios
-pod install
-cd ..
-```
-
-### 连接 API 服务器失败
-
-- Android 模拟器：使用 `10.0.2.2` 代替 `localhost`
-- iOS 模拟器：使用 `localhost` 即可
-- 真机：使用电脑的局域网 IP
-
-## 📖 文档
-
-- [Flutter 官方文档](https://flutter.dev/docs)
-- [Dart 语言指南](https://dart.dev/guides)
-- [Material Design](https://m3.material.io/)
-- [Cupertino (iOS)](https://docs.flutter.dev/development/ui/widgets/cupertino)
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-与 PrivateDeploy 主项目相同。
+- 继续拆分 `features/nodes/nodes_screen.dart`
+- 把工作台页拆成更清晰的导航结构
+- 同步 README 与产品实际能力，避免文档再次漂移

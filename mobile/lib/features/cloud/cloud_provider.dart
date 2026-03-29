@@ -51,6 +51,29 @@ class CloudProvider with ChangeNotifier {
     return 'node-$compact';
   }
 
+  @visibleForTesting
+  static String? validateDeploymentSelection({
+    required String region,
+    required String plan,
+    required List<CloudRegion> regions,
+    required List<CloudPlan> plans,
+  }) {
+    final regionExists = regions.any((candidate) => candidate.id == region);
+    if (!regionExists) {
+      return 'Selected region is unavailable';
+    }
+
+    final selectedPlan =
+        plans.where((candidate) => candidate.id == plan).firstOrNull;
+    if (selectedPlan == null) {
+      return 'Selected plan is unavailable';
+    }
+    if (!selectedPlan.locations.contains(region)) {
+      return 'Selected plan is not available in the chosen region';
+    }
+    return null;
+  }
+
   CloudProvider() {
     _init();
   }
@@ -451,6 +474,17 @@ class CloudProvider with ChangeNotifier {
 
     try {
       final resolvedLabel = normalizeInstanceLabel(label);
+      final selectionError = validateDeploymentSelection(
+        region: region,
+        plan: plan,
+        regions: _regions,
+        plans: _plans,
+      );
+      if (selectionError != null) {
+        _error = selectionError;
+        return false;
+      }
+
       final client = await _cloudClient();
       final planInfo = await client.getPlanById(plan);
       final planRam = _intValue(planInfo, const ['ram', 'memory', 'memory_mb']);

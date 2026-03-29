@@ -12,8 +12,7 @@
     <application
         android:name="${applicationName}"
         android:label="PrivateDeploy"
-        android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:icon="@mipmap/ic_launcher">
 
         <!-- Main Activity -->
         <activity
