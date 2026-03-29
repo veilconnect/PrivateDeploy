@@ -116,6 +116,10 @@ class TestCloudProvider extends ChangeNotifier with Fake implements CloudProvide
     this.error,
     this.instances = const [],
     this.isLoading = false,
+    this.apiKey,
+    this.providerName = 'vultr',
+    this.setApiKeyResult = true,
+    this.exportBackupPayload = '{"provider":"vultr"}',
     bool? hasApiKeyAfterRefresh,
     List<CloudInstance>? loadedInstances,
   })  : _hasApiKey = hasApiKey,
@@ -124,6 +128,8 @@ class TestCloudProvider extends ChangeNotifier with Fake implements CloudProvide
 
   final bool hasApiKeyAfterRefresh;
   final List<CloudInstance> loadedInstances;
+  final bool setApiKeyResult;
+  final String exportBackupPayload;
 
   bool _hasApiKey;
 
@@ -134,10 +140,20 @@ class TestCloudProvider extends ChangeNotifier with Fake implements CloudProvide
   String? error;
 
   @override
+  String? apiKey;
+
+  @override
+  final String providerName;
+
+  @override
   List<CloudInstance> instances;
 
   int refreshCalls = 0;
   int loadInstancesCalls = 0;
+  int clearLocalCloudDataCalls = 0;
+  String? savedApiKey;
+  String? importedBackupPayload;
+  String? importBackupError;
 
   @override
   bool get hasApiKey => _hasApiKey;
@@ -163,6 +179,45 @@ class TestCloudProvider extends ChangeNotifier with Fake implements CloudProvide
     if (notify) {
       notifyListeners();
     }
+  }
+
+  @override
+  Future<bool> setApiKey(String key) async {
+    savedApiKey = key.trim();
+    if (!setApiKeyResult) {
+      error ??= 'Failed to save API key';
+      notifyListeners();
+      return false;
+    }
+
+    apiKey = savedApiKey;
+    _hasApiKey = true;
+    error = null;
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  Future<void> clearLocalCloudData() async {
+    clearLocalCloudDataCalls++;
+    apiKey = null;
+    _hasApiKey = false;
+    instances = const [];
+    notifyListeners();
+  }
+
+  @override
+  Future<String> exportBackupJson() async {
+    return exportBackupPayload;
+  }
+
+  @override
+  Future<void> importBackupJson(String raw) async {
+    importedBackupPayload = raw;
+    if (importBackupError != null) {
+      throw Exception(importBackupError);
+    }
+    notifyListeners();
   }
 }
 
