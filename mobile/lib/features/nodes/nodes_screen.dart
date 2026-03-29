@@ -25,7 +25,7 @@ class NodesScreen extends StatefulWidget {
 }
 
 class _NodesScreenState extends State<NodesScreen> {
-  bool _bootstrapTriggered = false;
+  bool _didBootstrap = false;
 
   @override
   void initState() {
@@ -36,15 +36,15 @@ class _NodesScreenState extends State<NodesScreen> {
   }
 
   Future<void> _bootstrapNodesState() async {
-    if (!mounted || _bootstrapTriggered) {
+    if (!mounted || _didBootstrap) {
       return;
     }
 
-    _bootstrapTriggered = true;
+    _didBootstrap = true;
     await _syncWorkspaceState(initializeVpn: true);
   }
 
-  Future<void> _refreshAll(BuildContext context) async {
+  Future<void> _refreshAll() async {
     await _syncWorkspaceState(initializeVpn: false);
   }
 
@@ -92,8 +92,11 @@ class _NodesScreenState extends State<NodesScreen> {
   }
 
   Future<void> _refreshAfterCloudApiKeySaved() async {
-    _bootstrapTriggered = false;
-    await _refreshAll(context);
+    if (!mounted) {
+      return;
+    }
+
+    await _syncWorkspaceState(initializeVpn: false);
   }
 
   Future<void> _showCloudApiKeyDialog(CloudProvider cloudProvider) {
@@ -260,7 +263,7 @@ class _NodesScreenState extends State<NodesScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => _refreshAll(context),
+            onPressed: _refreshAll,
             tooltip: 'Refresh',
           ),
           IconButton(
@@ -272,12 +275,6 @@ class _NodesScreenState extends State<NodesScreen> {
       ),
       body: Consumer3<CloudProvider, ProfileProvider, VpnProvider>(
         builder: (context, cloudProvider, profileProvider, vpnProvider, _) {
-          if (!_bootstrapTriggered) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _bootstrapNodesState();
-            });
-          }
-
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
@@ -290,7 +287,7 @@ class _NodesScreenState extends State<NodesScreen> {
           }
 
           return RefreshIndicator(
-            onRefresh: () => _refreshAll(context),
+            onRefresh: _refreshAll,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.all(16.w),
