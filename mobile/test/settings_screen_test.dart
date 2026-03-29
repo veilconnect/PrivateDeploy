@@ -94,6 +94,36 @@ void main() {
       expect(find.text('API key saved and verified'), findsOneWidget);
     });
 
+    testWidgets('shows api key save errors inside the dialog', (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: false,
+        error: 'Invalid API key',
+        setApiKeyResult: false,
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: cloudProvider,
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+        settle: true,
+      );
+
+      await tester.tap(find.text('API Key'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'bad-key');
+      await tester.tap(find.text('Verify & Save'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.savedApiKey, 'bad-key');
+      expect(cloudProvider.loadInstancesCalls, 0);
+      expect(find.text('Invalid API key'), findsOneWidget);
+      expect(find.text('Verify & Save'), findsOneWidget);
+    });
+
     testWidgets('clears local cloud data and shows snackbar', (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
@@ -175,6 +205,38 @@ void main() {
 
       expect(cloudProvider.importedBackupPayload, payload);
       expect(find.text('Cloud backup restored'), findsOneWidget);
+    });
+
+    testWidgets('shows restore backup errors inside the dialog',
+        (tester) async {
+      const payload = '{"provider":"vultr","apiKey":"secret"}';
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: true,
+      )..importBackupError = 'Invalid backup';
+      clipboardText = payload;
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: cloudProvider,
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+        settle: true,
+      );
+
+      await tester.ensureVisible(
+        find.widgetWithText(ListTile, 'Restore Cloud Backup'),
+      );
+      await tester.tap(find.widgetWithText(ListTile, 'Restore Cloud Backup'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Restore'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.importedBackupPayload, payload);
+      expect(find.text('Invalid backup'), findsOneWidget);
+      expect(find.text('Restore'), findsOneWidget);
     });
   });
 }
