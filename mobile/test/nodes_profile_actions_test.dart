@@ -30,6 +30,31 @@ void main() {
       expect(find.text('Profile deleted'), findsOneWidget);
     });
 
+    testWidgets('confirmDeleteProfile shows delete failure message',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(
+        deleteResult: false,
+        errorMessage: 'Delete failed',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => confirmDeleteProfile(
+          context: context,
+          profileProvider: profileProvider,
+          profile: _profile(id: 'manual-a', name: 'Manual A'),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(profileProvider.deletedProfileId, 'manual-a');
+      expect(find.text('Delete failed'), findsOneWidget);
+    });
+
     testWidgets('showRenameProfileFlow trims updated name', (tester) async {
       final profileProvider = _FakeProfileProvider(updateResult: true);
 
@@ -51,6 +76,32 @@ void main() {
       expect(profileProvider.updatedProfileId, 'manual-a');
       expect(profileProvider.updatedProfileName, 'Manual B');
       expect(find.text('Profile renamed'), findsOneWidget);
+    });
+
+    testWidgets('showRenameProfileFlow reports rename failure', (tester) async {
+      final profileProvider = _FakeProfileProvider(
+        updateResult: false,
+        errorMessage: 'Rename failed',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => showRenameProfileFlow(
+          context: context,
+          profile: _profile(id: 'manual-a', name: 'Manual A'),
+          profileProvider: profileProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), 'Manual B');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(profileProvider.updatedProfileId, 'manual-a');
+      expect(profileProvider.updatedProfileName, 'Manual B');
+      expect(find.text('Rename failed'), findsOneWidget);
     });
 
     testWidgets('showCreateProfileFlow blocks duplicate names before submit',
@@ -125,6 +176,38 @@ void main() {
       expect(find.text('Imported successfully'), findsOneWidget);
     });
 
+    testWidgets('showImportProfileFlow reports create failure after parsing',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(
+        createResult: false,
+        errorMessage: 'Import failed',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => showImportProfileFlow(
+          context: context,
+          profileProvider: profileProvider,
+          fetchSubscriptionData: (_) async => 'raw-subscription',
+          parseSubscriptionData: (_) =>
+              '{"outbounds":[{"type":"direct"}]}',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextFormField).last,
+        'https://example.com/sub',
+      );
+      await tester.tap(find.text('Import'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(profileProvider.createdSubscriptionUrl, 'https://example.com/sub');
+      expect(find.text('Import failed'), findsOneWidget);
+    });
+
     testWidgets('showImportProfileFlow reports parser failure', (tester) async {
       final profileProvider = _FakeProfileProvider(createResult: true);
 
@@ -150,6 +233,33 @@ void main() {
 
       expect(profileProvider.createdName, isNull);
       expect(find.text('Failed to parse subscription'), findsOneWidget);
+    });
+
+    testWidgets('showImportProfileFlow reports network failures',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(createResult: true);
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => showImportProfileFlow(
+          context: context,
+          profileProvider: profileProvider,
+          fetchSubscriptionData: (_) async => throw Exception('timeout'),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextFormField).last,
+        'https://example.com/sub',
+      );
+      await tester.tap(find.text('Import'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(profileProvider.createdName, isNull);
+      expect(find.text('Network error: Exception: timeout'), findsOneWidget);
     });
 
     testWidgets('showCreateProfileFlow creates a local profile',
@@ -180,6 +290,35 @@ void main() {
         '{"outbounds":[{"type":"direct"}]}',
       );
       expect(find.text('Profile created successfully'), findsOneWidget);
+    });
+
+    testWidgets('showCreateProfileFlow reports create failures',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(
+        createResult: false,
+        errorMessage: 'Create failed',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => showCreateProfileFlow(
+          context: context,
+          profileProvider: profileProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, 'Manual A');
+      await tester.enterText(
+        find.byType(TextFormField).last,
+        '{"outbounds":[{"type":"direct"}]}',
+      );
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(profileProvider.createdName, 'Manual A');
+      expect(find.text('Create failed'), findsOneWidget);
     });
   });
 }
@@ -237,12 +376,14 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
     this.updateResult = true,
     this.createResult = true,
     this.validationError,
+    this.errorMessage,
   });
 
   final bool deleteResult;
   final bool updateResult;
   final bool createResult;
   final String? validationError;
+  final String? errorMessage;
 
   String? deletedProfileId;
   String? updatedProfileId;
@@ -252,7 +393,7 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
   String? createdContent;
 
   @override
-  String? get error => null;
+  String? get error => errorMessage;
 
   @override
   Future<bool> deleteProfile(String id) async {
