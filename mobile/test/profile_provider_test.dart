@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:privatedeploy_mobile/features/profiles/bundled_rule_set_registry.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 
@@ -265,6 +266,10 @@ void main() {
       final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
         config,
         routingSettings: VpnRoutingSettings.defaults,
+        bundledRuleSetPaths: const BundledRuleSetPaths(
+          geositeCnPath: '/tmp/geosite-cn.srs',
+          geoipCnPath: '/tmp/geoip-cn.srs',
+        ),
       );
       final json = jsonDecode(normalized) as Map<String, dynamic>;
       final route = json['route'] as Map<String, dynamic>;
@@ -290,7 +295,25 @@ void main() {
         isTrue,
       );
       expect(
+        ruleSets.any(
+          (ruleSet) =>
+              ruleSet['tag'] == 'pd-geosite-cn' &&
+              ruleSet['type'] == 'local' &&
+              ruleSet['path'] == '/tmp/geosite-cn.srs',
+        ),
+        isTrue,
+      );
+      expect(
         ruleSets.any((ruleSet) => ruleSet['tag'] == 'pd-geoip-cn'),
+        isTrue,
+      );
+      expect(
+        ruleSets.any(
+          (ruleSet) =>
+              ruleSet['tag'] == 'pd-geoip-cn' &&
+              ruleSet['type'] == 'local' &&
+              ruleSet['path'] == '/tmp/geoip-cn.srs',
+        ),
         isTrue,
       );
       expect(
@@ -336,6 +359,10 @@ void main() {
           mode: VpnRoutingMode.global,
           directCnDomains: true,
           directCnIpRanges: true,
+        ),
+        bundledRuleSetPaths: const BundledRuleSetPaths(
+          geositeCnPath: '/tmp/geosite-cn.srs',
+          geoipCnPath: '/tmp/geoip-cn.srs',
         ),
       );
       final json = jsonDecode(normalized) as Map<String, dynamic>;

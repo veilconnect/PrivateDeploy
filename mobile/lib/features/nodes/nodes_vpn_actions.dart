@@ -258,6 +258,8 @@ Future<void> connectSelectedProfile({
   final connected = await vpnProvider.connect(
     configJson: configJson,
     profileName: activeProfile?.name,
+    stabilityCheckDuration: const Duration(seconds: 6),
+    statusPollInterval: const Duration(milliseconds: 500),
   );
   if (!context.mounted) {
     return;

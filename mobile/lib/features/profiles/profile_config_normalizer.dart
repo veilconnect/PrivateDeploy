@@ -3,18 +3,16 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../settings/app_settings_provider.dart';
+import 'bundled_rule_set_registry.dart';
 
 const _managedGeositeCnTag = 'pd-geosite-cn';
 const _managedGeoipCnTag = 'pd-geoip-cn';
-const _managedGeositeCnUrl =
-    'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs';
-const _managedGeoipCnUrl =
-    'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs';
 
 String normalizeProfileConfigForCurrentPlatform(
   String content, {
   TargetPlatform? targetPlatform,
   VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
+  BundledRuleSetPaths bundledRuleSetPaths = const BundledRuleSetPaths(),
 }) {
   try {
     final decoded = jsonDecode(content);
@@ -26,7 +24,9 @@ String normalizeProfileConfigForCurrentPlatform(
     if ((targetPlatform ?? defaultTargetPlatform) == TargetPlatform.android) {
       changed = _normalizeAndroidConfig(decoded) || changed;
     }
-    changed = _applyRoutingSettings(decoded, routingSettings) || changed;
+    changed =
+        _applyRoutingSettings(decoded, routingSettings, bundledRuleSetPaths) ||
+            changed;
 
     if (!changed) {
       return content;
@@ -131,6 +131,7 @@ bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
 bool _applyRoutingSettings(
   Map<String, dynamic> decoded,
   VpnRoutingSettings routingSettings,
+  BundledRuleSetPaths bundledRuleSetPaths,
 ) {
   final originalJson = jsonEncode(decoded);
   final outbounds = decoded['outbounds'];
@@ -203,32 +204,35 @@ bool _applyRoutingSettings(
 
   final managedRuleSets = <Map<String, dynamic>>[];
   if (hasDirectOutbound && routingSettings.isSplitMode) {
-    final downloadDetour = proxyOutboundTag ?? 'direct';
     if (routingSettings.directCnDomains) {
-      managedRules.add({
-        'rule_set': _managedGeositeCnTag,
-        'outbound': 'direct',
-      });
-      managedRuleSets.add(
-        _buildRemoteRuleSet(
-          tag: _managedGeositeCnTag,
-          url: _managedGeositeCnUrl,
-          downloadDetour: downloadDetour,
-        ),
-      );
+      final geositeCnPath = bundledRuleSetPaths.geositeCnPath;
+      if (geositeCnPath != null && geositeCnPath.isNotEmpty) {
+        managedRules.add({
+          'rule_set': _managedGeositeCnTag,
+          'outbound': 'direct',
+        });
+        managedRuleSets.add(
+          _buildBundledRuleSet(
+            tag: _managedGeositeCnTag,
+            path: geositeCnPath,
+          ),
+        );
+      }
     }
     if (routingSettings.directCnIpRanges) {
-      managedRules.add({
-        'rule_set': _managedGeoipCnTag,
-        'outbound': 'direct',
-      });
-      managedRuleSets.add(
-        _buildRemoteRuleSet(
-          tag: _managedGeoipCnTag,
-          url: _managedGeoipCnUrl,
-          downloadDetour: downloadDetour,
-        ),
-      );
+      final geoipCnPath = bundledRuleSetPaths.geoipCnPath;
+      if (geoipCnPath != null && geoipCnPath.isNotEmpty) {
+        managedRules.add({
+          'rule_set': _managedGeoipCnTag,
+          'outbound': 'direct',
+        });
+        managedRuleSets.add(
+          _buildBundledRuleSet(
+            tag: _managedGeoipCnTag,
+            path: geoipCnPath,
+          ),
+        );
+      }
     }
   }
 
@@ -262,17 +266,15 @@ bool _applyRoutingSettings(
   return originalJson != jsonEncode(decoded);
 }
 
-Map<String, dynamic> _buildRemoteRuleSet({
+Map<String, dynamic> _buildBundledRuleSet({
   required String tag,
-  required String url,
-  required String downloadDetour,
+  required String path,
 }) {
   return {
     'tag': tag,
-    'type': 'remote',
+    'type': 'local',
     'format': 'binary',
-    'url': url,
-    'download_detour': downloadDetour,
+    'path': path,
   };
 }
 

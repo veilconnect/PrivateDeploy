@@ -1,6 +1,19 @@
 import '../../services/vpn_native_service.dart';
 import 'vpn_models.dart';
 
+bool isVpnConflictMessage(String? message) {
+  final normalizedMessage = message?.trim().toLowerCase();
+  if (normalizedMessage == null || normalizedMessage.isEmpty) {
+    return false;
+  }
+
+  return normalizedMessage.contains('permission revoked') ||
+      normalizedMessage.contains('another vpn') ||
+      normalizedMessage.contains('system vpn') ||
+      normalizedMessage.contains('interrupted this connection') ||
+      normalizedMessage.contains('took over this connection');
+}
+
 TrafficStats trafficStatsFromNative(VpnNativeStats nativeStats) {
   return TrafficStats(
     uploadBytes: nativeStats.uploadBytes,
@@ -37,15 +50,13 @@ bool isVpnConflictTransition({
   required VpnNativeStatus nativeStatus,
   String? message,
 }) {
-  if (nativeStatus.status == 'revoked' &&
-      previousStatus == VpnStatus.connected) {
+  if (nativeStatus.status == 'revoked') {
     return true;
   }
 
   if (previousStatus != VpnStatus.connected) {
-    return false;
+    return isVpnConflictMessage(message);
   }
 
-  final normalizedMessage = message?.toLowerCase();
-  return normalizedMessage?.contains('permission revoked') == true;
+  return isVpnConflictMessage(message);
 }

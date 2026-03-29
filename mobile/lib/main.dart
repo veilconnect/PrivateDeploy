@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/storage/storage_service.dart';
 import 'features/home/home_screen.dart';
+import 'features/profiles/bundled_rule_set_registry.dart';
 import 'features/profiles/profile_provider.dart';
 import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
@@ -18,6 +19,9 @@ void main() async {
 
   // Initialize Storage
   await StorageService.init();
+
+  // Install bundled routing rule sets before any profile is normalized.
+  await BundledRuleSetRegistry.ensureInstalled();
 
   runApp(const PrivateDeployApp());
 }

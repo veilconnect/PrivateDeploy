@@ -40,6 +40,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val TAG = "PrivateDeployVPN"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "PrivateDeployVPN"
+        private const val VPN_REVOKED_MESSAGE =
+            "VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again."
         private const val INTERFACE_FLAG_UP = 1
         private const val INTERFACE_FLAG_MULTICAST = 1 shl 5
         private const val INTERFACE_FLAG_RUNNING = 1 shl 6
@@ -415,8 +417,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
     override fun onRevoke() {
         super.onRevoke()
         Log.w(TAG, "VPN permission revoked")
+        broadcastStatus("revoked", VPN_REVOKED_MESSAGE)
         stopVpn()
-        broadcastStatus("revoked", null)
     }
 
     override fun openTun(options: TunConfig?): Int {

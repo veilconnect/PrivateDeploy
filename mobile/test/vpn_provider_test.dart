@@ -230,6 +230,107 @@ void main() {
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });
 
+    test('preserves conflict message after follow-up disconnected status',
+        () async {
+      var statusCallCount = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            statusCallCount += 1;
+            if (statusCallCount == 1) {
+              return {
+                'running': true,
+                'status': 'connected',
+                'message': null,
+                'connected_at': 123,
+                'uptime': 5,
+              };
+            }
+            if (statusCallCount == 2) {
+              return {
+                'running': false,
+                'status': 'revoked',
+                'message': null,
+                'connected_at': 123,
+                'uptime': 0,
+              };
+            }
+            return {
+              'running': false,
+              'status': 'disconnected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 0,
+            };
+          case 'isRunning':
+            return statusCallCount == 1;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, true);
+
+      await vpnProvider.loadStatus();
+      await vpnProvider.loadStatus();
+
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
+    });
+
+    test('connect fails when connection cannot stay stable during startup',
+        () async {
+      var statusCallCount = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            statusCallCount += 1;
+            if (statusCallCount == 1) {
+              return {
+                'running': true,
+                'status': 'connected',
+                'message': null,
+                'connected_at': 123,
+                'uptime': 5,
+              };
+            }
+            return {
+              'running': false,
+              'status': 'revoked',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 0,
+            };
+          case 'isRunning':
+            return statusCallCount == 1;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Test',
+        stabilityCheckDuration: const Duration(milliseconds: 5),
+        statusPollInterval: const Duration(milliseconds: 1),
+      );
+
+      expect(success, false);
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
+    });
+
     test('initializes unsupported native VPN capability explicitly', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(methodChannel, (call) async {

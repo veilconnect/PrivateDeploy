@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../shared/utils/logger.dart';
+import 'bundled_rule_set_registry.dart';
 import 'profile_config_normalizer.dart';
 import 'profile_model.dart';
 import '../settings/app_settings_provider.dart';
@@ -384,6 +385,7 @@ class ProfileProvider with ChangeNotifier {
     return normalizeConfigForCurrentPlatform(
       content,
       routingSettings: routingSettings,
+      bundledRuleSetPaths: BundledRuleSetRegistry.paths,
     );
   }
 
@@ -392,11 +394,13 @@ class ProfileProvider with ChangeNotifier {
     String content, {
     TargetPlatform? targetPlatform,
     VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
+    BundledRuleSetPaths bundledRuleSetPaths = const BundledRuleSetPaths(),
   }) {
     return normalizeProfileConfigForCurrentPlatform(
       content,
       targetPlatform: targetPlatform,
       routingSettings: routingSettings,
+      bundledRuleSetPaths: bundledRuleSetPaths,
     );
   }
 

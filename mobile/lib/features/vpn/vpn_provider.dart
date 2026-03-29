@@ -11,7 +11,7 @@ export 'vpn_models.dart';
 
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
-      'Another VPN app or system VPN interrupted this connection. Disable the other VPN and try again.';
+      'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.';
 
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
@@ -127,7 +127,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
-  Future<bool> connect({String? configJson, String? profileName}) async {
+  Future<bool> connect({
+    String? configJson,
+    String? profileName,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
       _safeNotifyListeners();
@@ -146,23 +151,35 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _activeProfile = profileName;
         await loadStatus();
         if (_status == VpnStatus.connected) {
+          final stable = await _verifyStableConnection(
+            stabilityCheckDuration: stabilityCheckDuration,
+            statusPollInterval: statusPollInterval,
+          );
+          if (!stable) {
+            return false;
+          }
           AppLogger.info('[VpnProvider] VPN connected');
           return true;
         }
 
         _status = VpnStatus.disconnected;
-        _error = _nativeService.lastError ??
-            _error ??
+        _error = _normalizeVpnError(
+              _nativeService.lastError ??
+                  _error ??
+                  'VPN did not reach connected state',
+            ) ??
             'VPN did not reach connected state';
         return false;
       } else {
         _status = VpnStatus.disconnected;
         _stopStatsPolling();
-        _error = _nativeService.lastError ?? 'Failed to start VPN';
+        _error = _normalizeVpnError(_nativeService.lastError) ??
+            'Failed to start VPN';
         return false;
       }
     } catch (e) {
-      _error = 'Failed to start VPN: ${e.toString()}';
+      _error = _normalizeVpnError(e.toString()) ??
+          'Failed to start VPN: ${e.toString()}';
       _status = VpnStatus.disconnected;
       _stopStatsPolling();
       AppLogger.error('[VpnProvider] Start error', e);
@@ -290,11 +307,51 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _statsTimer = null;
   }
 
+  Future<bool> _verifyStableConnection({
+    required Duration stabilityCheckDuration,
+    required Duration statusPollInterval,
+  }) async {
+    if (stabilityCheckDuration <= Duration.zero) {
+      return true;
+    }
+
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < stabilityCheckDuration) {
+      final remaining = stabilityCheckDuration - stopwatch.elapsed;
+      final nextDelay =
+          remaining < statusPollInterval ? remaining : statusPollInterval;
+      if (nextDelay > Duration.zero) {
+        await Future<void>.delayed(nextDelay);
+      }
+
+      await loadStatus();
+      if (_status != VpnStatus.connected) {
+        _error = _normalizeVpnError(_error ?? _nativeService.lastError) ??
+            'VPN connection was interrupted during startup';
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  String? _normalizeVpnError(String? message) {
+    if (isVpnConflictMessage(message)) {
+      return vpnConflictMessage;
+    }
+    return message;
+  }
+
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
     final previousStatus = _status;
     _status = vpnStatusFromNative(nativeStatus);
 
     final message = nativeStatus.message?.trim();
+    final normalizedStatus = nativeStatus.status.trim().toLowerCase();
+    final preserveConflictMessage = _error == vpnConflictMessage &&
+        (normalizedStatus == 'disconnecting' ||
+            normalizedStatus == 'disconnected') &&
+        (message == null || message.isEmpty);
     if (isVpnConflictTransition(
       previousStatus: previousStatus,
       nativeStatus: nativeStatus,
@@ -302,9 +359,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     )) {
       _error = vpnConflictMessage;
     } else if (message != null && message.isNotEmpty) {
-      _error = message;
+      _error = _normalizeVpnError(message);
     } else if (nativeStatus.status != 'error' &&
-        nativeStatus.status != 'revoked') {
+        nativeStatus.status != 'revoked' &&
+        !preserveConflictMessage) {
       _error = null;
     }
 

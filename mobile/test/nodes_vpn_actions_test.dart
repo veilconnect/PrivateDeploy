@@ -358,7 +358,12 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   TrafficStats get stats => TrafficStats.zero();
 
   @override
-  Future<bool> connect({String? configJson, String? profileName}) async {
+  Future<bool> connect({
+    String? configJson,
+    String? profileName,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
     connectCalls += 1;
     lastConfigJson = configJson;
     lastProfileName = profileName;
