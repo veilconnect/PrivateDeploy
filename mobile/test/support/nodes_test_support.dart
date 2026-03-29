@@ -354,9 +354,16 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
     this.isLoading = false,
     this.unsupportedReason,
     TrafficStats? stats,
+    this.diagnosticsEgressIp,
+    this.diagnosticsError,
+    this.isRefreshingDiagnostics = false,
+    this.diagnosticsUpdatedAt,
+    List<VpnRouteDecision>? recentRouteDecisions,
   })  : _status = status,
         statusAfterInitialize = statusAfterInitialize ?? status,
-        stats = stats ?? TrafficStats.zero();
+        stats = stats ?? TrafficStats.zero(),
+        _recentRouteDecisions =
+            List<VpnRouteDecision>.from(recentRouteDecisions ?? const []);
 
   final VpnStatus statusAfterInitialize;
   final VpnStatus? statusAfterLoadStatus;
@@ -373,11 +380,25 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
   @override
   final String? unsupportedReason;
 
+  @override
+  final String? diagnosticsEgressIp;
+
+  @override
+  final String? diagnosticsError;
+
+  @override
+  final bool isRefreshingDiagnostics;
+
+  @override
+  final DateTime? diagnosticsUpdatedAt;
+
   VpnStatus _status;
+  final List<VpnRouteDecision> _recentRouteDecisions;
 
   int initializeCalls = 0;
   int loadStatusCalls = 0;
   int disconnectCalls = 0;
+  int refreshDiagnosticsCalls = 0;
 
   @override
   VpnStatus get status => _status;
@@ -387,6 +408,10 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   bool get isConnected => _status == VpnStatus.connected;
+
+  @override
+  List<VpnRouteDecision> get recentRouteDecisions =>
+      List<VpnRouteDecision>.unmodifiable(_recentRouteDecisions);
 
   @override
   Future<void> initialize() async {
@@ -410,5 +435,11 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
     _status = VpnStatus.disconnected;
     notifyListeners();
     return true;
+  }
+
+  @override
+  Future<void> refreshDiagnostics() async {
+    refreshDiagnosticsCalls++;
+    notifyListeners();
   }
 }

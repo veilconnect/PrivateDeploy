@@ -84,6 +84,25 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                         }
                     }
                 }
+                ACTION_VPN_LOG -> {
+                    val message = intent.getStringExtra("message")
+                    val timestamp = intent.getLongExtra(
+                        "timestamp",
+                        System.currentTimeMillis()
+                    )
+
+                    if (!message.isNullOrBlank()) {
+                        eventSink?.success(
+                            mapOf(
+                                "type" to "log",
+                                "data" to mapOf(
+                                    "message" to message,
+                                    "timestamp" to timestamp,
+                                )
+                            )
+                        )
+                    }
+                }
             }
         }
     }
@@ -112,16 +131,20 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         binding.addActivityResultListener(this)
 
         // 注册 VPN 状态广播接收器
+        val receiverFilter = IntentFilter().apply {
+            addAction(ACTION_VPN_STATUS)
+            addAction(ACTION_VPN_LOG)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context?.registerReceiver(
                 vpnStatusReceiver,
-                IntentFilter(ACTION_VPN_STATUS),
+                receiverFilter,
                 Context.RECEIVER_NOT_EXPORTED
             )
         } else {
             context?.registerReceiver(
                 vpnStatusReceiver,
-                IntentFilter(ACTION_VPN_STATUS)
+                receiverFilter
             )
         }
 
@@ -155,6 +178,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "isRunning" -> isRunning(result)
             "getStatus" -> getStatus(result)
             "getStats" -> getStats(result)
+            "getRecentLogs" -> getRecentLogs(result)
             "resetStats" -> resetStats(result)
             "updateConfig" -> updateConfig(call, result)
             "getVersion" -> getVersion(result)
@@ -323,6 +347,10 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      */
     private fun getStats(result: MethodChannel.Result) {
         result.success(PrivateDeployVpnService.currentStats())
+    }
+
+    private fun getRecentLogs(result: MethodChannel.Result) {
+        result.success(PrivateDeployVpnService.currentRecentLogs())
     }
 
     /**

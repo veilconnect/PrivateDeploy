@@ -92,6 +92,60 @@ void main() {
       expect(find.textContaining('默认全部走 VPN'), findsOneWidget);
     });
 
+    testWidgets('opens diagnostics screen and renders diagnostics content',
+        (tester) async {
+      final vpnProvider = TestVpnProvider(
+        status: VpnStatus.connected,
+        diagnosticsEgressIp: '203.0.113.42',
+        diagnosticsUpdatedAt: DateTime(2026, 3, 30, 7, 10, 0),
+        recentRouteDecisions: [
+          VpnRouteDecision(
+            timestamp: DateTime(2026, 3, 30, 7, 10, 1),
+            type: VpnRouteDecisionType.direct,
+            outboundType: 'direct',
+            outboundTag: 'direct',
+            target: '45.113.192.102:443',
+            domain: 'www.baidu.com',
+          ),
+          VpnRouteDecision(
+            timestamp: DateTime(2026, 3, 30, 7, 10, 2),
+            type: VpnRouteDecisionType.proxy,
+            outboundType: 'shadowsocks',
+            outboundTag: '新加坡-SS',
+            target: '103.102.166.224:443',
+            domain: 'www.wikipedia.org',
+          ),
+        ],
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: TestCloudProvider(hasApiKey: false),
+        vpnProvider: vpnProvider,
+        appSettingsProvider: TestAppSettingsProvider(),
+        settle: true,
+      );
+
+      await tester.ensureVisible(find.text('VPN Diagnostics'));
+      await tester.tap(find.text('VPN Diagnostics'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.refreshDiagnosticsCalls, 1);
+      expect(find.text('VPN Diagnostics'), findsWidgets);
+      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(find.text('203.0.113.42'), findsOneWidget);
+      expect(find.text('www.baidu.com -> 45.113.192.102:443'), findsOneWidget);
+      expect(
+        find.text('www.wikipedia.org -> 103.102.166.224:443'),
+        findsOneWidget,
+      );
+      expect(find.text('DIRECT'), findsOneWidget);
+      expect(find.text('PROXY'), findsOneWidget);
+    });
+
     testWidgets('saves custom routing rules from dialog', (tester) async {
       final appSettingsProvider = TestAppSettingsProvider();
 

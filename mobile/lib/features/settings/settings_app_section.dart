@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'app_settings_provider.dart';
 import 'settings_routing_rules_dialog.dart';
+import 'settings_vpn_diagnostics_screen.dart';
 import '../vpn/vpn_provider.dart';
 
 class SettingsAppSection extends StatelessWidget {
@@ -92,6 +93,20 @@ class SettingsAppSection extends StatelessWidget {
                       ],
                     ),
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.monitor_heart_outlined),
+                    title: const Text('VPN Diagnostics'),
+                    subtitle: const Text('查看当前出口 IP 和最近分流命中'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsVpnDiagnosticsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.rule_folder_outlined),
                     title: const Text('Routing Rules'),

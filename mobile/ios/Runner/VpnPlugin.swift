@@ -59,6 +59,8 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             getStatus(result)
         case "getStats":
             getStats(result)
+        case "getRecentLogs":
+            result([])
         case "resetStats":
             resetStats(result)
         case "updateConfig":

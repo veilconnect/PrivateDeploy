@@ -23,8 +23,9 @@ import com.privatedeploy.mobile.vpncore.gomobile.VPNService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.net.InetAddress
 import java.net.NetworkInterface
+import java.net.InetAddress
+import java.util.ArrayDeque
 import kotlin.concurrent.thread
 
 /**
@@ -49,6 +50,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val INTERFACE_TYPE_CELLULAR = 1
         private const val INTERFACE_TYPE_ETHERNET = 2
         private const val INTERFACE_TYPE_OTHER = 3
+        private const val MAX_RECENT_LOGS = 250
+        private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
 
         @Volatile
         var isRunning = false
@@ -80,6 +83,32 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 "connections_out" to 0,
                 "traffic_available" to false
             )
+        }
+
+        internal fun currentRecentLogs(): List<Map<String, Any?>> {
+            synchronized(recentRuntimeLogs) {
+                return recentRuntimeLogs.map { record ->
+                    mapOf(
+                        "message" to record.message,
+                        "timestamp" to record.timestamp,
+                    )
+                }
+            }
+        }
+
+        private fun clearRecentLogs() {
+            synchronized(recentRuntimeLogs) {
+                recentRuntimeLogs.clear()
+            }
+        }
+
+        private fun appendRecentLog(message: String, timestamp: Long) {
+            synchronized(recentRuntimeLogs) {
+                if (recentRuntimeLogs.size >= MAX_RECENT_LOGS) {
+                    recentRuntimeLogs.removeFirst()
+                }
+                recentRuntimeLogs.addLast(RuntimeLogRecord(timestamp, message))
+            }
         }
 
         internal fun currentVersion(): String {
@@ -141,6 +170,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
 
         activeConfig = config
+        clearRecentLogs()
         startForeground(NOTIFICATION_ID, createNotification("VPN is connecting"))
         broadcastStatus("connecting", null)
 
@@ -393,6 +423,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
         broadcastStatus("error", message)
     }
 
+    private fun broadcastLog(message: String, timestamp: Long) {
+        appendRecentLog(message, timestamp)
+        sendBroadcast(Intent(ACTION_VPN_LOG).apply {
+            setPackage(packageName)
+            putExtra("message", message)
+            putExtra("timestamp", timestamp)
+        })
+    }
+
     override fun getNetworkInterfaces(): String {
         return try {
             val payload = JSONArray()
@@ -463,6 +502,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return
         }
         Log.d(TAG, "[vpncore] $message")
+        broadcastLog(message, System.currentTimeMillis())
     }
 
     private fun collectUnderlyingInterfaces(): List<InterfaceSnapshot> {
@@ -706,6 +746,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
         }
     }
+
+    private data class RuntimeLogRecord(
+        val timestamp: Long,
+        val message: String,
+    )
 }
 
 const val ACTION_START = "com.privatedeploy.mobile.START_VPN"
@@ -714,5 +759,6 @@ const val ACTION_RESTART = "com.privatedeploy.mobile.RESTART_VPN"
 const val ACTION_UPDATE_CONFIG = "com.privatedeploy.mobile.UPDATE_VPN_CONFIG"
 const val ACTION_RESET_STATS = "com.privatedeploy.mobile.RESET_VPN_STATS"
 const val ACTION_VPN_STATUS = "com.privatedeploy.mobile.VPN_STATUS"
+const val ACTION_VPN_LOG = "com.privatedeploy.mobile.VPN_LOG"
 
 const val EXTRA_CONFIG = "config"

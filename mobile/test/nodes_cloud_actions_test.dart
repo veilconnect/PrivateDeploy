@@ -504,8 +504,44 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   int disconnectCalls = 0;
 
   @override
+  String? get error => null;
+
+  @override
+  bool get isConnected => status == VpnStatus.connected;
+
+  @override
+  bool get isLoading => false;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  String? get unsupportedReason => null;
+
+  @override
+  TrafficStats get stats => TrafficStats.zero();
+
+  @override
+  String? get diagnosticsEgressIp => null;
+
+  @override
+  String? get diagnosticsError => null;
+
+  @override
+  bool get isRefreshingDiagnostics => false;
+
+  @override
+  DateTime? get diagnosticsUpdatedAt => null;
+
+  @override
+  List<VpnRouteDecision> get recentRouteDecisions => const [];
+
+  @override
   Future<bool> disconnect() async {
     disconnectCalls += 1;
     return disconnectResult;
   }
+
+  @override
+  Future<void> refreshDiagnostics() async {}
 }

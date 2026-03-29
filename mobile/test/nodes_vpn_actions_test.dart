@@ -337,6 +337,21 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   @override
   String? get error => null;
 
+  @override
+  String? get diagnosticsEgressIp => null;
+
+  @override
+  String? get diagnosticsError => null;
+
+  @override
+  bool get isRefreshingDiagnostics => false;
+
+  @override
+  DateTime? get diagnosticsUpdatedAt => null;
+
+  @override
+  List<VpnRouteDecision> get recentRouteDecisions => const [];
+
   int connectCalls = 0;
   int disconnectCalls = 0;
   String? lastConfigJson;
@@ -377,6 +392,9 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     _status = disconnectResult ? VpnStatus.disconnected : VpnStatus.connected;
     return disconnectResult;
   }
+
+  @override
+  Future<void> refreshDiagnostics() async {}
 }
 
 class _FakeAppSettingsProvider extends ChangeNotifier

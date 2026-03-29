@@ -394,5 +394,56 @@ void main() {
       expect(statusCalls, greaterThanOrEqualTo(2));
       expect(vpnProvider.status, VpnStatus.connected);
     });
+
+    test('refreshDiagnostics loads egress IP and recent route decisions',
+        () async {
+      vpnProvider = VpnProvider(fetchEgressIp: () async => '203.0.113.42');
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getRecentLogs':
+            return [
+              {
+                'message':
+                    'dns: exchanged A www.wikipedia.org. 180 IN A 103.102.166.224',
+                'timestamp': 1,
+              },
+              {
+                'message':
+                    'outbound/shadowsocks[新加坡-SS]: outbound connection to 103.102.166.224:443',
+                'timestamp': 2,
+              },
+            ];
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.loadStatus();
+      await vpnProvider.refreshDiagnostics();
+
+      expect(vpnProvider.diagnosticsEgressIp, '203.0.113.42');
+      expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.recentRouteDecisions, hasLength(1));
+      expect(
+        vpnProvider.recentRouteDecisions.single.domain,
+        'www.wikipedia.org',
+      );
+      expect(
+        vpnProvider.recentRouteDecisions.single.type,
+        VpnRouteDecisionType.proxy,
+      );
+    });
   });
 }

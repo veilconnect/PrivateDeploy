@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
+import 'vpn_diagnostics.dart';
 import 'vpn_models.dart';
 import 'vpn_status_helpers.dart';
 
 export 'vpn_models.dart';
+export 'vpn_diagnostics.dart';
 
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
@@ -25,9 +28,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   Timer? _statsTimer;
   StreamSubscription? _statusSub;
   StreamSubscription? _statsSub;
+  StreamSubscription? _logSub;
   Future<void>? _initializeTask;
   bool _initialized = false;
   bool _disposed = false;
+  final VpnRuntimeLogParser _runtimeLogParser = VpnRuntimeLogParser();
+  final Future<String?> Function() _fetchEgressIp;
+  String? _diagnosticsEgressIp;
+  String? _diagnosticsError;
+  bool _isRefreshingDiagnostics = false;
+  DateTime? _diagnosticsUpdatedAt;
 
   VpnStatus get status => _status;
   String? get activeProfile => _activeProfile;
@@ -37,8 +47,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isSupported => _isSupported;
   String? get unsupportedReason => _unsupportedReason;
+  String? get diagnosticsEgressIp => _diagnosticsEgressIp;
+  String? get diagnosticsError => _diagnosticsError;
+  bool get isRefreshingDiagnostics => _isRefreshingDiagnostics;
+  DateTime? get diagnosticsUpdatedAt => _diagnosticsUpdatedAt;
+  List<VpnRouteDecision> get recentRouteDecisions =>
+      _runtimeLogParser.recentDecisions;
 
-  VpnProvider() {
+  VpnProvider({
+    Future<String?> Function()? fetchEgressIp,
+  }) : _fetchEgressIp = fetchEgressIp ?? fetchVpnEgressIp {
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -75,6 +93,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
       await _statusSub?.cancel();
       await _statsSub?.cancel();
+      await _logSub?.cancel();
       _statusSub = _nativeService.statusStream.listen((nativeStatus) {
         _applyNativeStatus(nativeStatus);
       });
@@ -83,6 +102,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _stats = trafficStatsFromNative(nativeStats);
         _safeNotifyListeners();
       });
+      _logSub = _nativeService.logStream.listen(_applyNativeLogEntry);
       initializedNow = true;
     } catch (e) {
       AppLogger.error('[VpnProvider] Initialize error', e);
@@ -141,6 +161,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _isLoading = true;
     _error = null;
     _status = VpnStatus.connecting;
+    _runtimeLogParser.reset();
+    _diagnosticsEgressIp = null;
+    _diagnosticsError = null;
+    _diagnosticsUpdatedAt = null;
     _safeNotifyListeners();
 
     try {
@@ -293,6 +317,40 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  Future<void> refreshDiagnostics() async {
+    if (!_isSupported) {
+      _diagnosticsError =
+          _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      _safeNotifyListeners();
+      return;
+    }
+
+    _isRefreshingDiagnostics = true;
+    _diagnosticsError = null;
+    _safeNotifyListeners();
+
+    try {
+      final logs = await _nativeService.getRecentLogs();
+      _runtimeLogParser.replaceWith(logs);
+
+      if (_status == VpnStatus.connected) {
+        _diagnosticsEgressIp = await _fetchEgressIp();
+      } else {
+        _diagnosticsEgressIp = null;
+      }
+
+      _diagnosticsUpdatedAt = DateTime.now();
+    } on DioException catch (e) {
+      _diagnosticsError =
+          'Failed to refresh diagnostics: ${e.message ?? e.toString()}';
+    } catch (e) {
+      _diagnosticsError = 'Failed to refresh diagnostics: $e';
+    } finally {
+      _isRefreshingDiagnostics = false;
+      _safeNotifyListeners();
+    }
+  }
+
   void _startStatsPolling() {
     _stopStatsPolling();
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -370,11 +428,21 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _startStatsPolling();
     } else {
       _stopStatsPolling();
+      _diagnosticsEgressIp = null;
     }
 
     if (notify) {
       _safeNotifyListeners();
     }
+  }
+
+  void _applyNativeLogEntry(VpnNativeLogEntry entry) {
+    final decision = _runtimeLogParser.ingest(entry);
+    if (decision == null) {
+      return;
+    }
+    _diagnosticsUpdatedAt = entry.timestamp;
+    _safeNotifyListeners();
   }
 
   void _safeNotifyListeners() {
@@ -397,6 +465,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _stopStatsPolling();
     _statusSub?.cancel();
     _statsSub?.cancel();
+    _logSub?.cancel();
     super.dispose();
   }
 }

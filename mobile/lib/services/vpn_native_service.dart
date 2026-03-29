@@ -12,6 +12,7 @@ class VpnNativeService {
   StreamSubscription? _eventSubscription;
   final _statusController = StreamController<VpnNativeStatus>.broadcast();
   final _statsController = StreamController<VpnNativeStats>.broadcast();
+  final _logController = StreamController<VpnNativeLogEntry>.broadcast();
   String? _lastError;
 
   VpnNativeService._();
@@ -27,6 +28,9 @@ class VpnNativeService {
 
   /// 流量统计变化流
   Stream<VpnNativeStats> get statsStream => _statsController.stream;
+
+  /// 运行期日志变化流
+  Stream<VpnNativeLogEntry> get logStream => _logController.stream;
 
   /// 最近一次原生调用错误
   String? get lastError => _lastError;
@@ -208,6 +212,31 @@ class VpnNativeService {
     }
   }
 
+  /// 获取最近的运行日志
+  Future<List<VpnNativeLogEntry>> getRecentLogs() async {
+    try {
+      _clearLastError();
+      final result =
+          await _methodChannel.invokeMethod<List<dynamic>>('getRecentLogs');
+      if (result == null) {
+        return const [];
+      }
+
+      return result
+          .whereType<Map>()
+          .map((item) => VpnNativeLogEntry.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } on PlatformException catch (e) {
+      _recordLastError(e.message ?? 'Failed to get recent VPN logs');
+      AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
+      return const [];
+    } catch (e) {
+      _recordLastError('Failed to get recent VPN logs: $e');
+      AppLogger.error('[VpnNativeService] Failed to get recent logs', e);
+      return const [];
+    }
+  }
+
   /// 重置流量统计
   Future<bool> resetStats() async {
     try {
@@ -327,6 +356,16 @@ class VpnNativeService {
           AppLogger.error('[VpnNativeService] Native error: $error');
           break;
 
+        case 'log':
+          final payload = eventData['data'];
+          if (payload is Map) {
+            final entry = VpnNativeLogEntry.fromJson(
+              Map<String, dynamic>.from(payload),
+            );
+            _logController.add(entry);
+          }
+          break;
+
         default:
           AppLogger.warning(
               '[VpnNativeService] Unknown event type: $eventType');
@@ -341,7 +380,27 @@ class VpnNativeService {
     await _eventSubscription?.cancel();
     await _statusController.close();
     await _statsController.close();
+    await _logController.close();
     _instance = null;
+  }
+}
+
+class VpnNativeLogEntry {
+  const VpnNativeLogEntry({
+    required this.message,
+    required this.timestamp,
+  });
+
+  final String message;
+  final DateTime timestamp;
+
+  factory VpnNativeLogEntry.fromJson(Map<String, dynamic> json) {
+    final timestampMs = (json['timestamp'] as num?)?.toInt() ??
+        DateTime.now().millisecondsSinceEpoch;
+    return VpnNativeLogEntry(
+      message: json['message']?.toString() ?? '',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
+    );
   }
 }
 
