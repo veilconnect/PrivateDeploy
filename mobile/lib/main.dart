@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'core/storage/storage_service.dart';
 import 'features/home/home_screen.dart';
 import 'features/profiles/profile_provider.dart';
+import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
 import 'features/cloud/cloud_provider.dart';
 
@@ -31,6 +32,7 @@ class PrivateDeployApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => VpnProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
+        ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
       ],
       child: ScreenUtilInit(
         designSize: const Size(375, 812),

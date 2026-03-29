@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../shared/utils/logger.dart';
 import 'profile_config_normalizer.dart';
 import 'profile_model.dart';
+import '../settings/app_settings_provider.dart';
 
 export 'profile_model.dart';
 
@@ -374,21 +375,28 @@ class ProfileProvider with ChangeNotifier {
   }
 
   /// Get the active profile's sing-box config JSON for VPN connection
-  String? getActiveConfigJson() {
+  String? getActiveConfigJson({
+    VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
+  }) {
     if (_activeProfile == null) return null;
     final content = _activeProfile!.content;
     if (content == null || content.isEmpty) return null;
-    return normalizeConfigForCurrentPlatform(content);
+    return normalizeConfigForCurrentPlatform(
+      content,
+      routingSettings: routingSettings,
+    );
   }
 
   @visibleForTesting
   static String normalizeConfigForCurrentPlatform(
     String content, {
     TargetPlatform? targetPlatform,
+    VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
   }) {
     return normalizeProfileConfigForCurrentPlatform(
       content,
       targetPlatform: targetPlatform,
+      routingSettings: routingSettings,
     );
   }
 

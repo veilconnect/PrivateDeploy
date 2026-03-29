@@ -5,7 +5,9 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_vpn_actions.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -157,12 +159,48 @@ void main() {
       );
       expect(find.text('VPN connected successfully'), findsOneWidget);
     });
+
+    testWidgets('reads routing settings from app settings provider',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(
+        activeProfile: _profile(name: 'Manual A'),
+        activeConfigJson: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+      );
+
+      await _pumpActionHarness(
+        tester,
+        appSettingsProvider: _FakeAppSettingsProvider(
+          settings: const VpnRoutingSettings(
+            mode: VpnRoutingMode.global,
+            directCnDomains: false,
+            directCnIpRanges: false,
+          ),
+        ),
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: _FakeVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: profileProvider,
+          cloudProvider: _FakeCloudProvider(),
+          onUseCloudNode: (_) async {},
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(
+        profileProvider.lastRoutingSettings?.mode,
+        VpnRoutingMode.global,
+      );
+    });
   });
 }
 
 Future<void> _pumpActionHarness(
   WidgetTester tester, {
   required Future<void> Function(BuildContext context) onRun,
+  AppSettingsProvider? appSettingsProvider,
 }) async {
   tester.view.physicalSize = const Size(1440, 2400);
   tester.view.devicePixelRatio = 3.0;
@@ -174,17 +212,20 @@ Future<void> _pumpActionHarness(
       minTextAdapt: true,
       splitScreenMode: true,
       builder: (context, _) {
-        return MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) {
-                return Center(
-                  child: ElevatedButton(
-                    onPressed: () => onRun(context),
-                    child: const Text('Run'),
-                  ),
-                );
-              },
+        return ChangeNotifierProvider<AppSettingsProvider>.value(
+          value: appSettingsProvider ?? _FakeAppSettingsProvider(),
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) {
+                  return Center(
+                    child: ElevatedButton(
+                      onPressed: () => onRun(context),
+                      child: const Text('Run'),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         );
@@ -263,12 +304,18 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
   final Profile? activeProfile;
 
   final String? activeConfigJson;
+  VpnRoutingSettings? lastRoutingSettings;
 
   @override
   String? get error => null;
 
   @override
-  String? getActiveConfigJson() => activeConfigJson;
+  String? getActiveConfigJson({
+    VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
+  }) {
+    lastRoutingSettings = routingSettings;
+    return activeConfigJson;
+  }
 }
 
 class _FakeVpnProvider extends Fake implements VpnProvider {
@@ -322,8 +369,20 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   @override
   Future<bool> disconnect() async {
     disconnectCalls += 1;
-    _status =
-        disconnectResult ? VpnStatus.disconnected : VpnStatus.connected;
+    _status = disconnectResult ? VpnStatus.disconnected : VpnStatus.connected;
     return disconnectResult;
   }
+}
+
+class _FakeAppSettingsProvider extends ChangeNotifier
+    with Fake
+    implements AppSettingsProvider {
+  _FakeAppSettingsProvider({
+    VpnRoutingSettings? settings,
+  }) : _settings = settings ?? VpnRoutingSettings.defaults;
+
+  VpnRoutingSettings _settings;
+
+  @override
+  VpnRoutingSettings get vpnRoutingSettings => _settings;
 }

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../profiles/profile_provider.dart';
+import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_cloud_actions.dart';
@@ -191,7 +193,11 @@ Future<void> connectSelectedProfile({
   }
 
   final activeProfile = profileProvider.activeProfile;
-  final configJson = profileProvider.getActiveConfigJson();
+  final routingSettings =
+      context.read<AppSettingsProvider>().vpnRoutingSettings;
+  final configJson = profileProvider.getActiveConfigJson(
+    routingSettings: routingSettings,
+  );
   if (configJson == null || configJson.isEmpty) {
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
     if (readyCloudNodes.length == 1) {

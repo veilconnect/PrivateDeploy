@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -215,6 +216,238 @@ void main() {
           .cast<Map<String, dynamic>>()
           .firstWhere((item) => item['tag'] == 'auto');
       expect(auto['outbounds'], ['node-ss', 'node-trojan']);
+    });
+
+    test('normalizeConfigForCurrentPlatform applies split routing defaults',
+        () {
+      const config = '''
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["auto", "node-ss"],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["node-ss"]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "node-ss"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "geoip": ["private"],
+        "outbound": "direct"
+      }
+    ]
+  }
+}
+''';
+
+      final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
+        config,
+        routingSettings: VpnRoutingSettings.defaults,
+      );
+      final json = jsonDecode(normalized) as Map<String, dynamic>;
+      final route = json['route'] as Map<String, dynamic>;
+      final rules = (route['rules'] as List<dynamic>).cast<Map>();
+      final ruleSets = (route['rule_set'] as List<dynamic>).cast<Map>();
+      final experimental = json['experimental'] as Map<String, dynamic>;
+
+      expect(route['final'], 'select');
+      expect(
+        rules.any((rule) => rule['ip_is_private'] == true),
+        isTrue,
+      );
+      expect(
+        rules.any((rule) => rule['rule_set'] == 'pd-geosite-cn'),
+        isTrue,
+      );
+      expect(
+        rules.any((rule) => rule['rule_set'] == 'pd-geoip-cn'),
+        isTrue,
+      );
+      expect(
+        ruleSets.any((ruleSet) => ruleSet['tag'] == 'pd-geosite-cn'),
+        isTrue,
+      );
+      expect(
+        ruleSets.any((ruleSet) => ruleSet['tag'] == 'pd-geoip-cn'),
+        isTrue,
+      );
+      expect(
+        ((experimental['cache_file'] as Map<String, dynamic>)['enabled']),
+        true,
+      );
+    });
+
+    test('normalizeConfigForCurrentPlatform applies global routing mode', () {
+      const config = '''
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["auto", "node-ss"],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["node-ss"]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "node-ss"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ]
+}
+''';
+
+      final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
+        config,
+        routingSettings: const VpnRoutingSettings(
+          mode: VpnRoutingMode.global,
+          directCnDomains: true,
+          directCnIpRanges: true,
+        ),
+      );
+      final json = jsonDecode(normalized) as Map<String, dynamic>;
+      final route = json['route'] as Map<String, dynamic>;
+      final rules = (route['rules'] as List<dynamic>).cast<Map>();
+
+      expect(route['final'], 'select');
+      expect(
+        rules.any((rule) => rule['ip_is_private'] == true),
+        isTrue,
+      );
+      expect(
+        rules.any((rule) => rule['rule_set'] == 'pd-geosite-cn'),
+        isFalse,
+      );
+      expect(
+        rules.any((rule) => rule['rule_set'] == 'pd-geoip-cn'),
+        isFalse,
+      );
+      expect(route.containsKey('rule_set'), isFalse);
+    });
+
+    test('normalizeConfigForCurrentPlatform adds custom proxy and direct rules',
+        () {
+      const config = '''
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["auto", "node-ss"],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["node-ss"]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "node-ss"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ]
+}
+''';
+
+      final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
+        config,
+        routingSettings: const VpnRoutingSettings(
+          customDirectDomains: ['corp.local'],
+          customProxyDomains: ['openai.com'],
+          customDirectCidrs: ['10.10.0.0/16'],
+          customProxyCidrs: ['203.0.113.0/24'],
+        ),
+      );
+      final json = jsonDecode(normalized) as Map<String, dynamic>;
+      final route = json['route'] as Map<String, dynamic>;
+      final rules =
+          (route['rules'] as List<dynamic>).cast<Map<String, dynamic>>();
+
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['domain_suffix'] as List<dynamic>?)?.cast<String>(),
+                ['openai.com'],
+              ) &&
+              rule['outbound'] == 'select',
+        ),
+        isTrue,
+      );
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['domain_suffix'] as List<dynamic>?)?.cast<String>(),
+                ['corp.local'],
+              ) &&
+              rule['outbound'] == 'direct',
+        ),
+        isTrue,
+      );
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['ip_cidr'] as List<dynamic>?)?.cast<String>(),
+                ['203.0.113.0/24'],
+              ) &&
+              rule['outbound'] == 'select',
+        ),
+        isTrue,
+      );
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['ip_cidr'] as List<dynamic>?)?.cast<String>(),
+                ['10.10.0.0/16'],
+              ) &&
+              rule['outbound'] == 'direct',
+        ),
+        isTrue,
+      );
     });
   });
 

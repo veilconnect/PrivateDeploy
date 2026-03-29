@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -15,9 +16,12 @@ Future<void> pumpNodesTestApp(
   CloudProvider? cloudProvider,
   ProfileProvider? profileProvider,
   VpnProvider? vpnProvider,
+  AppSettingsProvider? appSettingsProvider,
 }) async {
   await tester.binding.setSurfaceSize(const Size(1440, 2400));
   addTearDown(() => tester.binding.setSurfaceSize(null));
+  final resolvedAppSettingsProvider =
+      appSettingsProvider ?? TestAppSettingsProvider();
 
   final app = MaterialApp(
     home: wrapInScaffold ? Scaffold(body: child) : child,
@@ -38,11 +42,10 @@ Future<void> pumpNodesTestApp(
             ),
           if (vpnProvider != null)
             ChangeNotifierProvider<VpnProvider>.value(value: vpnProvider),
+          ChangeNotifierProvider<AppSettingsProvider>.value(
+            value: resolvedAppSettingsProvider,
+          ),
         ];
-
-        if (providers.isEmpty) {
-          return app;
-        }
         return MultiProvider(providers: providers, child: app);
       },
     ),
@@ -51,6 +54,37 @@ Future<void> pumpNodesTestApp(
   await tester.pump();
   if (settle) {
     await tester.pumpAndSettle();
+  }
+}
+
+class TestAppSettingsProvider extends ChangeNotifier
+    with Fake
+    implements AppSettingsProvider {
+  TestAppSettingsProvider({
+    VpnRoutingSettings? vpnRoutingSettings,
+  }) : _vpnRoutingSettings = vpnRoutingSettings ?? VpnRoutingSettings.defaults;
+
+  VpnRoutingSettings _vpnRoutingSettings;
+
+  @override
+  VpnRoutingSettings get vpnRoutingSettings => _vpnRoutingSettings;
+
+  @override
+  Future<void> setVpnRoutingMode(VpnRoutingMode mode) async {
+    _vpnRoutingSettings = _vpnRoutingSettings.copyWith(mode: mode);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> updateVpnRoutingSettings(VpnRoutingSettings settings) async {
+    _vpnRoutingSettings = settings;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> resetVpnRoutingSettings() async {
+    _vpnRoutingSettings = VpnRoutingSettings.defaults;
+    notifyListeners();
   }
 }
 
@@ -110,7 +144,9 @@ Profile testProfile({
   );
 }
 
-class TestCloudProvider extends ChangeNotifier with Fake implements CloudProvider {
+class TestCloudProvider extends ChangeNotifier
+    with Fake
+    implements CloudProvider {
   TestCloudProvider({
     required bool hasApiKey,
     this.error,
@@ -262,7 +298,8 @@ class TestProfileProvider extends ChangeNotifier
   }
 
   @override
-  Future<int> pruneMissingCloudProfiles(Set<String> existingCloudProfiles) async {
+  Future<int> pruneMissingCloudProfiles(
+      Set<String> existingCloudProfiles) async {
     pruneCalls++;
     lastPrunedCloudProfiles = Set<String>.from(existingCloudProfiles);
     final staleCount = _profiles
