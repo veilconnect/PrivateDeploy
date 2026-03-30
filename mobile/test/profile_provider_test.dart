@@ -86,6 +86,87 @@ void main() {
     });
 
     test(
+        'normalizeConfigForCurrentPlatform blocks Android Private DNS probes to tun subnet',
+        () {
+      const config = '''
+{
+  "inbounds": [
+    {
+      "type": "tun",
+      "inet4_address": "172.19.0.1/30"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["auto", "node-ss"],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["node-ss"]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "node-ss"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "geoip": ["private"],
+        "outbound": "direct"
+      }
+    ]
+  }
+}
+''';
+
+      final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
+        config,
+        targetPlatform: TargetPlatform.android,
+      );
+      final json = jsonDecode(normalized) as Map<String, dynamic>;
+      final outbounds =
+          (json['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final route = json['route'] as Map<String, dynamic>;
+      final rules =
+          (route['rules'] as List<dynamic>).cast<Map<String, dynamic>>();
+
+      expect(
+        outbounds.any((outbound) => outbound['tag'] == 'block'),
+        isTrue,
+      );
+      expect(
+        rules.any(
+          (rule) =>
+              rule['outbound'] == 'block' &&
+              rule['network'] == 'tcp' &&
+              rule['port'] == 853 &&
+              listEquals(
+                (rule['ip_cidr'] as List<dynamic>?)?.cast<String>(),
+                ['172.19.0.0/30'],
+              ),
+        ),
+        isTrue,
+      );
+    });
+
+    test(
         'normalizeConfigForCurrentPlatform removes Android hysteria2 outbounds',
         () {
       const config = '''
