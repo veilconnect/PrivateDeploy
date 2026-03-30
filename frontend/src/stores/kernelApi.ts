@@ -43,6 +43,8 @@ import {
 import { runKernelStartAttempts } from './kernelApiStartRunner'
 import { createKernelApiWebsocketManager } from './kernelApiWebsocket'
 
+import { maybePromptToEnableSystemProxyBeforeConnect } from '@/hooks/systemProxyControlCore'
+
 import type {
   CoreApiConfig,
   CoreApiProxy,
@@ -138,7 +140,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     coreStateLoading,
     refreshConfig,
     refreshProviderProxies,
-    startCore: (profile) => startCore(profile),
+    startCore: (profile, options) => startCore(profile, options),
     getRuntimeProfile: () => runtimeProfile,
     isAutoStartKernelEnabled: () => appSettingsStore.app.autoStartKernel,
     isAutoSetSystemProxyEnabled: () => appSettingsStore.app.autoSetSystemProxy,
@@ -178,7 +180,12 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     })
   }
 
-  const startCore = async (_profile?: IProfile) => {
+  const startCore = async (
+    _profile?: IProfile,
+    options?: {
+      promptSystemProxy?: boolean
+    },
+  ) => {
     if (startCoreTask) {
       logsStore.recordKernelLog('[KernelApi] startCore joined existing start attempt')
       return startCoreTask
@@ -198,6 +205,13 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
       const { profile: profileID, branch } = appSettingsStore.app.kernel
       const profile = _profile || profilesStore.getProfileById(profileID)
       if (!profile) throw 'Choose a profile first'
+
+      if (options?.promptSystemProxy !== false) {
+        await maybePromptToEnableSystemProxyBeforeConnect({
+          appSettingsStore,
+          envStore,
+        })
+      }
 
       if (!_profile) {
         runtimeProfile = undefined

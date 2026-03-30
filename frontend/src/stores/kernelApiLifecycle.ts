@@ -18,7 +18,12 @@ type CreateKernelApiLifecycleManagerDeps = {
   coreStateLoading: Ref<boolean>
   refreshConfig: () => Promise<void>
   refreshProviderProxies: () => Promise<void>
-  startCore: (profile?: IProfile) => Promise<void>
+  startCore: (
+    profile?: IProfile,
+    options?: {
+      promptSystemProxy?: boolean
+    },
+  ) => Promise<void>
   getRuntimeProfile: () => IProfile | undefined
   isAutoStartKernelEnabled: () => boolean
   isAutoSetSystemProxyEnabled: () => boolean
@@ -70,7 +75,7 @@ export const createKernelApiLifecycleManager = ({
       await Promise.all([refreshConfig(), refreshProviderProxies()])
     } else if (isAutoStartKernelEnabled()) {
       await restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
-      await startCore()
+      await startCore(undefined, { promptSystemProxy: false })
     } else {
       await restoreSystemProxyAfterUnexpectedExit().catch(() => undefined)
     }

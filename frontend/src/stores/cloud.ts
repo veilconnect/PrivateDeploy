@@ -116,7 +116,7 @@ export const useCloudStore = defineStore('cloud', () => {
         return
       }
 
-      await kernelApiStore.startCore()
+      await kernelApiStore.startCore(undefined, { promptSystemProxy: false })
       logInfo('[CloudStore] Kernel started:', reason)
     })()
 

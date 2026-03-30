@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -534,7 +535,7 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	log.Printf("TestDownloadSpeed: proxy=%s url=%s timeout=%ds", proxyURL, testURL, timeoutSec)
 
 	if testURL == "" {
-		testURL = "https://speed.cloudflare.com/__down?bytes=5000000"
+		testURL = "https://speed.cloudflare.com/__down?bytes=1000000"
 	}
 	if timeoutSec <= 0 {
 		timeoutSec = 15
@@ -580,7 +581,7 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	resp, err := client.Get(testURL)
 	if err != nil {
 		log.Printf("TestDownloadSpeed error: %v", err)
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"%s"}`, err.Error())}
+		return speedError(err.Error())
 	}
 	defer resp.Body.Close()
 
@@ -589,7 +590,11 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 
 	if err != nil {
 		log.Printf("TestDownloadSpeed read error: %v", err)
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"%s"}`, err.Error())}
+		if result, ok := buildPartialSpeedResult(testURL, n, elapsed, err); ok {
+			log.Printf("TestDownloadSpeed partial result: %s", result)
+			return FlagResult{true, result}
+		}
+		return speedError(err.Error())
 	}
 
 	elapsedSec := elapsed.Seconds()
@@ -601,6 +606,56 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	data := fmt.Sprintf(`{"speedMbps":%.2f,"bytes":%d,"elapsedMs":%.0f,"status":"ok"}`, speedMbps, n, elapsed.Seconds()*1000)
 	log.Printf("TestDownloadSpeed result: %s", data)
 	return FlagResult{true, data}
+}
+
+func buildPartialSpeedResult(testURL string, bytesRead int64, elapsed time.Duration, readErr error) (string, bool) {
+	if bytesRead <= 0 || elapsed <= 0 {
+		return "", false
+	}
+
+	minimumSampleBytes := int64(128 * 1024)
+	expectedBytes := expectedSpeedSampleBytes(testURL)
+	if expectedBytes > 0 {
+		threshold := expectedBytes / 4
+		if threshold < minimumSampleBytes {
+			threshold = minimumSampleBytes
+		}
+		if bytesRead < threshold {
+			return "", false
+		}
+	} else if bytesRead < minimumSampleBytes {
+		return "", false
+	}
+
+	elapsedSec := elapsed.Seconds()
+	if elapsedSec <= 0 {
+		elapsedSec = 0.001
+	}
+	speedMbps := float64(bytesRead*8) / elapsedSec / 1_000_000.0
+	escapedErr, _ := json.Marshal(readErr.Error())
+	data := fmt.Sprintf(`{"speedMbps":%.2f,"bytes":%d,"elapsedMs":%.0f,"status":"partial","error":%s}`,
+		speedMbps,
+		bytesRead,
+		elapsed.Seconds()*1000,
+		string(escapedErr),
+	)
+	return data, true
+}
+
+func expectedSpeedSampleBytes(testURL string) int64 {
+	parsed, err := url.Parse(testURL)
+	if err != nil {
+		return 0
+	}
+	raw := parsed.Query().Get("bytes")
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // TestNodeDirectSpeed tests download speed for a node by spawning a temporary sing-box
@@ -617,22 +672,22 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 	// Parse outbounds
 	var outbounds []json.RawMessage
 	if err := json.Unmarshal([]byte(outboundsJSON), &outbounds); err != nil {
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"invalid outbounds: %s"}`, err.Error())}
+		return speedError("invalid outbounds: " + err.Error())
 	}
 	if len(outbounds) == 0 {
-		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"no outbounds provided"}`}
+		return speedError("no outbounds provided")
 	}
 
 	// Find sing-box binary
 	singboxPath := findSingboxBinaryFromEnv()
 	if singboxPath == "" {
-		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"sing-box binary not found"}`}
+		return speedError(fmt.Sprintf("sing-box binary not found (basePath=%s)", Env.BasePath))
 	}
 
 	// Get a free port for the temporary SOCKS5 inbound
 	localPort, err := getAvailablePort()
 	if err != nil {
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"no free port: %s"}`, err.Error())}
+		return speedError("no free port: " + err.Error())
 	}
 
 	// Use the first outbound's tag as the default route
@@ -649,36 +704,38 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 		outbounds[0], _ = json.Marshal(ob)
 	}
 
-	// Build temporary sing-box config
+	// Build temporary sing-box config — keep minimal for maximum compatibility
 	tmpConfig := map[string]interface{}{
 		"log": map[string]interface{}{
-			"disabled": true,
+			"disabled": false,
+			"level":    "info",
 		},
 		"inbounds": []map[string]interface{}{
 			{
-				"type":   "socks",
-				"tag":    "socks-in",
-				"listen": "127.0.0.1",
+				"type":        "socks",
+				"tag":         "socks-in",
+				"listen":      "127.0.0.1",
 				"listen_port": localPort,
 			},
 		},
 		"outbounds": outbounds,
 		"route": map[string]interface{}{
-			"default_mark":      0,
-			"final":             firstOutbound.Tag,
+			"final":                 firstOutbound.Tag,
 			"auto_detect_interface": true,
 		},
 	}
 
 	configBytes, err := json.Marshal(tmpConfig)
 	if err != nil {
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"config marshal: %s"}`, err.Error())}
+		return speedError("config marshal: " + err.Error())
 	}
+
+	log.Printf("TestNodeDirectSpeed: binary=%s port=%d tag=%s", singboxPath, localPort, firstOutbound.Tag)
 
 	// Write temp config file
 	tmpFile, err := os.CreateTemp("", "pd-speedtest-*.json")
 	if err != nil {
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"tmpfile: %s"}`, err.Error())}
+		return speedError("tmpfile: " + err.Error())
 	}
 	tmpFile.Write(configBytes)
 	tmpFile.Close()
@@ -689,10 +746,17 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, singboxPath, "run", "--disable-color", "-c", tmpFile.Name())
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	SetCmdWindowHidden(cmd)
+	cmd.Env = append(os.Environ(),
+		"ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true",
+		"ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER=true",
+	)
+
+	var combinedBuf bytes.Buffer
+	cmd.Stdout = &combinedBuf
+	cmd.Stderr = &combinedBuf
 	if err := cmd.Start(); err != nil {
-		return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":"start sing-box: %s"}`, err.Error())}
+		return speedError("start sing-box: " + err.Error())
 	}
 	defer func() {
 		cmd.Process.Kill()
@@ -712,13 +776,24 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 		time.Sleep(100 * time.Millisecond)
 	}
 	if !ready {
-		return FlagResult{false, `{"speedMbps":0,"status":"error","error":"sing-box socks not ready"}`}
+		errMsg := strings.TrimSpace(combinedBuf.String())
+		if errMsg == "" {
+			errMsg = "sing-box socks not ready (no output from process)"
+		}
+		log.Printf("TestNodeDirectSpeed: sing-box failed: %s", errMsg)
+		return speedError(errMsg)
 	}
 
 	// Now run the speed test through the temporary proxy
 	result := a.TestDownloadSpeed(proxyURL, "", timeoutSec)
 	log.Printf("TestNodeDirectSpeed result: %s", result.Data)
 	return result
+}
+
+// speedError builds a JSON speed test error result with properly escaped error message.
+func speedError(msg string) FlagResult {
+	escapedMsg, _ := json.Marshal(msg)
+	return FlagResult{false, fmt.Sprintf(`{"speedMbps":0,"status":"error","error":%s}`, string(escapedMsg))}
 }
 
 // findSingboxBinaryFromEnv locates the sing-box binary using the app's base path.
@@ -728,10 +803,16 @@ func findSingboxBinaryFromEnv() string {
 	if fromEnv := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_SINGBOX_PATH")); fromEnv != "" {
 		candidates = append(candidates, fromEnv)
 	}
+
+	suffix := ""
+	if goruntime.GOOS == "windows" {
+		suffix = ".exe"
+	}
+
 	if basePath != "" {
 		candidates = append(candidates,
-			filepath.Join(basePath, "data", "sing-box", "sing-box"),
-			filepath.Join(basePath, "data", "sing-box", "sing-box-latest"),
+			filepath.Join(basePath, "data", "sing-box", "sing-box"+suffix),
+			filepath.Join(basePath, "data", "sing-box", "sing-box-latest"+suffix),
 		)
 	}
 	for _, c := range candidates {
@@ -743,6 +824,47 @@ func findSingboxBinaryFromEnv() string {
 		return fromPath
 	}
 	return ""
+}
+
+// DiagnoseSingbox checks sing-box binary availability and runs a quick version check.
+// Returns a JSON string with diagnostic info for troubleshooting.
+func (a *App) DiagnoseSingbox() FlagResult {
+	basePath := Env.BasePath
+	exeDir := filepath.Dir(Env.ExecPath)
+
+	singboxPath := findSingboxBinaryFromEnv()
+
+	info := map[string]interface{}{
+		"basePath":    basePath,
+		"exeDir":      exeDir,
+		"os":          goruntime.GOOS,
+		"arch":        goruntime.GOARCH,
+		"singboxPath": singboxPath,
+		"found":       singboxPath != "",
+	}
+
+	if singboxPath != "" {
+		fi, err := os.Stat(singboxPath)
+		if err == nil {
+			info["singboxSize"] = fi.Size()
+			info["singboxMode"] = fi.Mode().String()
+		}
+
+		// Try running sing-box version
+		cmd := exec.Command(singboxPath, "version")
+		SetCmdWindowHidden(cmd)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			info["versionError"] = err.Error()
+			info["versionOutput"] = string(out)
+		} else {
+			info["version"] = strings.TrimSpace(string(out))
+		}
+	}
+
+	data, _ := json.Marshal(info)
+	log.Printf("DiagnoseSingbox: %s", string(data))
+	return FlagResult{singboxPath != "", string(data)}
 }
 
 // getAvailablePort returns an available TCP port on localhost (non-exported helper).

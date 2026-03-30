@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 
 import { useCloudStore, useAppSettingsStore, useKernelApiStore, useProfilesStore } from '@/stores'
 import { formatRelativeTime, message } from '@/utils'
+import { formatSpeedFailureReason, isSpeedTimeoutError } from '@/views/CloudView/cloudViewPresentation'
 import GroupsController from '@/views/HomeView/components/GroupsController.vue'
 import KernelLogs from '@/views/HomeView/components/KernelLogs.vue'
 import OverView from '@/views/HomeView/components/OverView.vue'
@@ -339,9 +340,22 @@ onMounted(() => {
               <Tag v-if="node.speedTesting" color="default">
                 {{ t('cloud.speed.testing') }}
               </Tag>
-              <Tag v-else-if="node.speedMbps != null" :color="node.speedMbps < 0 ? 'red' : node.speedMbps > 50 ? 'green' : node.speedMbps > 10 ? 'cyan' : 'red'">
-                {{ node.speedMbps < 0 ? t('cloud.speed.timeout') : t('cloud.speed.mbps', { speed: node.speedMbps }) }}
-              </Tag>
+              <template v-else-if="node.speedMbps != null">
+                <Tag v-if="node.speedMbps < 0" color="red" :title="node.speedError || ''">
+                  {{
+                    isSpeedTimeoutError(node.speedError)
+                      ? t('cloud.speed.timeout')
+                      : t('cloud.speed.failedWithReason', { reason: formatSpeedFailureReason(node.speedError, t) })
+                  }}
+                </Tag>
+                <Tag
+                  v-else
+                  :color="node.speedMbps > 50 ? 'green' : node.speedMbps > 10 ? 'cyan' : 'red'"
+                  :title="node.speedError || ''"
+                >
+                  {{ node.speedError ? t('cloud.speed.mbpsPartial', { speed: node.speedMbps }) : t('cloud.speed.mbps', { speed: node.speedMbps }) }}
+                </Tag>
+              </template>
               <Tag v-else-if="node.speedMs != null" :color="node.speedMs < 0 ? 'red' : node.speedMs < 200 ? 'green' : node.speedMs < 500 ? 'cyan' : 'red'">
                 {{ node.speedMs < 0 ? t('cloud.speed.timeout') : t('cloud.speed.ms', { ms: node.speedMs }) }}
               </Tag>

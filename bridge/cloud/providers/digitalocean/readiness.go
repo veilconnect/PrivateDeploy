@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -479,19 +480,9 @@ func parseProtocolRepairAttempts(extra map[string]string, fallback int) int {
 }
 
 func findSingboxBinary(basePath string) string {
-	candidates := make([]string, 0, 8)
+	candidates := singboxBinaryCandidates(basePath, runtime.GOOS)
 	if fromEnv := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_SINGBOX_PATH")); fromEnv != "" {
-		candidates = append(candidates, fromEnv)
-	}
-
-	if strings.TrimSpace(basePath) != "" {
-		candidates = append(candidates,
-			filepath.Join(basePath, "data", "sing-box", "sing-box"),
-			filepath.Join(basePath, "data", "sing-box", "sing-box-latest"),
-			filepath.Join(basePath, "build", "bin", "data", "sing-box", "sing-box"),
-			filepath.Join(basePath, "build", "bin", "data", "sing-box", "sing-box-latest"),
-			filepath.Join(basePath, "test-tools", "sing-box"),
-		)
+		candidates = append([]string{fromEnv}, candidates...)
 	}
 
 	for _, candidate := range candidates {
@@ -504,6 +495,26 @@ func findSingboxBinary(basePath string) string {
 		return fromPath
 	}
 	return ""
+}
+
+func singboxBinaryCandidates(basePath, goos string) []string {
+	candidates := make([]string, 0, 5)
+	if strings.TrimSpace(basePath) == "" {
+		return candidates
+	}
+
+	suffix := ""
+	if goos == "windows" {
+		suffix = ".exe"
+	}
+
+	return append(candidates,
+		filepath.Join(basePath, "data", "sing-box", "sing-box"+suffix),
+		filepath.Join(basePath, "data", "sing-box", "sing-box-latest"+suffix),
+		filepath.Join(basePath, "build", "bin", "data", "sing-box", "sing-box"+suffix),
+		filepath.Join(basePath, "build", "bin", "data", "sing-box", "sing-box-latest"+suffix),
+		filepath.Join(basePath, "test-tools", "sing-box"+suffix),
+	)
 }
 
 func normalizeRealityPublicKey(value string) string {
