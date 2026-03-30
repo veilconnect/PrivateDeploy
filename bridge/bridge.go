@@ -2,7 +2,9 @@ package bridge
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -95,6 +97,7 @@ func CreateApp(fs embed.FS) *App {
 	}
 
 	extractEmbeddedFiles(fs)
+	seedRuntimeData()
 
 	loadConfig()
 
@@ -319,6 +322,133 @@ func extractFiles(fs embed.FS, srcDir, dstDir string) {
 			}
 		}
 	}
+}
+
+// seedRuntimeData copies bundled runtime data (e.g. sing-box binary) from the
+// installation directory to BasePath when BasePath differs from the exe directory
+// (i.e. on Windows system installs where BasePath is %LOCALAPPDATA%\PrivateDeploy).
+// Existing files are refreshed when the bundled copy changes so upgrades do not
+// leave behind a stale runtime.
+func seedRuntimeData() {
+	exeDir := filepath.Dir(Env.ExecPath)
+	basePath := Env.BasePath
+
+	// Only needed when BasePath is redirected away from the exe directory.
+	if filepath.Clean(exeDir) == filepath.Clean(basePath) {
+		return
+	}
+
+	// Files to seed from install dir → BasePath (relative paths).
+	seeds := []string{
+		filepath.Join("data", "sing-box", "sing-box"),
+	}
+	if sysruntime.GOOS == "windows" {
+		seeds = []string{
+			filepath.Join("data", "sing-box", "sing-box.exe"),
+		}
+	}
+
+	for _, rel := range seeds {
+		src := filepath.Join(exeDir, rel)
+		dst := filepath.Join(basePath, rel)
+
+		srcInfo, err := os.Stat(src)
+		if err != nil || srcInfo.IsDir() {
+			continue // source not bundled
+		}
+
+		shouldCopy, err := shouldRefreshSeededFile(src, dst, srcInfo.Size())
+		if err != nil {
+			log.Printf("seedRuntimeData: compare %s → %s: %v", src, dst, err)
+			continue
+		}
+		if !shouldCopy {
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			log.Printf("seedRuntimeData: mkdir %s: %v", filepath.Dir(dst), err)
+			continue
+		}
+
+		if err := copyFile(src, dst, srcInfo.Mode()); err != nil {
+			log.Printf("seedRuntimeData: copy %s → %s: %v", src, dst, err)
+		} else {
+			log.Printf("seedRuntimeData: seeded %s", rel)
+		}
+	}
+}
+
+func shouldRefreshSeededFile(src, dst string, srcSize int64) (bool, error) {
+	dstInfo, err := os.Stat(dst)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	if dstInfo.IsDir() {
+		return true, nil
+	}
+
+	if dstInfo.Size() != srcSize {
+		return true, nil
+	}
+
+	equal, err := filesHaveSameHash(src, dst)
+	if err != nil {
+		return false, err
+	}
+	return !equal, nil
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func filesHaveSameHash(src, dst string) (bool, error) {
+	srcHash, err := hashFile(src)
+	if err != nil {
+		return false, err
+	}
+
+	dstHash, err := hashFile(dst)
+	if err != nil {
+		return false, err
+	}
+
+	return srcHash == dstHash, nil
+}
+
+func hashFile(path string) ([sha256.Size]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+
+	var digest [sha256.Size]byte
+	copy(digest[:], hasher.Sum(nil))
+	return digest, nil
 }
 
 func loadConfig() {

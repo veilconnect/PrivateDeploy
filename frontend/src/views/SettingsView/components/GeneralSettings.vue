@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { BrowserOpenURL, WriteFile, RemoveFile, AbsolutePath, MakeDir } from '@/bridge'
 import { DefaultFontFamily, LocalesFilePath } from '@/constant/app'
 import { Theme, WindowStartState, Color, WebviewGpuPolicy } from '@/enums/app'
+import { useSystemProxyControl } from '@/hooks'
 import { useAppSettingsStore, useEnvStore } from '@/stores'
 import {
   APP_TITLE,
@@ -25,12 +26,14 @@ const isTaskScheduled = ref(false)
 const { t } = useI18n()
 const appSettings = useAppSettingsStore()
 const envStore = useEnvStore()
+const { setAutomationEnabled } = useSystemProxyControl()
 const capabilities = computed(() => envStore.capabilities)
 const supportsSystemProxy = computed(() => capabilities.value.systemProxySupported)
 const supportsAdminElevation = computed(() => capabilities.value.adminElevationSupported)
 const supportsWebviewGpuPolicy = computed(() => capabilities.value.configurableWebviewGpuPolicy)
 const supportsStartupLaunch = computed(() => capabilities.value.startupLaunchSupported)
 const supportsStartupDelay = computed(() => capabilities.value.startupDelaySupported)
+const systemProxyAutomation = ref(false)
 const systemProxyStateLabel = computed(() => {
   return t(`settings.systemProxy.status.${envStore.systemProxyState}`)
 })
@@ -179,6 +182,13 @@ const restorePreviousSystemProxy = async () => {
   }
 }
 
+const onSystemProxyAutomationChange = async (enabled: boolean) => {
+  systemProxyAutomation.value = await setAutomationEnabled(enabled, { forcePrompt: false })
+  await envStore.updateSystemProxyStatus().catch((error) => {
+    console.error(error)
+  })
+}
+
 const syncPlatformSettings = async () => {
   await envStore.updateSystemProxyStatus()
 
@@ -206,6 +216,14 @@ watch([supportsStartupLaunch, supportsAdminElevation], () => {
     console.error(error)
   })
 })
+
+watch(
+  () => appSettings.app.autoSetSystemProxy,
+  (value) => {
+    systemProxyAutomation.value = value
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -269,7 +287,10 @@ watch([supportsStartupLaunch, supportsAdminElevation], () => {
         {{ t('settings.autoSetSystemProxy') }}
       </div>
       <div class="flex items-center">
-        <Switch v-model="appSettings.app.autoSetSystemProxy" />
+        <Switch
+          v-model="systemProxyAutomation"
+          @change="onSystemProxyAutomationChange"
+        />
         <Button
           v-if="appSettings.app.systemProxyBackup || appSettings.app.systemProxyManaged"
           @click="restorePreviousSystemProxy"
