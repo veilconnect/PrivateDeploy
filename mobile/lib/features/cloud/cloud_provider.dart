@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
@@ -636,26 +637,20 @@ class CloudProvider with ChangeNotifier {
 
     _nodeRecords = importedRecords;
     await _saveNodeRecords();
-    _instances = [];
+    _instances = importedRecords.values
+        .map((record) => record.toCloudInstance())
+        .toList()
+      ..sort(
+        (a, b) =>
+            (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)),
+      );
     _regions = [];
     _plans = [];
     _error = null;
     _configLoaded = false;
-    await refreshCloudConfig(notify: false);
-    if (_hasApiKey) {
-      await loadRegions(notify: false);
-      await loadPlans(notify: false);
-      await loadInstances(notify: false);
-    } else if (importedRecords.isNotEmpty) {
-      _instances = importedRecords.values
-          .map((record) => record.toCloudInstance())
-          .toList()
-        ..sort(
-          (a, b) => (b.createdAt ?? DateTime(0))
-              .compareTo(a.createdAt ?? DateTime(0)),
-        );
-    }
     notifyListeners();
+
+    unawaited(_refreshImportedBackupCloudState());
   }
 
   String? generateNodeConfig(CloudInstance instance) {
@@ -676,5 +671,13 @@ class CloudProvider with ChangeNotifier {
     }
 
     return true;
+  }
+
+  Future<void> _refreshImportedBackupCloudState() async {
+    await refreshCloudConfig(notify: false);
+    if (_hasApiKey) {
+      await loadInstances(notify: false);
+    }
+    notifyListeners();
   }
 }

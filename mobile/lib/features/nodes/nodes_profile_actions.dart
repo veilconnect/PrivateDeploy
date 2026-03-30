@@ -1,22 +1,16 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/subscription/parser.dart';
+import '../../core/subscription/subscription_fetcher.dart';
+import '../../shared/utils/logger.dart';
 import '../profiles/profile_provider.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
 
-Future<Object?> _fetchSubscriptionData(String url) async {
-  final dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-      headers: {'User-Agent': 'PrivateDeploy/1.0'},
-    ),
-  );
-  final resp = await dio.get(url);
-  return resp.data;
+String _subscriptionSourceLabel(String url) {
+  final uri = Uri.tryParse(url.trim());
+  return uri?.host.isNotEmpty == true ? uri!.host : 'unknown source';
 }
 
 Future<void> confirmDeleteProfile({
@@ -74,8 +68,9 @@ Future<void> showRenameProfileFlow({
 
   showNodesActionSnackBar(
     context,
-    message:
-        success ? 'Profile renamed' : profileProvider.error ?? 'Failed to rename',
+    message: success
+        ? 'Profile renamed'
+        : profileProvider.error ?? 'Failed to rename',
     backgroundColor: success ? Colors.green : Colors.red,
   );
 }
@@ -101,12 +96,17 @@ Future<void> showImportProfileFlow({
   );
 
   try {
+    final sourceLabel = _subscriptionSourceLabel(request.url);
     final responseData =
-        await (fetchSubscriptionData ?? _fetchSubscriptionData)(request.url);
-    final config =
-        (parseSubscriptionData ??
-            SubscriptionParser.parseResponseDataToSingboxConfig)(responseData);
+        await (fetchSubscriptionData ?? fetchSubscriptionResponseData)(
+      request.url,
+    );
+    final config = (parseSubscriptionData ??
+        SubscriptionParser.parseResponseDataToSingboxConfig)(responseData);
     if (config == null) {
+      AppLogger.warning(
+        '[Nodes] Failed to parse subscription response from $sourceLabel',
+      );
       if (context.mounted) {
         showNodesActionSnackBar(
           context,
@@ -127,6 +127,17 @@ Future<void> showImportProfileFlow({
       content: config,
     );
 
+    if (success) {
+      AppLogger.info(
+        '[Nodes] Imported subscription profile "$profileName" from $sourceLabel',
+      );
+    } else {
+      AppLogger.warning(
+        '[Nodes] Failed to create imported profile "$profileName" from $sourceLabel: '
+        '${profileProvider.error ?? 'unknown error'}',
+      );
+    }
+
     if (!context.mounted) {
       return;
     }
@@ -139,7 +150,8 @@ Future<void> showImportProfileFlow({
       backgroundColor: success ? Colors.green : Colors.red,
       replaceCurrent: true,
     );
-  } catch (e) {
+  } catch (e, stackTrace) {
+    AppLogger.error('[Nodes] Subscription import failed', e, stackTrace);
     if (!context.mounted) {
       return;
     }
