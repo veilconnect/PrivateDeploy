@@ -49,12 +49,19 @@ class SettingsServerSection extends StatelessWidget {
                     title: const Text('Cloud Provider'),
                     subtitle: Text('${cloud.providerName} (direct)'),
                   ),
+                  const ListTile(
+                    leading: Icon(Icons.shield_outlined),
+                    title: Text('Sensitive Data'),
+                    subtitle: Text(
+                      'API keys stay in device secure storage. Backup export and restore can expose secrets, so rotate keys if a backup is shared.',
+                    ),
+                  ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.copy_all_outlined),
                     title: const Text('Copy Cloud Backup'),
                     subtitle: const Text(
-                      'Copy sensitive JSON backup with API key and local node records',
+                      'Review the summary first, then copy sensitive backup JSON with API key and local node records',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onExportBackup(cloud),
@@ -63,7 +70,7 @@ class SettingsServerSection extends StatelessWidget {
                     leading: const Icon(Icons.restore_outlined),
                     title: const Text('Restore Cloud Backup'),
                     subtitle: const Text(
-                      'Paste a backup JSON to restore API key and nodes',
+                      'Paste a backup JSON, validate it, then confirm restoring the API key and local nodes',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onImportBackup(cloud),

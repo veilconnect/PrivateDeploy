@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_backup.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/settings_screen.dart';
@@ -88,6 +89,10 @@ void main() {
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('abcd1234...'), findsOneWidget);
       expect(find.text('vultr (direct)'), findsOneWidget);
+      expect(
+        find.textContaining('API keys stay in device secure storage'),
+        findsOneWidget,
+      );
       expect(find.text('Connected'), findsOneWidget);
       expect(find.text('Routing Mode'), findsOneWidget);
       expect(find.text('局域网直连、国内域名直连、国内 IP 直连'), findsOneWidget);
@@ -399,9 +404,11 @@ void main() {
       expect(find.text('Local cloud data cleared'), findsOneWidget);
     });
 
-    testWidgets('exports cloud backup to clipboard without revealing payload',
+    testWidgets(
+        'reviews backup summary before copying sensitive payload to clipboard',
         (tester) async {
-      const payload = '{"provider":"vultr","apiKey":"secret"}';
+      const payload =
+          '{"version":1,"provider":"vultr","exportedAt":"2026-03-30T10:00:00.000Z","apiKey":"secret","nodeRecords":{"node-1":{"label":"ams-node"}}}';
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
         exportBackupPayload: payload,
@@ -422,16 +429,27 @@ void main() {
       await tester.tap(find.widgetWithText(ListTile, 'Copy Cloud Backup'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Cloud Backup Copied'), findsOneWidget);
-      expect(find.textContaining('copied to your clipboard'), findsOneWidget);
+      expect(find.text('Cloud Backup Ready'), findsOneWidget);
+      expect(find.textContaining('Review the backup summary'), findsOneWidget);
       expect(find.text('Backup Summary'), findsOneWidget);
       expect(find.textContaining('"apiKey"'), findsNothing);
-      expect(clipboardText, payload);
+      expect(clipboardText, isNull);
 
-      await tester.tap(find.text('Copy Again'));
+      await tester.tap(find.text('Copy Sensitive Backup'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Backup copied again'), findsOneWidget);
+      expect(find.text('Copy Sensitive Backup?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(clipboardText, isNull);
+
+      await tester.tap(find.text('Copy Sensitive Backup'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sensitive backup copied to clipboard'), findsOneWidget);
       expect(clipboardText, payload);
 
       await tester.tap(find.text('Reveal JSON'));
@@ -444,8 +462,16 @@ void main() {
       expect(find.textContaining('"apiKey":"secret"'), findsOneWidget);
     });
 
-    testWidgets('restores cloud backup from clipboard', (tester) async {
-      const payload = '{"provider":"vultr","apiKey":"secret"}';
+    testWidgets('restores cloud backup from clipboard after preview',
+        (tester) async {
+      final payload = createCloudBackupJson(
+        provider: vultrCloudBackupProvider,
+        apiKey: 'secret',
+        exportedAt: DateTime.utc(2026, 3, 30, 10),
+        nodeRecords: const {
+          'node-1': {'label': 'ams-node'},
+        },
+      );
       final cloudProvider = TestCloudProvider(hasApiKey: true);
       clipboardText = payload;
 
@@ -465,7 +491,21 @@ void main() {
       await tester.tap(find.widgetWithText(ListTile, 'Restore Cloud Backup'));
       await tester.pumpAndSettle();
 
+      expect(find.text('Restore Preview'), findsOneWidget);
+      expect(find.textContaining('Nodes: ams-node'), findsOneWidget);
+
       await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Restore This Backup?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.importedBackupPayload, isNull);
+
+      await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Restore').last);
       await tester.pump();
       await tester.pumpAndSettle();
 
@@ -475,7 +515,14 @@ void main() {
 
     testWidgets('shows restore backup errors inside the dialog',
         (tester) async {
-      const payload = '{"provider":"vultr","apiKey":"secret"}';
+      final payload = createCloudBackupJson(
+        provider: vultrCloudBackupProvider,
+        apiKey: 'secret',
+        exportedAt: DateTime.utc(2026, 3, 30, 10),
+        nodeRecords: const {
+          'node-1': {'label': 'ams-node'},
+        },
+      );
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
       )..importBackupError = 'Invalid backup';
@@ -498,12 +545,40 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Restore').last);
       await tester.pump();
       await tester.pumpAndSettle();
 
       expect(cloudProvider.importedBackupPayload, payload);
       expect(find.text('Invalid backup'), findsOneWidget);
       expect(find.text('Restore'), findsOneWidget);
+    });
+
+    testWidgets('validates restore backup JSON before allowing restore',
+        (tester) async {
+      clipboardText = '{"provider":"vultr","nodeRecords":[]}';
+      final cloudProvider = TestCloudProvider(hasApiKey: true);
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: cloudProvider,
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+        appSettingsProvider: TestAppSettingsProvider(),
+        settle: true,
+      );
+
+      await tester.ensureVisible(
+        find.widgetWithText(ListTile, 'Restore Cloud Backup'),
+      );
+      await tester.tap(find.widgetWithText(ListTile, 'Restore Cloud Backup'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Backup nodeRecords must be an object'), findsOneWidget);
+      expect(find.text('Restore Preview'), findsNothing);
+      expect(cloudProvider.importedBackupPayload, isNull);
     });
   });
 }

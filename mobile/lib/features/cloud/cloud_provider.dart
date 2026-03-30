@@ -624,14 +624,9 @@ class CloudProvider with ChangeNotifier {
 
     final importedRecords = <String, VultrNodeRecord>{};
     for (final entry in backup.nodeRecords.entries) {
-      if (entry.value is! Map) {
-        throw FormatException(
-          'Backup node record "${entry.key}" is not a JSON object',
-        );
-      }
       importedRecords[entry.key] = VultrNodeRecord.fromJson(
         entry.key,
-        Map<String, dynamic>.from(entry.value as Map),
+        entry.value,
       );
     }
 
