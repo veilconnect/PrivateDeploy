@@ -211,6 +211,7 @@ void main() {
           onViewDetails: (_) {},
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
         ),
       );
 
@@ -239,6 +240,7 @@ void main() {
           onViewDetails: (_) {},
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
         ),
       );
 
@@ -254,6 +256,7 @@ void main() {
     testWidgets('shows ready cloud node and forwards callbacks', (tester) async {
       CloudInstance? usedNode;
       CloudInstance? detailedNode;
+      CloudInstance? testedNode;
 
       await pumpNodesTestApp(
         tester,
@@ -262,6 +265,13 @@ void main() {
           cloudProvider: TestCloudProvider(
             hasApiKey: true,
             instances: [readyCloudTestInstance(label: 'fra-node')],
+            latencyChecks: {
+              'fra-node': CloudLatencyCheck.success(
+                latencyMs: 38,
+                endpointLabel: 'Trojan',
+                updatedAt: DateTime(2026, 3, 30, 21, 0),
+              ),
+            },
           ),
           profileProvider: TestProfileProvider(
             profiles: [testProfile(name: 'Cloud: fra-node')],
@@ -274,12 +284,20 @@ void main() {
           onViewDetails: (instance) => detailedNode = instance,
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (instance) => usedNode = instance,
+          onTestCloudNodeLatency: (instance) => testedNode = instance,
         ),
       );
 
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Active Node'), findsOneWidget);
       expect(find.text('IN USE'), findsOneWidget);
+      expect(find.text('38 ms'), findsOneWidget);
+      expect(find.text('Fastest endpoint: Trojan'), findsOneWidget);
+
+      await tester.tap(find.text('38 ms'));
+      await tester.pump();
+
+      expect(testedNode?.label, 'fra-node');
 
       await tester.tap(find.byIcon(Icons.more_vert));
       await tester.pumpAndSettle();

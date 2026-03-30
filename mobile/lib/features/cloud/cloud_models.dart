@@ -43,6 +43,52 @@ class CloudInstance {
   bool get hasIp => ipv4 != null && ipv4!.isNotEmpty && ipv4 != '0.0.0.0';
 }
 
+class CloudLatencyCheck {
+  final bool isTesting;
+  final int? latencyMs;
+  final String? endpointLabel;
+  final String? error;
+  final DateTime? updatedAt;
+
+  const CloudLatencyCheck({
+    required this.isTesting,
+    this.latencyMs,
+    this.endpointLabel,
+    this.error,
+    this.updatedAt,
+  });
+
+  factory CloudLatencyCheck.testing({DateTime? updatedAt}) {
+    return CloudLatencyCheck(isTesting: true, updatedAt: updatedAt);
+  }
+
+  factory CloudLatencyCheck.success({
+    required int latencyMs,
+    String? endpointLabel,
+    DateTime? updatedAt,
+  }) {
+    return CloudLatencyCheck(
+      isTesting: false,
+      latencyMs: latencyMs,
+      endpointLabel: endpointLabel,
+      updatedAt: updatedAt,
+    );
+  }
+
+  factory CloudLatencyCheck.failure({
+    required String error,
+    String? endpointLabel,
+    DateTime? updatedAt,
+  }) {
+    return CloudLatencyCheck(
+      isTesting: false,
+      endpointLabel: endpointLabel,
+      error: error,
+      updatedAt: updatedAt,
+    );
+  }
+}
+
 class CloudRegion {
   final String id;
   final String city;

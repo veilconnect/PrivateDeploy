@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
@@ -148,6 +150,18 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   void initState() {
     super.initState();
     _labelController = TextEditingController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final provider = context.read<CloudProvider>();
+      if (provider.regions.isEmpty && !provider.isLoadingRegions) {
+        unawaited(provider.loadRegions());
+      }
+      if (provider.plans.isEmpty && !provider.isLoadingPlans) {
+        unawaited(provider.loadPlans());
+      }
+    });
   }
 
   @override
@@ -160,6 +174,12 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   Widget build(BuildContext context) {
     final provider = context.watch<CloudProvider>();
     final availablePlans = _availablePlans(provider, _selectedRegion);
+    final isLoadingOptions =
+        provider.isLoadingRegions || provider.isLoadingPlans;
+    final missingRegions = provider.regions.isEmpty;
+    final missingPlans = provider.plans.isEmpty;
+    final canDeploy =
+        !missingRegions && !missingPlans && _selectedRegion != null && _selectedPlan != null;
 
     return AlertDialog(
       title: const Text('Deploy Node'),
@@ -167,6 +187,59 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (missingRegions || missingPlans)
+              Container(
+                width: double.infinity,
+                margin: EdgeInsets.only(bottom: 16.h),
+                padding: EdgeInsets.all(12.w),
+                decoration: BoxDecoration(
+                  color: Colors.blueGrey.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (isLoadingOptions) ...[
+                          SizedBox(
+                            width: 16.w,
+                            height: 16.w,
+                            child: const CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          ),
+                          SizedBox(width: 8.w),
+                        ] else
+                          const Icon(Icons.cloud_off_outlined, size: 18),
+                        Expanded(
+                          child: Text(
+                            isLoadingOptions
+                                ? 'Loading regions and plans...'
+                                : provider.error ??
+                                    'Deployment options are unavailable right now.',
+                            style: TextStyle(fontSize: 12.sp),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!isLoadingOptions) ...[
+                      SizedBox(height: 10.h),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            unawaited(provider.loadRegions());
+                            unawaited(provider.loadPlans());
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry Loading'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             TextField(
               controller: _labelController,
               decoration: const InputDecoration(
@@ -187,7 +260,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                     ),
                   )
                   .toList(),
-              onChanged: (value) {
+              onChanged: missingRegions
+                  ? null
+                  : (value) {
                 setState(() {
                   _selectedRegion = value;
                   final availablePlanIds = _availablePlans(provider, value)
@@ -203,7 +278,13 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
               initialValue: _selectedPlan,
-              decoration: const InputDecoration(labelText: 'Plan'),
+              decoration: InputDecoration(
+                labelText: 'Plan',
+                helperText:
+                    !missingPlans && _selectedRegion != null && availablePlans.isEmpty
+                    ? 'No supported plans are available in this region.'
+                    : null,
+              ),
               isExpanded: true,
               items: availablePlans
                   .map(
@@ -213,7 +294,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                     ),
                   )
                   .toList(),
-              onChanged: availablePlans.isEmpty
+              onChanged: missingPlans || availablePlans.isEmpty
                   ? null
                   : (value) => setState(() => _selectedPlan = value),
             ),
@@ -226,7 +307,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
+          onPressed: !canDeploy
+              ? null
+              : () {
             if (_selectedRegion == null || _selectedPlan == null) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -260,7 +343,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               ),
             );
           },
-          child: const Text('Deploy'),
+          child: Text(isLoadingOptions && !canDeploy ? 'Loading...' : 'Deploy'),
         ),
       ],
     );

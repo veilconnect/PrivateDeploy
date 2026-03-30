@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../../shared/utils/logger.dart';
@@ -15,6 +16,9 @@ import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
 
+typedef CloudLatencyProbe =
+    Future<CloudLatencyCheck> Function(CloudInstance instance);
+
 class CloudProvider with ChangeNotifier {
   static const _providerName = 'vultr';
   static const String _apiKeyStorageKey = 'mobile_cloud_vultr_api_key';
@@ -26,21 +30,30 @@ class CloudProvider with ChangeNotifier {
   bool _isLoading = false;
   bool _configLoaded = false;
   bool _hasApiKey = false;
+  bool _isLoadingRegions = false;
+  bool _isLoadingPlans = false;
   String? _error;
   String? _apiKey;
   final String _selectedProfile = PortProfileAllocator.randomProfile;
   Map<String, VultrNodeRecord> _nodeRecords = {};
+  final Map<String, CloudLatencyCheck> _latencyChecks = {};
+  Future<void>? _regionsLoadFuture;
+  Future<void>? _plansLoadFuture;
+  final CloudLatencyProbe _latencyProbe;
 
   List<CloudInstance> get instances => _instances;
   List<CloudRegion> get regions => _regions;
   List<CloudPlan> get plans => _plans;
   bool get isLoading => _isLoading;
   bool get configLoaded => _configLoaded;
+  bool get isLoadingRegions => _isLoadingRegions;
+  bool get isLoadingPlans => _isLoadingPlans;
   String? get error => _error;
   bool get hasApiKey => _hasApiKey;
   String? get apiKey => _apiKey;
   bool get isConfigured => _hasApiKey && _configLoaded;
   String get providerName => _providerName;
+  CloudLatencyCheck? latencyCheckFor(String instanceId) => _latencyChecks[instanceId];
 
   String? resolveEgressIpForProfileName(String? profileName) {
     final label = _cloudInstanceLabelFromProfileName(profileName);
@@ -81,7 +94,8 @@ class CloudProvider with ChangeNotifier {
     );
   }
 
-  CloudProvider() {
+  CloudProvider({CloudLatencyProbe? latencyProbe})
+      : _latencyProbe = latencyProbe ?? _defaultLatencyProbe {
     _init();
   }
 
@@ -363,6 +377,9 @@ class CloudProvider with ChangeNotifier {
         (a, b) =>
             (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)),
       );
+      _latencyChecks.removeWhere(
+        (instanceId, _) => !_instances.any((instance) => instance.id == instanceId),
+      );
 
       for (final item in _instances) {
         if (item.id.isNotEmpty) {
@@ -448,53 +465,100 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<void> loadRegions({bool notify = true}) async {
+    if (_regionsLoadFuture != null) {
+      return _regionsLoadFuture!;
+    }
+
     if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
       return;
     }
 
-    try {
-      final client = await _cloudClient();
-      final data = await client.listRegions();
-      final rawRegions = (data['regions'] as List?) ?? const [];
-      _regions = rawRegions
-          .whereType<Map>()
-          .map((item) => CloudRegion.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-      _error = null;
-    } catch (e) {
-      _error = 'Failed to load regions: ${cloudProviderMessageFromError(e)}';
-      AppLogger.error('[CloudProvider] Load regions error', e);
-    }
-
+    final completer = Completer<void>();
+    _regionsLoadFuture = completer.future;
+    _isLoadingRegions = true;
     if (notify) {
       notifyListeners();
     }
+
+    () async {
+      try {
+        final client = await _cloudClient();
+        final data = await client.listRegions();
+        final rawRegions = (data['regions'] as List?) ?? const [];
+        _regions = rawRegions
+            .whereType<Map>()
+            .map((item) => CloudRegion.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
+        _error = null;
+      } catch (e) {
+        _error = 'Failed to load regions: ${cloudProviderMessageFromError(e)}';
+        AppLogger.error('[CloudProvider] Load regions error', e);
+      } finally {
+        _isLoadingRegions = false;
+        _regionsLoadFuture = null;
+        if (notify) {
+          notifyListeners();
+        }
+        completer.complete();
+      }
+    }();
+
+    return completer.future;
   }
 
   Future<void> loadPlans({bool notify = true}) async {
+    if (_plansLoadFuture != null) {
+      return _plansLoadFuture!;
+    }
+
     if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
       return;
     }
 
-    try {
-      final client = await _cloudClient();
-      final data = await client.listPlans();
-      final rawPlans = (data['plans'] as List?) ?? const [];
-      _plans = rawPlans
-          .whereType<Map>()
-          .map((item) => CloudPlan.fromJson(Map<String, dynamic>.from(item)))
-          .where((plan) => plan.monthlyCost <= 24 && plan.monthlyCost > 0)
-          .toList()
-        ..sort((a, b) => a.monthlyCost.compareTo(b.monthlyCost));
-      _error = null;
-    } catch (e) {
-      _error = 'Failed to load plans: ${cloudProviderMessageFromError(e)}';
-      AppLogger.error('[CloudProvider] Load plans error', e);
-    }
-
+    final completer = Completer<void>();
+    _plansLoadFuture = completer.future;
+    _isLoadingPlans = true;
     if (notify) {
       notifyListeners();
     }
+
+    () async {
+      try {
+        final client = await _cloudClient();
+        final data = await client.listPlans();
+        final rawPlans = (data['plans'] as List?) ?? const [];
+        _plans = rawPlans
+            .whereType<Map>()
+            .map((item) => CloudPlan.fromJson(Map<String, dynamic>.from(item)))
+            .where((plan) => plan.monthlyCost <= 24 && plan.monthlyCost > 0)
+            .toList()
+          ..sort((a, b) => a.monthlyCost.compareTo(b.monthlyCost));
+        _error = null;
+      } catch (e) {
+        _error = 'Failed to load plans: ${cloudProviderMessageFromError(e)}';
+        AppLogger.error('[CloudProvider] Load plans error', e);
+      } finally {
+        _isLoadingPlans = false;
+        _plansLoadFuture = null;
+        if (notify) {
+          notifyListeners();
+        }
+        completer.complete();
+      }
+    }();
+
+    return completer.future;
+  }
+
+  Future<CloudLatencyCheck> testInstanceLatency(CloudInstance instance) async {
+    final testing = CloudLatencyCheck.testing(updatedAt: DateTime.now());
+    _latencyChecks[instance.id] = testing;
+    notifyListeners();
+
+    final result = await _latencyProbe(instance);
+    _latencyChecks[instance.id] = result;
+    notifyListeners();
+    return result;
   }
 
   Future<bool> createInstance({
@@ -614,6 +678,7 @@ class CloudProvider with ChangeNotifier {
       final client = await _cloudClient();
       await client.deleteInstance(id);
       _nodeRecords.remove(id);
+      _latencyChecks.remove(id);
       await _saveNodeRecords();
       _instances = _instances.where((instance) => instance.id != id).toList();
       return true;
@@ -724,4 +789,81 @@ class CloudProvider with ChangeNotifier {
     }
     notifyListeners();
   }
+}
+
+Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {
+  final host = (() {
+    final ipv4 = instance.ipv4?.trim();
+    if (ipv4 != null && ipv4.isNotEmpty && ipv4 != '0.0.0.0') {
+      return ipv4;
+    }
+    final ipv6 = instance.ipv6?.trim();
+    if (ipv6 != null && ipv6.isNotEmpty) {
+      return ipv6;
+    }
+    return null;
+  })();
+  final nodeInfo = instance.nodeInfo;
+  if (!instance.isActive || host == null || host.isEmpty || nodeInfo == null) {
+    return CloudLatencyCheck.failure(
+      error: 'Node is not ready for latency testing yet',
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  final targets = <({String label, int port})>[];
+  void addTarget(String label, int port) {
+    if (port <= 0 || targets.any((target) => target.port == port)) {
+      return;
+    }
+    targets.add((label: label, port: port));
+  }
+
+  addTarget('Trojan', nodeInfo.trojanPort);
+  addTarget('VLESS', nodeInfo.vlessPort);
+  addTarget('Shadowsocks', nodeInfo.ssPort);
+
+  if (targets.isEmpty) {
+    return CloudLatencyCheck.failure(
+      error: 'No TCP endpoint is available for testing',
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  ({String label, int latencyMs})? fastest;
+  String? lastError;
+
+  for (final target in targets) {
+    final stopwatch = Stopwatch()..start();
+    try {
+      final socket = await Socket.connect(
+        host,
+        target.port,
+        timeout: const Duration(seconds: 3),
+      );
+      stopwatch.stop();
+      socket.destroy();
+      final latencyMs =
+          stopwatch.elapsedMilliseconds.clamp(1, 9999).toInt();
+      if (fastest == null || latencyMs < fastest.latencyMs) {
+        fastest = (label: target.label, latencyMs: latencyMs);
+      }
+    } catch (e) {
+      stopwatch.stop();
+      lastError = '${target.label} port ${target.port} unavailable';
+    }
+  }
+
+  if (fastest != null) {
+    return CloudLatencyCheck.success(
+      latencyMs: fastest.latencyMs,
+      endpointLabel: fastest.label,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  return CloudLatencyCheck.failure(
+    error: lastError ?? 'Latency test failed',
+    updatedAt: DateTime.now(),
+  );
 }

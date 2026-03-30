@@ -6,22 +6,26 @@ import 'nodes_common_widgets.dart';
 
 class NodesCloudInstanceCard extends StatelessWidget {
   final CloudInstance instance;
+  final CloudLatencyCheck? latencyCheck;
   final bool isLinked;
   final bool isSelected;
   final bool isConnected;
   final VoidCallback onViewDetails;
   final VoidCallback onDelete;
   final VoidCallback? onUseNode;
+  final VoidCallback? onTestLatency;
 
   const NodesCloudInstanceCard({
     Key? key,
     required this.instance,
+    this.latencyCheck,
     required this.isLinked,
     required this.isSelected,
     required this.isConnected,
     required this.onViewDetails,
     required this.onDelete,
     this.onUseNode,
+    this.onTestLatency,
   }) : super(key: key);
 
   @override
@@ -29,12 +33,20 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final isReady =
         instance.isActive && instance.hasIp && instance.nodeInfo != null;
     final canUseNode = !isSelected || !isConnected;
+    final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
         ? (isConnected ? 'Active Node' : 'Connect')
         : (isConnected ? 'Use & Switch' : 'Use & Connect');
     final primaryIcon = isSelected
         ? (isConnected ? Icons.check_circle : Icons.shield)
         : Icons.play_arrow;
+    final latencyLabel = isLatencyTesting
+        ? 'Testing...'
+        : latencyCheck?.latencyMs != null
+            ? '${latencyCheck!.latencyMs} ms'
+            : latencyCheck?.error != null
+                ? 'Retry Test'
+                : 'Test Latency';
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
@@ -168,11 +180,44 @@ class NodesCloudInstanceCard extends StatelessWidget {
               ),
             if (isReady) ...[
               SizedBox(height: 14.h),
-              FilledButton.icon(
-                onPressed: canUseNode ? onUseNode : null,
-                icon: Icon(primaryIcon),
-                label: Text(primaryLabel),
+              Wrap(
+                spacing: 8.w,
+                runSpacing: 8.h,
+                children: [
+                  FilledButton.icon(
+                    onPressed: canUseNode ? onUseNode : null,
+                    icon: Icon(primaryIcon),
+                    label: Text(primaryLabel),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: isLatencyTesting ? null : onTestLatency,
+                    icon: isLatencyTesting
+                        ? SizedBox(
+                            width: 16.w,
+                            height: 16.w,
+                            child: const CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.speed),
+                    label: Text(latencyLabel),
+                  ),
+                ],
               ),
+              if (latencyCheck?.endpointLabel != null ||
+                  latencyCheck?.error != null) ...[
+                SizedBox(height: 10.h),
+                Text(
+                  latencyCheck?.error ??
+                      'Fastest endpoint: ${latencyCheck!.endpointLabel}',
+                  style: TextStyle(
+                    fontSize: 12.sp,
+                    color: latencyCheck?.error == null
+                        ? Colors.grey[700]
+                        : Colors.orange[800],
+                  ),
+                ),
+              ],
             ],
           ],
         ),

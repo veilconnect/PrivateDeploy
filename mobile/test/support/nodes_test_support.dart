@@ -152,13 +152,17 @@ class TestCloudProvider extends ChangeNotifier
     this.error,
     this.instances = const [],
     this.isLoading = false,
+    this.isLoadingRegions = false,
+    this.isLoadingPlans = false,
     this.apiKey,
     this.providerName = 'vultr',
     this.setApiKeyResult = true,
     this.exportBackupPayload = '{"provider":"vultr"}',
+    Map<String, CloudLatencyCheck>? latencyChecks,
     bool? hasApiKeyAfterRefresh,
     List<CloudInstance>? loadedInstances,
   })  : _hasApiKey = hasApiKey,
+        _latencyChecks = latencyChecks ?? const {},
         hasApiKeyAfterRefresh = hasApiKeyAfterRefresh ?? hasApiKey,
         loadedInstances = loadedInstances ?? instances;
 
@@ -168,9 +172,16 @@ class TestCloudProvider extends ChangeNotifier
   final String exportBackupPayload;
 
   bool _hasApiKey;
+  Map<String, CloudLatencyCheck> _latencyChecks;
 
   @override
   bool isLoading;
+
+  @override
+  bool isLoadingRegions;
+
+  @override
+  bool isLoadingPlans;
 
   @override
   String? error;
@@ -186,7 +197,10 @@ class TestCloudProvider extends ChangeNotifier
 
   int refreshCalls = 0;
   int loadInstancesCalls = 0;
+  int loadRegionsCalls = 0;
+  int loadPlansCalls = 0;
   int clearLocalCloudDataCalls = 0;
+  int testInstanceLatencyCalls = 0;
   String? savedApiKey;
   String? importedBackupPayload;
   String? importBackupError;
@@ -212,6 +226,24 @@ class TestCloudProvider extends ChangeNotifier
   Future<void> loadInstances({bool notify = true}) async {
     loadInstancesCalls++;
     instances = List<CloudInstance>.from(loadedInstances);
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  Future<void> loadRegions({bool notify = true}) async {
+    loadRegionsCalls++;
+    isLoadingRegions = false;
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  Future<void> loadPlans({bool notify = true}) async {
+    loadPlansCalls++;
+    isLoadingPlans = false;
     if (notify) {
       notifyListeners();
     }
@@ -254,6 +286,26 @@ class TestCloudProvider extends ChangeNotifier
       throw Exception(importBackupError);
     }
     notifyListeners();
+  }
+
+  @override
+  CloudLatencyCheck? latencyCheckFor(String instanceId) =>
+      _latencyChecks[instanceId];
+
+  @override
+  Future<CloudLatencyCheck> testInstanceLatency(CloudInstance instance) async {
+    testInstanceLatencyCalls++;
+    final result =
+        _latencyChecks[instance.id] ??
+        CloudLatencyCheck.success(
+          latencyMs: 42,
+          endpointLabel: 'Trojan',
+          updatedAt: DateTime(2026, 3, 30, 20, 0),
+        );
+    _latencyChecks = Map<String, CloudLatencyCheck>.from(_latencyChecks)
+      ..[instance.id] = result;
+    notifyListeners();
+    return result;
   }
 }
 

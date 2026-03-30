@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
@@ -62,6 +64,8 @@ class _NodesScreenState extends State<NodesScreen> {
     await cloudProvider.refreshCloudConfig();
     if (cloudProvider.hasApiKey) {
       await cloudProvider.loadInstances();
+      unawaited(cloudProvider.loadRegions());
+      unawaited(cloudProvider.loadPlans());
       await _reconcileCloudProfiles(
           cloudProvider, profileProvider, vpnProvider);
     }
@@ -187,6 +191,17 @@ class _NodesScreenState extends State<NodesScreen> {
       cloudProvider: cloudProvider,
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
+      instance: instance,
+    );
+  }
+
+  Future<void> _testCloudNodeLatency(
+    CloudProvider cloudProvider,
+    CloudInstance instance,
+  ) {
+    return testCloudNodeLatency(
+      context: context,
+      cloudProvider: cloudProvider,
       instance: instance,
     );
   }
@@ -334,6 +349,8 @@ class _NodesScreenState extends State<NodesScreen> {
                     vpnProvider,
                     instance,
                   ),
+                  onTestCloudNodeLatency: (instance) =>
+                      _testCloudNodeLatency(cloudProvider, instance),
                 ),
                 if (localProfiles.isNotEmpty) ...[
                   SizedBox(height: 20.h),

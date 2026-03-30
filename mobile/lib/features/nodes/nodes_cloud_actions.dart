@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../cloud/cloud_models.dart';
@@ -116,22 +118,11 @@ Future<void> showCreateCloudNodeFlow({
   required BuildContext context,
   required CloudProvider cloudProvider,
 }) async {
-  await Future.wait([
-    cloudProvider.loadRegions(),
-    cloudProvider.loadPlans(),
-  ]);
-  if (!context.mounted) {
-    return;
+  if (cloudProvider.regions.isEmpty && !cloudProvider.isLoadingRegions) {
+    unawaited(cloudProvider.loadRegions());
   }
-
-  if (cloudProvider.regions.isEmpty || cloudProvider.plans.isEmpty) {
-    showNodesActionSnackBar(
-      context,
-      message: cloudProvider.error ??
-          'Cloud regions or plans are unavailable right now. Please try again.',
-      backgroundColor: Colors.orange,
-    );
-    return;
+  if (cloudProvider.plans.isEmpty && !cloudProvider.isLoadingPlans) {
+    unawaited(cloudProvider.loadPlans());
   }
 
   final request = await showNodesCreateCloudDialog(context);
@@ -154,5 +145,22 @@ Future<void> showCreateCloudNodeFlow({
         ? 'Node deploying... It takes 3-5 minutes.'
         : cloudProvider.error ?? 'Failed to create',
     backgroundColor: success ? Colors.green : Colors.red,
+  );
+}
+
+Future<void> testCloudNodeLatency({
+  required BuildContext context,
+  required CloudProvider cloudProvider,
+  required CloudInstance instance,
+}) async {
+  final result = await cloudProvider.testInstanceLatency(instance);
+  if (!context.mounted || result.error == null) {
+    return;
+  }
+
+  showNodesActionSnackBar(
+    context,
+    message: result.error!,
+    backgroundColor: Colors.orange,
   );
 }

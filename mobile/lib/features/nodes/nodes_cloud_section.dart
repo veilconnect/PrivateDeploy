@@ -18,6 +18,7 @@ class NodesCloudSection extends StatelessWidget {
   final ValueChanged<CloudInstance> onViewDetails;
   final ValueChanged<CloudInstance> onDeleteCloudNode;
   final ValueChanged<CloudInstance> onUseCloudNode;
+  final ValueChanged<CloudInstance> onTestCloudNodeLatency;
 
   const NodesCloudSection({
     Key? key,
@@ -30,6 +31,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.onViewDetails,
     required this.onDeleteCloudNode,
     required this.onUseCloudNode,
+    required this.onTestCloudNodeLatency,
   }) : super(key: key);
 
   @override
@@ -97,12 +99,14 @@ class NodesCloudSection extends StatelessWidget {
 
     return NodesCloudInstanceCard(
       instance: instance,
+      latencyCheck: cloudProvider.latencyCheckFor(instance.id),
       isLinked: linkedProfile != null,
       isSelected: isSelected,
       isConnected: vpnProvider.status == VpnStatus.connected,
       onViewDetails: () => onViewDetails(instance),
       onDelete: () => onDeleteCloudNode(instance),
       onUseNode: () => onUseCloudNode(instance),
+      onTestLatency: () => onTestCloudNodeLatency(instance),
     );
   }
 }

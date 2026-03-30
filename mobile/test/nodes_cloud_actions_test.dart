@@ -184,7 +184,31 @@ void main() {
       expect(find.text('API key saved and verified'), findsNothing);
     });
 
-    testWidgets('showCreateCloudNodeFlow warns when cloud options are unavailable',
+    testWidgets('showCreateCloudNodeFlow opens dialog immediately while loading',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(
+        isLoadingRegions: true,
+        isLoadingPlans: true,
+      );
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        onRun: (context) => showCreateCloudNodeFlow(
+          context: context,
+          cloudProvider: cloudProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pump();
+      expect(find.text('Deploy Node'), findsOneWidget);
+      expect(find.text('Loading regions and plans...'), findsOneWidget);
+      expect(cloudProvider.loadRegionsCalls, 0);
+      expect(cloudProvider.loadPlansCalls, 0);
+    });
+
+    testWidgets('showCreateCloudNodeFlow retries loading missing options',
         (tester) async {
       final cloudProvider = _FakeCloudProvider();
 
@@ -201,14 +225,21 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(cloudProvider.loadRegionsCalls, 1);
-      expect(cloudProvider.loadPlansCalls, 1);
+      expect(find.text('Deploy Node'), findsOneWidget);
       expect(
-        find.text(
-          'Cloud regions or plans are unavailable right now. Please try again.',
-        ),
+        find.text('Deployment options are unavailable right now.'),
         findsOneWidget,
       );
+      final initialRegionLoads = cloudProvider.loadRegionsCalls;
+      final initialPlanLoads = cloudProvider.loadPlansCalls;
+      expect(initialRegionLoads, greaterThanOrEqualTo(1));
+      expect(initialPlanLoads, greaterThanOrEqualTo(1));
+
+      await tester.tap(find.text('Retry Loading'));
+      await tester.pump();
+
+      expect(cloudProvider.loadRegionsCalls, initialRegionLoads + 1);
+      expect(cloudProvider.loadPlansCalls, initialPlanLoads + 1);
     });
 
     testWidgets('showCreateCloudNodeFlow deploys selected cloud node',
@@ -396,6 +427,8 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   _FakeCloudProvider({
     this.regions = const [],
     this.plans = const [],
+    this.isLoadingRegions = false,
+    this.isLoadingPlans = false,
     this.deleteResult = true,
     this.setApiKeyResult = true,
     this.createInstanceResult = true,
@@ -408,6 +441,12 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   @override
   final List<CloudPlan> plans;
+
+  @override
+  bool isLoadingRegions;
+
+  @override
+  bool isLoadingPlans;
 
   final bool deleteResult;
   final bool setApiKeyResult;
@@ -430,11 +469,19 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   @override
   Future<void> loadRegions({bool notify = true}) async {
     loadRegionsCalls += 1;
+    isLoadingRegions = false;
+    if (notify) {
+      notifyListeners();
+    }
   }
 
   @override
   Future<void> loadPlans({bool notify = true}) async {
     loadPlansCalls += 1;
+    isLoadingPlans = false;
+    if (notify) {
+      notifyListeners();
+    }
   }
 
   @override
