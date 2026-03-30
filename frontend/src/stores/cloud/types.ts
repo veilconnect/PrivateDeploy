@@ -14,6 +14,7 @@ export type ManagedCloudNode = CloudNode & {
   lastConnectivityResult?: ConnectivityResult
   speedMs?: number
   speedMbps?: number
+  speedError?: string
   speedTesting?: boolean
 }
 
@@ -27,7 +28,8 @@ export type NodeConnectivityHistoryEntry = {
 export type NodeSpeedHistoryEntry = {
   timestamp: number
   speedMbps?: number
-  status: 'ok' | 'timeout' | 'error'
+  status: 'ok' | 'partial' | 'timeout' | 'error'
+  error?: string
 }
 
 export type NodeHistoryRecord = {

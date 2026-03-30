@@ -8,6 +8,8 @@ import { logInfo } from '@/utils/logger'
 import { initOfflineMode } from '@/utils/offline'
 import { type ConnectivityDataPoint, type LatencyDataPoint } from '@/utils/visualization'
 
+import { formatSpeedFailureReason, isSpeedTimeoutError } from './cloudViewPresentation'
+
 import type { ManagedCloudNode, NodeHistoryMap } from '@/stores/cloud'
 import type { ConnectivityResult } from '@/types/cloud'
 
@@ -141,7 +143,7 @@ export const useCloudViewMonitoring = ({
     }
 
     return getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).speed
-      .filter((entry) => entry.status === 'ok' && typeof entry.speedMbps === 'number')
+      .filter((entry) => (entry.status === 'ok' || entry.status === 'partial') && typeof entry.speedMbps === 'number')
       .map((entry) => ({
         timestamp: entry.timestamp,
         latency: entry.speedMbps!,
@@ -173,8 +175,16 @@ export const useCloudViewMonitoring = ({
     }
     if (typeof node.speedMbps === 'number') {
       return node.speedMbps < 0
-        ? translate('cloud.speed.timeout')
-        : translate('cloud.speed.mbps', { speed: node.speedMbps })
+        ? (node.speedError
+            ? (isSpeedTimeoutError(node.speedError)
+                ? translate('cloud.speed.timeout')
+                : translate('cloud.speed.failedWithReason', {
+                    reason: formatSpeedFailureReason(node.speedError, translate),
+                  }))
+            : translate('cloud.speed.timeout'))
+        : (node.speedError
+            ? translate('cloud.speed.mbpsPartial', { speed: node.speedMbps })
+            : translate('cloud.speed.mbps', { speed: node.speedMbps }))
     }
     if (typeof node.speedMs === 'number') {
       return node.speedMs < 0
@@ -184,11 +194,19 @@ export const useCloudViewMonitoring = ({
 
     const speedHistory = getRecentNodeHistory(cloudStore.nodeHistory, node.instanceId).speed
     const latestSpeedEntry = speedHistory[speedHistory.length - 1]
-    if (latestSpeedEntry?.status === 'ok' && typeof latestSpeedEntry.speedMbps === 'number') {
-      return translate('cloud.speed.mbps', { speed: latestSpeedEntry.speedMbps })
+    if ((latestSpeedEntry?.status === 'ok' || latestSpeedEntry?.status === 'partial') && typeof latestSpeedEntry.speedMbps === 'number') {
+      return latestSpeedEntry.status === 'partial'
+        ? translate('cloud.speed.mbpsPartial', { speed: latestSpeedEntry.speedMbps })
+        : translate('cloud.speed.mbps', { speed: latestSpeedEntry.speedMbps })
     }
     if (latestSpeedEntry?.status === 'timeout') {
       return translate('cloud.speed.timeout')
+    }
+    if (latestSpeedEntry?.status === 'error') {
+      const reason = formatSpeedFailureReason(latestSpeedEntry.error, translate)
+      return isSpeedTimeoutError(latestSpeedEntry.error)
+        ? translate('cloud.speed.timeout')
+        : translate('cloud.speed.failedWithReason', { reason })
     }
 
     return translate('cloud.charts.noMeasurement')

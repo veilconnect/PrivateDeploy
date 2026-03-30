@@ -12,6 +12,7 @@
 | `build-macos-dmg.sh` | macOS | 生成 macOS DMG 安装镜像 | `.dmg` 镜像 |
 | `protocol_speed_compare.py` | Linux/macOS | 按协议测速（SS/HY2/VLESS/Trojan，基于 sing-box + curl） | `output/benchmarks/protocol_speed_compare_*.{json,tsv}` |
 | `local_gui_vultr_smoke.sh` | Linux | 在隔离 Xvfb 会话里通过桌面 GUI 真实创建 1 台 Vultr 节点、验端口并销毁 | `output/gui-smoke/<run-id>/` |
+| `local_gui_container_smoke.sh` | Linux | 在 Docker 容器里用隔离 Xvfb 会话做本机非破坏性 GUI smoke，并按不同缩放留图 | `output/gui-smoke/<run-id>/` |
 
 ## 快速使用
 
@@ -31,6 +32,11 @@
 # Windows NSIS 安装程序
 ./scripts/build-windows-installer.sh 1.0.0
 
+# Windows NSIS 安装程序（使用本地归档并校验 SHA256）
+SINGBOX_ARCHIVE_PATH=/path/to/sing-box-windows-amd64.zip \
+SINGBOX_SHA256=<sha256> \
+./scripts/build-windows-installer.sh 1.0.0
+
 # Linux DEB + RPM 包
 ./scripts/build-linux-packages.sh 1.0.0
 
@@ -42,6 +48,9 @@ python3 scripts/protocol_speed_compare.py --rounds 3
 
 # 本机 GUI 真部署 smoke（默认读取 /tmp/vultr_api_key.txt）
 ./scripts/local_gui_vultr_smoke.sh
+
+# 本机容器化 GUI 非破坏性 smoke（默认读取 build/bin/data）
+./scripts/local_gui_container_smoke.sh
 ```
 
 ## 前置要求
@@ -66,6 +75,9 @@ sudo gem install fpm
 
 # 本机 GUI smoke 额外依赖
 sudo apt-get install xvfb xdotool imagemagick jq curl
+
+# 容器化 GUI smoke 额外依赖
+sudo apt-get install docker.io
 ```
 
 ### macOS 特定

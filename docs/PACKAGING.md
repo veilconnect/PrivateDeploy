@@ -44,6 +44,13 @@
    ./scripts/build-windows-installer.sh 1.0.0
    ```
 
+   如需使用预先下载的 `sing-box` 归档并校验 SHA256，可额外传入：
+   ```bash
+   SINGBOX_ARCHIVE_PATH=/path/to/sing-box-windows-amd64.zip \
+   SINGBOX_SHA256=<sha256> \
+   ./scripts/build-windows-installer.sh 1.0.0
+   ```
+
 2. **手动构建** (可选):
    ```bash
    # 构建前端
@@ -53,7 +60,7 @@
    cd ..
 
    # 构建 Windows 安装程序
-   wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41 -nsis -o PrivateDeploy.exe
+   PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build -m -s -trimpath -tags webkit2_41 -nsis -o PrivateDeploy.exe
    ```
 
 3. **输出文件**:
@@ -170,7 +177,7 @@ pnpm run build
 cd ..
 
 # 构建可执行文件
-wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41
+PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build -m -s -trimpath -tags webkit2_41
 ```
 
 可执行文件位于 `build/bin/` 目录。
@@ -190,7 +197,7 @@ export CC=x86_64-w64-mingw32-gcc
 export CXX=x86_64-w64-mingw32-g++
 
 # 构建
-wails build -m -s -trimpath -skipbindings -o PrivateDeploy.exe
+PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build -m -s -trimpath -o PrivateDeploy.exe
 ```
 
 **注意**: NSIS 安装程序只能在 Windows 上生成。

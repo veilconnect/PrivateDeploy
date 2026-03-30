@@ -58,6 +58,7 @@ export default {
     directDesc: 'Directly connect all traffic',
     errors: {
       coreMissing: 'Sing-box core binary is missing. Please download it from Settings → Kernel and retry.',
+      autoDownloadingCore: 'Downloading the sing-box core…',
       cacheResetting: 'Detected invalid cache file. Cleaning it up and retrying...',
       portResetting: 'Detected port conflict. Reassigning new ports automatically...',
     },
@@ -385,10 +386,18 @@ export default {
     speed: {
       testing: 'Testing…',
       timeout: 'Timeout',
+      failed: 'Speed test failed',
+      failedWithReason: 'Speed test failed: {reason}',
       ms: '{ms}ms',
       mbps: '{speed} Mbps',
+      mbpsPartial: '{speed} Mbps (partial)',
       testAll: 'Speed Test All',
       testAllComplete: 'Speed test completed',
+      reason: {
+        coreMissing: 'sing-box core is missing',
+        socksNotReady: 'temporary SOCKS proxy is not ready',
+        noOutbounds: 'node configuration is not ready yet',
+      },
     },
     loadBalance: {
       enable: 'Load Balance',
@@ -956,13 +965,24 @@ export default {
         'Allow PrivateDeploy to automatically set and restore system proxy when the kernel starts and stops?',
       firstLaunchEnabled: 'Auto system proxy management enabled.',
       firstLaunchDisabled: 'Auto system proxy management disabled.',
+      clickToToggle: 'Click to configure automatic system proxy management',
+      clickUnsupported: 'Automatic system proxy management is not supported on this platform',
       autoSkippedExisting:
         'Detected an existing system proxy. PrivateDeploy skipped automatic takeover.',
+      disableConfirmTitle: 'Disable system proxy automation',
+      disableConfirmMessage:
+        'Stop letting PrivateDeploy manage the system proxy automatically and restore the previous proxy settings?',
       restorePrevious: 'Restore previous proxy',
       restoreSuccess: 'Previous system proxy restored.',
       restoreUnavailable: 'No previous proxy backup available.',
       restoreFailed: 'Failed to restore previous system proxy.',
       current: 'Current system proxy state',
+      badge: {
+        unsupported: 'System proxy unsupported',
+        disabled: 'System proxy disabled',
+        managed: 'System proxy enabled',
+        external: 'External proxy active',
+      },
       status: {
         unsupported: 'Unsupported on this platform',
         disabled: 'Disabled',

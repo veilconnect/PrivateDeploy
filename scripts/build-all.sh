@@ -84,7 +84,7 @@ case $choice in
         pnpm run build
         cd ..
 
-        wails build -m -s -trimpath -skipbindings -devtools -tags webkit2_41
+        PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build -m -s -trimpath -tags webkit2_41
 
         echo "✅ 可执行文件已生成: build/bin/"
         ls -lh build/bin/ | grep -v "^d"

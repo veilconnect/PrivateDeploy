@@ -80,7 +80,7 @@ export const ensureKernelCoreExecutable = async ({
   const cacheDir = 'data/.cache'
   const cacheFile = `${cacheDir}/${assetName}`
   const cancelId = `kernel-auto-download-${Date.now()}`
-  const toast = message.info('common.downloading', 10 * 60 * 1_000, () => {
+  const toast = message.info('kernel.errors.autoDownloadingCore', 10 * 60 * 1_000, () => {
     HttpCancel(cancelId)
   })
 

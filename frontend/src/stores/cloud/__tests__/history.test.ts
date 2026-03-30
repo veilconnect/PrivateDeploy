@@ -105,4 +105,48 @@ describe('cloud history', () => {
     expect(persisted['node-1']).toBeUndefined()
     expect(persisted['node-2']).toBeTruthy()
   })
+
+  it('preserves speed error reasons when loading and recording failures', async () => {
+    const now = new Date('2026-03-25T00:00:00Z').getTime()
+    vi.setSystemTime(now)
+
+    bridgeMocks.readFile.mockResolvedValue(JSON.stringify({
+      'node-1': {
+        connectivity: [],
+        speed: [
+          { timestamp: now - 30 * 1000, status: 'error', error: 'sing-box binary not found' },
+        ],
+      },
+    }))
+    bridgeMocks.writeFile.mockResolvedValue(undefined)
+
+    const nodeHistory = shallowRef({})
+    const nodeHistoryLoaded = ref(false)
+    const history = createCloudHistory({
+      nodeHistory,
+      nodeHistoryLoaded,
+    })
+
+    await history.loadNodeHistory()
+    expect(nodeHistory.value['node-1'].speed[0]).toMatchObject({
+      status: 'error',
+      error: 'sing-box binary not found',
+    })
+
+    await history.recordSpeedSample('node-1', {
+      status: 'timeout',
+      error: 'context deadline exceeded',
+    })
+
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    const [, writtenPayload] = bridgeMocks.writeFile.mock.calls.at(-1)!
+    const persisted = JSON.parse(writtenPayload)
+    expect(persisted['node-1'].speed).toHaveLength(2)
+    expect(persisted['node-1'].speed[1]).toMatchObject({
+      status: 'timeout',
+      error: 'context deadline exceeded',
+    })
+  })
 })

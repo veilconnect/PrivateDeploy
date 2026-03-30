@@ -34,8 +34,16 @@ class PrivateDeployApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
-        ChangeNotifierProvider(create: (_) => VpnProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
+        ChangeNotifierProxyProvider<CloudProvider, VpnProvider>(
+          create: (_) => VpnProvider()..initialize(),
+          update: (_, cloudProvider, vpnProvider) {
+            vpnProvider?.setFallbackEgressIpResolver(
+              cloudProvider.resolveEgressIpForProfileName,
+            );
+            return vpnProvider!;
+          },
+        ),
         ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
       ],
       child: ScreenUtilInit(

@@ -133,11 +133,11 @@ export const TestNodeSpeed = async (
 export const TestNodeDirectSpeed = async (
   outbounds: Array<Record<string, any>>,
   timeoutSec?: number,
-): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string }> => {
+): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string; error?: string }> => {
   const outboundsJSON = JSON.stringify(outbounds)
   const { flag, data } = await App.TestNodeDirectSpeed(outboundsJSON, timeoutSec || 15)
   const result = JSON.parse(data)
-  if (!flag && result.status === 'error') {
+  if (!flag && (result.status === 'error' || result.status === 'timeout' || result.status === 'partial')) {
     return result
   }
   if (!flag) {
@@ -150,10 +150,10 @@ export const TestDownloadSpeed = async (
   proxyURL: string,
   testURL?: string,
   timeoutSec?: number,
-): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string }> => {
+): Promise<{ speedMbps: number; bytes: number; elapsedMs: number; status: string; error?: string }> => {
   const { flag, data } = await App.TestDownloadSpeed(proxyURL, testURL || '', timeoutSec || 15)
   const result = JSON.parse(data)
-  if (!flag && result.status === 'error') {
+  if (!flag && (result.status === 'error' || result.status === 'partial')) {
     return result
   }
   if (!flag) {

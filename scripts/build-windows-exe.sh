@@ -81,9 +81,9 @@ build_windows() {
         export CXX=i686-w64-mingw32-g++
     fi
 
-    GOOS=windows GOARCH=$arch wails build \
-      -m -s -trimpath -skipbindings \
-      -devtools -tags webkit2_41 \
+    GOOS=windows GOARCH=$arch PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build \
+      -m -s -trimpath \
+      -tags webkit2_41 \
       -o "$APP_NAME.exe"
 
     # 临时移除不需要打包的文件

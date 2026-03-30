@@ -219,27 +219,72 @@ func validateLinuxDisplay() error {
 		_ = conn.Close()
 	}
 
-	if _, err := exec.LookPath("xdpyinfo"); err != nil {
+	xdpyinfoOutput := ""
+	if _, err := exec.LookPath("xdpyinfo"); err == nil {
+		cmd := exec.Command("xdpyinfo")
+		cmd.Env = append(os.Environ(), "DISPLAY="+display)
+		if xAuthority != "" {
+			cmd.Env = append(cmd.Env, "XAUTHORITY="+xAuthority)
+		}
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			detail := strings.TrimSpace(string(output))
+			if detail == "" {
+				detail = err.Error()
+			}
+			if len(detail) > 160 {
+				detail = detail[:160] + "..."
+			}
+			return fmt.Errorf("X11 display %q is not accessible: %s", display, detail)
+		}
+		xdpyinfoOutput = string(output)
+	}
+
+	if os.Getenv("PRIVATEDEPLOY_ALLOW_UNSUPPORTED_REMOTE_DISPLAY") == "1" {
 		return nil
 	}
 
-	cmd := exec.Command("xdpyinfo")
-	cmd.Env = append(os.Environ(), "DISPLAY="+display)
-	if xAuthority != "" {
-		cmd.Env = append(cmd.Env, "XAUTHORITY="+xAuthority)
+	xrandrOutput := ""
+	if _, err := exec.LookPath("xrandr"); err == nil {
+		cmd := exec.Command("xrandr", "--verbose")
+		cmd.Env = append(os.Environ(), "DISPLAY="+display)
+		if xAuthority != "" {
+			cmd.Env = append(cmd.Env, "XAUTHORITY="+xAuthority)
+		}
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			xrandrOutput = string(output)
+		}
 	}
-	if output, err := cmd.CombinedOutput(); err != nil {
-		detail := strings.TrimSpace(string(output))
-		if detail == "" {
-			detail = err.Error()
-		}
-		if len(detail) > 160 {
-			detail = detail[:160] + "..."
-		}
-		return fmt.Errorf("X11 display %q is not accessible: %s", display, detail)
+
+	if reason, unsupported := detectUnsupportedLinuxRemoteDisplay(
+		display,
+		waylandDisplay,
+		os.Getenv("SSH_CONNECTION"),
+		xdpyinfoOutput,
+		xrandrOutput,
+	); unsupported {
+		return fmt.Errorf("%s Set PRIVATEDEPLOY_ALLOW_UNSUPPORTED_REMOTE_DISPLAY=1 to try anyway.", reason)
 	}
 
 	return nil
+}
+
+func detectUnsupportedLinuxRemoteDisplay(display, waylandDisplay, sshConnection, xdpyinfoOutput, xrandrOutput string) (string, bool) {
+	if waylandDisplay != "" || display == "" {
+		return "", false
+	}
+
+	normalizedDisplay := strings.TrimSpace(display)
+	if sshConnection != "" && (strings.HasPrefix(normalizedDisplay, "localhost:") || strings.HasPrefix(normalizedDisplay, "127.0.0.1:")) {
+		return "Remote Linux X11 forwarding is not supported by this build because WebKitGTK renders blank windows in forwarded sessions.", true
+	}
+
+	if strings.Contains(xdpyinfoOutput, "VNC-EXTENSION") || strings.Contains(xrandrOutput, "VNC-") {
+		return "Remote Linux VNC desktops are not supported by this build because WebKitGTK renders blank windows in VNC sessions.", true
+	}
+
+	return "", false
 }
 
 func ensureXAuthorityEnv() string {

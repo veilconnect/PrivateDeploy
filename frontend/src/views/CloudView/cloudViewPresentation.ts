@@ -154,6 +154,42 @@ export const getConnectivityColor = (status?: string): TagColor => {
   return connectivityColors[status || 'unknown'] || 'default'
 }
 
+export const isSpeedTimeoutError = (error?: string): boolean => {
+  if (!error) {
+    return false
+  }
+
+  const normalized = error.toLowerCase()
+  return normalized.includes('timeout')
+    || normalized.includes('timed out')
+    || normalized.includes('deadline exceeded')
+}
+
+export const formatSpeedFailureReason = (
+  error: string | undefined,
+  translate: TranslateFn,
+): string => {
+  if (!error || error.trim().length === 0) {
+    return translate('cloud.speed.failed')
+  }
+
+  const normalized = error.trim().toLowerCase()
+  if (normalized.includes('sing-box binary not found')) {
+    return translate('cloud.speed.reason.coreMissing')
+  }
+  if (normalized.includes('sing-box socks not ready')) {
+    return translate('cloud.speed.reason.socksNotReady')
+  }
+  if (normalized.includes('no outbounds provided') || normalized.includes('no outbound config')) {
+    return translate('cloud.speed.reason.noOutbounds')
+  }
+  if (isSpeedTimeoutError(error)) {
+    return translate('cloud.speed.timeout')
+  }
+
+  return error.trim()
+}
+
 export const formatPlan = (plan: CloudPlan, translate: TranslateFn): string => {
   if (!plan || typeof plan !== 'object') {
     return String(plan || '')

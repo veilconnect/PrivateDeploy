@@ -42,6 +42,10 @@ export function DestroyCloudInstanceTyped(arg1) {
   return window['go']['bridge']['App']['DestroyCloudInstanceTyped'](arg1);
 }
 
+export function DiagnoseSingbox() {
+  return window['go']['bridge']['App']['DiagnoseSingbox']();
+}
+
 export function Download(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['bridge']['App']['Download'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

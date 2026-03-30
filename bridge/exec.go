@@ -16,6 +16,18 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+func buildCmdEnv(customEnv map[string]string) []string {
+	if len(customEnv) == 0 {
+		return nil
+	}
+
+	env := os.Environ()
+	for key, value := range customEnv {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
 func (a *App) Exec(path string, args []string, options ExecOptions) FlagResult {
 	log.Printf("Exec: %s %s %v", path, args, options)
 
@@ -27,10 +39,7 @@ func (a *App) Exec(path string, args []string, options ExecOptions) FlagResult {
 
 	cmd := exec.Command(exePath, args...)
 	SetCmdWindowHidden(cmd)
-
-	for key, value := range options.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
+	cmd.Env = buildCmdEnv(options.Env)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -58,10 +67,7 @@ func (a *App) ExecBackground(path string, args []string, outEvent string, endEve
 
 	cmd := exec.Command(exePath, args...)
 	SetCmdWindowHidden(cmd)
-
-	for key, value := range options.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
+	cmd.Env = buildCmdEnv(options.Env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

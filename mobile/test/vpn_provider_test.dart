@@ -490,7 +490,8 @@ void main() {
       expect(fallbackCalls, 0);
     });
 
-    test('refreshDiagnostics fails fast on native probe error', () async {
+    test('refreshDiagnostics falls back to Dart probe on native probe error',
+        () async {
       var fallbackCalls = 0;
       vpnProvider = VpnProvider(
         fetchEgressIp: () async {
@@ -528,11 +529,67 @@ void main() {
       await vpnProvider.loadStatus();
       await vpnProvider.refreshDiagnostics();
 
-      expect(vpnProvider.diagnosticsEgressIp, isNull);
-      expect(
-        vpnProvider.diagnosticsError,
-        VpnProvider.egressProbeFailureMessage,
+      expect(vpnProvider.diagnosticsEgressIp, '198.51.100.10');
+      expect(vpnProvider.diagnosticsError, isNull);
+      expect(fallbackCalls, 1);
+    });
+
+    test(
+        'refreshDiagnostics falls back to active cloud node IP when probes fail',
+        () async {
+      var fallbackCalls = 0;
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async {
+          fallbackCalls += 1;
+          throw Exception('probe failed');
+        },
       );
+      vpnProvider.setFallbackEgressIpResolver((activeProfile) {
+        if (activeProfile == 'Cloud: smoke-2603302014') {
+          return '95.179.178.229';
+        }
+        return null;
+      });
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getRecentLogs':
+            return const [];
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final connected = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Cloud: smoke-2603302014',
+      );
+
+      expect(connected, true);
+
+      await vpnProvider.refreshDiagnostics();
+
+      expect(vpnProvider.diagnosticsEgressIp, '95.179.178.229');
+      expect(vpnProvider.diagnosticsError, isNull);
       expect(fallbackCalls, 0);
     });
 

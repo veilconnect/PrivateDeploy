@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router'
 import { EventsOn, WindowHide, WindowShow, WindowUnminimise, IsStartup } from '@/bridge'
 import { TitleBar, WorkspaceHeader } from '@/components'
 import * as Stores from '@/stores'
-import { confirm, exitApp, sampleID, sleep, message } from '@/utils'
+import { exitApp, sampleID, sleep, message } from '@/utils'
 import { ensureBuiltinPresets } from '@/utils/builtinPresets'
 import AboutView from '@/views/AboutView.vue'
 import CommandView from '@/views/CommandView.vue'
@@ -40,32 +40,6 @@ const showStartupError = (error: unknown) => {
   hasError.value = true
   console.error('[App] Startup failed:', error)
   message.error(error instanceof Error ? error.message : String(error))
-}
-
-const maybePromptSystemProxyPolicy = async () => {
-  if (!envStore.capabilities.systemProxySupported || appSettings.app.systemProxyPolicyInitialized) {
-    return
-  }
-
-  const enableAutoProxy = await confirm(
-    'settings.systemProxy.firstLaunchTitle',
-    'settings.systemProxy.firstLaunchMessage',
-    {
-      type: 'text',
-      okText: 'common.enable',
-      cancelText: 'common.disable',
-    },
-  )
-    .then(() => true)
-    .catch(() => false)
-
-  appSettings.app.autoSetSystemProxy = enableAutoProxy
-  appSettings.app.systemProxyPolicyInitialized = true
-  message.info(
-    enableAutoProxy
-      ? 'settings.systemProxy.firstLaunchEnabled'
-      : 'settings.systemProxy.firstLaunchDisabled',
-  )
 }
 
 EventsOn('onLaunchApp', async (args: string[]) => {
@@ -160,10 +134,6 @@ const bootstrapApp = async () => {
     await kernelApiStore.updateCoreState().catch((error) => {
       console.error('[App] Failed to update core state:', error)
     })
-
-    if (!hasError.value) {
-      await maybePromptSystemProxyPolicy()
-    }
 
     try {
       if (!kernelApiStore.running && autoApplyPromise) {

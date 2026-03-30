@@ -61,13 +61,17 @@ const normalizeSpeedEntries = (entries: unknown): NodeSpeedHistoryEntry[] => {
       const item = entry as Record<string, unknown>
       const timestamp = Number(item.timestamp)
       const speedMbps = item.speedMbps == null ? undefined : Number(item.speedMbps)
-      const status: NodeSpeedHistoryEntry['status'] = item.status === 'ok' || item.status === 'timeout' || item.status === 'error'
+      const status: NodeSpeedHistoryEntry['status'] = item.status === 'ok' || item.status === 'partial' || item.status === 'timeout' || item.status === 'error'
         ? item.status
         : 'error'
+      const error = typeof item.error === 'string' && item.error.trim().length > 0
+        ? item.error.trim()
+        : undefined
       return {
         timestamp: Number.isFinite(timestamp) ? timestamp : 0,
         speedMbps: speedMbps != null && Number.isFinite(speedMbps) ? speedMbps : undefined,
         status,
+        ...(error ? { error } : {}),
       }
     })
     .filter((entry) => entry.timestamp > 0)

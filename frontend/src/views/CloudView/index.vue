@@ -26,11 +26,13 @@ import {
 import {
   buildPlanOptions,
   buildRegionOptions,
+  formatSpeedFailureReason,
   formatNodeRegion as formatNodeRegionLabel,
   formatPlan as formatCloudPlan,
   formatRegion as formatCloudRegion,
   getConnectivityColor,
   getConnectivityLabel,
+  isSpeedTimeoutError,
   getStatusColor,
   getStatusLabel,
 } from './cloudViewPresentation'
@@ -766,11 +768,27 @@ const handleClearChartHistory = async () => {
                   {{ t('cloud.speed.testing') }}
                 </div>
                 <div v-else-if="record.speedMbps != null" class="flex items-center gap-4">
+                  <template v-if="record.speedMbps < 0">
+                    <div class="flex flex-col items-start gap-2">
+                      <Tag color="red" size="small">
+                        {{ isSpeedTimeoutError(record.speedError) ? t('cloud.speed.timeout') : t('cloud.speed.failed') }}
+                      </Tag>
+                      <span
+                        v-if="record.speedError"
+                        class="text-secondary text-12"
+                        :title="record.speedError"
+                      >
+                        {{ formatSpeedFailureReason(record.speedError, t) }}
+                      </span>
+                    </div>
+                  </template>
                   <Tag
-                    :color="record.speedMbps < 0 ? 'red' : record.speedMbps > 50 ? 'green' : record.speedMbps > 10 ? 'cyan' : 'red'"
+                    v-else
+                    :color="record.speedMbps > 50 ? 'green' : record.speedMbps > 10 ? 'cyan' : 'red'"
                     size="small"
+                    :title="record.speedError || ''"
                   >
-                    {{ record.speedMbps < 0 ? t('cloud.speed.timeout') : t('cloud.speed.mbps', { speed: record.speedMbps }) }}
+                    {{ record.speedError ? t('cloud.speed.mbpsPartial', { speed: record.speedMbps }) : t('cloud.speed.mbps', { speed: record.speedMbps }) }}
                   </Tag>
                 </div>
                 <div v-else-if="record.speedMs != null" class="flex items-center gap-4">

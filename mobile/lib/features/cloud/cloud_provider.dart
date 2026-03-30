@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
+import '../profiles/profile_provider.dart';
 import 'cloud_backup.dart';
 import 'cloud_node_config_builder.dart';
 import 'cloud_node_record.dart';
@@ -41,6 +42,25 @@ class CloudProvider with ChangeNotifier {
   bool get isConfigured => _hasApiKey && _configLoaded;
   String get providerName => _providerName;
 
+  String? resolveEgressIpForProfileName(String? profileName) {
+    final label = _cloudInstanceLabelFromProfileName(profileName);
+    if (label == null) {
+      return null;
+    }
+
+    final instance =
+        _instances.where((candidate) => candidate.label == label).firstOrNull;
+    final instanceIp = _preferredPublicIp(instance?.ipv4, instance?.ipv6);
+    if (instanceIp != null) {
+      return instanceIp;
+    }
+
+    final record = _nodeRecords.values
+        .where((candidate) => candidate.label == label)
+        .firstOrNull;
+    return _preferredPublicIp(record?.ipv4, record?.ipv6);
+  }
+
   @visibleForTesting
   static String normalizeInstanceLabel(String? raw, {DateTime? now}) {
     return normalizeCloudInstanceLabel(raw, now: now);
@@ -63,6 +83,35 @@ class CloudProvider with ChangeNotifier {
 
   CloudProvider() {
     _init();
+  }
+
+  static String? _cloudInstanceLabelFromProfileName(String? profileName) {
+    final trimmedName = profileName?.trim();
+    if (trimmedName == null ||
+        trimmedName.isEmpty ||
+        !ProfileProvider.isCloudManagedProfileName(trimmedName)) {
+      return null;
+    }
+
+    final label = trimmedName
+        .substring(ProfileProvider.cloudManagedProfilePrefix.length)
+        .trim();
+    return label.isEmpty ? null : label;
+  }
+
+  static String? _preferredPublicIp(String? ipv4, String? ipv6) {
+    final normalizedIpv4 = ipv4?.trim();
+    if (normalizedIpv4 != null &&
+        normalizedIpv4.isNotEmpty &&
+        normalizedIpv4 != '0.0.0.0') {
+      return normalizedIpv4;
+    }
+
+    final normalizedIpv6 = ipv6?.trim();
+    if (normalizedIpv6 != null && normalizedIpv6.isNotEmpty) {
+      return normalizedIpv6;
+    }
+    return null;
   }
 
   Future<void> _init() async {

@@ -38,6 +38,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   bool _diagnosticsSessionActive = false;
   final VpnRuntimeLogParser _runtimeLogParser = VpnRuntimeLogParser();
   final Future<String?> Function() _fetchEgressIp;
+  String? Function(String? activeProfile)? _resolveFallbackEgressIp;
   String? _diagnosticsEgressIp;
   String? _diagnosticsError;
   bool _isRefreshingDiagnostics = false;
@@ -62,6 +63,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     Future<String?> Function()? fetchEgressIp,
   }) : _fetchEgressIp = fetchEgressIp ?? fetchVpnEgressIp {
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  void setFallbackEgressIpResolver(
+    String? Function(String? activeProfile)? resolver,
+  ) {
+    _resolveFallbackEgressIp = resolver;
   }
 
   Future<void> initialize() async {
@@ -384,18 +391,23 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
 
     final nativeError = nativeProbe?.error;
-    if (nativeError != null && nativeError.isNotEmpty) {
-      _diagnosticsEgressIp = null;
-      _diagnosticsError = _normalizeEgressProbeError(nativeError);
+    final normalizedProbeError = nativeError != null && nativeError.isNotEmpty
+        ? _normalizeEgressProbeError(nativeError)
+        : egressProbeFailureMessage;
+    final fallbackEgressIp = _resolveFallbackEgressIp?.call(_activeProfile);
+    if (fallbackEgressIp != null && fallbackEgressIp.trim().isNotEmpty) {
+      _diagnosticsEgressIp = fallbackEgressIp.trim();
+      _diagnosticsError = null;
       return;
     }
 
     try {
       _diagnosticsEgressIp = await _fetchEgressIp();
       _diagnosticsError = null;
+      return;
     } catch (_) {
       _diagnosticsEgressIp = null;
-      _diagnosticsError = egressProbeFailureMessage;
+      _diagnosticsError = normalizedProbeError;
     }
   }
 

@@ -126,7 +126,7 @@ export type InstanceSyncDeps = {
   ) => Promise<void>
   recordSpeedSample: (
     instanceId: string,
-    sample: { speedMbps?: number; status: 'ok' | 'timeout' | 'error' },
+    sample: { speedMbps?: number; status: 'ok' | 'partial' | 'timeout' | 'error'; error?: string },
   ) => Promise<void>
   loadManualNodes: () => Promise<ManagedCloudNode[]>
   syncManualNodesIntoInstances: () => void
@@ -168,6 +168,21 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
   let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
   const autoApplyTimers = new Map<string, ReturnType<typeof setInterval>>()
   let refreshingInstances = false
+
+  const isSpeedTimeoutError = (error: string | undefined): boolean => {
+    if (!error) {
+      return false
+    }
+
+    const normalized = error.toLowerCase()
+    return normalized.includes('timeout')
+      || normalized.includes('timed out')
+      || normalized.includes('deadline exceeded')
+  }
+
+  const getSpeedFailureStatus = (error: string | undefined): 'timeout' | 'error' => {
+    return isSpeedTimeoutError(error) ? 'timeout' : 'error'
+  }
 
   const isCacheValid = (timestamp: number | null, ttl: number): boolean => {
     if (!timestamp) return false
@@ -323,6 +338,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
           // Preserve speed test data across refreshes
           ...(prev?.speedMs !== undefined ? { speedMs: prev.speedMs } : {}),
           ...(prev?.speedMbps !== undefined ? { speedMbps: prev.speedMbps } : {}),
+          ...(prev?.speedError ? { speedError: prev.speedError } : {}),
           ...(prev?.speedTesting ? { speedTesting: prev.speedTesting } : {}),
         }
       })
@@ -822,29 +838,52 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
                  manualNodes.value.find((item) => item.instanceId === instanceId)
     if (!node) return
 
-    patchNode(instanceId, { speedTesting: true, speedMbps: undefined })
+    patchNode(instanceId, { speedTesting: true, speedMbps: undefined, speedError: undefined })
 
     // Read outbounds directly from this node's subscription file
     const outbounds = await getNodeOutbounds(instanceId)
     if (!outbounds.length) {
       logError(`[CloudStore] Speed test skipped for ${node.label}: no outbound config`)
-      patchNode(instanceId, { speedMbps: -1, speedTesting: false })
+      const error = 'no outbound config'
+      patchNode(instanceId, { speedMbps: -1, speedError: error, speedTesting: false })
+      await deps.recordSpeedSample(instanceId, { status: 'error', error })
       return
     }
 
     try {
       // Test directly via temporary sing-box — no dependency on main kernel
       const result = await TestNodeDirectSpeed(outbounds, 15)
-      const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
-      logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
-      patchNode(instanceId, { speedMbps: mbps, speedTesting: false })
+      if (result.status === 'ok' || result.status === 'partial') {
+        const mbps = Math.round(result.speedMbps * 100) / 100
+        logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
+        patchNode(instanceId, {
+          speedMbps: mbps,
+          speedError: result.status === 'partial' ? (result.error || 'partial sample') : undefined,
+          speedTesting: false,
+        })
+        await deps.recordSpeedSample(instanceId, {
+          speedMbps: mbps,
+          status: result.status === 'partial' ? 'partial' : 'ok',
+          error: result.status === 'partial' ? result.error : undefined,
+        })
+        return
+      }
+
+      const error = typeof result.error === 'string' && result.error.trim().length > 0
+        ? result.error.trim()
+        : 'speed test failed'
+      patchNode(instanceId, { speedMbps: -1, speedError: error, speedTesting: false })
       await deps.recordSpeedSample(instanceId, {
-        speedMbps: result.status === 'ok' ? mbps : undefined,
-        status: result.status === 'ok' ? 'ok' : 'error',
+        status: getSpeedFailureStatus(error),
+        error,
       })
-    } catch {
-      patchNode(instanceId, { speedMbps: -1, speedTesting: false })
-      await deps.recordSpeedSample(instanceId, { status: 'timeout' })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      patchNode(instanceId, { speedMbps: -1, speedError: reason, speedTesting: false })
+      await deps.recordSpeedSample(instanceId, {
+        status: getSpeedFailureStatus(reason),
+        error: reason,
+      })
     }
   }
 
@@ -854,7 +893,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
 
     // Mark all as testing
     allNodes.forEach(node => {
-      patchNode(node.instanceId, { speedTesting: true, speedMbps: undefined })
+      patchNode(node.instanceId, { speedTesting: true, speedMbps: undefined, speedError: undefined })
     })
 
     // Test each node sequentially — each spawns its own temporary sing-box
@@ -862,21 +901,47 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       const outbounds = await getNodeOutbounds(node.instanceId)
       if (!outbounds.length) {
         logInfo(`[CloudStore] Skipping ${node.label}: no outbound config`)
-        patchNode(node.instanceId, { speedMbps: -1, speedTesting: false })
+        const error = 'no outbound config'
+        patchNode(node.instanceId, { speedMbps: -1, speedError: error, speedTesting: false })
+        await deps.recordSpeedSample(node.instanceId, {
+          status: 'error',
+          error,
+        })
         continue
       }
       try {
         const result = await TestNodeDirectSpeed(outbounds, 15)
-        const mbps = result.status === 'ok' ? Math.round(result.speedMbps * 100) / 100 : -1
-        logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
-        patchNode(node.instanceId, { speedMbps: mbps, speedTesting: false })
+        if (result.status === 'ok' || result.status === 'partial') {
+          const mbps = Math.round(result.speedMbps * 100) / 100
+          logInfo(`[CloudStore] ${node.label}: ${mbps} Mbps`)
+          patchNode(node.instanceId, {
+            speedMbps: mbps,
+            speedError: result.status === 'partial' ? (result.error || 'partial sample') : undefined,
+            speedTesting: false,
+          })
+          await deps.recordSpeedSample(node.instanceId, {
+            speedMbps: mbps,
+            status: result.status === 'partial' ? 'partial' : 'ok',
+            error: result.status === 'partial' ? result.error : undefined,
+          })
+          continue
+        }
+
+        const error = typeof result.error === 'string' && result.error.trim().length > 0
+          ? result.error.trim()
+          : 'speed test failed'
+        patchNode(node.instanceId, { speedMbps: -1, speedError: error, speedTesting: false })
         await deps.recordSpeedSample(node.instanceId, {
-          speedMbps: result.status === 'ok' ? mbps : undefined,
-          status: result.status === 'ok' ? 'ok' : 'error',
+          status: getSpeedFailureStatus(error),
+          error,
         })
-      } catch {
-        patchNode(node.instanceId, { speedMbps: -1, speedTesting: false })
-        await deps.recordSpeedSample(node.instanceId, { status: 'timeout' })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        patchNode(node.instanceId, { speedMbps: -1, speedError: reason, speedTesting: false })
+        await deps.recordSpeedSample(node.instanceId, {
+          status: getSpeedFailureStatus(reason),
+          error: reason,
+        })
       }
     }
 

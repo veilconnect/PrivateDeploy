@@ -71,6 +71,35 @@ func TestBuildPartialSpeedResultEscapesErrorMessage(t *testing.T) {
 	}
 }
 
+func TestSpeedErrorEscapesJsonErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+	}{
+		{"simple", "connection refused"},
+		{"quotes", `sing-box: "config error"`},
+		{"newlines", "line1\nline2\nline3"},
+		{"tabs", "field\tvalue"},
+		{"backslash", `path\to\file`},
+		{"unicode", "错误：连接失败"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := speedError(tt.msg)
+
+			var parsed map[string]interface{}
+			if err := json.Unmarshal([]byte(result.Data), &parsed); err != nil {
+				t.Fatalf("speedError produced invalid JSON for %q: %v\nRaw: %s", tt.msg, err, result.Data)
+			}
+
+			if got := parsed["error"].(string); got != tt.msg {
+				t.Errorf("error field mismatch: got %q, want %q", got, tt.msg)
+			}
+		})
+	}
+}
+
 type contextDeadlineExceededStub struct{}
 
 func (contextDeadlineExceededStub) Error() string {

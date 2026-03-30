@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useSystemProxyControl } from '@/hooks'
 import { useEnvStore, useKernelApiStore } from '@/stores'
 import { APP_TITLE } from '@/utils'
 
@@ -11,6 +12,7 @@ const route = useRoute()
 const router = useRouter()
 const envStore = useEnvStore()
 const kernelApiStore = useKernelApiStore()
+const { handleProxyStatusAction } = useSystemProxyControl()
 
 const pageTitle = computed(() => {
   const key = route.meta?.name as string | undefined
@@ -35,6 +37,16 @@ const kernelStateColor = computed(() => {
 const proxyStateColor = computed(() => {
   return envStore.systemProxyState === 'managed' ? 'primary' : 'default'
 })
+
+const proxyStateLabel = computed(() => t(`settings.systemProxy.badge.${envStore.systemProxyState}`))
+
+const proxyActionHint = computed(() =>
+  t(
+    envStore.capabilities.systemProxySupported && !envStore.systemProxyState.startsWith('unsupported')
+      ? 'settings.systemProxy.clickToToggle'
+      : 'settings.systemProxy.clickUnsupported',
+  ),
+)
 
 const isSettingsPage = computed(() => route.name === 'Settings')
 
@@ -61,9 +73,16 @@ const handleTogglePage = () => {
       <Tag :color="kernelStateColor">
         {{ kernelStateLabel }}
       </Tag>
-      <Tag :color="proxyStateColor">
-        {{ t(`settings.systemProxy.status.${envStore.systemProxyState}`) }}
-      </Tag>
+      <button
+        type="button"
+        class="proxy-state-trigger"
+        :title="proxyActionHint"
+        @click="handleProxyStatusAction"
+      >
+        <Tag :color="proxyStateColor">
+          {{ proxyStateLabel }}
+        </Tag>
+      </button>
       <Button
         @click="handleTogglePage"
         :icon="isSettingsPage ? 'overview' : 'settings2'"
@@ -81,5 +100,18 @@ const handleTogglePage = () => {
     radial-gradient(circle at top left, color-mix(in srgb, var(--primary-color) 12%, transparent), transparent 45%),
     linear-gradient(135deg, color-mix(in srgb, var(--card-bg) 82%, black 18%), var(--card-bg));
   border: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
+}
+
+.proxy-state-trigger {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.proxy-state-trigger:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 </style>
