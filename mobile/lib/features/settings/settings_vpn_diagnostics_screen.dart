@@ -71,6 +71,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final showStatusError = vpn.diagnosticsError != null && !vpn.isConnected;
     final subtitle = switch (vpn.status) {
       VpnStatus.connected => 'VPN 已连接，下面的数据来自当前活跃会话',
       VpnStatus.connecting => 'VPN 正在建立连接，诊断结果可能会变化',
@@ -102,7 +103,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             ],
-            if (vpn.diagnosticsError != null) ...[
+            if (showStatusError) ...[
               SizedBox(height: 8.h),
               Text(
                 vpn.diagnosticsError!,
@@ -126,21 +127,66 @@ class _DiagnosticsEgressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final value = switch ((vpn.isConnected, vpn.isRefreshingDiagnostics,
-        vpn.diagnosticsEgressIp)) {
-      (false, _, _) => 'Connect VPN to measure current egress IP',
-      (true, true, null) => 'Refreshing...',
-      (true, _, String ip) => ip,
+    final value = switch ((
+      vpn.isConnected,
+      vpn.isRefreshingDiagnostics,
+      vpn.diagnosticsEgressIp,
+      vpn.diagnosticsError
+    )) {
+      (false, _, _, _) => 'Connect VPN to measure current egress IP',
+      (true, true, null, _) => 'Refreshing...',
+      (true, _, String ip, _) => ip,
+      (true, _, null, String _) => 'Probe unavailable',
       _ => 'Unavailable',
+    };
+    final helpText = switch ((
+      vpn.isConnected,
+      vpn.isRefreshingDiagnostics,
+      vpn.diagnosticsEgressIp,
+      vpn.diagnosticsError
+    )) {
+      (true, false, null, String error) => error,
+      (true, true, null, _) =>
+        'Trying a short native probe first, then falling back only if needed.',
+      _ => null,
     };
 
     return Card(
-      child: ListTile(
-        leading: const Icon(Icons.public_outlined),
-        title: const Text('Current Egress IP'),
-        subtitle: Text(
-          value,
-          style: theme.textTheme.titleMedium,
+      child: Padding(
+        padding: EdgeInsets.all(16.w),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Icon(Icons.public_outlined),
+            ),
+            SizedBox(width: 16.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Current Egress IP', style: theme.textTheme.titleMedium),
+                  SizedBox(height: 6.h),
+                  Text(
+                    value,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (helpText != null) ...[
+                    SizedBox(height: 8.h),
+                    Text(
+                      helpText,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -193,7 +239,8 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
                     '${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}',
                   ),
                   trailing: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
                     decoration: BoxDecoration(
                       color: decision.isDirect
                           ? Colors.teal.withValues(alpha: 0.12)

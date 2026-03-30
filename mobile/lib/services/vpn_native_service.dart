@@ -224,7 +224,8 @@ class VpnNativeService {
 
       return result
           .whereType<Map>()
-          .map((item) => VpnNativeLogEntry.fromJson(Map<String, dynamic>.from(item)))
+          .map((item) =>
+              VpnNativeLogEntry.fromJson(Map<String, dynamic>.from(item)))
           .toList(growable: false);
     } on PlatformException catch (e) {
       _recordLastError(e.message ?? 'Failed to get recent VPN logs');
@@ -234,6 +235,35 @@ class VpnNativeService {
       _recordLastError('Failed to get recent VPN logs: $e');
       AppLogger.error('[VpnNativeService] Failed to get recent logs', e);
       return const [];
+    }
+  }
+
+  /// 获取当前出口 IP 探测结果
+  Future<VpnNativeEgressProbeResult?> getEgressIp() async {
+    try {
+      final result = await _methodChannel.invokeMethod<Map>('getEgressIp');
+      if (result == null) {
+        return null;
+      }
+      return VpnNativeEgressProbeResult.fromJson(
+        Map<String, dynamic>.from(result),
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Native egress probe unavailable: ${e.message}',
+      );
+      return VpnNativeEgressProbeResult(
+        error: e.message ?? 'Unable to run native egress probe.',
+      );
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to run native egress probe: $e',
+      );
+      return VpnNativeEgressProbeResult(
+        error: 'Unable to run native egress probe.',
+      );
     }
   }
 
@@ -400,6 +430,36 @@ class VpnNativeLogEntry {
     return VpnNativeLogEntry(
       message: json['message']?.toString() ?? '',
       timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
+    );
+  }
+}
+
+class VpnNativeEgressProbeResult {
+  const VpnNativeEgressProbeResult({
+    this.ip,
+    this.source,
+    this.error,
+  });
+
+  final String? ip;
+  final String? source;
+  final String? error;
+
+  bool get hasIp => ip != null && ip!.trim().isNotEmpty;
+
+  factory VpnNativeEgressProbeResult.fromJson(Map<String, dynamic> json) {
+    String? normalize(String key) {
+      final value = json[key]?.toString().trim();
+      if (value == null || value.isEmpty || value == 'null') {
+        return null;
+      }
+      return value;
+    }
+
+    return VpnNativeEgressProbeResult(
+      ip: normalize('ip'),
+      source: normalize('source'),
+      error: normalize('error'),
     );
   }
 }

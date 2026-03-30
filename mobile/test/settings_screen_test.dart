@@ -146,6 +146,37 @@ void main() {
       expect(find.text('PROXY'), findsOneWidget);
     });
 
+    testWidgets('shows clearer diagnostics copy when egress probe fails',
+        (tester) async {
+      final vpnProvider = TestVpnProvider(
+        status: VpnStatus.connected,
+        diagnosticsEgressIp: null,
+        diagnosticsError: VpnProvider.egressProbeFailureMessage,
+        diagnosticsUpdatedAt: DateTime(2026, 3, 30, 7, 10, 0),
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: TestCloudProvider(hasApiKey: false),
+        vpnProvider: vpnProvider,
+        appSettingsProvider: TestAppSettingsProvider(),
+        settle: true,
+      );
+
+      await tester.ensureVisible(find.text('VPN Diagnostics'));
+      await tester.tap(find.text('VPN Diagnostics'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Probe unavailable'), findsOneWidget);
+      expect(
+        find.text(VpnProvider.egressProbeFailureMessage),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('saves custom routing rules from dialog', (tester) async {
       final appSettingsProvider = TestAppSettingsProvider();
 

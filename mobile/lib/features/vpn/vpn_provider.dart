@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../services/vpn_native_service.dart';
@@ -15,6 +14,9 @@ export 'vpn_diagnostics.dart';
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
       'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.';
+  static const String egressProbeFailureMessage =
+      'Could not reach public IP probe endpoints through the current VPN route. Recent routing decisions below may still be valid.';
+  static const Duration nativeEgressProbeTimeout = Duration(seconds: 3);
 
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
@@ -228,6 +230,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     try {
       final success = await _nativeService.stopVpn();
       if (success) {
+        await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
         _stopStatsPolling();
@@ -332,22 +335,47 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     try {
       final logs = await _nativeService.getRecentLogs();
       _runtimeLogParser.replaceWith(logs);
+      _diagnosticsUpdatedAt = DateTime.now();
 
       if (_status == VpnStatus.connected) {
-        _diagnosticsEgressIp = await _fetchEgressIp();
+        await _refreshConnectedDiagnosticsEgressIp();
       } else {
         _diagnosticsEgressIp = null;
       }
-
-      _diagnosticsUpdatedAt = DateTime.now();
-    } on DioException catch (e) {
-      _diagnosticsError =
-          'Failed to refresh diagnostics: ${e.message ?? e.toString()}';
     } catch (e) {
       _diagnosticsError = 'Failed to refresh diagnostics: $e';
     } finally {
       _isRefreshingDiagnostics = false;
       _safeNotifyListeners();
+    }
+  }
+
+  Future<void> _refreshConnectedDiagnosticsEgressIp() async {
+    final nativeProbe = await _nativeService.getEgressIp().timeout(
+          nativeEgressProbeTimeout,
+          onTimeout: () => const VpnNativeEgressProbeResult(
+            error: egressProbeFailureMessage,
+          ),
+        );
+    if (nativeProbe?.hasIp == true) {
+      _diagnosticsEgressIp = nativeProbe!.ip;
+      _diagnosticsError = null;
+      return;
+    }
+
+    final nativeError = nativeProbe?.error;
+    if (nativeError != null && nativeError.isNotEmpty) {
+      _diagnosticsEgressIp = null;
+      _diagnosticsError = _normalizeEgressProbeError(nativeError);
+      return;
+    }
+
+    try {
+      _diagnosticsEgressIp = await _fetchEgressIp();
+      _diagnosticsError = null;
+    } catch (_) {
+      _diagnosticsEgressIp = null;
+      _diagnosticsError = egressProbeFailureMessage;
     }
   }
 
@@ -393,11 +421,57 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     return true;
   }
 
+  Future<void> _waitForNativeDisconnect({
+    Duration timeout = const Duration(seconds: 3),
+    Duration pollInterval = const Duration(milliseconds: 100),
+    Duration settleDelay = const Duration(milliseconds: 150),
+  }) async {
+    final stopwatch = Stopwatch()..start();
+
+    while (stopwatch.elapsed < timeout) {
+      final nativeStatus = await _nativeService.getStatus();
+      final isRunning =
+          nativeStatus?.running ?? await _nativeService.isRunning();
+      final normalizedStatus =
+          nativeStatus?.status.trim().toLowerCase() ?? 'disconnected';
+      if (!isRunning &&
+          (normalizedStatus == 'disconnected' ||
+              normalizedStatus == 'error' ||
+              normalizedStatus == 'revoked')) {
+        if (settleDelay > Duration.zero) {
+          await Future<void>.delayed(settleDelay);
+        }
+        return;
+      }
+      await Future<void>.delayed(pollInterval);
+    }
+
+    if (settleDelay > Duration.zero) {
+      await Future<void>.delayed(settleDelay);
+    }
+  }
+
   String? _normalizeVpnError(String? message) {
     if (isVpnConflictMessage(message)) {
       return vpnConflictMessage;
     }
     return message;
+  }
+
+  String _normalizeEgressProbeError(String message) {
+    final normalized = message.trim();
+    if (normalized.isEmpty) {
+      return egressProbeFailureMessage;
+    }
+
+    final lower = normalized.toLowerCase();
+    if (lower.contains('timeout') ||
+        lower.contains('timed out') ||
+        lower.contains('could not reach public ip probe endpoints') ||
+        lower.contains('unable to determine current egress ip')) {
+      return egressProbeFailureMessage;
+    }
+    return normalized;
   }
 
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {

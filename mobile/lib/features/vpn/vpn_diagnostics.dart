@@ -1,10 +1,12 @@
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
 import '../../services/vpn_native_service.dart';
+import '../../shared/utils/logger.dart';
 
 enum VpnRouteDecisionType {
   direct,
@@ -32,8 +34,7 @@ class VpnRouteDecision {
 
   String get typeLabel => isDirect ? 'DIRECT' : 'PROXY';
 
-  String get routeLabel =>
-      isDirect ? '直连规则' : '代理规则 (${outboundTag.trim()})';
+  String get routeLabel => isDirect ? '直连规则' : '代理规则 (${outboundTag.trim()})';
 
   String get displayTarget {
     if (domain == null || domain == targetHost) {
@@ -182,15 +183,6 @@ class VpnRuntimeLogParser {
 }
 
 Future<String?> fetchVpnEgressIp() async {
-  final dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 5),
-      sendTimeout: const Duration(seconds: 5),
-      responseType: ResponseType.plain,
-      validateStatus: (status) => status != null && status >= 200 && status < 400,
-    ),
-  );
   const endpoints = [
     'https://api64.ipify.org?format=json',
     'https://api.ipify.org?format=json',
@@ -199,14 +191,49 @@ Future<String?> fetchVpnEgressIp() async {
   ];
 
   Object? lastError;
-  for (final endpoint in endpoints) {
+  for (final host in const ['1.1.1.1', '1.0.0.1']) {
     try {
-      final response = await dio.get<String>(endpoint);
-      final value = _extractIp(response.data);
+      final value = await _probeCloudflareTraceViaLiteralIp(host);
+      if (value == null) {
+        AppLogger.debug(
+          '[VpnDiagnostics] Literal IP probe returned no parseable payload for $host',
+        );
+      }
       if (value != null) {
+        AppLogger.info(
+          '[VpnDiagnostics] Egress probe succeeded via literal IP $host -> $value',
+        );
         return value;
       }
     } catch (error) {
+      AppLogger.warning(
+        '[VpnDiagnostics] Literal IP probe failed for $host: $error',
+      );
+      lastError = error;
+    }
+  }
+
+  final dio = _buildVpnEgressIpDio();
+  for (final endpoint in endpoints) {
+    try {
+      final response = await dio.get<String>(endpoint);
+      final value = extractVpnEgressIp(response.data);
+      if (value == null) {
+        AppLogger.debug(
+          '[VpnDiagnostics] Egress probe returned unparseable payload from $endpoint: '
+          '${response.data?.toString().replaceAll('\n', '\\n')}',
+        );
+      }
+      if (value != null) {
+        AppLogger.info(
+          '[VpnDiagnostics] Egress probe succeeded via $endpoint -> $value',
+        );
+        return value;
+      }
+    } catch (error) {
+      AppLogger.warning(
+        '[VpnDiagnostics] Egress probe failed for $endpoint: $error',
+      );
       lastError = error;
     }
   }
@@ -217,7 +244,71 @@ Future<String?> fetchVpnEgressIp() async {
   throw const FormatException('Unable to determine egress IP');
 }
 
-String? _extractIp(String? payload) {
+Dio _buildVpnEgressIpDio() {
+  final dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 5),
+      sendTimeout: const Duration(seconds: 5),
+      responseType: ResponseType.plain,
+      followRedirects: true,
+      maxRedirects: 3,
+      validateStatus: (status) =>
+          status != null && status >= 200 && status < 400,
+    ),
+  );
+  return dio;
+}
+
+Future<String?> _probeCloudflareTraceViaLiteralIp(String host) async {
+  Socket? rawSocket;
+  SecureSocket? secureSocket;
+
+  try {
+    rawSocket = await Socket.connect(
+      host,
+      443,
+      timeout: const Duration(seconds: 5),
+    );
+    secureSocket = await SecureSocket.secure(
+      rawSocket,
+      onBadCertificate: (_) => true,
+      supportedProtocols: const ['http/1.1'],
+    ).timeout(const Duration(seconds: 5));
+    rawSocket = null;
+
+    secureSocket.write(
+      'GET /cdn-cgi/trace HTTP/1.1\r\n'
+      'Host: $host\r\n'
+      'User-Agent: PrivateDeploy/1.0\r\n'
+      'Accept: */*\r\n'
+      'Connection: close\r\n'
+      '\r\n',
+    );
+    await secureSocket.flush();
+
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk
+        in secureSocket.timeout(const Duration(seconds: 5))) {
+      bytes.add(chunk);
+    }
+
+    final responseText = utf8.decode(
+      bytes.takeBytes(),
+      allowMalformed: true,
+    );
+    final separatorIndex = responseText.indexOf('\r\n\r\n');
+    final body = separatorIndex >= 0
+        ? responseText.substring(separatorIndex + 4)
+        : responseText;
+    return extractVpnEgressIp(body);
+  } finally {
+    await secureSocket?.close();
+    await rawSocket?.close();
+  }
+}
+
+String? extractVpnEgressIp(String? payload) {
   if (payload == null) {
     return null;
   }
@@ -234,12 +325,24 @@ String? _extractIp(String? payload) {
       if (decoded is Map<String, dynamic>) {
         for (final key in ['ip', 'ip_addr', 'address']) {
           final candidate = decoded[key]?.toString().trim();
-          if (candidate != null && InternetAddress.tryParse(candidate) != null) {
+          if (candidate != null &&
+              InternetAddress.tryParse(candidate) != null) {
             return candidate;
           }
         }
       }
     } catch (_) {}
+  }
+
+  for (final line in normalized.split('\n')) {
+    final trimmedLine = line.trim();
+    if (!trimmedLine.startsWith('ip=')) {
+      continue;
+    }
+    final candidate = trimmedLine.substring(3).trim();
+    if (InternetAddress.tryParse(candidate) != null) {
+      return candidate;
+    }
   }
 
   final firstLine = normalized.split('\n').first.trim();

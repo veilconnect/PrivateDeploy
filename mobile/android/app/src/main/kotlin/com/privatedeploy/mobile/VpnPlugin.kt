@@ -5,11 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.Patterns
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -17,6 +19,9 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.URL
 
 /**
  * VPN Plugin for Flutter
@@ -32,6 +37,13 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         private const val EVENT_CHANNEL = "com.privatedeploy.vpn/events"
         private const val VPN_REQUEST_CODE = 100
         private const val START_TIMEOUT_MS = 30000L
+        private const val EGRESS_PROBE_TIMEOUT_MS = 1500
+        private val EGRESS_PROBE_ENDPOINTS = listOf(
+            NativeEgressProbeEndpoint("http://1.1.1.1/cdn-cgi/trace"),
+            NativeEgressProbeEndpoint("http://1.0.0.1/cdn-cgi/trace"),
+            NativeEgressProbeEndpoint("https://api.ipify.org?format=json"),
+            NativeEgressProbeEndpoint("https://ifconfig.me/ip"),
+        )
     }
 
     private lateinit var methodChannel: MethodChannel
@@ -75,10 +87,15 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                             message = "VPN permission revoked"
                         )
                         "disconnected" -> {
-                            if (pendingStartResult != null) {
+                            if (pendingStartResult != null && !message.isNullOrBlank()) {
                                 failPendingStart(
                                     code = "START_FAILED",
-                                    message = message ?: "VPN disconnected during startup"
+                                    message = message
+                                )
+                            } else if (pendingStartResult != null) {
+                                Log.i(
+                                    TAG,
+                                    "Ignoring stale disconnected status while a new VPN start is pending"
                                 )
                             }
                         }
@@ -179,6 +196,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "getStatus" -> getStatus(result)
             "getStats" -> getStats(result)
             "getRecentLogs" -> getRecentLogs(result)
+            "getEgressIp" -> getEgressIp(result)
             "resetStats" -> resetStats(result)
             "updateConfig" -> updateConfig(call, result)
             "getVersion" -> getVersion(result)
@@ -353,6 +371,21 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         result.success(PrivateDeployVpnService.currentRecentLogs())
     }
 
+    private fun getEgressIp(result: MethodChannel.Result) {
+        Thread {
+            val probeResult = probeEgressIp()
+            mainHandler.post {
+                result.success(
+                    mapOf(
+                        "ip" to probeResult.ip,
+                        "source" to probeResult.source,
+                        "error" to probeResult.error,
+                    )
+                )
+            }
+        }.start()
+    }
+
     /**
      * 重置统计
      */
@@ -455,5 +488,120 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     override fun onCancel(arguments: Any?) {
         eventSink = null
         Log.d(TAG, "Event stream listener cancelled")
+    }
+
+    private data class NativeEgressProbeResult(
+        val ip: String? = null,
+        val source: String? = null,
+        val error: String? = null,
+    )
+
+    private data class NativeEgressProbeEndpoint(
+        val url: String,
+        val hostHeader: String? = null,
+    )
+
+    private fun probeEgressIp(): NativeEgressProbeResult {
+        var lastError: String? = null
+
+        for (endpoint in EGRESS_PROBE_ENDPOINTS) {
+            try {
+                val payload = fetchProbePayload(endpoint)
+                val ip = extractIpFromProbePayload(payload)
+                if (!ip.isNullOrBlank()) {
+                    Log.i(TAG, "VPN egress probe succeeded via ${endpoint.url} -> $ip")
+                    return NativeEgressProbeResult(ip = ip, source = endpoint.url)
+                }
+                Log.w(TAG, "VPN egress probe returned unparseable payload from ${endpoint.url}")
+                lastError = "Public IP probe returned an unexpected response."
+            } catch (timeout: SocketTimeoutException) {
+                Log.w(TAG, "VPN egress probe timed out for ${endpoint.url}", timeout)
+                lastError = "Timed out contacting public IP probe endpoints."
+            } catch (error: Exception) {
+                Log.w(TAG, "VPN egress probe failed for ${endpoint.url}", error)
+                lastError = "Could not reach public IP probe endpoints through the current VPN route."
+            }
+        }
+
+        return NativeEgressProbeResult(error = lastError ?: "Unable to determine current egress IP.")
+    }
+
+    private fun fetchProbePayload(endpoint: NativeEgressProbeEndpoint): String {
+        val url = URL(endpoint.url)
+        val connection = openProbeConnection(url)
+        try {
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = EGRESS_PROBE_TIMEOUT_MS
+            connection.readTimeout = EGRESS_PROBE_TIMEOUT_MS
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "application/json, text/plain;q=0.9, */*;q=0.8")
+            connection.setRequestProperty("User-Agent", "PrivateDeploy/1.0")
+            endpoint.hostHeader?.let { connection.setRequestProperty("Host", it) }
+            connection.connect()
+
+            val statusCode = connection.responseCode
+            if (statusCode !in 200..399) {
+                throw IllegalStateException("Unexpected HTTP status $statusCode from ${endpoint.url}")
+            }
+
+            return connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun openProbeConnection(url: URL): HttpURLConnection {
+        val connectivityManager =
+            context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val activeNetwork = connectivityManager?.activeNetwork
+        val connection = if (activeNetwork != null) {
+            activeNetwork.openConnection(url)
+        } else {
+            url.openConnection()
+        }
+
+        return connection as? HttpURLConnection
+            ?: throw IllegalStateException("Unsupported probe connection type for $url")
+    }
+
+    private fun extractIpFromProbePayload(payload: String): String? {
+        val trimmed = payload.trim()
+        if (trimmed.isEmpty()) {
+            return null
+        }
+
+        try {
+            val json = org.json.JSONObject(trimmed)
+            for (key in listOf("ip", "ip_addr", "address")) {
+                val candidate = json.optString(key).trim()
+                if (isLiteralIp(candidate)) {
+                    return candidate
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        Regex("^ip=([^\\s]+)$", RegexOption.MULTILINE)
+            .find(trimmed)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf(::isLiteralIp)
+            ?.let { return it }
+
+        val firstLine = trimmed.lineSequence().firstOrNull()?.trim()
+        if (isLiteralIp(firstLine)) {
+            return firstLine
+        }
+
+        return null
+    }
+
+    private fun isLiteralIp(candidate: String?): Boolean {
+        val value = candidate?.trim()
+        if (value.isNullOrEmpty()) {
+            return false
+        }
+        return Patterns.IP_ADDRESS.matcher(value).matches()
     }
 }

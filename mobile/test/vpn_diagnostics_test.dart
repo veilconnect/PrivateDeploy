@@ -9,8 +9,7 @@ void main() {
 
       parser.replaceWith([
         VpnNativeLogEntry(
-          message:
-              'dns: exchanged A www.baidu.com. 1 IN A 45.113.192.102',
+          message: 'dns: exchanged A www.baidu.com. 1 IN A 45.113.192.102',
           timestamp: DateTime(2026, 3, 30, 7, 0, 0),
         ),
         VpnNativeLogEntry(
@@ -65,6 +64,29 @@ void main() {
       ]);
 
       expect(parser.recentDecisions, hasLength(2));
+    });
+  });
+
+  group('extractVpnEgressIp', () {
+    test('parses JSON payloads', () {
+      expect(
+        extractVpnEgressIp('{"ip":"203.0.113.42"}'),
+        '203.0.113.42',
+      );
+    });
+
+    test('parses plain text payloads', () {
+      expect(
+        extractVpnEgressIp('203.0.113.43\n'),
+        '203.0.113.43',
+      );
+    });
+
+    test('parses Cloudflare trace payloads without DNS', () {
+      expect(
+        extractVpnEgressIp('fl=29f117\nh=1.1.1.1\nip=198.51.100.10\nts=123'),
+        '198.51.100.10',
+      );
     });
   });
 }
