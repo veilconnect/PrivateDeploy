@@ -28,6 +28,29 @@ class SettingsScreen extends StatelessWidget {
           ),
           SizedBox(height: 16.h),
           SettingsAppSection(onClearLocalCloudData: () async {
+            final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('Clear Local Cloud Data?'),
+                    content: const Text(
+                      'This removes the saved Vultr API key and cached cloud node records from this device only. It does not delete any cloud instances.',
+                    ),
+                    actions: [
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                ) ??
+                false;
+            if (!confirmed || !context.mounted) {
+              return;
+            }
             final cloud = context.read<CloudProvider>();
             await cloud.clearLocalCloudData();
             if (context.mounted) {

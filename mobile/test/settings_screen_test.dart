@@ -361,7 +361,7 @@ void main() {
       expect(find.text('Verify & Save'), findsOneWidget);
     });
 
-    testWidgets('clears local cloud data and shows snackbar', (tester) async {
+    testWidgets('confirms before clearing local cloud data', (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
         apiKey: 'abcd1234efgh',
@@ -377,7 +377,21 @@ void main() {
         settle: true,
       );
 
-      await tester.tap(find.text('Clear Local Cloud Data'));
+      await tester.tap(find.widgetWithText(ListTile, 'Clear Local Cloud Data'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clear Local Cloud Data?'), findsOneWidget);
+      expect(cloudProvider.clearLocalCloudDataCalls, 0);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.clearLocalCloudDataCalls, 0);
+      expect(cloudProvider.apiKey, 'abcd1234efgh');
+
+      await tester.tap(find.widgetWithText(ListTile, 'Clear Local Cloud Data'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear'));
       await tester.pumpAndSettle();
 
       expect(cloudProvider.clearLocalCloudDataCalls, 1);
@@ -385,7 +399,7 @@ void main() {
       expect(find.text('Local cloud data cleared'), findsOneWidget);
     });
 
-    testWidgets('exports cloud backup to clipboard and shows dialog',
+    testWidgets('exports cloud backup to clipboard without revealing payload',
         (tester) async {
       const payload = '{"provider":"vultr","apiKey":"secret"}';
       final cloudProvider = TestCloudProvider(
@@ -409,7 +423,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Cloud Backup Copied'), findsOneWidget);
-      expect(find.textContaining('already been copied'), findsOneWidget);
+      expect(find.textContaining('copied to your clipboard'), findsOneWidget);
+      expect(find.text('Backup Summary'), findsOneWidget);
+      expect(find.textContaining('"apiKey"'), findsNothing);
       expect(clipboardText, payload);
 
       await tester.tap(find.text('Copy Again'));
@@ -417,6 +433,15 @@ void main() {
 
       expect(find.text('Backup copied again'), findsOneWidget);
       expect(clipboardText, payload);
+
+      await tester.tap(find.text('Reveal JSON'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reveal Sensitive Backup?'), findsOneWidget);
+      await tester.tap(find.text('Reveal'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('"apiKey":"secret"'), findsOneWidget);
     });
 
     testWidgets('restores cloud backup from clipboard', (tester) async {

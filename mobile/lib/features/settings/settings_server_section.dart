@@ -54,7 +54,7 @@ class SettingsServerSection extends StatelessWidget {
                     leading: const Icon(Icons.copy_all_outlined),
                     title: const Text('Copy Cloud Backup'),
                     subtitle: const Text(
-                      'Copy API key and local node records as JSON',
+                      'Copy sensitive JSON backup with API key and local node records',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onExportBackup(cloud),
