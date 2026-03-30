@@ -399,6 +399,8 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
   int loadStatusCalls = 0;
   int disconnectCalls = 0;
   int refreshDiagnosticsCalls = 0;
+  int activateDiagnosticsSessionCalls = 0;
+  int deactivateDiagnosticsSessionCalls = 0;
 
   @override
   VpnStatus get status => _status;
@@ -441,5 +443,15 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
   Future<void> refreshDiagnostics() async {
     refreshDiagnosticsCalls++;
     notifyListeners();
+  }
+
+  @override
+  Future<void> activateDiagnosticsSession() async {
+    activateDiagnosticsSessionCalls++;
+  }
+
+  @override
+  Future<void> deactivateDiagnosticsSession() async {
+    deactivateDiagnosticsSessionCalls++;
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,28 @@ import 'package:privatedeploy_mobile/features/settings/settings_screen.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 
 import 'support/nodes_test_support.dart';
+
+class _NoisyTestVpnProvider extends TestVpnProvider {
+  _NoisyTestVpnProvider({
+    required super.status,
+    super.diagnosticsEgressIp,
+    super.diagnosticsUpdatedAt,
+  });
+
+  Timer? _timer;
+
+  void startNotifications({
+    Duration interval = const Duration(milliseconds: 16),
+  }) {
+    _timer?.cancel();
+    _timer = Timer.periodic(interval, (_) => notifyListeners());
+  }
+
+  void stopNotifications() {
+    _timer?.cancel();
+    _timer = null;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -133,6 +157,7 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
+      expect(vpnProvider.activateDiagnosticsSessionCalls, 1);
       expect(vpnProvider.refreshDiagnosticsCalls, 1);
       expect(find.text('VPN Diagnostics'), findsWidgets);
       expect(find.text('Current Egress IP'), findsOneWidget);
@@ -144,6 +169,45 @@ void main() {
       );
       expect(find.text('DIRECT'), findsOneWidget);
       expect(find.text('PROXY'), findsOneWidget);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(vpnProvider.deactivateDiagnosticsSessionCalls, 1);
+    });
+
+    testWidgets(
+        'still opens diagnostics while connected provider keeps notifying',
+        (tester) async {
+      final vpnProvider = _NoisyTestVpnProvider(
+        status: VpnStatus.connected,
+        diagnosticsEgressIp: '203.0.113.42',
+        diagnosticsUpdatedAt: DateTime(2026, 3, 30, 7, 10, 0),
+      );
+
+      addTearDown(vpnProvider.stopNotifications);
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: TestCloudProvider(hasApiKey: false),
+        vpnProvider: vpnProvider,
+        appSettingsProvider: TestAppSettingsProvider(),
+        settle: true,
+      );
+
+      vpnProvider.startNotifications();
+
+      await tester.ensureVisible(find.text('VPN Diagnostics'));
+      await tester.tap(find.text('VPN Diagnostics'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      vpnProvider.stopNotifications();
+
+      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(vpnProvider.activateDiagnosticsSessionCalls, 1);
+      expect(vpnProvider.refreshDiagnosticsCalls, 1);
     });
 
     testWidgets('shows clearer diagnostics copy when egress probe fails',

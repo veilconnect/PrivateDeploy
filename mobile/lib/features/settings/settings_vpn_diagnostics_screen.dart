@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
@@ -15,15 +17,32 @@ class SettingsVpnDiagnosticsScreen extends StatefulWidget {
 
 class _SettingsVpnDiagnosticsScreenState
     extends State<SettingsVpnDiagnosticsScreen> {
+  VpnProvider? _vpnProvider;
+
   @override
   void initState() {
     super.initState();
+    _vpnProvider = context.read<VpnProvider>();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
-      context.read<VpnProvider>().refreshDiagnostics();
+      final vpnProvider = _vpnProvider;
+      if (vpnProvider == null) {
+        return;
+      }
+      unawaited(vpnProvider.activateDiagnosticsSession());
+      unawaited(vpnProvider.refreshDiagnostics());
     });
+  }
+
+  @override
+  void dispose() {
+    final vpnProvider = _vpnProvider;
+    if (vpnProvider != null) {
+      unawaited(vpnProvider.deactivateDiagnosticsSession());
+    }
+    super.dispose();
   }
 
   @override

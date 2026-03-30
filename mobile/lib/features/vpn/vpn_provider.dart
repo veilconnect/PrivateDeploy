@@ -31,9 +31,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   StreamSubscription? _statusSub;
   StreamSubscription? _statsSub;
   StreamSubscription? _logSub;
+  Timer? _logNotifyTimer;
   Future<void>? _initializeTask;
   bool _initialized = false;
   bool _disposed = false;
+  bool _diagnosticsSessionActive = false;
   final VpnRuntimeLogParser _runtimeLogParser = VpnRuntimeLogParser();
   final Future<String?> Function() _fetchEgressIp;
   String? _diagnosticsEgressIp;
@@ -104,7 +106,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _stats = trafficStatsFromNative(nativeStats);
         _safeNotifyListeners();
       });
-      _logSub = _nativeService.logStream.listen(_applyNativeLogEntry);
+      if (_diagnosticsSessionActive) {
+        _logSub = _nativeService.logStream.listen(_applyNativeLogEntry);
+      }
       initializedNow = true;
     } catch (e) {
       AppLogger.error('[VpnProvider] Initialize error', e);
@@ -350,6 +354,22 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  Future<void> activateDiagnosticsSession() async {
+    _diagnosticsSessionActive = true;
+    if (!_isSupported || _logSub != null) {
+      return;
+    }
+    _logSub = _nativeService.logStream.listen(_applyNativeLogEntry);
+  }
+
+  Future<void> deactivateDiagnosticsSession() async {
+    _diagnosticsSessionActive = false;
+    await _logSub?.cancel();
+    _logSub = null;
+    _logNotifyTimer?.cancel();
+    _logNotifyTimer = null;
+  }
+
   Future<void> _refreshConnectedDiagnosticsEgressIp() async {
     final nativeProbe = await _nativeService.getEgressIp().timeout(
           nativeEgressProbeTimeout,
@@ -516,7 +536,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return;
     }
     _diagnosticsUpdatedAt = entry.timestamp;
-    _safeNotifyListeners();
+    _scheduleLogUpdateNotification();
+  }
+
+  void _scheduleLogUpdateNotification() {
+    if (_logNotifyTimer?.isActive ?? false) {
+      return;
+    }
+    _logNotifyTimer = Timer(const Duration(milliseconds: 250), () {
+      _logNotifyTimer = null;
+      _safeNotifyListeners();
+    });
   }
 
   void _safeNotifyListeners() {
@@ -537,6 +567,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _stopStatsPolling();
+    _logNotifyTimer?.cancel();
     _statusSub?.cancel();
     _statsSub?.cancel();
     _logSub?.cancel();
