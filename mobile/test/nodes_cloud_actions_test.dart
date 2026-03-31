@@ -184,7 +184,8 @@ void main() {
       expect(find.text('API key saved and verified'), findsNothing);
     });
 
-    testWidgets('showCreateCloudNodeFlow opens dialog immediately while loading',
+    testWidgets(
+        'showCreateCloudNodeFlow opens dialog immediately while loading',
         (tester) async {
       final cloudProvider = _FakeCloudProvider(
         isLoadingRegions: true,
@@ -295,7 +296,8 @@ void main() {
       expect(cloudProvider.createdRegion, 'nrt');
       expect(cloudProvider.createdPlan, 'vc2-1c-1gb');
       expect(cloudProvider.createdLabel, 'tokyo-edge');
-      expect(find.text('Node deploying... It takes 3-5 minutes.'), findsOneWidget);
+      expect(
+          find.text('Node deploying... It takes 3-5 minutes.'), findsOneWidget);
     });
 
     testWidgets('showCreateCloudNodeFlow shows create failure message',
@@ -353,6 +355,42 @@ void main() {
       expect(cloudProvider.createdPlan, 'vc2-1c-1gb');
       expect(cloudProvider.createdLabel, 'tokyo-edge');
       expect(find.text('Failed to create instance'), findsOneWidget);
+    });
+
+    testWidgets('testAllCloudNodesLatency shows benchmark winner details',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(
+        benchmarkSelection: CloudFastestNodeSelection(
+          instance: _instance(label: 'fra-node'),
+          latencyCheck: CloudLatencyCheck.success(
+            latencyMs: 24,
+            endpointLabel: 'Trojan',
+            updatedAt: DateTime.now(),
+            mode: CloudProbeMode.benchmark,
+            sampleCount: 3,
+            successfulSamples: 3,
+          ),
+        ),
+      );
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        onRun: (context) => testAllCloudNodesLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Best benchmark: fra-node (24 ms) via Trojan • 3/3 probes',
+        ),
+        findsOneWidget,
+      );
     });
   });
 }
@@ -434,7 +472,11 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     this.createInstanceResult = true,
     this.apiKey,
     this.error,
-  });
+    CloudFastestNodeSelection? benchmarkSelection,
+  }) : benchmarkSelection = benchmarkSelection ??
+            const CloudFastestNodeSelection(
+              error: 'No ready cloud node is available for testing',
+            );
 
   @override
   final List<CloudRegion> regions;
@@ -451,6 +493,7 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   final bool deleteResult;
   final bool setApiKeyResult;
   final bool createInstanceResult;
+  final CloudFastestNodeSelection benchmarkSelection;
 
   @override
   final String? apiKey;
@@ -506,6 +549,11 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     createdPlan = plan;
     createdLabel = label;
     return createInstanceResult;
+  }
+
+  @override
+  Future<CloudFastestNodeSelection> benchmarkConnectableInstances() async {
+    return benchmarkSelection;
   }
 
   @override

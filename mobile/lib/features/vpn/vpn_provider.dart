@@ -32,6 +32,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   StreamSubscription? _statsSub;
   StreamSubscription? _logSub;
   Timer? _logNotifyTimer;
+  int _startupVerificationGeneration = 0;
   Future<void>? _initializeTask;
   bool _initialized = false;
   bool _disposed = false;
@@ -171,6 +172,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _safeNotifyListeners();
       return false;
     }
+    _cancelStartupVerification();
     _isLoading = true;
     _error = null;
     _status = VpnStatus.connecting;
@@ -188,13 +190,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _activeProfile = profileName;
         await loadStatus();
         if (_status == VpnStatus.connected) {
-          final stable = await _verifyStableConnection(
+          _isLoading = false;
+          _safeNotifyListeners();
+          _beginStartupVerification(
             stabilityCheckDuration: stabilityCheckDuration,
             statusPollInterval: statusPollInterval,
           );
-          if (!stable) {
-            return false;
-          }
           AppLogger.info('[VpnProvider] VPN connected');
           return true;
         }
@@ -233,6 +234,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _safeNotifyListeners();
       return false;
     }
+    _cancelStartupVerification();
     _isLoading = true;
     _error = null;
     _status = VpnStatus.disconnecting;
@@ -266,6 +268,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _safeNotifyListeners();
       return false;
     }
+    _cancelStartupVerification();
     _isLoading = true;
     _error = null;
     _safeNotifyListeners();
@@ -420,12 +423,53 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     });
   }
 
+  void _beginStartupVerification({
+    required Duration stabilityCheckDuration,
+    required Duration statusPollInterval,
+  }) {
+    if (stabilityCheckDuration <= Duration.zero) {
+      return;
+    }
+
+    final generation = ++_startupVerificationGeneration;
+    unawaited(
+      _runStartupVerification(
+        generation: generation,
+        stabilityCheckDuration: stabilityCheckDuration,
+        statusPollInterval: statusPollInterval,
+      ),
+    );
+  }
+
+  void _cancelStartupVerification() {
+    _startupVerificationGeneration += 1;
+  }
+
+  Future<void> _runStartupVerification({
+    required int generation,
+    required Duration stabilityCheckDuration,
+    required Duration statusPollInterval,
+  }) async {
+    final stable = await _verifyStableConnection(
+      generation: generation,
+      stabilityCheckDuration: stabilityCheckDuration,
+      statusPollInterval: statusPollInterval,
+    );
+    if (!_isActiveStartupVerification(generation)) {
+      return;
+    }
+    if (stable) {
+      AppLogger.info('[VpnProvider] VPN startup verified');
+    }
+  }
+
   void _stopStatsPolling() {
     _statsTimer?.cancel();
     _statsTimer = null;
   }
 
   Future<bool> _verifyStableConnection({
+    required int generation,
     required Duration stabilityCheckDuration,
     required Duration statusPollInterval,
   }) async {
@@ -435,6 +479,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     final stopwatch = Stopwatch()..start();
     while (stopwatch.elapsed < stabilityCheckDuration) {
+      if (!_isActiveStartupVerification(generation)) {
+        return true;
+      }
       final remaining = stabilityCheckDuration - stopwatch.elapsed;
       final nextDelay =
           remaining < statusPollInterval ? remaining : statusPollInterval;
@@ -442,15 +489,26 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await Future<void>.delayed(nextDelay);
       }
 
+      if (!_isActiveStartupVerification(generation)) {
+        return true;
+      }
       await loadStatus();
+      if (!_isActiveStartupVerification(generation)) {
+        return true;
+      }
       if (_status != VpnStatus.connected) {
         _error = _normalizeVpnError(_error ?? _nativeService.lastError) ??
             'VPN connection was interrupted during startup';
+        _safeNotifyListeners();
         return false;
       }
     }
 
     return true;
+  }
+
+  bool _isActiveStartupVerification(int generation) {
+    return !_disposed && generation == _startupVerificationGeneration;
   }
 
   Future<void> _waitForNativeDisconnect({
@@ -577,6 +635,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
+    _cancelStartupVerification();
     WidgetsBinding.instance.removeObserver(this);
     _stopStatsPolling();
     _logNotifyTimer?.cancel();

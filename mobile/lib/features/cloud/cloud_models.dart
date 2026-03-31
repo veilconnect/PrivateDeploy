@@ -43,12 +43,20 @@ class CloudInstance {
   bool get hasIp => ipv4 != null && ipv4!.isNotEmpty && ipv4 != '0.0.0.0';
 }
 
+enum CloudProbeMode {
+  quick,
+  benchmark,
+}
+
 class CloudLatencyCheck {
   final bool isTesting;
   final int? latencyMs;
   final String? endpointLabel;
   final String? error;
   final DateTime? updatedAt;
+  final CloudProbeMode mode;
+  final int? sampleCount;
+  final int? successfulSamples;
 
   const CloudLatencyCheck({
     required this.isTesting,
@@ -56,22 +64,38 @@ class CloudLatencyCheck {
     this.endpointLabel,
     this.error,
     this.updatedAt,
+    this.mode = CloudProbeMode.quick,
+    this.sampleCount,
+    this.successfulSamples,
   });
 
-  factory CloudLatencyCheck.testing({DateTime? updatedAt}) {
-    return CloudLatencyCheck(isTesting: true, updatedAt: updatedAt);
+  factory CloudLatencyCheck.testing({
+    DateTime? updatedAt,
+    CloudProbeMode mode = CloudProbeMode.quick,
+  }) {
+    return CloudLatencyCheck(
+      isTesting: true,
+      updatedAt: updatedAt,
+      mode: mode,
+    );
   }
 
   factory CloudLatencyCheck.success({
     required int latencyMs,
     String? endpointLabel,
     DateTime? updatedAt,
+    CloudProbeMode mode = CloudProbeMode.quick,
+    int? sampleCount,
+    int? successfulSamples,
   }) {
     return CloudLatencyCheck(
       isTesting: false,
       latencyMs: latencyMs,
       endpointLabel: endpointLabel,
       updatedAt: updatedAt,
+      mode: mode,
+      sampleCount: sampleCount,
+      successfulSamples: successfulSamples,
     );
   }
 
@@ -79,14 +103,22 @@ class CloudLatencyCheck {
     required String error,
     String? endpointLabel,
     DateTime? updatedAt,
+    CloudProbeMode mode = CloudProbeMode.quick,
+    int? sampleCount,
+    int? successfulSamples,
   }) {
     return CloudLatencyCheck(
       isTesting: false,
       endpointLabel: endpointLabel,
       error: error,
       updatedAt: updatedAt,
+      mode: mode,
+      sampleCount: sampleCount,
+      successfulSamples: successfulSamples,
     );
   }
+
+  bool get isBenchmark => mode == CloudProbeMode.benchmark;
 }
 
 class CloudFastestNodeSelection {

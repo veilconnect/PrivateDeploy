@@ -132,7 +132,48 @@ void main() {
 
       expect(usedNode?.label, 'fra-node');
       expect(
-        find.text('Testing ready nodes and selecting the fastest one...'),
+        find.text('Quick-testing ready nodes and selecting the fastest one...'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('reuses recent cached winner before refreshing in background',
+        (tester) async {
+      CloudInstance? usedNode;
+      final fastestNode = _readyInstance(label: 'fra-node');
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: _FakeVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: _FakeProfileProvider(activeConfigJson: null),
+          cloudProvider: _FakeCloudProvider(
+            instances: [
+              _readyInstance(label: 'sgp-node'),
+              fastestNode,
+            ],
+            cachedSelection: CloudFastestNodeSelection(
+              instance: fastestNode,
+              latencyCheck: CloudLatencyCheck.success(
+                latencyMs: 24,
+                endpointLabel: 'Trojan',
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          ),
+          onUseCloudNode: (selected) async => usedNode = selected,
+          autoSelectFastestCloudNode: true,
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(usedNode?.label, 'fra-node');
+      expect(
+        find.textContaining('Using recent fastest node: fra-node'),
         findsOneWidget,
       );
     });
@@ -327,7 +368,12 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
   _FakeCloudProvider({
     this.instances = const [],
     CloudFastestNodeSelection? fastestSelection,
-  }) : fastestSelection = fastestSelection ??
+    CloudFastestNodeSelection? cachedSelection,
+  })  : fastestSelection = fastestSelection ??
+            const CloudFastestNodeSelection(
+              error: 'Latency testing did not return a usable node',
+            ),
+        cachedSelection = cachedSelection ??
             const CloudFastestNodeSelection(
               error: 'Latency testing did not return a usable node',
             );
@@ -336,6 +382,7 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
   final List<CloudInstance> instances;
 
   final CloudFastestNodeSelection fastestSelection;
+  final CloudFastestNodeSelection cachedSelection;
 
   @override
   Future<CloudFastestNodeSelection> selectFastestConnectableInstance({
@@ -343,6 +390,13 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
     Duration maxAge = CloudProvider.latencyCacheMaxAge,
   }) async {
     return fastestSelection;
+  }
+
+  @override
+  CloudFastestNodeSelection cachedFastestConnectableInstance({
+    Duration maxAge = CloudProvider.latencyCacheMaxAge,
+  }) {
+    return cachedSelection;
   }
 }
 

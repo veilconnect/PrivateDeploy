@@ -159,10 +159,12 @@ class TestCloudProvider extends ChangeNotifier
     this.setApiKeyResult = true,
     this.exportBackupPayload = '{"provider":"vultr"}',
     Map<String, CloudLatencyCheck>? latencyChecks,
+    CloudFastestNodeSelection? fastestSelection,
     bool? hasApiKeyAfterRefresh,
     List<CloudInstance>? loadedInstances,
   })  : _hasApiKey = hasApiKey,
         _latencyChecks = latencyChecks ?? const {},
+        _fastestSelection = fastestSelection,
         hasApiKeyAfterRefresh = hasApiKeyAfterRefresh ?? hasApiKey,
         loadedInstances = loadedInstances ?? instances;
 
@@ -173,6 +175,7 @@ class TestCloudProvider extends ChangeNotifier
 
   bool _hasApiKey;
   Map<String, CloudLatencyCheck> _latencyChecks;
+  final CloudFastestNodeSelection? _fastestSelection;
 
   @override
   bool isLoading;
@@ -293,19 +296,51 @@ class TestCloudProvider extends ChangeNotifier
       _latencyChecks[instanceId];
 
   @override
-  Future<CloudLatencyCheck> testInstanceLatency(CloudInstance instance) async {
+  Future<CloudLatencyCheck> testInstanceLatency(
+    CloudInstance instance, {
+    CloudProbeMode mode = CloudProbeMode.quick,
+  }) async {
     testInstanceLatencyCalls++;
-    final result =
-        _latencyChecks[instance.id] ??
+    final result = _latencyChecks[instance.id] ??
         CloudLatencyCheck.success(
           latencyMs: 42,
           endpointLabel: 'Trojan',
           updatedAt: DateTime(2026, 3, 30, 20, 0),
+          mode: mode,
         );
     _latencyChecks = Map<String, CloudLatencyCheck>.from(_latencyChecks)
       ..[instance.id] = result;
     notifyListeners();
     return result;
+  }
+
+  @override
+  CloudFastestNodeSelection cachedFastestConnectableInstance({
+    Duration maxAge = CloudProvider.latencyCacheMaxAge,
+  }) {
+    return _fastestSelection ??
+        const CloudFastestNodeSelection(
+          error: 'Latency testing did not return a usable node',
+        );
+  }
+
+  @override
+  Future<CloudFastestNodeSelection> selectFastestConnectableInstance({
+    bool forceRefresh = false,
+    Duration maxAge = CloudProvider.latencyCacheMaxAge,
+  }) async {
+    return _fastestSelection ??
+        const CloudFastestNodeSelection(
+          error: 'Latency testing did not return a usable node',
+        );
+  }
+
+  @override
+  Future<CloudFastestNodeSelection> benchmarkConnectableInstances() async {
+    return _fastestSelection ??
+        const CloudFastestNodeSelection(
+          error: 'No ready cloud node is available for testing',
+        );
   }
 }
 

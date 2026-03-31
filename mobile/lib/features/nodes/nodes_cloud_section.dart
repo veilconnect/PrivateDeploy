@@ -79,10 +79,10 @@ class NodesCloudSection extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onTestAllCloudNodesLatency,
                 icon: const Icon(Icons.speed),
-                label: const Text('Test All Nodes'),
+                label: const Text('Benchmark All Nodes'),
               ),
               Text(
-                'Measures TCP handshake latency across available protocols.',
+                'Runs a heavier multi-probe TCP benchmark. Top Connect reuses recent winners first.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

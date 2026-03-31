@@ -169,9 +169,14 @@ Future<void> testAllCloudNodesLatency({
   required BuildContext context,
   required CloudProvider cloudProvider,
 }) async {
-  final selection = await cloudProvider.selectFastestConnectableInstance(
-    forceRefresh: true,
+  showNodesActionSnackBar(
+    context,
+    message: 'Benchmarking ready nodes with repeated TCP probes...',
+    backgroundColor: Colors.blue,
+    replaceCurrent: true,
   );
+
+  final selection = await cloudProvider.benchmarkConnectableInstances();
   if (!context.mounted) {
     return;
   }
@@ -189,13 +194,19 @@ Future<void> testAllCloudNodesLatency({
 
   final latencyMs = selection.latencyCheck?.latencyMs;
   final endpoint = selection.latencyCheck?.endpointLabel;
+  final sampleCount = selection.latencyCheck?.sampleCount;
+  final successfulSamples = selection.latencyCheck?.successfulSamples;
   final latencySuffix = latencyMs != null ? ' (${latencyMs} ms)' : '';
   final endpointSuffix =
       endpoint != null && endpoint.isNotEmpty ? ' via $endpoint' : '';
+  final sampleSuffix =
+      sampleCount != null && successfulSamples != null && sampleCount > 0
+          ? ' • $successfulSamples/$sampleCount probes'
+          : '';
   showNodesActionSnackBar(
     context,
     message:
-        'Fastest node: ${selection.instance!.label}$latencySuffix$endpointSuffix',
+        'Best benchmark: ${selection.instance!.label}$latencySuffix$endpointSuffix$sampleSuffix',
     backgroundColor: Colors.green,
     replaceCurrent: true,
   );

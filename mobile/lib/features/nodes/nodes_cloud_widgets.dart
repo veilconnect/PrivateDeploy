@@ -41,12 +41,13 @@ class NodesCloudInstanceCard extends StatelessWidget {
         ? (isConnected ? Icons.check_circle : Icons.shield)
         : Icons.play_arrow;
     final latencyLabel = isLatencyTesting
-        ? 'Testing...'
+        ? (latencyCheck?.isBenchmark == true ? 'Benchmarking...' : 'Testing...')
         : latencyCheck?.latencyMs != null
             ? '${latencyCheck!.latencyMs} ms'
             : latencyCheck?.error != null
-                ? 'Retry Test'
-                : 'Test Latency';
+                ? 'Retry Quick Test'
+                : 'Quick Test';
+    final latencyDetail = _latencyDetailText(latencyCheck);
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
@@ -167,7 +168,9 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   ),
               ],
             ),
-            if (instance.isActive && instance.hasIp && instance.nodeInfo == null)
+            if (instance.isActive &&
+                instance.hasIp &&
+                instance.nodeInfo == null)
               Padding(
                 padding: EdgeInsets.only(top: 10.h),
                 child: Text(
@@ -204,12 +207,10 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (latencyCheck?.endpointLabel != null ||
-                  latencyCheck?.error != null) ...[
+              if (latencyDetail != null) ...[
                 SizedBox(height: 10.h),
                 Text(
-                  latencyCheck?.error ??
-                      'Fastest endpoint: ${latencyCheck!.endpointLabel}',
+                  latencyDetail,
                   style: TextStyle(
                     fontSize: 12.sp,
                     color: latencyCheck?.error == null
@@ -223,5 +224,27 @@ class NodesCloudInstanceCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String? _latencyDetailText(CloudLatencyCheck? latencyCheck) {
+    if (latencyCheck == null) {
+      return null;
+    }
+    if (latencyCheck.error != null) {
+      return latencyCheck.error;
+    }
+    final endpointLabel = latencyCheck.endpointLabel;
+    if (endpointLabel == null || endpointLabel.isEmpty) {
+      return null;
+    }
+    if (!latencyCheck.isBenchmark) {
+      return 'Fastest endpoint: $endpointLabel';
+    }
+    final sampleCount = latencyCheck.sampleCount;
+    final successfulSamples = latencyCheck.successfulSamples;
+    if (sampleCount == null || successfulSamples == null || sampleCount <= 0) {
+      return 'Benchmark leader: $endpointLabel';
+    }
+    return 'Benchmark leader: $endpointLabel • $successfulSamples/$sampleCount probes';
   }
 }

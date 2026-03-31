@@ -123,6 +123,42 @@ void main() {
       expect(vpnProvider.activeProfile, 'Test');
     });
 
+    test('connect returns before stability window elapses', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final stopwatch = Stopwatch()..start();
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Test',
+        stabilityCheckDuration: const Duration(milliseconds: 250),
+        statusPollInterval: const Duration(milliseconds: 25),
+      );
+      stopwatch.stop();
+
+      expect(success, true);
+      expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 150)));
+      expect(vpnProvider.isLoading, false);
+      expect(vpnProvider.status, VpnStatus.connected);
+    });
+
     test(
         'treats connected status as connected even when running field is malformed',
         () async {
@@ -285,7 +321,8 @@ void main() {
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });
 
-    test('connect fails when connection cannot stay stable during startup',
+    test(
+        'connect succeeds fast but background verification catches startup drop',
         () async {
       var statusCallCount = 0;
 
@@ -326,7 +363,11 @@ void main() {
         statusPollInterval: const Duration(milliseconds: 1),
       );
 
-      expect(success, false);
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });

@@ -24,6 +24,10 @@ class CloudProvider with ChangeNotifier {
   static const String _apiKeyStorageKey = 'mobile_cloud_vultr_api_key';
   static const String _nodeRecordsStorageKey = 'mobile_cloud_vultr_nodes';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
+  static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
+  static const Duration quickProbeTimeout = Duration(milliseconds: 900);
+  static const Duration benchmarkProbeTimeout = Duration(milliseconds: 1500);
+  static const int benchmarkProbeSamplesPerEndpoint = 3;
 
   List<CloudInstance> _instances = [];
   List<CloudRegion> _regions = [];
@@ -41,6 +45,7 @@ class CloudProvider with ChangeNotifier {
   Future<void>? _regionsLoadFuture;
   Future<void>? _plansLoadFuture;
   final CloudLatencyProbe _latencyProbe;
+  final CloudLatencyProbe _benchmarkLatencyProbe;
 
   List<CloudInstance> get instances => _instances;
   List<CloudRegion> get regions => _regions;
@@ -96,9 +101,16 @@ class CloudProvider with ChangeNotifier {
     );
   }
 
-  CloudProvider({CloudLatencyProbe? latencyProbe})
-      : _latencyProbe = latencyProbe ?? _defaultLatencyProbe {
-    _init();
+  CloudProvider({
+    CloudLatencyProbe? latencyProbe,
+    CloudLatencyProbe? benchmarkLatencyProbe,
+    bool autoInitialize = true,
+  })  : _latencyProbe = latencyProbe ?? _defaultLatencyProbe,
+        _benchmarkLatencyProbe =
+            benchmarkLatencyProbe ?? _defaultBenchmarkLatencyProbe {
+    if (autoInitialize) {
+      _init();
+    }
   }
 
   static String? _cloudInstanceLabelFromProfileName(String? profileName) {
@@ -554,12 +566,21 @@ class CloudProvider with ChangeNotifier {
     return completer.future;
   }
 
-  Future<CloudLatencyCheck> testInstanceLatency(CloudInstance instance) async {
-    final testing = CloudLatencyCheck.testing(updatedAt: DateTime.now());
+  Future<CloudLatencyCheck> testInstanceLatency(
+    CloudInstance instance, {
+    CloudProbeMode mode = CloudProbeMode.quick,
+  }) async {
+    final testing = CloudLatencyCheck.testing(
+      updatedAt: DateTime.now(),
+      mode: mode,
+    );
     _latencyChecks[instance.id] = testing;
     notifyListeners();
 
-    final result = await _latencyProbe(instance);
+    final probe = mode == CloudProbeMode.benchmark
+        ? _benchmarkLatencyProbe
+        : _latencyProbe;
+    final result = await probe(instance);
     _latencyChecks[instance.id] = result;
     notifyListeners();
     return result;
@@ -569,12 +590,7 @@ class CloudProvider with ChangeNotifier {
     bool forceRefresh = false,
     Duration maxAge = latencyCacheMaxAge,
   }) async {
-    final candidates = _instances
-        .where(
-          (instance) =>
-              instance.isActive && instance.hasIp && instance.nodeInfo != null,
-        )
-        .toList(growable: false);
+    final candidates = _connectableCandidates();
     if (candidates.isEmpty) {
       return const CloudFastestNodeSelection(
         error: 'No ready cloud nodes are available yet',
@@ -593,43 +609,42 @@ class CloudProvider with ChangeNotifier {
       await Future.wait(nodesToRefresh.map(testInstanceLatency));
     }
 
-    CloudInstance? fastestInstance;
-    CloudLatencyCheck? fastestCheck;
-    var successCount = 0;
-    String? lastError;
+    return _selectionFromLatencyChecks(
+      candidates,
+      usedCachedResults: nodesToRefresh.isEmpty,
+    );
+  }
 
-    for (final instance in candidates) {
-      final check = _latencyChecks[instance.id];
-      if (check == null) {
-        continue;
-      }
-      if (check.latencyMs != null) {
-        successCount += 1;
-        if (fastestCheck == null ||
-            check.latencyMs! < (fastestCheck.latencyMs ?? 1 << 30)) {
-          fastestInstance = instance;
-          fastestCheck = check;
-        }
-      } else if (check.error != null && check.error!.trim().isNotEmpty) {
-        lastError = check.error;
-      }
-    }
+  CloudFastestNodeSelection cachedFastestConnectableInstance({
+    Duration maxAge = latencyCacheMaxAge,
+  }) {
+    return _selectionFromLatencyChecks(
+      _connectableCandidates(),
+      maxAge: maxAge,
+      usedCachedResults: true,
+    );
+  }
 
-    if (fastestInstance == null || fastestCheck == null) {
-      return CloudFastestNodeSelection(
-        testedCount: candidates.length,
-        successCount: successCount,
-        usedCachedResults: nodesToRefresh.isEmpty,
-        error: lastError ?? 'Latency testing did not return a usable node',
+  Future<CloudFastestNodeSelection> benchmarkConnectableInstances() async {
+    final candidates = _connectableCandidates();
+    if (candidates.isEmpty) {
+      return const CloudFastestNodeSelection(
+        error: 'No ready cloud nodes are available yet',
       );
     }
 
-    return CloudFastestNodeSelection(
-      instance: fastestInstance,
-      latencyCheck: fastestCheck,
-      testedCount: candidates.length,
-      successCount: successCount,
-      usedCachedResults: nodesToRefresh.isEmpty,
+    await Future.wait(
+      candidates.map(
+        (instance) => testInstanceLatency(
+          instance,
+          mode: CloudProbeMode.benchmark,
+        ),
+      ),
+    );
+
+    return _selectionFromLatencyChecks(
+      candidates,
+      usedCachedResults: false,
     );
   }
 
@@ -644,6 +659,78 @@ class CloudProvider with ChangeNotifier {
       return false;
     }
     return now.difference(updatedAt) <= maxAge;
+  }
+
+  List<CloudInstance> _connectableCandidates() {
+    return _instances
+        .where(
+          (instance) =>
+              instance.isActive && instance.hasIp && instance.nodeInfo != null,
+        )
+        .toList(growable: false);
+  }
+
+  CloudFastestNodeSelection _selectionFromLatencyChecks(
+    List<CloudInstance> candidates, {
+    Duration? maxAge,
+    required bool usedCachedResults,
+  }) {
+    final now = DateTime.now();
+    CloudInstance? fastestInstance;
+    CloudLatencyCheck? fastestCheck;
+    var successCount = 0;
+    String? lastError;
+
+    for (final instance in candidates) {
+      final check = _latencyChecks[instance.id];
+      if (check == null || check.isTesting) {
+        continue;
+      }
+      if (maxAge != null) {
+        final updatedAt = check.updatedAt;
+        if (updatedAt == null || now.difference(updatedAt) > maxAge) {
+          continue;
+        }
+      }
+      if (check.latencyMs != null) {
+        successCount += 1;
+        if (fastestCheck == null ||
+            _latencySelectionScore(check) <
+                _latencySelectionScore(fastestCheck)) {
+          fastestInstance = instance;
+          fastestCheck = check;
+        }
+      } else if (check.error != null && check.error!.trim().isNotEmpty) {
+        lastError = check.error;
+      }
+    }
+
+    if (fastestInstance == null || fastestCheck == null) {
+      return CloudFastestNodeSelection(
+        testedCount: candidates.length,
+        successCount: successCount,
+        usedCachedResults: usedCachedResults,
+        error: lastError ?? 'Latency testing did not return a usable node',
+      );
+    }
+
+    return CloudFastestNodeSelection(
+      instance: fastestInstance,
+      latencyCheck: fastestCheck,
+      testedCount: candidates.length,
+      successCount: successCount,
+      usedCachedResults: usedCachedResults,
+    );
+  }
+
+  int _latencySelectionScore(CloudLatencyCheck check) {
+    final latencyMs = check.latencyMs ?? (1 << 30);
+    final sampleCount = check.sampleCount ?? 1;
+    final successfulSamples = check.successfulSamples ?? 1;
+    final failedSamples =
+        sampleCount > successfulSamples ? sampleCount - successfulSamples : 0;
+    final reliabilityPenalty = failedSamples * (check.isBenchmark ? 250 : 400);
+    return latencyMs + reliabilityPenalty;
   }
 
   Future<bool> createInstance({
@@ -880,6 +967,25 @@ class CloudProvider with ChangeNotifier {
 }
 
 Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {
+  return _probeCloudInstanceLatency(
+    instance,
+    mode: CloudProbeMode.quick,
+  );
+}
+
+Future<CloudLatencyCheck> _defaultBenchmarkLatencyProbe(
+  CloudInstance instance,
+) async {
+  return _probeCloudInstanceLatency(
+    instance,
+    mode: CloudProbeMode.benchmark,
+  );
+}
+
+Future<CloudLatencyCheck> _probeCloudInstanceLatency(
+  CloudInstance instance, {
+  required CloudProbeMode mode,
+}) async {
   final host = (() {
     final ipv4 = instance.ipv4?.trim();
     if (ipv4 != null && ipv4.isNotEmpty && ipv4 != '0.0.0.0') {
@@ -896,12 +1002,13 @@ Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {
     return CloudLatencyCheck.failure(
       error: 'Node is not ready for latency testing yet',
       updatedAt: DateTime.now(),
+      mode: mode,
     );
   }
 
   final targets = <({String label, int port})>[];
   void addTarget(String label, int port) {
-    if (port <= 0 || targets.any((target) => target.port == port)) {
+    if (port <= 0) {
       return;
     }
     targets.add((label: label, port: port));
@@ -915,42 +1022,164 @@ Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {
     return CloudLatencyCheck.failure(
       error: 'No TCP endpoint is available for testing',
       updatedAt: DateTime.now(),
+      mode: mode,
     );
   }
 
-  ({String label, int latencyMs})? fastest;
-  String? lastError;
+  final targetResults = await Future.wait(
+    targets.map(
+      (target) => mode == CloudProbeMode.benchmark
+          ? _runBenchmarkEndpointProbe(
+              host: host,
+              label: target.label,
+              port: target.port,
+            )
+          : _runQuickEndpointProbe(
+              host: host,
+              label: target.label,
+              port: target.port,
+            ),
+    ),
+  );
 
-  for (final target in targets) {
-    final stopwatch = Stopwatch()..start();
-    try {
-      final socket = await Socket.connect(
-        host,
-        target.port,
-        timeout: const Duration(seconds: 3),
-      );
-      stopwatch.stop();
-      socket.destroy();
-      final latencyMs = stopwatch.elapsedMilliseconds.clamp(1, 9999).toInt();
-      if (fastest == null || latencyMs < fastest.latencyMs) {
-        fastest = (label: target.label, latencyMs: latencyMs);
-      }
-    } catch (e) {
-      stopwatch.stop();
-      lastError = '${target.label} port ${target.port} unavailable';
-    }
-  }
+  final successfulResults = targetResults
+      .where((result) => result.latencyMs != null && result.scoreMs != null)
+      .toList(growable: false)
+    ..sort((a, b) => a.scoreMs!.compareTo(b.scoreMs!));
+  final lastError = targetResults
+      .map((result) => result.error)
+      .whereType<String>()
+      .where((error) => error.trim().isNotEmpty)
+      .firstOrNull;
 
-  if (fastest != null) {
+  if (successfulResults.isNotEmpty) {
+    final fastest = successfulResults.first;
     return CloudLatencyCheck.success(
-      latencyMs: fastest.latencyMs,
+      latencyMs: fastest.latencyMs!,
       endpointLabel: fastest.label,
       updatedAt: DateTime.now(),
+      mode: mode,
+      sampleCount: fastest.sampleCount,
+      successfulSamples: fastest.successfulSamples,
     );
   }
 
   return CloudLatencyCheck.failure(
-    error: lastError ?? 'Latency test failed',
+    error: lastError ??
+        (mode == CloudProbeMode.benchmark
+            ? 'Benchmark test failed'
+            : 'Latency test failed'),
     updatedAt: DateTime.now(),
+    mode: mode,
   );
+}
+
+Future<_CloudEndpointProbeResult> _runQuickEndpointProbe({
+  required String host,
+  required String label,
+  required int port,
+}) async {
+  final latencyMs = await _probeTcpLatency(
+    host: host,
+    port: port,
+    timeout: CloudProvider.quickProbeTimeout,
+  );
+  if (latencyMs == null) {
+    return _CloudEndpointProbeResult(
+      label: label,
+      sampleCount: 1,
+      successfulSamples: 0,
+      error: '$label port $port unavailable',
+    );
+  }
+
+  return _CloudEndpointProbeResult(
+    label: label,
+    latencyMs: latencyMs,
+    sampleCount: 1,
+    successfulSamples: 1,
+    scoreMs: latencyMs,
+  );
+}
+
+Future<_CloudEndpointProbeResult> _runBenchmarkEndpointProbe({
+  required String host,
+  required String label,
+  required int port,
+}) async {
+  final samples = <int>[];
+  for (var index = 0;
+      index < CloudProvider.benchmarkProbeSamplesPerEndpoint;
+      index += 1) {
+    final latencyMs = await _probeTcpLatency(
+      host: host,
+      port: port,
+      timeout: CloudProvider.benchmarkProbeTimeout,
+    );
+    if (latencyMs != null) {
+      samples.add(latencyMs);
+    }
+  }
+
+  if (samples.isEmpty) {
+    return _CloudEndpointProbeResult(
+      label: label,
+      sampleCount: CloudProvider.benchmarkProbeSamplesPerEndpoint,
+      successfulSamples: 0,
+      error: '$label port $port did not answer benchmark probes',
+    );
+  }
+
+  samples.sort();
+  final medianLatencyMs = samples[samples.length ~/ 2];
+  final failedSamples =
+      CloudProvider.benchmarkProbeSamplesPerEndpoint - samples.length;
+  return _CloudEndpointProbeResult(
+    label: label,
+    latencyMs: medianLatencyMs,
+    sampleCount: CloudProvider.benchmarkProbeSamplesPerEndpoint,
+    successfulSamples: samples.length,
+    scoreMs: medianLatencyMs + (failedSamples * 250),
+  );
+}
+
+Future<int?> _probeTcpLatency({
+  required String host,
+  required int port,
+  required Duration timeout,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  Socket? socket;
+  try {
+    socket = await Socket.connect(
+      host,
+      port,
+      timeout: timeout,
+    );
+    stopwatch.stop();
+    return stopwatch.elapsedMilliseconds.clamp(1, 9999).toInt();
+  } catch (_) {
+    stopwatch.stop();
+    return null;
+  } finally {
+    socket?.destroy();
+  }
+}
+
+class _CloudEndpointProbeResult {
+  const _CloudEndpointProbeResult({
+    required this.label,
+    required this.sampleCount,
+    required this.successfulSamples,
+    this.latencyMs,
+    this.scoreMs,
+    this.error,
+  });
+
+  final String label;
+  final int sampleCount;
+  final int successfulSamples;
+  final int? latencyMs;
+  final int? scoreMs;
+  final String? error;
 }

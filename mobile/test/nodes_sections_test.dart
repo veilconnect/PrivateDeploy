@@ -342,8 +342,8 @@ void main() {
         ),
       );
 
-      expect(find.text('Test All Nodes'), findsOneWidget);
-      await tester.tap(find.text('Test All Nodes'));
+      expect(find.text('Benchmark All Nodes'), findsOneWidget);
+      await tester.tap(find.text('Benchmark All Nodes'));
       await tester.pump();
 
       expect(testedAll, isTrue);

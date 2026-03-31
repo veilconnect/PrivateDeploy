@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -304,14 +306,41 @@ Future<bool> _useFastestReadyCloudNode({
     return true;
   }
 
+  final cachedSelection = cloudProvider.cachedFastestConnectableInstance(
+    maxAge: CloudProvider.connectSelectionReuseMaxAge,
+  );
+  if (cachedSelection.hasSelection) {
+    final cachedLatencyMs = cachedSelection.latencyCheck?.latencyMs;
+    final cachedEndpoint = cachedSelection.latencyCheck?.endpointLabel;
+    final latencySuffix =
+        cachedLatencyMs != null ? ' (${cachedLatencyMs} ms)' : '';
+    final endpointSuffix = cachedEndpoint != null && cachedEndpoint.isNotEmpty
+        ? ' via $cachedEndpoint'
+        : '';
+    showNodesActionSnackBar(
+      context,
+      message:
+          'Using recent fastest node: ${cachedSelection.instance!.label}$latencySuffix$endpointSuffix. Refreshing ranking in background...',
+      backgroundColor: Colors.blue,
+      replaceCurrent: true,
+    );
+    await onUseCloudNode(cachedSelection.instance!);
+    unawaited(
+      cloudProvider.selectFastestConnectableInstance(forceRefresh: true),
+    );
+    return true;
+  }
+
   showNodesActionSnackBar(
     context,
-    message: 'Testing ready nodes and selecting the fastest one...',
+    message: 'Quick-testing ready nodes and selecting the fastest one...',
     backgroundColor: Colors.blue,
     replaceCurrent: true,
   );
 
-  final selection = await cloudProvider.selectFastestConnectableInstance();
+  final selection = await cloudProvider.selectFastestConnectableInstance(
+    forceRefresh: true,
+  );
   if (!context.mounted) {
     return true;
   }
