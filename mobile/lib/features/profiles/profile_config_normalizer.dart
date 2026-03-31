@@ -191,6 +191,22 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     });
   }
 
+  if (isAndroid && proxyOutboundTag != null) {
+    _appendPackageRule(
+      managedRules,
+      routingSettings.customProxyPackages,
+      proxyOutboundTag,
+    );
+  }
+
+  if (isAndroid && hasDirectOutbound) {
+    _appendPackageRule(
+      managedRules,
+      routingSettings.customDirectPackages,
+      'direct',
+    );
+  }
+
   if (hasDirectOutbound && routingSettings.directPrivateNetworks) {
     managedRules.add({
       'ip_is_private': true,
@@ -510,6 +526,9 @@ bool _isManagedOrLegacyRule(Map<String, dynamic> rule) {
   if (protocol == 'dns' && outbound == 'dns-out') {
     return true;
   }
+  if (rule.containsKey('package_name')) {
+    return true;
+  }
   if (rule['ip_is_private'] == true && outbound == 'direct') {
     return true;
   }
@@ -547,6 +566,23 @@ void _appendDomainSuffixRule(
   }
   rules.add({
     'domain_suffix': normalizedDomains,
+    'outbound': outboundTag,
+  });
+}
+
+void _appendPackageRule(
+  List<Map<String, dynamic>> rules,
+  List<String> packageNames,
+  String outboundTag,
+) {
+  final normalizedPackages = _dedupeStrings(
+    packageNames.map((packageName) => packageName.trim()),
+  );
+  if (normalizedPackages.isEmpty) {
+    return;
+  }
+  rules.add({
+    'package_name': normalizedPackages,
     'outbound': outboundTag,
   });
 }

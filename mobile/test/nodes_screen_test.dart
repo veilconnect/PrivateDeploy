@@ -130,5 +130,40 @@ void main() {
       expect(find.text('fresh-node'), findsOneWidget);
       expect(find.text('Disconnected'), findsOneWidget);
     });
+
+    testWidgets('opens settings and returns to workspace via system back',
+        (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: false,
+      );
+      final profileProvider = TestProfileProvider(
+        loadedProfiles: [testProfile(id: 'manual-1', name: 'Manual A')],
+      );
+      final vpnProvider = TestVpnProvider(
+        status: VpnStatus.connected,
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const NodesScreen(),
+        cloudProvider: cloudProvider,
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Settings'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Settings'), findsOneWidget);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Workspace'), findsOneWidget);
+      expect(find.text('Settings'), findsNothing);
+    });
   });
 }

@@ -132,6 +132,7 @@ Future<void> handleNodesConnect({
     profileProvider: profileProvider,
     cloudProvider: cloudProvider,
     onUseCloudNode: onUseCloudNode,
+    autoSelectFastestCloudNode: true,
     successMessage: 'VPN connected successfully',
   );
 }
@@ -180,6 +181,7 @@ Future<void> connectSelectedProfile({
   required Future<void> Function(CloudInstance instance) onUseCloudNode,
   required String successMessage,
   bool forceReconnect = false,
+  bool autoSelectFastestCloudNode = false,
 }) async {
   if (vpnProvider.isLoading ||
       vpnProvider.status == VpnStatus.connecting ||
@@ -193,13 +195,26 @@ Future<void> connectSelectedProfile({
   }
 
   final activeProfile = profileProvider.activeProfile;
+  final readyCloudNodes = connectableCloudInstances(cloudProvider);
+  if (autoSelectFastestCloudNode &&
+      (activeProfile == null || isCloudManagedProfile(activeProfile))) {
+    final usedFastestNode = await _useFastestReadyCloudNode(
+      context: context,
+      cloudProvider: cloudProvider,
+      readyCloudNodes: readyCloudNodes,
+      onUseCloudNode: onUseCloudNode,
+    );
+    if (usedFastestNode) {
+      return;
+    }
+  }
+
   final routingSettings =
       context.read<AppSettingsProvider>().vpnRoutingSettings;
   final configJson = profileProvider.getActiveConfigJson(
     routingSettings: routingSettings,
   );
   if (configJson == null || configJson.isEmpty) {
-    final readyCloudNodes = connectableCloudInstances(cloudProvider);
     if (readyCloudNodes.length == 1) {
       await onUseCloudNode(readyCloudNodes.first);
       return;
@@ -272,4 +287,56 @@ Future<void> connectSelectedProfile({
         : vpnProvider.error ?? 'Failed to connect VPN',
     backgroundColor: connected ? Colors.green : Colors.red,
   );
+}
+
+Future<bool> _useFastestReadyCloudNode({
+  required BuildContext context,
+  required CloudProvider cloudProvider,
+  required List<CloudInstance> readyCloudNodes,
+  required Future<void> Function(CloudInstance instance) onUseCloudNode,
+}) async {
+  if (readyCloudNodes.isEmpty) {
+    return false;
+  }
+
+  if (readyCloudNodes.length == 1) {
+    await onUseCloudNode(readyCloudNodes.first);
+    return true;
+  }
+
+  showNodesActionSnackBar(
+    context,
+    message: 'Testing ready nodes and selecting the fastest one...',
+    backgroundColor: Colors.blue,
+    replaceCurrent: true,
+  );
+
+  final selection = await cloudProvider.selectFastestConnectableInstance();
+  if (!context.mounted) {
+    return true;
+  }
+
+  final selectedInstance = selection.instance ?? readyCloudNodes.firstOrNull;
+  if (selectedInstance == null) {
+    showNodesActionSnackBar(
+      context,
+      message: selection.error ?? 'No ready cloud node is available yet',
+      backgroundColor: Colors.orange,
+      replaceCurrent: true,
+    );
+    return true;
+  }
+
+  if (!selection.hasSelection) {
+    showNodesActionSnackBar(
+      context,
+      message:
+          '${selection.error ?? 'Latency test was unavailable.'} Using ${selectedInstance.label} instead.',
+      backgroundColor: Colors.orange,
+      replaceCurrent: true,
+    );
+  }
+
+  await onUseCloudNode(selectedInstance);
+  return true;
 }

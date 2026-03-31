@@ -89,6 +89,26 @@ class CloudLatencyCheck {
   }
 }
 
+class CloudFastestNodeSelection {
+  const CloudFastestNodeSelection({
+    this.instance,
+    this.latencyCheck,
+    this.testedCount = 0,
+    this.successCount = 0,
+    this.usedCachedResults = false,
+    this.error,
+  });
+
+  final CloudInstance? instance;
+  final CloudLatencyCheck? latencyCheck;
+  final int testedCount;
+  final int successCount;
+  final bool usedCachedResults;
+  final String? error;
+
+  bool get hasSelection => instance != null;
+}
+
 class CloudRegion {
   final String id;
   final String city;

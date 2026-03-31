@@ -200,7 +200,7 @@ String _connectionHint(CloudProvider cloudProvider) {
     return 'Tap Connect to use your ready cloud node automatically.';
   }
   if (readyCloudNodes.length > 1) {
-    return 'Tap Connect to choose one of your ready cloud nodes, or select a local profile below.';
+    return 'Tap Connect to test your ready cloud nodes and use the fastest one automatically, or select a local profile below.';
   }
   if (cloudProvider.instances.isNotEmpty) {
     return 'Cloud nodes are visible, but this device still needs their local credentials before it can connect.';

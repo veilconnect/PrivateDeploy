@@ -19,6 +19,15 @@ class _SettingsVpnDiagnosticsScreenState
     extends State<SettingsVpnDiagnosticsScreen> {
   VpnProvider? _vpnProvider;
 
+  Future<void> _popRootRoute() async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+    await Navigator.of(context).maybePop();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -49,31 +58,45 @@ class _SettingsVpnDiagnosticsScreenState
   Widget build(BuildContext context) {
     return Consumer<VpnProvider>(
       builder: (context, vpn, _) {
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('VPN Diagnostics'),
-            actions: [
-              IconButton(
-                tooltip: 'Refresh',
-                onPressed: vpn.isRefreshingDiagnostics
-                    ? null
-                    : () => vpn.refreshDiagnostics(),
-                icon: const Icon(Icons.refresh),
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) {
+              return;
+            }
+            _popRootRoute();
+          },
+          child: Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                tooltip: 'Back',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _popRootRoute,
               ),
-            ],
-          ),
-          body: RefreshIndicator(
-            onRefresh: vpn.refreshDiagnostics,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.all(16.w),
-              children: [
-                _DiagnosticsStatusCard(vpn: vpn),
-                SizedBox(height: 16.h),
-                _DiagnosticsEgressCard(vpn: vpn),
-                SizedBox(height: 16.h),
-                _DiagnosticsDecisionCard(vpn: vpn),
+              title: const Text('VPN Diagnostics'),
+              actions: [
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: vpn.isRefreshingDiagnostics
+                      ? null
+                      : () => vpn.refreshDiagnostics(),
+                  icon: const Icon(Icons.refresh),
+                ),
               ],
+            ),
+            body: RefreshIndicator(
+              onRefresh: vpn.refreshDiagnostics,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.all(16.w),
+                children: [
+                  _DiagnosticsStatusCard(vpn: vpn),
+                  SizedBox(height: 16.h),
+                  _DiagnosticsEgressCard(vpn: vpn),
+                  SizedBox(height: 16.h),
+                  _DiagnosticsDecisionCard(vpn: vpn),
+                ],
+              ),
             ),
           ),
         );

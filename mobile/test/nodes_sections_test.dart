@@ -33,7 +33,8 @@ void main() {
       );
     });
 
-    test('connectableCloudInstances returns only active nodes with ip and creds',
+    test(
+        'connectableCloudInstances returns only active nodes with ip and creds',
         () {
       final provider = TestCloudProvider(
         hasApiKey: true,
@@ -92,7 +93,8 @@ void main() {
       expect(find.text('Processing VPN...'), findsOneWidget);
     });
 
-    testWidgets('shows unsupported native VPN notice when runtime is unavailable',
+    testWidgets(
+        'shows unsupported native VPN notice when runtime is unavailable',
         (tester) async {
       await pumpNodesTestApp(
         tester,
@@ -212,6 +214,7 @@ void main() {
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
         ),
       );
 
@@ -241,6 +244,7 @@ void main() {
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
         ),
       );
 
@@ -253,7 +257,8 @@ void main() {
       expect(configureTapped, isTrue);
     });
 
-    testWidgets('shows ready cloud node and forwards callbacks', (tester) async {
+    testWidgets('shows ready cloud node and forwards callbacks',
+        (tester) async {
       CloudInstance? usedNode;
       CloudInstance? detailedNode;
       CloudInstance? testedNode;
@@ -285,6 +290,7 @@ void main() {
           onDeleteCloudNode: (_) {},
           onUseCloudNode: (instance) => usedNode = instance,
           onTestCloudNodeLatency: (instance) => testedNode = instance,
+          onTestAllCloudNodesLatency: () {},
         ),
       );
 
@@ -306,6 +312,41 @@ void main() {
 
       expect(detailedNode?.label, 'fra-node');
       expect(usedNode, isNull);
+    });
+
+    testWidgets('shows one-tap speed test when multiple nodes are ready',
+        (tester) async {
+      var testedAll = false;
+
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [
+              readyCloudTestInstance(label: 'sgp-node'),
+              readyCloudTestInstance(label: 'fra-node'),
+            ],
+          ),
+          profileProvider: TestProfileProvider(),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () => testedAll = true,
+        ),
+      );
+
+      expect(find.text('Test All Nodes'), findsOneWidget);
+      await tester.tap(find.text('Test All Nodes'));
+      await tester.pump();
+
+      expect(testedAll, isTrue);
     });
   });
 

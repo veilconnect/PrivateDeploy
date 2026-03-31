@@ -207,9 +207,11 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Deploy'));
-      await tester.pump();
-      expect(find.text('Please select region and plan'), findsOneWidget);
+      final deployButton = find.widgetWithText(ElevatedButton, 'Deploy');
+      expect(
+        tester.widget<ElevatedButton>(deployButton).onPressed,
+        isNull,
+      );
 
       await tester.enterText(find.byType(TextField).first, 'tokyo-edge');
 
@@ -228,9 +230,10 @@ void main() {
       await tester.tap(find.text(backupRegion.displayName).last);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Deploy'));
-      await tester.pump();
-      expect(find.text('Please select region and plan'), findsOneWidget);
+      expect(
+        tester.widget<ElevatedButton>(deployButton).onPressed,
+        isNull,
+      );
 
       await tester.tap(find.byType(DropdownButtonFormField<String>).last);
       await tester.pumpAndSettle();
@@ -360,6 +363,12 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   @override
   final List<CloudPlan> plans;
+
+  @override
+  bool get isLoadingRegions => false;
+
+  @override
+  bool get isLoadingPlans => false;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

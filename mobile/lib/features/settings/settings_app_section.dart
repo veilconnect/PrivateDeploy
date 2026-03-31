@@ -15,6 +15,14 @@ class SettingsAppSection extends StatelessWidget {
 
   final Future<void> Function() onClearLocalCloudData;
 
+  Future<void> _openDiagnostics(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => const SettingsVpnDiagnosticsScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -98,20 +106,14 @@ class SettingsAppSection extends StatelessWidget {
                     title: const Text('VPN Diagnostics'),
                     subtitle: const Text('查看当前出口 IP 和最近分流命中'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsVpnDiagnosticsScreen(),
-                        ),
-                      );
-                    },
+                    onTap: () => _openDiagnostics(context),
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.rule_folder_outlined),
                     title: const Text('Routing Rules'),
                     subtitle: const Text(
-                      '默认分流规则 + 可编辑域名和 CIDR 覆盖',
+                      '默认分流规则 + 可编辑域名、CIDR、App 覆盖',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => showSettingsRoutingRulesDialog(

@@ -267,6 +267,35 @@ class VpnNativeService {
     }
   }
 
+  Future<List<VpnInstalledApp>> getInstalledApps() async {
+    try {
+      final result =
+          await _methodChannel.invokeMethod<List<dynamic>>('getInstalledApps');
+      if (result == null) {
+        return const [];
+      }
+      return result
+          .whereType<Map>()
+          .map(
+            (item) => VpnInstalledApp.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .where((item) => item.packageName.isNotEmpty)
+          .toList(growable: false);
+    } on MissingPluginException {
+      return const [];
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to list installed apps: ${e.message}',
+      );
+      return const [];
+    } catch (e) {
+      AppLogger.warning('[VpnNativeService] Failed to list installed apps: $e');
+      return const [];
+    }
+  }
+
   /// 重置流量统计
   Future<bool> resetStats() async {
     try {
@@ -358,7 +387,9 @@ class VpnNativeService {
       final eventData = Map<String, dynamic>.from(event);
       final eventType = eventData['type'] as String?;
 
-      AppLogger.debug('[VpnNativeService] Received event: $eventType');
+      if (eventType != 'log') {
+        AppLogger.debug('[VpnNativeService] Received event: $eventType');
+      }
 
       switch (eventType) {
         case 'status':
@@ -430,6 +461,23 @@ class VpnNativeLogEntry {
     return VpnNativeLogEntry(
       message: json['message']?.toString() ?? '',
       timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
+    );
+  }
+}
+
+class VpnInstalledApp {
+  const VpnInstalledApp({
+    required this.packageName,
+    required this.label,
+  });
+
+  final String packageName;
+  final String label;
+
+  factory VpnInstalledApp.fromJson(Map<String, dynamic> json) {
+    return VpnInstalledApp(
+      packageName: json['packageName']?.toString().trim() ?? '',
+      label: json['label']?.toString().trim() ?? '',
     );
   }
 }

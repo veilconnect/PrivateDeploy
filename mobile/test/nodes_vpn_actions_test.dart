@@ -96,6 +96,47 @@ void main() {
       expect(usedNode?.label, 'fra-node');
     });
 
+    testWidgets('auto-selects the fastest ready cloud node on top connect',
+        (tester) async {
+      CloudInstance? usedNode;
+      final fastestNode = _readyInstance(label: 'fra-node');
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: _FakeVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: _FakeProfileProvider(activeConfigJson: null),
+          cloudProvider: _FakeCloudProvider(
+            instances: [
+              _readyInstance(label: 'sgp-node'),
+              fastestNode,
+            ],
+            fastestSelection: CloudFastestNodeSelection(
+              instance: fastestNode,
+              latencyCheck: CloudLatencyCheck.success(
+                latencyMs: 24,
+                endpointLabel: 'Trojan',
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          ),
+          onUseCloudNode: (selected) async => usedNode = selected,
+          autoSelectFastestCloudNode: true,
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(usedNode?.label, 'fra-node');
+      expect(
+        find.text('Testing ready nodes and selecting the fastest one...'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('shows config validation error before connecting',
         (tester) async {
       final vpnProvider = _FakeVpnProvider(status: VpnStatus.disconnected);
@@ -285,10 +326,24 @@ Profile _profile({
 class _FakeCloudProvider extends Fake implements CloudProvider {
   _FakeCloudProvider({
     this.instances = const [],
-  });
+    CloudFastestNodeSelection? fastestSelection,
+  }) : fastestSelection = fastestSelection ??
+            const CloudFastestNodeSelection(
+              error: 'Latency testing did not return a usable node',
+            );
 
   @override
   final List<CloudInstance> instances;
+
+  final CloudFastestNodeSelection fastestSelection;
+
+  @override
+  Future<CloudFastestNodeSelection> selectFastestConnectableInstance({
+    bool forceRefresh = false,
+    Duration maxAge = CloudProvider.latencyCacheMaxAge,
+  }) async {
+    return fastestSelection;
+  }
 }
 
 class _FakeProfileProvider extends Fake implements ProfileProvider {

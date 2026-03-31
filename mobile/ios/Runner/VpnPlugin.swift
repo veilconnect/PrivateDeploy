@@ -63,6 +63,8 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             result([])
         case "getEgressIp":
             result(nil)
+        case "getInstalledApps":
+            result([])
         case "resetStats":
             resetStats(result)
         case "updateConfig":

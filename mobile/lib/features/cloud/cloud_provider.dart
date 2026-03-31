@@ -16,13 +16,14 @@ import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
 
-typedef CloudLatencyProbe =
-    Future<CloudLatencyCheck> Function(CloudInstance instance);
+typedef CloudLatencyProbe = Future<CloudLatencyCheck> Function(
+    CloudInstance instance);
 
 class CloudProvider with ChangeNotifier {
   static const _providerName = 'vultr';
   static const String _apiKeyStorageKey = 'mobile_cloud_vultr_api_key';
   static const String _nodeRecordsStorageKey = 'mobile_cloud_vultr_nodes';
+  static const Duration latencyCacheMaxAge = Duration(minutes: 5);
 
   List<CloudInstance> _instances = [];
   List<CloudRegion> _regions = [];
@@ -53,7 +54,8 @@ class CloudProvider with ChangeNotifier {
   String? get apiKey => _apiKey;
   bool get isConfigured => _hasApiKey && _configLoaded;
   String get providerName => _providerName;
-  CloudLatencyCheck? latencyCheckFor(String instanceId) => _latencyChecks[instanceId];
+  CloudLatencyCheck? latencyCheckFor(String instanceId) =>
+      _latencyChecks[instanceId];
 
   String? resolveEgressIpForProfileName(String? profileName) {
     final label = _cloudInstanceLabelFromProfileName(profileName);
@@ -378,7 +380,8 @@ class CloudProvider with ChangeNotifier {
             (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)),
       );
       _latencyChecks.removeWhere(
-        (instanceId, _) => !_instances.any((instance) => instance.id == instanceId),
+        (instanceId, _) =>
+            !_instances.any((instance) => instance.id == instanceId),
       );
 
       for (final item in _instances) {
@@ -487,7 +490,8 @@ class CloudProvider with ChangeNotifier {
         final rawRegions = (data['regions'] as List?) ?? const [];
         _regions = rawRegions
             .whereType<Map>()
-            .map((item) => CloudRegion.fromJson(Map<String, dynamic>.from(item)))
+            .map(
+                (item) => CloudRegion.fromJson(Map<String, dynamic>.from(item)))
             .toList();
         _error = null;
       } catch (e) {
@@ -559,6 +563,87 @@ class CloudProvider with ChangeNotifier {
     _latencyChecks[instance.id] = result;
     notifyListeners();
     return result;
+  }
+
+  Future<CloudFastestNodeSelection> selectFastestConnectableInstance({
+    bool forceRefresh = false,
+    Duration maxAge = latencyCacheMaxAge,
+  }) async {
+    final candidates = _instances
+        .where(
+          (instance) =>
+              instance.isActive && instance.hasIp && instance.nodeInfo != null,
+        )
+        .toList(growable: false);
+    if (candidates.isEmpty) {
+      return const CloudFastestNodeSelection(
+        error: 'No ready cloud nodes are available yet',
+      );
+    }
+
+    final now = DateTime.now();
+    final nodesToRefresh = forceRefresh
+        ? candidates
+        : candidates
+            .where(
+                (instance) => !_hasFreshLatencyCheck(instance.id, now, maxAge))
+            .toList(growable: false);
+
+    if (nodesToRefresh.isNotEmpty) {
+      await Future.wait(nodesToRefresh.map(testInstanceLatency));
+    }
+
+    CloudInstance? fastestInstance;
+    CloudLatencyCheck? fastestCheck;
+    var successCount = 0;
+    String? lastError;
+
+    for (final instance in candidates) {
+      final check = _latencyChecks[instance.id];
+      if (check == null) {
+        continue;
+      }
+      if (check.latencyMs != null) {
+        successCount += 1;
+        if (fastestCheck == null ||
+            check.latencyMs! < (fastestCheck.latencyMs ?? 1 << 30)) {
+          fastestInstance = instance;
+          fastestCheck = check;
+        }
+      } else if (check.error != null && check.error!.trim().isNotEmpty) {
+        lastError = check.error;
+      }
+    }
+
+    if (fastestInstance == null || fastestCheck == null) {
+      return CloudFastestNodeSelection(
+        testedCount: candidates.length,
+        successCount: successCount,
+        usedCachedResults: nodesToRefresh.isEmpty,
+        error: lastError ?? 'Latency testing did not return a usable node',
+      );
+    }
+
+    return CloudFastestNodeSelection(
+      instance: fastestInstance,
+      latencyCheck: fastestCheck,
+      testedCount: candidates.length,
+      successCount: successCount,
+      usedCachedResults: nodesToRefresh.isEmpty,
+    );
+  }
+
+  bool _hasFreshLatencyCheck(
+    String instanceId,
+    DateTime now,
+    Duration maxAge,
+  ) {
+    final check = _latencyChecks[instanceId];
+    final updatedAt = check?.updatedAt;
+    if (check == null || check.isTesting || updatedAt == null) {
+      return false;
+    }
+    return now.difference(updatedAt) <= maxAge;
   }
 
   Future<bool> createInstance({
@@ -763,7 +848,10 @@ class CloudProvider with ChangeNotifier {
   }
 
   String? generateNodeConfig(CloudInstance instance) {
-    return buildCloudNodeConfig(instance);
+    return buildCloudNodeConfig(
+      instance,
+      preferredEndpointLabel: _latencyChecks[instance.id]?.endpointLabel,
+    );
   }
 
   Future<bool> _ensureAuthorizedCloudAccess({bool notify = true}) async {
@@ -843,8 +931,7 @@ Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {
       );
       stopwatch.stop();
       socket.destroy();
-      final latencyMs =
-          stopwatch.elapsedMilliseconds.clamp(1, 9999).toInt();
+      final latencyMs = stopwatch.elapsedMilliseconds.clamp(1, 9999).toInt();
       if (fastest == null || latencyMs < fastest.latencyMs) {
         fastest = (label: target.label, latencyMs: latencyMs);
       }

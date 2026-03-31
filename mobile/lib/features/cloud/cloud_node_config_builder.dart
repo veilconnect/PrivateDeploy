@@ -2,7 +2,10 @@ import 'dart:convert';
 
 import 'cloud_models.dart';
 
-String? buildCloudNodeConfig(CloudInstance instance) {
+String? buildCloudNodeConfig(
+  CloudInstance instance, {
+  String? preferredEndpointLabel,
+}) {
   if (!instance.hasIp || instance.nodeInfo == null) {
     return null;
   }
@@ -12,6 +15,7 @@ String? buildCloudNodeConfig(CloudInstance instance) {
   final label = instance.label;
   final outbounds = <Map<String, dynamic>>[];
   final tags = <String>[];
+  final endpointTagByLabel = <String, String>{};
 
   if (info.ssPort > 0 && info.ssPassword.isNotEmpty) {
     final tag = '$label-SS';
@@ -24,6 +28,7 @@ String? buildCloudNodeConfig(CloudInstance instance) {
       'password': info.ssPassword,
     });
     tags.add(tag);
+    endpointTagByLabel['Shadowsocks'] = tag;
   }
 
   if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
@@ -43,6 +48,7 @@ String? buildCloudNodeConfig(CloudInstance instance) {
       },
     });
     tags.add(tag);
+    endpointTagByLabel['Hysteria2'] = tag;
   }
 
   if (info.vlessPort > 0 &&
@@ -79,6 +85,7 @@ String? buildCloudNodeConfig(CloudInstance instance) {
       },
     });
     tags.add(tag);
+    endpointTagByLabel['VLESS'] = tag;
   }
 
   if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
@@ -97,10 +104,29 @@ String? buildCloudNodeConfig(CloudInstance instance) {
       },
     });
     tags.add(tag);
+    endpointTagByLabel['Trojan'] = tag;
   }
 
   if (outbounds.isEmpty) {
     return null;
+  }
+
+  final preferredTag = endpointTagByLabel[preferredEndpointLabel?.trim() ?? ''];
+  if (preferredTag != null) {
+    outbounds.sort((a, b) {
+      final aTag = a['tag']?.toString();
+      final bTag = b['tag']?.toString();
+      if (aTag == preferredTag && bTag != preferredTag) {
+        return -1;
+      }
+      if (aTag != preferredTag && bTag == preferredTag) {
+        return 1;
+      }
+      return 0;
+    });
+    tags
+      ..remove(preferredTag)
+      ..insert(0, preferredTag);
   }
 
   final config = {

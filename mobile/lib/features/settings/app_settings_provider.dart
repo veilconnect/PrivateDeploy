@@ -17,6 +17,8 @@ class VpnRoutingSettings {
     this.directPrivateNetworks = true,
     this.directCnDomains = true,
     this.directCnIpRanges = true,
+    this.customDirectPackages = const [],
+    this.customProxyPackages = const [],
     this.customDirectDomains = const [],
     this.customProxyDomains = const [],
     this.customDirectCidrs = const [],
@@ -27,6 +29,8 @@ class VpnRoutingSettings {
   final bool directPrivateNetworks;
   final bool directCnDomains;
   final bool directCnIpRanges;
+  final List<String> customDirectPackages;
+  final List<String> customProxyPackages;
   final List<String> customDirectDomains;
   final List<String> customProxyDomains;
   final List<String> customDirectCidrs;
@@ -41,7 +45,9 @@ class VpnRoutingSettings {
   String get summary {
     if (mode == VpnRoutingMode.global) {
       final customCount = customDirectDomains.length +
+          customDirectPackages.length +
           customProxyDomains.length +
+          customProxyPackages.length +
           customDirectCidrs.length +
           customProxyCidrs.length;
       if (customCount == 0) {
@@ -56,7 +62,9 @@ class VpnRoutingSettings {
       if (directCnIpRanges) '国内 IP 直连',
     ];
     final customCount = customDirectDomains.length +
+        customDirectPackages.length +
         customProxyDomains.length +
+        customProxyPackages.length +
         customDirectCidrs.length +
         customProxyCidrs.length;
     final builtinText =
@@ -72,6 +80,8 @@ class VpnRoutingSettings {
     bool? directPrivateNetworks,
     bool? directCnDomains,
     bool? directCnIpRanges,
+    List<String>? customDirectPackages,
+    List<String>? customProxyPackages,
     List<String>? customDirectDomains,
     List<String>? customProxyDomains,
     List<String>? customDirectCidrs,
@@ -83,6 +93,8 @@ class VpnRoutingSettings {
           directPrivateNetworks ?? this.directPrivateNetworks,
       directCnDomains: directCnDomains ?? this.directCnDomains,
       directCnIpRanges: directCnIpRanges ?? this.directCnIpRanges,
+      customDirectPackages: customDirectPackages ?? this.customDirectPackages,
+      customProxyPackages: customProxyPackages ?? this.customProxyPackages,
       customDirectDomains: customDirectDomains ?? this.customDirectDomains,
       customProxyDomains: customProxyDomains ?? this.customProxyDomains,
       customDirectCidrs: customDirectCidrs ?? this.customDirectCidrs,
@@ -96,6 +108,8 @@ class VpnRoutingSettings {
       'directPrivateNetworks': directPrivateNetworks,
       'directCnDomains': directCnDomains,
       'directCnIpRanges': directCnIpRanges,
+      'customDirectPackages': customDirectPackages,
+      'customProxyPackages': customProxyPackages,
       'customDirectDomains': customDirectDomains,
       'customProxyDomains': customProxyDomains,
       'customDirectCidrs': customDirectCidrs,
@@ -127,6 +141,8 @@ class VpnRoutingSettings {
       directPrivateNetworks: json['directPrivateNetworks'] != false,
       directCnDomains: json['directCnDomains'] != false,
       directCnIpRanges: json['directCnIpRanges'] != false,
+      customDirectPackages: parseList(json['customDirectPackages']),
+      customProxyPackages: parseList(json['customProxyPackages']),
       customDirectDomains: parseList(json['customDirectDomains']),
       customProxyDomains: parseList(json['customProxyDomains']),
       customDirectCidrs: parseList(json['customDirectCidrs']),
@@ -173,6 +189,20 @@ String? validateVpnRoutingCidr(String value) {
   final maxPrefix = address.type == InternetAddressType.IPv4 ? 32 : 128;
   if (prefix < 0 || prefix > maxPrefix) {
     return 'Invalid CIDR prefix: $value';
+  }
+  return null;
+}
+
+String? validateVpnRoutingPackageName(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    return 'App package cannot be empty';
+  }
+  if (normalized.contains(' ')) {
+    return 'App package cannot contain spaces';
+  }
+  if (!RegExp(r'^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$').hasMatch(normalized)) {
+    return 'Invalid app package: $value';
   }
   return null;
 }

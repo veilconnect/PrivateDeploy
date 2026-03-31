@@ -70,5 +70,49 @@ void main() {
       expect(reality['public_key'], 'abc-_');
       expect(reality['short_id'], 'shortid');
     });
+
+    test('prefers the measured fastest endpoint first in auto outbounds', () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: const NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: false,
+          vlessPort: 0,
+          vlessUuid: '',
+          vlessPublicKey: '',
+          vlessShortId: '',
+          vlessServerName: '',
+          trojanPort: 10443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: '',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(
+        instance,
+        preferredEndpointLabel: 'Trojan',
+      );
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds = decoded['outbounds'] as List<dynamic>;
+      final auto = outbounds.firstWhere(
+        (item) => item is Map<String, dynamic> && item['tag'] == 'auto',
+      ) as Map<String, dynamic>;
+
+      expect(
+        List<String>.from(auto['outbounds'] as List).first,
+        'tokyo-1-Trojan',
+      );
+    });
   });
 }

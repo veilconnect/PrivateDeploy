@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
@@ -197,6 +198,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "getStats" -> getStats(result)
             "getRecentLogs" -> getRecentLogs(result)
             "getEgressIp" -> getEgressIp(result)
+            "getInstalledApps" -> getInstalledApps(result)
             "resetStats" -> resetStats(result)
             "updateConfig" -> updateConfig(call, result)
             "getVersion" -> getVersion(result)
@@ -384,6 +386,62 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                 )
             }
         }.start()
+    }
+
+    private fun getInstalledApps(result: MethodChannel.Result) {
+        val appContext = context
+        if (appContext == null) {
+            result.success(emptyList<Map<String, String>>())
+            return
+        }
+
+        try {
+            val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val resolvedActivities =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appContext.packageManager.queryIntentActivities(
+                        launcherIntent,
+                        PackageManager.ResolveInfoFlags.of(0)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    appContext.packageManager.queryIntentActivities(
+                        launcherIntent,
+                        0
+                    )
+                }
+
+            val apps = resolvedActivities
+                .mapNotNull { resolveInfo ->
+                    val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+                    val packageName = activityInfo.packageName?.trim().orEmpty()
+                    if (packageName.isEmpty() || packageName == appContext.packageName) {
+                        return@mapNotNull null
+                    }
+                    val label = resolveInfo.loadLabel(appContext.packageManager)
+                        ?.toString()
+                        ?.trim()
+                        .orEmpty()
+                    mapOf(
+                        "packageName" to packageName,
+                        "label" to if (label.isEmpty()) packageName else label,
+                    )
+                }
+                .distinctBy { app -> app["packageName"] }
+                .sortedWith(
+                    compareBy<Map<String, String>>(
+                        { app -> app["label"]?.lowercase().orEmpty() },
+                        { app -> app["packageName"]?.lowercase().orEmpty() },
+                    )
+                )
+
+            result.success(apps)
+        } catch (error: Exception) {
+            Log.w(TAG, "Failed to list installed apps", error)
+            result.success(emptyList<Map<String, String>>())
+        }
     }
 
     /**

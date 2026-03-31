@@ -206,6 +206,13 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _testAllCloudNodesLatency(CloudProvider cloudProvider) {
+    return testAllCloudNodesLatency(
+      context: context,
+      cloudProvider: cloudProvider,
+    );
+  }
+
   Future<void> _activateProfile(
     CloudProvider cloudProvider,
     ProfileProvider profileProvider,
@@ -258,7 +265,7 @@ class _NodesScreenState extends State<NodesScreen> {
   }
 
   void _openSettings() {
-    Navigator.of(context).push(
+    Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
         builder: (_) => const SettingsScreen(),
       ),
@@ -273,7 +280,8 @@ class _NodesScreenState extends State<NodesScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.key),
-            onPressed: () => _showCloudApiKeyDialog(context.read<CloudProvider>()),
+            onPressed: () =>
+                _showCloudApiKeyDialog(context.read<CloudProvider>()),
             tooltip: 'Cloud API Key',
           ),
           IconButton(
@@ -311,14 +319,14 @@ class _NodesScreenState extends State<NodesScreen> {
                   vpnProvider: vpnProvider,
                   profileProvider: profileProvider,
                   cloudProvider: cloudProvider,
-                  onConnect: () =>
-                      _handleConnect(cloudProvider, profileProvider, vpnProvider),
+                  onConnect: () => _handleConnect(
+                      cloudProvider, profileProvider, vpnProvider),
                   onDisconnect: () => handleNodesDisconnect(
                     context: context,
                     vpnProvider: vpnProvider,
                   ),
-                  onRestart: () =>
-                      _handleRestart(cloudProvider, profileProvider, vpnProvider),
+                  onRestart: () => _handleRestart(
+                      cloudProvider, profileProvider, vpnProvider),
                 ),
                 if (vpnProvider.error != null) ...[
                   SizedBox(height: 12.h),
@@ -333,9 +341,11 @@ class _NodesScreenState extends State<NodesScreen> {
                   cloudProvider: cloudProvider,
                   profileProvider: profileProvider,
                   vpnProvider: vpnProvider,
-                  onConfigureApiKey: () => _showCloudApiKeyDialog(cloudProvider),
+                  onConfigureApiKey: () =>
+                      _showCloudApiKeyDialog(cloudProvider),
                   onRetryLoad: cloudProvider.loadInstances,
-                  onCreateCloudNode: () => _showCreateCloudNodeDialog(cloudProvider),
+                  onCreateCloudNode: () =>
+                      _showCreateCloudNodeDialog(cloudProvider),
                   onViewDetails: _openCloudNodeDetails,
                   onDeleteCloudNode: (instance) => _deleteCloudNode(
                     cloudProvider,
@@ -351,6 +361,8 @@ class _NodesScreenState extends State<NodesScreen> {
                   ),
                   onTestCloudNodeLatency: (instance) =>
                       _testCloudNodeLatency(cloudProvider, instance),
+                  onTestAllCloudNodesLatency: () =>
+                      _testAllCloudNodesLatency(cloudProvider),
                 ),
                 if (localProfiles.isNotEmpty) ...[
                   SizedBox(height: 20.h),
@@ -364,8 +376,10 @@ class _NodesScreenState extends State<NodesScreen> {
                       profile,
                     ),
                     onView: (profile) => _viewProfileContent(context, profile),
-                    onEdit: (profile) => _renameProfile(profileProvider, profile),
-                    onDelete: (profile) => _deleteProfile(profileProvider, profile),
+                    onEdit: (profile) =>
+                        _renameProfile(profileProvider, profile),
+                    onDelete: (profile) =>
+                        _deleteProfile(profileProvider, profile),
                   ),
                 ],
               ],

@@ -36,6 +36,7 @@ class _NoisyTestVpnProvider extends TestVpnProvider {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   String? clipboardText;
+  final vpnChannel = const MethodChannel('com.privatedeploy.vpn/native');
 
   setUp(() {
     PackageInfo.setMockInitialValues(
@@ -59,11 +60,31 @@ void main() {
           return null;
       }
     });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(vpnChannel, (call) async {
+      switch (call.method) {
+        case 'getInstalledApps':
+          return [
+            {
+              'packageName': 'com.android.chrome',
+              'label': 'Chrome',
+            },
+            {
+              'packageName': 'org.telegram.messenger',
+              'label': 'Telegram',
+            },
+          ];
+        default:
+          return null;
+      }
+    });
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(vpnChannel, null);
   });
 
   group('SettingsScreen', () {
@@ -175,8 +196,10 @@ void main() {
       expect(find.text('DIRECT'), findsOneWidget);
       expect(find.text('PROXY'), findsOneWidget);
 
-      await tester.pageBack();
+      await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
+
+      expect(find.text('Settings'), findsOneWidget);
       expect(vpnProvider.deactivateDiagnosticsSessionCalls, 1);
     });
 
@@ -303,6 +326,49 @@ void main() {
 
       expect(find.text('Invalid CIDR prefix: 10.0.0.0/99'), findsOneWidget);
       expect(find.text('分流规则'), findsOneWidget);
+    });
+
+    testWidgets('saves app-based routing selections from dialog',
+        (tester) async {
+      final appSettingsProvider = TestAppSettingsProvider();
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const SettingsScreen(),
+        cloudProvider: TestCloudProvider(hasApiKey: false),
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+        appSettingsProvider: appSettingsProvider,
+        settle: true,
+      );
+
+      await tester.tap(find.text('Routing Rules'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('直连应用'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Chrome'));
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('代理应用'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Telegram'));
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('保存'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(
+        appSettingsProvider.vpnRoutingSettings.customDirectPackages,
+        ['com.android.chrome'],
+      );
+      expect(
+        appSettingsProvider.vpnRoutingSettings.customProxyPackages,
+        ['org.telegram.messenger'],
+      );
     });
 
     testWidgets('saves api key from dialog and shows success message',

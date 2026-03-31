@@ -19,6 +19,7 @@ class NodesCloudSection extends StatelessWidget {
   final ValueChanged<CloudInstance> onDeleteCloudNode;
   final ValueChanged<CloudInstance> onUseCloudNode;
   final ValueChanged<CloudInstance> onTestCloudNodeLatency;
+  final VoidCallback onTestAllCloudNodesLatency;
 
   const NodesCloudSection({
     Key? key,
@@ -32,10 +33,12 @@ class NodesCloudSection extends StatelessWidget {
     required this.onDeleteCloudNode,
     required this.onUseCloudNode,
     required this.onTestCloudNodeLatency,
+    required this.onTestAllCloudNodesLatency,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final readyCloudNodes = connectableCloudInstances(cloudProvider);
     if (!cloudProvider.hasApiKey) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,6 +69,25 @@ class NodesCloudSection extends StatelessWidget {
           subtitle: 'Deploy, sync, and use cloud-backed nodes',
           count: cloudProvider.instances.length,
         ),
+        if (readyCloudNodes.length > 1) ...[
+          SizedBox(height: 8.h),
+          Wrap(
+            spacing: 10.w,
+            runSpacing: 8.h,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onTestAllCloudNodesLatency,
+                icon: const Icon(Icons.speed),
+                label: const Text('Test All Nodes'),
+              ),
+              Text(
+                'Measures TCP handshake latency across available protocols.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ],
         SizedBox(height: 8.h),
         if (cloudProvider.error != null && cloudProvider.instances.isEmpty)
           NodesInlineInfoCard(

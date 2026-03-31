@@ -501,17 +501,42 @@ void main() {
       final normalized = ProfileProvider.normalizeConfigForCurrentPlatform(
         config,
         routingSettings: const VpnRoutingSettings(
+          customDirectPackages: ['com.example.mail'],
+          customProxyPackages: ['com.example.browser'],
           customDirectDomains: ['corp.local'],
           customProxyDomains: ['openai.com'],
           customDirectCidrs: ['10.10.0.0/16'],
           customProxyCidrs: ['203.0.113.0/24'],
         ),
+        targetPlatform: TargetPlatform.android,
       );
       final json = jsonDecode(normalized) as Map<String, dynamic>;
       final route = json['route'] as Map<String, dynamic>;
       final rules =
           (route['rules'] as List<dynamic>).cast<Map<String, dynamic>>();
 
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['package_name'] as List<dynamic>?)?.cast<String>(),
+                ['com.example.browser'],
+              ) &&
+              rule['outbound'] == 'select',
+        ),
+        isTrue,
+      );
+      expect(
+        rules.any(
+          (rule) =>
+              listEquals(
+                (rule['package_name'] as List<dynamic>?)?.cast<String>(),
+                ['com.example.mail'],
+              ) &&
+              rule['outbound'] == 'direct',
+        ),
+        isTrue,
+      );
       expect(
         rules.any(
           (rule) =>

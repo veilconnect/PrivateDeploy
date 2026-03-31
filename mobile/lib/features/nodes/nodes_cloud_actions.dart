@@ -164,3 +164,39 @@ Future<void> testCloudNodeLatency({
     backgroundColor: Colors.orange,
   );
 }
+
+Future<void> testAllCloudNodesLatency({
+  required BuildContext context,
+  required CloudProvider cloudProvider,
+}) async {
+  final selection = await cloudProvider.selectFastestConnectableInstance(
+    forceRefresh: true,
+  );
+  if (!context.mounted) {
+    return;
+  }
+
+  if (!selection.hasSelection) {
+    showNodesActionSnackBar(
+      context,
+      message:
+          selection.error ?? 'No ready cloud node is available for testing',
+      backgroundColor: Colors.orange,
+      replaceCurrent: true,
+    );
+    return;
+  }
+
+  final latencyMs = selection.latencyCheck?.latencyMs;
+  final endpoint = selection.latencyCheck?.endpointLabel;
+  final latencySuffix = latencyMs != null ? ' (${latencyMs} ms)' : '';
+  final endpointSuffix =
+      endpoint != null && endpoint.isNotEmpty ? ' via $endpoint' : '';
+  showNodesActionSnackBar(
+    context,
+    message:
+        'Fastest node: ${selection.instance!.label}$latencySuffix$endpointSuffix',
+    backgroundColor: Colors.green,
+    replaceCurrent: true,
+  );
+}
