@@ -128,6 +128,38 @@ func TestIsRetryableSpeedFailure(t *testing.T) {
 	}
 }
 
+func TestExtractSpeedProbeRootCause(t *testing.T) {
+	logs := `INFO[0000] inbound/socks[socks-in]: inbound connection to speed.cloudflare.com:443
+INFO[0000] outbound/shadowsocks[test-ss-v4]: outbound connection to speed.cloudflare.com:443
+ERROR[0005] [2043003180 5.0s] connection: open connection to speed.cloudflare.com:443 using outbound/shadowsocks[test-ss-v4]: dial tcp 192.0.2.10:43379: i/o timeout`
+
+	got := extractSpeedProbeRootCause(logs)
+	want := "dial tcp 192.0.2.10:43379: i/o timeout"
+	if got != want {
+		t.Fatalf("extractSpeedProbeRootCause() = %q, want %q", got, want)
+	}
+}
+
+func TestEnrichSpeedProbeError(t *testing.T) {
+	result := FlagResult{
+		Flag: false,
+		Data: `{"speedMbps":0,"status":"error","error":"Get \"https://speed.cloudflare.com/__down?bytes=1000000\": socks connect tcp 127.0.0.1:43261->speed.cloudflare.com:443: unknown error general SOCKS server failure"}`,
+	}
+	logs := `ERROR[0005] [2043003180 5.0s] connection: open connection to speed.cloudflare.com:443 using outbound/shadowsocks[test-ss-v4]: dial tcp 192.0.2.10:43379: i/o timeout`
+
+	enriched := enrichSpeedProbeError(result, logs)
+
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(enriched.Data), &parsed); err != nil {
+		t.Fatalf("unexpected invalid json: %v", err)
+	}
+	if parsed.Error != "dial tcp 192.0.2.10:43379: i/o timeout" {
+		t.Fatalf("unexpected error: %q", parsed.Error)
+	}
+}
+
 type contextDeadlineExceededStub struct{}
 
 func (contextDeadlineExceededStub) Error() string {

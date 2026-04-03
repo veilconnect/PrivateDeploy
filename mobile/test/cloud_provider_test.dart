@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_node_record.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -699,6 +700,63 @@ void main() {
       expect(result.latencyMs, 18);
       expect(result.endpointLabel, 'Trojan');
       expect(result.isBenchmark, isTrue);
+    });
+  });
+
+  group('CloudProvider stale instance reconciliation', () {
+    test('finds a replaced record by matching public IP', () {
+      final replacementId = CloudProvider.findReplacementRecordId(
+        instanceId: 'inst-new',
+        label: 'sgp-node',
+        region: 'sgp',
+        ipv4: '192.0.2.10',
+        ipv6: '',
+        knownRecords: {
+          'inst-old': VultrNodeRecord(
+            instanceId: 'inst-old',
+            label: 'sgp-node',
+            region: 'sgp',
+            ipv4: '192.0.2.10',
+            ssPort: 43379,
+            ssPassword: 'old-secret',
+          ),
+        },
+        liveInstanceIds: {'inst-new'},
+      );
+
+      expect(replacementId, 'inst-old');
+    });
+
+    test('prepares replacement records with cleared stale credentials', () {
+      final migrated = CloudProvider.prepareReplacementRecord(
+        record: VultrNodeRecord(
+          instanceId: 'inst-old',
+          label: 'sgp-node',
+          region: 'sgp',
+          plan: 'vc2-1c-1gb',
+          ipv4: '192.0.2.10',
+          ssPort: 43379,
+          ssPassword: 'old-secret',
+          vlessPort: 43381,
+          vlessUuid: 'uuid-old',
+          trojanPort: 43382,
+          trojanPassword: 'trojan-old',
+        ),
+        instanceId: 'inst-new',
+        label: 'sgp-node',
+        region: 'sgp',
+        plan: 'vc2-1c-1gb',
+        ipv4: '192.0.2.10',
+        ipv6: '',
+        createdAt: '2026-04-03T10:00:00Z',
+      );
+
+      expect(migrated.instanceId, 'inst-new');
+      expect(migrated.ssPort, 0);
+      expect(migrated.ssPassword, isEmpty);
+      expect(migrated.vlessPort, 0);
+      expect(migrated.trojanPort, 0);
+      expect(migrated.ipv4, '192.0.2.10');
     });
   });
 

@@ -26,10 +26,10 @@ import (
 const (
 	configFileRelPath = "data/cloud/vultr-config.json"
 	nodesFileRelPath  = "data/cloud/vultr-nodes.json"
-	vultrAPIBaseURL   = "https://api.vultr.com/v2"
 )
 
 var (
+	vultrAPIBaseURL = "https://api.vultr.com/v2"
 	vultrHTTPClient = &http.Client{Timeout: 60 * time.Second}
 	nodesMu         sync.Mutex
 	osCache         []vultrOS
@@ -418,6 +418,122 @@ func toCloudInstance(inst vultrInstance, record nodeRecord) cloud.Instance {
 	}
 }
 
+func clearNodeRecordCredentials(record *nodeRecord) bool {
+	changed := false
+
+	resetInt := func(target *int) {
+		if *target != 0 {
+			*target = 0
+			changed = true
+		}
+	}
+	resetString := func(target *string) {
+		if strings.TrimSpace(*target) != "" {
+			*target = ""
+			changed = true
+		}
+	}
+	resetBoolPtr := func(target **bool) {
+		if *target != nil {
+			*target = nil
+			changed = true
+		}
+	}
+
+	resetInt(&record.Port)
+	resetString(&record.Password)
+	resetInt(&record.SSPort)
+	resetString(&record.SSPassword)
+	resetInt(&record.HysteriaPort)
+	resetString(&record.HysteriaPassword)
+	resetString(&record.HysteriaServerName)
+	resetBoolPtr(&record.HysteriaInsecure)
+	resetInt(&record.VLESSPort)
+	resetString(&record.VLESSUUID)
+	resetString(&record.VLESSPublicKey)
+	resetString(&record.VLESSShortID)
+	resetString(&record.VLESSServerName)
+	resetInt(&record.TrojanPort)
+	resetString(&record.TrojanPassword)
+	resetString(&record.TrojanServerName)
+	resetBoolPtr(&record.TrojanInsecure)
+
+	return changed
+}
+
+func vultrRecordMatchesInstanceAddress(record nodeRecord, inst vultrInstance) bool {
+	recordIPv4 := strings.TrimSpace(record.IPv4)
+	instanceIPv4 := strings.TrimSpace(inst.MainIP)
+	if recordIPv4 != "" && instanceIPv4 != "" && recordIPv4 == instanceIPv4 {
+		return true
+	}
+
+	recordIPv6 := strings.TrimSpace(record.IPv6)
+	instanceIPv6 := strings.TrimSpace(inst.V6MainIP)
+	return recordIPv6 != "" && instanceIPv6 != "" && strings.EqualFold(recordIPv6, instanceIPv6)
+}
+
+func vultrRecordMatchesLabelRegion(record nodeRecord, inst vultrInstance) bool {
+	label := strings.TrimSpace(record.Label)
+	region := strings.TrimSpace(record.Region)
+	instanceLabel := strings.TrimSpace(inst.Label)
+	instanceRegion := strings.TrimSpace(inst.Region)
+
+	return label != "" &&
+		region != "" &&
+		instanceLabel != "" &&
+		instanceRegion != "" &&
+		strings.EqualFold(label, instanceLabel) &&
+		strings.EqualFold(region, instanceRegion)
+}
+
+func findReplacementNodeRecord(
+	inst vultrInstance,
+	records map[string]nodeRecord,
+	liveIDs map[string]struct{},
+	claimed map[string]struct{},
+) (string, nodeRecord, bool) {
+	addressMatches := make([]string, 0, 1)
+	labelRegionMatches := make([]string, 0, 1)
+
+	for id, record := range records {
+		if id == inst.ID {
+			continue
+		}
+		if _, ok := liveIDs[id]; ok {
+			continue
+		}
+		if _, ok := claimed[id]; ok {
+			continue
+		}
+		if vultrRecordMatchesInstanceAddress(record, inst) {
+			addressMatches = append(addressMatches, id)
+			continue
+		}
+		if vultrRecordMatchesLabelRegion(record, inst) {
+			labelRegionMatches = append(labelRegionMatches, id)
+		}
+	}
+
+	selectCandidate := func(candidates []string) (string, nodeRecord, bool) {
+		if len(candidates) != 1 {
+			return "", nodeRecord{}, false
+		}
+		id := candidates[0]
+		record, ok := records[id]
+		return id, record, ok
+	}
+
+	if id, record, ok := selectCandidate(addressMatches); ok {
+		return id, record, true
+	}
+	if id, record, ok := selectCandidate(labelRegionMatches); ok {
+		return id, record, true
+	}
+
+	return "", nodeRecord{}, false
+}
+
 func recordsToInstances(records map[string]nodeRecord) []cloud.Instance {
 	instances := make([]cloud.Instance, 0, len(records))
 	for id, record := range records {
@@ -596,24 +712,44 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 	}
 
 	dirty := false
+	liveIDs := make(map[string]struct{}, len(payload.Instances))
+	for _, inst := range payload.Instances {
+		liveIDs[inst.ID] = struct{}{}
+	}
+	claimedReplacements := make(map[string]struct{})
 	seen := make(map[string]struct{}, len(payload.Instances))
 	instances := make([]cloud.Instance, 0, len(payload.Instances))
 
 	for _, inst := range payload.Instances {
 		record, ok := records[inst.ID]
+		replacedFrom := ""
+		replacementDetected := false
 		if !ok {
-			record = nodeRecord{
-				InstanceID: inst.ID,
-				Label:      inst.Label,
-				Region:     inst.Region,
-				InstanceRecord: cloud.InstanceRecord{
-					CreatedAt: inst.CreatedAt,
-				},
+			if oldID, migrated, found := findReplacementNodeRecord(inst, records, liveIDs, claimedReplacements); found {
+				record = migrated
+				replacedFrom = oldID
+				replacementDetected = true
+				claimedReplacements[oldID] = struct{}{}
+				delete(records, oldID)
+				dirty = true
+			} else {
+				record = nodeRecord{
+					InstanceID: inst.ID,
+					Label:      inst.Label,
+					Region:     inst.Region,
+					InstanceRecord: cloud.InstanceRecord{
+						CreatedAt: inst.CreatedAt,
+					},
+				}
+				dirty = true
 			}
+		}
+
+		if replacementDetected && clearNodeRecordCredentials(&record) {
 			dirty = true
 		}
 
-		if shouldRecoverNodeRecord(record) {
+		if replacementDetected || shouldRecoverNodeRecord(record) {
 			if recovered, ok := p.recoverNodeRecordForInstance(ctx, inst, record); ok {
 				record = recovered
 				dirty = true
@@ -654,7 +790,11 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 
 		records[inst.ID] = record
 		seen[inst.ID] = struct{}{}
-		instances = append(instances, toCloudInstance(inst, record))
+		instance := toCloudInstance(inst, record)
+		if replacedFrom != "" {
+			instance.ReplacedInstanceID = replacedFrom
+		}
+		instances = append(instances, instance)
 	}
 
 	if len(records) > len(seen) {

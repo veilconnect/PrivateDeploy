@@ -94,6 +94,9 @@ type Instance struct {
 	Port      int       `json:"port"`      // Default SSH port
 	Password  string    `json:"password"`  // Root password
 	CreatedAt time.Time `json:"createdAt"` // Creation timestamp
+	// ReplacedInstanceID identifies the stale local instance record that was
+	// migrated to this live instance during refresh reconciliation.
+	ReplacedInstanceID string `json:"replacedInstanceId,omitempty"`
 
 	// Multi-protocol proxy configuration
 	SSPort             int    `json:"ssPort,omitempty"`             // Shadowsocks port

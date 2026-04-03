@@ -116,9 +116,11 @@ export type InstanceSyncDeps = {
   }
   ensureSubscriptionForNode: (node: CloudNode) => Promise<void>
   removeSubscriptionForNode: (instanceId: string) => Promise<void>
+  migrateManagedNodeIdentity: (fromInstanceId: string, node: CloudNode) => Promise<boolean>
   applyNodeToProfile: (node: CloudNode, profileId?: string) => Promise<string | undefined>
   applyAllNodesToProfile: () => Promise<string[]>
   loadNodeHistory: () => Promise<unknown>
+  migrateNodeHistory: (fromInstanceId: string, toInstanceId: string) => Promise<boolean>
   recordConnectivitySample: (
     instanceId: string,
     status: import('@/types/cloud').ConnectivityStatus,
@@ -153,9 +155,11 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     kernelApiStore,
     ensureSubscriptionForNode,
     removeSubscriptionForNode,
+    migrateManagedNodeIdentity,
     applyNodeToProfile,
     applyAllNodesToProfile,
     loadNodeHistory,
+    migrateNodeHistory,
     loadManualNodes,
     syncManualNodesIntoInstances,
     saveManualNodes,
@@ -304,6 +308,30 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         .map((node) => normalizeCloudNode(node, currentProvider.value))
       const filteredNodes = normalizedNodes.filter((node) => node.instanceId)
       const nodesToProcess = filteredNodes
+      const migratedInstanceIds = new Set<string>()
+
+      for (const node of nodesToProcess) {
+        const replacedInstanceId = node.replacedInstanceId?.trim()
+        if (!replacedInstanceId || replacedInstanceId === node.instanceId) {
+          continue
+        }
+
+        try {
+          await migrateManagedNodeIdentity(replacedInstanceId, node)
+          await migrateNodeHistory(replacedInstanceId, node.instanceId)
+          migratedInstanceIds.add(replacedInstanceId)
+          logInfo(
+            `[CloudStore] Migrated replaced cloud instance ${replacedInstanceId} -> ${node.instanceId} (${node.label})`,
+          )
+        } catch (error) {
+          logError(
+            '[CloudStore] Failed to migrate replaced cloud instance:',
+            replacedInstanceId,
+            node.instanceId,
+            error,
+          )
+        }
+      }
 
       await Promise.all(
         nodesToProcess.map((node) => ensureRegionAvailability(node.region || '').catch(() => [])),
@@ -315,6 +343,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       const previousMap = new Map(instances.value.map((node) => [node.instanceId, node]))
       const enriched: ManagedCloudNode[] = nodesToProcess.map((node) => {
         const prev = previousMap.get(node.instanceId)
+          || (node.replacedInstanceId ? previousMap.get(node.replacedInstanceId) : undefined)
         const previousStatus = prev?.statusText || 'unknown'
         const providerStatus = providerStatusToNodeStatus(node.status)
         let statusText: CloudNodeStatus = previousStatus
@@ -352,7 +381,8 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         })
         enriched.forEach((node) => {
           const subId = subscriptionId(node.instanceId)
-          if (subscriptionIds.has(subId) && node.statusText !== 'applying') {
+          const legacySubId = node.replacedInstanceId ? subscriptionId(node.replacedInstanceId) : ''
+          if ((subscriptionIds.has(subId) || (!!legacySubId && subscriptionIds.has(legacySubId))) && node.statusText !== 'applying') {
             node.statusText = node.statusText === 'pending' ? 'pending' : 'connected'
           }
         })
@@ -433,7 +463,10 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       }
 
       const removedNodes = previousInstances.filter(
-        (prev) => prev.instanceId && !nodesToProcess.some((node) => node.instanceId === prev.instanceId),
+        (prev) =>
+          prev.instanceId &&
+          !migratedInstanceIds.has(prev.instanceId) &&
+          !nodesToProcess.some((node) => node.instanceId === prev.instanceId),
       )
       if (removedNodes.length > 0) {
         await Promise.all(removedNodes.map((node) => removeSubscriptionForNode(node.instanceId)))

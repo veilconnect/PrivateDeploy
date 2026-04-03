@@ -161,6 +161,7 @@ export const useCloudStore = defineStore('cloud', () => {
   const {
     ensureSubscriptionForNode,
     removeSubscriptionForNode,
+    migrateManagedNodeIdentity,
     applyNodeToProfile,
     updateProtocolHealthFromConnectivity,
   } = subscriptionApply
@@ -204,6 +205,7 @@ export const useCloudStore = defineStore('cloud', () => {
   const {
     loadNodeHistory,
     clearNodeHistory,
+    migrateNodeHistory,
     recordConnectivitySample,
     recordSpeedSample,
   } = historyModule
@@ -228,9 +230,11 @@ export const useCloudStore = defineStore('cloud', () => {
     subscribesStore,
     ensureSubscriptionForNode,
     removeSubscriptionForNode,
+    migrateManagedNodeIdentity,
     applyNodeToProfile,
     applyAllNodesToProfile,
     loadNodeHistory,
+    migrateNodeHistory,
     recordConnectivitySample,
     recordSpeedSample,
     loadManualNodes,

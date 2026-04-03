@@ -777,6 +777,56 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 		return speedError(fmt.Sprintf("sing-box binary not found (basePath=%s)", Env.BasePath))
 	}
 
+	var bestPartial *speedProbeResult
+	var lastError string
+
+	for index, outbound := range outbounds {
+		tag := speedProbeTag(outbound, index)
+		result := a.testNodeDirectSpeedSingleOutbound(outbound, timeoutSec, singboxPath)
+		parsed, ok := decodeSpeedProbeResult(result.Data)
+		if !ok {
+			if result.Data != "" {
+				lastError = result.Data
+			}
+			continue
+		}
+
+		switch parsed.Status {
+		case "ok":
+			if index > 0 {
+				log.Printf("TestNodeDirectSpeed: fallback outbound succeeded tag=%s attempt=%d/%d", tag, index+1, len(outbounds))
+			}
+			return result
+		case "partial":
+			candidate := parsed
+			if bestPartial == nil || candidate.SpeedMbps > bestPartial.SpeedMbps {
+				bestPartial = &candidate
+			}
+		default:
+			if parsed.Error != "" {
+				lastError = parsed.Error
+			}
+		}
+	}
+
+	if bestPartial != nil {
+		payload, err := json.Marshal(bestPartial)
+		if err == nil {
+			return FlagResult{Flag: true, Data: string(payload)}
+		}
+	}
+
+	if lastError == "" {
+		lastError = "speed test failed"
+	}
+	return speedError(lastError)
+}
+
+func (a *App) testNodeDirectSpeedSingleOutbound(outbound json.RawMessage, timeoutSec int, singboxPath string) FlagResult {
+	if len(outbound) == 0 {
+		return speedError("no outbound provided")
+	}
+
 	// Get a free port for the temporary SOCKS5 inbound
 	localPort, err := getAvailablePort()
 	if err != nil {
@@ -787,14 +837,14 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 	var firstOutbound struct {
 		Tag string `json:"tag"`
 	}
-	json.Unmarshal(outbounds[0], &firstOutbound)
+	json.Unmarshal(outbound, &firstOutbound)
 	if firstOutbound.Tag == "" {
 		firstOutbound.Tag = "speed-test-proxy"
-		// Inject tag into first outbound
+		// Inject tag into outbound
 		var ob map[string]interface{}
-		json.Unmarshal(outbounds[0], &ob)
+		json.Unmarshal(outbound, &ob)
 		ob["tag"] = firstOutbound.Tag
-		outbounds[0], _ = json.Marshal(ob)
+		outbound, _ = json.Marshal(ob)
 	}
 
 	// Build temporary sing-box config — keep minimal for maximum compatibility
@@ -811,7 +861,7 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 				"listen_port": localPort,
 			},
 		},
-		"outbounds": outbounds,
+		"outbounds": []json.RawMessage{outbound},
 		"route": map[string]interface{}{
 			"final":                 firstOutbound.Tag,
 			"auto_detect_interface": true,
@@ -900,8 +950,86 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 	// Run the speed test through the temporary proxy with retries and fallback
 	// URLs so a single transient endpoint/proxy race does not tank the node.
 	result := a.testNodeDownloadBenchmark(proxyURL, timeoutSec)
+	result = enrichSpeedProbeError(result, combinedBuf.String())
 	log.Printf("TestNodeDirectSpeed result: %s", result.Data)
 	return result
+}
+
+type speedProbeResult struct {
+	SpeedMbps float64 `json:"speedMbps"`
+	Bytes     int64   `json:"bytes,omitempty"`
+	ElapsedMs float64 `json:"elapsedMs,omitempty"`
+	Status    string  `json:"status"`
+	Error     string  `json:"error,omitempty"`
+}
+
+func decodeSpeedProbeResult(data string) (speedProbeResult, bool) {
+	if strings.TrimSpace(data) == "" {
+		return speedProbeResult{}, false
+	}
+
+	var parsed speedProbeResult
+	if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+		return speedProbeResult{}, false
+	}
+	if parsed.Status == "" {
+		return speedProbeResult{}, false
+	}
+	return parsed, true
+}
+
+func speedProbeTag(outbound json.RawMessage, index int) string {
+	var payload struct {
+		Tag string `json:"tag"`
+	}
+	if err := json.Unmarshal(outbound, &payload); err == nil && strings.TrimSpace(payload.Tag) != "" {
+		return payload.Tag
+	}
+	return fmt.Sprintf("outbound-%d", index+1)
+}
+
+func enrichSpeedProbeError(result FlagResult, logs string) FlagResult {
+	parsed, ok := decodeSpeedProbeResult(result.Data)
+	if !ok || parsed.Status != "error" || strings.TrimSpace(parsed.Error) == "" {
+		return result
+	}
+
+	rootCause := extractSpeedProbeRootCause(logs)
+	if rootCause == "" || rootCause == parsed.Error {
+		return result
+	}
+
+	parsed.Error = rootCause
+	payload, err := json.Marshal(parsed)
+	if err != nil {
+		return result
+	}
+	return FlagResult{Flag: result.Flag, Data: string(payload)}
+}
+
+func extractSpeedProbeRootCause(logs string) string {
+	lines := strings.Split(logs, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || !strings.Contains(line, "ERROR") {
+			continue
+		}
+		if marker := "using outbound/"; strings.Contains(line, marker) {
+			parts := strings.SplitN(line, marker, 2)
+			if len(parts) == 2 {
+				if idx := strings.Index(parts[1], ": "); idx >= 0 {
+					cause := strings.TrimSpace(parts[1][idx+2:])
+					if cause != "" {
+						return cause
+					}
+				}
+			}
+		}
+		if idx := strings.Index(line, "dial tcp "); idx >= 0 {
+			return strings.TrimSpace(line[idx:])
+		}
+	}
+	return ""
 }
 
 // speedError builds a JSON speed test error result with properly escaped error message.

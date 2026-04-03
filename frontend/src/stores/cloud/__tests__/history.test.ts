@@ -149,4 +149,40 @@ describe('cloud history', () => {
       error: 'context deadline exceeded',
     })
   })
+
+  it('migrates history from a replaced instance id into the live node id', async () => {
+    const now = new Date('2026-04-03T00:00:00Z').getTime()
+    vi.setSystemTime(now)
+
+    bridgeMocks.readFile.mockResolvedValue(JSON.stringify({
+      'old-node': {
+        connectivity: [{ timestamp: now - 60_000, status: 'reachable' }],
+        speed: [{ timestamp: now - 30_000, speedMbps: 42.5, status: 'ok' }],
+      },
+      'new-node': {
+        connectivity: [{ timestamp: now - 10_000, status: 'blocked' }],
+        speed: [],
+      },
+    }))
+    bridgeMocks.writeFile.mockResolvedValue(undefined)
+
+    const nodeHistory = shallowRef({})
+    const nodeHistoryLoaded = ref(false)
+    const history = createCloudHistory({
+      nodeHistory,
+      nodeHistoryLoaded,
+    })
+
+    const migrated = await history.migrateNodeHistory('old-node', 'new-node')
+
+    expect(migrated).toBe(true)
+    expect(nodeHistory.value['old-node']).toBeUndefined()
+    expect(nodeHistory.value['new-node'].connectivity).toHaveLength(2)
+    expect(nodeHistory.value['new-node'].speed).toHaveLength(1)
+
+    const [, writtenPayload] = bridgeMocks.writeFile.mock.calls.at(-1)!
+    const persisted = JSON.parse(writtenPayload)
+    expect(persisted['old-node']).toBeUndefined()
+    expect(persisted['new-node'].connectivity).toHaveLength(2)
+  })
 })

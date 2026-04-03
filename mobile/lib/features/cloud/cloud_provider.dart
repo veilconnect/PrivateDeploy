@@ -101,6 +101,52 @@ class CloudProvider with ChangeNotifier {
     );
   }
 
+  @visibleForTesting
+  static String? findReplacementRecordId({
+    required String instanceId,
+    required String label,
+    required String region,
+    required String ipv4,
+    required String ipv6,
+    required Map<String, VultrNodeRecord> knownRecords,
+    required Set<String> liveInstanceIds,
+    Set<String>? claimedRecordIds,
+  }) {
+    return _findReplacementNodeRecordId(
+      instanceId: instanceId,
+      label: label,
+      region: region,
+      ipv4: ipv4,
+      ipv6: ipv6,
+      knownRecords: knownRecords,
+      liveInstanceIds: liveInstanceIds,
+      claimedRecordIds: claimedRecordIds ?? <String>{},
+    );
+  }
+
+  @visibleForTesting
+  static VultrNodeRecord prepareReplacementRecord({
+    required VultrNodeRecord record,
+    required String instanceId,
+    required String label,
+    required String region,
+    required String plan,
+    required String ipv4,
+    required String ipv6,
+    required String createdAt,
+  }) {
+    return _prepareReplacementNodeRecord(
+      record: record,
+      instanceId: instanceId,
+      label: label,
+      region: region,
+      plan: plan,
+      ipv4: ipv4,
+      ipv6: ipv6,
+      createdAt: createdAt,
+    );
+  }
+
   CloudProvider({
     CloudLatencyProbe? latencyProbe,
     CloudLatencyProbe? benchmarkLatencyProbe,
@@ -361,6 +407,53 @@ class CloudProvider with ChangeNotifier {
         } else {
           parsed.add(CloudInstance.fromJson(source));
         }
+      }
+
+      final liveInstanceIds = sources.keys.toSet();
+      final claimedReplacementIds = <String>{};
+      for (final entry in sources.entries) {
+        if (knownRecords.containsKey(entry.key)) {
+          continue;
+        }
+
+        final source = entry.value;
+        final replacementId = _findReplacementNodeRecordId(
+          instanceId: entry.key,
+          label: source['label']?.toString() ?? '',
+          region: source['region']?.toString() ?? '',
+          ipv4: source['main_ip']?.toString() ?? '',
+          ipv6: source['v6_main_ip']?.toString() ?? '',
+          knownRecords: knownRecords,
+          liveInstanceIds: liveInstanceIds,
+          claimedRecordIds: claimedReplacementIds,
+        );
+        if (replacementId == null) {
+          continue;
+        }
+
+        final previous = knownRecords.remove(replacementId);
+        if (previous == null) {
+          continue;
+        }
+
+        claimedReplacementIds.add(replacementId);
+        knownRecords[entry.key] = _prepareReplacementNodeRecord(
+          record: previous,
+          instanceId: entry.key,
+          label: source['label']?.toString() ?? previous.label,
+          region: source['region']?.toString() ?? previous.region,
+          plan: source['plan']?.toString() ?? previous.plan,
+          ipv4: source['main_ip']?.toString() ?? '',
+          ipv6: source['v6_main_ip']?.toString() ?? '',
+          createdAt: source['date_created']?.toString() ??
+              source['created_at']?.toString() ??
+              source['createdAt']?.toString() ??
+              previous.createdAt,
+        );
+        recordsChanged = true;
+        AppLogger.info(
+          '[CloudProvider] Migrated replaced node record $replacementId -> ${entry.key}',
+        );
       }
 
       // Kick off all recovery requests concurrently.
@@ -1043,6 +1136,95 @@ class CloudProvider with ChangeNotifier {
     }
     notifyListeners();
   }
+}
+
+String? _findReplacementNodeRecordId({
+  required String instanceId,
+  required String label,
+  required String region,
+  required String ipv4,
+  required String ipv6,
+  required Map<String, VultrNodeRecord> knownRecords,
+  required Set<String> liveInstanceIds,
+  required Set<String> claimedRecordIds,
+}) {
+  final addressMatches = <String>[];
+  final labelRegionMatches = <String>[];
+
+  final normalizedLabel = label.trim().toLowerCase();
+  final normalizedRegion = region.trim().toLowerCase();
+  final normalizedIpv4 = ipv4.trim();
+  final normalizedIpv6 = ipv6.trim().toLowerCase();
+
+  for (final entry in knownRecords.entries) {
+    if (entry.key == instanceId ||
+        liveInstanceIds.contains(entry.key) ||
+        claimedRecordIds.contains(entry.key)) {
+      continue;
+    }
+
+    final record = entry.value;
+    final recordIpv4 = record.ipv4.trim();
+    final recordIpv6 = record.ipv6.trim().toLowerCase();
+    if ((normalizedIpv4.isNotEmpty && recordIpv4 == normalizedIpv4) ||
+        (normalizedIpv6.isNotEmpty &&
+            recordIpv6.isNotEmpty &&
+            recordIpv6 == normalizedIpv6)) {
+      addressMatches.add(entry.key);
+      continue;
+    }
+
+    final recordLabel = record.label.trim().toLowerCase();
+    final recordRegion = record.region.trim().toLowerCase();
+    if (normalizedLabel.isNotEmpty &&
+        normalizedRegion.isNotEmpty &&
+        recordLabel == normalizedLabel &&
+        recordRegion == normalizedRegion) {
+      labelRegionMatches.add(entry.key);
+    }
+  }
+
+  if (addressMatches.length == 1) {
+    return addressMatches.first;
+  }
+  if (labelRegionMatches.length == 1) {
+    return labelRegionMatches.first;
+  }
+  return null;
+}
+
+VultrNodeRecord _prepareReplacementNodeRecord({
+  required VultrNodeRecord record,
+  required String instanceId,
+  required String label,
+  required String region,
+  required String plan,
+  required String ipv4,
+  required String ipv6,
+  required String createdAt,
+}) {
+  final next = record.toJson()
+    ..['label'] = label
+    ..['region'] = region
+    ..['plan'] = plan
+    ..['ipv4'] = ipv4
+    ..['ipv6'] = ipv6
+    ..['createdAt'] = createdAt
+    ..['ssPort'] = 0
+    ..['ssPassword'] = ''
+    ..['hyPort'] = 0
+    ..['hyPassword'] = ''
+    ..['hysteriaServerName'] = ''
+    ..['vlessPort'] = 0
+    ..['vlessUUID'] = ''
+    ..['vlessPublicKey'] = ''
+    ..['vlessShortId'] = ''
+    ..['vlessServerName'] = ''
+    ..['trojanPort'] = 0
+    ..['trojanPassword'] = ''
+    ..['trojanServerName'] = '';
+
+  return VultrNodeRecord.fromJson(instanceId, next);
 }
 
 Future<CloudLatencyCheck> _defaultLatencyProbe(CloudInstance instance) async {

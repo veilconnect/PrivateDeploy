@@ -47,6 +47,7 @@ export interface CloudPlan {
 // Generic Cloud Node/Instance
 export interface CloudNode {
   instanceId: string
+  replacedInstanceId?: string
   provider?: CloudProvider  // Which cloud provider this instance belongs to
   label: string
   status?: string

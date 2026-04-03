@@ -152,6 +152,12 @@ export const normalizeCloudNode = (
   const node = { ...rawNode } as Record<string, any>
 
   node.instanceId = node.instanceId || node.InstanceID || node.id || node.ID || ''
+  node.replacedInstanceId =
+    node.replacedInstanceId ||
+    node.replacedInstanceID ||
+    node.ReplacedInstanceID ||
+    node.replaced_instance_id ||
+    ''
   node.label = node.label || node.name || node.Label || node.instanceId
   node.provider = node.provider || providerFallback
 

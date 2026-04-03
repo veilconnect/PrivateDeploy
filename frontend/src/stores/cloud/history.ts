@@ -27,6 +27,11 @@ const emptyHistoryRecord = (): NodeHistoryRecord => ({
   speed: [],
 })
 
+const cloneHistoryRecord = (record?: NodeHistoryRecord): NodeHistoryRecord => ({
+  connectivity: [...(record?.connectivity || [])],
+  speed: [...(record?.speed || [])],
+})
+
 const normalizeConnectivityEntries = (entries: unknown): NodeConnectivityHistoryEntry[] => {
   if (!Array.isArray(entries)) {
     return []
@@ -117,6 +122,25 @@ export const pruneNodeHistoryMap = (history: NodeHistoryMap, now: number = Date.
   )
 }
 
+export const mergeNodeHistoryRecords = (
+  primary?: NodeHistoryRecord,
+  secondary?: NodeHistoryRecord,
+  now: number = Date.now(),
+): NodeHistoryRecord => {
+  const merged = {
+    connectivity: [
+      ...cloneHistoryRecord(primary).connectivity,
+      ...cloneHistoryRecord(secondary).connectivity,
+    ],
+    speed: [
+      ...cloneHistoryRecord(primary).speed,
+      ...cloneHistoryRecord(secondary).speed,
+    ],
+  }
+
+  return pruneNodeHistoryMap({ merged }, now).merged || emptyHistoryRecord()
+}
+
 export function createCloudHistory(deps: CloudHistoryDeps) {
   const { nodeHistory, nodeHistoryLoaded } = deps
 
@@ -165,6 +189,26 @@ export function createCloudHistory(deps: CloudHistoryDeps) {
     await saveNodeHistoryImmediate()
   }
 
+  const migrateNodeHistory = async (fromInstanceId: string, toInstanceId: string) => {
+    if (!fromInstanceId || !toInstanceId || fromInstanceId === toInstanceId) {
+      return false
+    }
+
+    await loadNodeHistory()
+    const source = nodeHistory.value[fromInstanceId]
+    if (!source) {
+      return false
+    }
+
+    const merged = mergeNodeHistoryRecords(source, nodeHistory.value[toInstanceId])
+    const nextHistory = { ...nodeHistory.value }
+    delete nextHistory[fromInstanceId]
+    nextHistory[toInstanceId] = merged
+    nodeHistory.value = nextHistory
+    await saveNodeHistoryImmediate()
+    return true
+  }
+
   const recordConnectivitySample = async (
     instanceId: string,
     status: ConnectivityStatus,
@@ -196,6 +240,7 @@ export function createCloudHistory(deps: CloudHistoryDeps) {
   return {
     loadNodeHistory,
     clearNodeHistory,
+    migrateNodeHistory,
     recordConnectivitySample,
     recordSpeedSample,
     saveNodeHistory,

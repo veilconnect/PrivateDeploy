@@ -149,6 +149,31 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     return true
   }
 
+  const migrateProtocolHealthEntry = async (fromInstanceId: string, toInstanceId: string) => {
+    if (!fromInstanceId || !toInstanceId || fromInstanceId === toInstanceId) {
+      return false
+    }
+
+    await loadProtocolHealth()
+    const source = protocolHealth.value[fromInstanceId]
+    if (!source) {
+      return false
+    }
+
+    const target = protocolHealth.value[toInstanceId] || {}
+    const nextHealth = {
+      ...protocolHealth.value,
+      [toInstanceId]: {
+        ...source,
+        ...target,
+      },
+    }
+    delete nextHealth[fromInstanceId]
+    protocolHealth.value = nextHealth
+    await saveProtocolHealthImmediate()
+    return true
+  }
+
   const syncManagedCloudProfiles = async (reason: string, allowStartWhenStopped = false) => {
     let changed = false
     const updates: Array<Promise<void>> = []
@@ -437,6 +462,138 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     }
   }
 
+  const replaceSubscriptionReferences = async (
+    oldSubscriptionId: string,
+    newSubscriptionId: string,
+    nextTag: string,
+  ) => {
+    if (!oldSubscriptionId || !newSubscriptionId || oldSubscriptionId === newSubscriptionId) {
+      return false
+    }
+
+    let changed = false
+    const updates: Array<Promise<void>> = []
+
+    for (const profile of profilesStore.profiles) {
+      if (!profile) continue
+      let profileChanged = false
+      const updated = deepClone(profile)
+
+      const replaceItems = (items: Array<any> | undefined) => {
+        if (!Array.isArray(items)) {
+          return items
+        }
+
+        const next: any[] = []
+        const seenIds = new Set<string>()
+        for (const item of items) {
+          if (!item || typeof item !== 'object') {
+            next.push(item)
+            continue
+          }
+
+          const nextItem = item.id === oldSubscriptionId
+            ? { ...item, id: newSubscriptionId, tag: nextTag || item.tag }
+            : { ...item }
+
+          if (item.id === oldSubscriptionId) {
+            profileChanged = true
+          }
+
+          const dedupeKey = typeof nextItem.id === 'string' ? nextItem.id : ''
+          if (dedupeKey && seenIds.has(dedupeKey)) {
+            profileChanged = true
+            continue
+          }
+          if (dedupeKey) {
+            seenIds.add(dedupeKey)
+          }
+          next.push(nextItem)
+        }
+
+        return next
+      }
+
+      updated.outbounds = updated.outbounds.map((outbound: IOutbound) => {
+        const nextOutbound = { ...outbound }
+        if (nextOutbound.id === oldSubscriptionId) {
+          nextOutbound.id = newSubscriptionId
+          nextOutbound.tag = nextTag || nextOutbound.tag
+          profileChanged = true
+        }
+        nextOutbound.outbounds = replaceItems(nextOutbound.outbounds) as any
+        return nextOutbound
+      })
+
+      if (profileChanged) {
+        ensureSmartAutoRouting(updated, protocolHealth.value)
+        updates.push(profilesStore.editProfile(profile.id, updated))
+        changed = true
+      }
+    }
+
+    if (updates.length > 0) {
+      await Promise.all(updates)
+    }
+
+    return changed
+  }
+
+  const migrateManagedNodeIdentity = async (
+    fromInstanceId: string,
+    node: CloudNode,
+  ) => {
+    if (!fromInstanceId || fromInstanceId === node.instanceId) {
+      return false
+    }
+
+    const oldSubscriptionId = subscriptionId(fromInstanceId)
+    const newSubscriptionId = subscriptionId(node.instanceId)
+    const oldSubscription = subscribesStore.getSubscribeById(oldSubscriptionId)
+
+    let changed = await migrateProtocolHealthEntry(fromInstanceId, node.instanceId)
+
+    await ensureSubscriptionForNode(node)
+
+    const newSubscription = subscribesStore.getSubscribeById(newSubscriptionId)
+    if (newSubscription && oldSubscription) {
+      const migratedSubscription: Subscription = {
+        ...oldSubscription,
+        id: newSubscriptionId,
+        name: node.label,
+        path: subscriptionPath(node.instanceId),
+        updateTime: Date.now(),
+        script: newSubscription.script || oldSubscription.script || DefaultSubscribeScript,
+        proxies: newSubscription.proxies,
+        header: {
+          request: {
+            ...(oldSubscription.header?.request || {}),
+          },
+          response: {
+            ...(oldSubscription.header?.response || {}),
+          },
+        },
+      }
+      applyManagedExcludeToSubscription(migratedSubscription, node.instanceId)
+      await subscribesStore.editSubscribe(newSubscriptionId, migratedSubscription)
+      changed = true
+    }
+
+    const nextTag = newSubscription?.name || node.label
+    if (await replaceSubscriptionReferences(oldSubscriptionId, newSubscriptionId, nextTag)) {
+      changed = true
+    }
+
+    if (oldSubscription) {
+      await subscribesStore.deleteSubscribe(oldSubscriptionId)
+      changed = true
+    }
+    await RemoveFile(subscriptionPath(fromInstanceId)).catch(() => undefined)
+    kernelApiStore.removeProxyFromGroups(oldSubscriptionId)
+
+    return changed
+  }
+
   const applyProtocolHealthToNode = async (node: CloudNode) => {
     await loadProtocolHealth()
     const existing = subscribesStore.getSubscribeById(subscriptionId(node.instanceId))
@@ -673,6 +830,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     loadProtocolHealth,
     ensureSubscriptionForNode,
     removeSubscriptionForNode,
+    migrateManagedNodeIdentity,
     applyNodeToProfile,
     applyAllNodesToProfile,
     syncManagedCloudProfiles,
