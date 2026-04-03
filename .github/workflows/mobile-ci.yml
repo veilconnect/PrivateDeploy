@@ -5,11 +5,19 @@ on:
     branches: [ main, develop, feature/* ]
     paths:
       - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
       - '.github/workflows/mobile-ci.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
       - '.github/workflows/mobile-ci.yml'
   schedule:
     # 每天凌晨 2 点运行
@@ -21,9 +29,21 @@ defaults:
     working-directory: mobile
 
 jobs:
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check shared version metadata
+        run: bash scripts/check_versions.sh
+
   lint:
     name: Lint Check
     runs-on: ubuntu-latest
+    needs: version-consistency
 
     steps:
       - name: Checkout code

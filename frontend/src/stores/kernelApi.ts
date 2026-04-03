@@ -9,6 +9,7 @@ import {
 } from '@/constant/kernel'
 import { Branch } from '@/enums/app'
 import { Inbound } from '@/enums/kernel'
+import { maybePromptToEnableSystemProxyBeforeConnect } from '@/hooks/systemProxyControlCore'
 import {
   useAppSettingsStore,
   useProfilesStore,
@@ -42,8 +43,6 @@ import {
 } from './kernelApiRuntime'
 import { runKernelStartAttempts } from './kernelApiStartRunner'
 import { createKernelApiWebsocketManager } from './kernelApiWebsocket'
-
-import { maybePromptToEnableSystemProxyBeforeConnect } from '@/hooks/systemProxyControlCore'
 
 import type {
   CoreApiConfig,

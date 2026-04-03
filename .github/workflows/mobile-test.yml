@@ -5,11 +5,19 @@ on:
     branches: [ main, develop ]
     paths:
       - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
       - '.github/workflows/mobile-test.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
       - '.github/workflows/mobile-test.yml'
   workflow_dispatch:
 
@@ -18,9 +26,21 @@ defaults:
     working-directory: mobile
 
 jobs:
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check shared version metadata
+        run: bash scripts/check_versions.sh
+
   analyze:
     name: Flutter Analyze
     runs-on: ubuntu-latest
+    needs: version-consistency
 
     steps:
       - name: Checkout code
@@ -48,6 +68,7 @@ jobs:
   test:
     name: Flutter Test
     runs-on: ubuntu-latest
+    needs: version-consistency
 
     steps:
       - name: Checkout code
@@ -78,6 +99,7 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: macos-latest
+    needs: version-consistency
     strategy:
       matrix:
         device:
@@ -118,6 +140,7 @@ jobs:
   code-quality:
     name: Code Quality Check
     runs-on: ubuntu-latest
+    needs: version-consistency
 
     steps:
       - name: Checkout code

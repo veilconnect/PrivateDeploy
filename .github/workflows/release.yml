@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check version consistency
+        run: bash scripts/check_versions.sh
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
