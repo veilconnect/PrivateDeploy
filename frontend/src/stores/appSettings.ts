@@ -59,7 +59,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     webviewGpuPolicy: WebviewGpuPolicy.Never,
     width: 0,
     height: 0,
-    exitOnClose: true,
+    exitOnClose: false,
     closeKernelOnExit: true,
     autoSetSystemProxy: false,
     systemProxyPolicyInitialized: false,

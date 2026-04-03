@@ -40,13 +40,14 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final primaryIcon = isSelected
         ? (isConnected ? Icons.check_circle : Icons.shield)
         : Icons.play_arrow;
+    final throughputLabel = _formatThroughput(latencyCheck?.throughputMbps);
     final latencyLabel = isLatencyTesting
-        ? (latencyCheck?.isBenchmark == true ? 'Benchmarking...' : 'Testing...')
-        : latencyCheck?.latencyMs != null
-            ? '${latencyCheck!.latencyMs} ms'
+        ? 'Testing...'
+        : throughputLabel != null
+            ? throughputLabel
             : latencyCheck?.error != null
-                ? 'Retry Quick Test'
-                : 'Quick Test';
+                ? 'Retry Speed Test'
+                : 'Speed Test';
     final latencyDetail = _latencyDetailText(latencyCheck);
 
     return Card(
@@ -243,8 +244,52 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final sampleCount = latencyCheck.sampleCount;
     final successfulSamples = latencyCheck.successfulSamples;
     if (sampleCount == null || successfulSamples == null || sampleCount <= 0) {
-      return 'Benchmark leader: $endpointLabel';
+      return _buildBenchmarkDetail(
+        endpointLabel: endpointLabel,
+        throughputMbps: latencyCheck.throughputMbps,
+        latencyMs: latencyCheck.latencyMs,
+      );
     }
-    return 'Benchmark leader: $endpointLabel • $successfulSamples/$sampleCount probes';
+    return _buildBenchmarkDetail(
+      endpointLabel: endpointLabel,
+      throughputMbps: latencyCheck.throughputMbps,
+      latencyMs: latencyCheck.latencyMs,
+      sampleCount: sampleCount,
+      successfulSamples: successfulSamples,
+    );
+  }
+
+  String _buildBenchmarkDetail({
+    required String endpointLabel,
+    double? throughputMbps,
+    int? latencyMs,
+    int? sampleCount,
+    int? successfulSamples,
+  }) {
+    final segments = <String>['Benchmark leader: $endpointLabel'];
+    if (sampleCount != null && successfulSamples != null && sampleCount > 0) {
+      segments.add('$successfulSamples/$sampleCount probes');
+    }
+    final throughputLabel = _formatThroughput(throughputMbps);
+    if (throughputLabel != null) {
+      segments.add(throughputLabel);
+    }
+    if (latencyMs != null) {
+      segments.add('${latencyMs} ms latency');
+    }
+    return segments.join(' • ');
+  }
+
+  String? _formatThroughput(double? throughputMbps) {
+    if (throughputMbps == null || throughputMbps <= 0) {
+      return null;
+    }
+    if (throughputMbps >= 100) {
+      return '${throughputMbps.toStringAsFixed(0)} Mbps';
+    }
+    if (throughputMbps >= 10) {
+      return '${throughputMbps.toStringAsFixed(1)} Mbps';
+    }
+    return '${throughputMbps.toStringAsFixed(2)} Mbps';
   }
 }

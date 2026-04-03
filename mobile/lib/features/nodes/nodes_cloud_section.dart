@@ -82,7 +82,7 @@ class NodesCloudSection extends StatelessWidget {
                 label: const Text('Benchmark All Nodes'),
               ),
               Text(
-                'Runs a heavier multi-probe TCP benchmark. Top Connect reuses recent winners first.',
+                'Runs a real download sample after picking the best endpoint for each node. Top Connect still reuses recent winners first.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

@@ -551,16 +551,11 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		if err == nil {
 			dialer, dErr := xproxy.FromURL(parsed, xproxy.Direct)
 			if dErr == nil {
-				// Wrap dialer to resolve DNS locally first, then connect via SOCKS5 with IP.
-				// sing-box's SOCKS inbound doesn't support remote DNS resolution (socks5h).
+				// Pass the domain name directly to the SOCKS5 proxy so that
+				// DNS resolution happens on the remote server (via sing-box's
+				// outbound).  Local DNS resolution can return altered or
+				// unreachable IPs in restricted network environments.
 				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-					host, port, splitErr := net.SplitHostPort(addr)
-					if splitErr == nil {
-						ips, resolveErr := net.LookupHost(host)
-						if resolveErr == nil && len(ips) > 0 {
-							addr = net.JoinHostPort(ips[0], port)
-						}
-					}
 					if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
 						return ctxDialer.DialContext(ctx, network, addr)
 					}
@@ -723,6 +718,20 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 			"final":                 firstOutbound.Tag,
 			"auto_detect_interface": true,
 		},
+		"dns": map[string]interface{}{
+			"servers": []map[string]interface{}{
+				{
+					"tag":     "proxy-dns",
+					"address": "https://1.1.1.1/dns-query",
+					"detour":  firstOutbound.Tag,
+				},
+				{
+					"tag":     "local-dns",
+					"address": "https://223.5.5.5/dns-query",
+				},
+			},
+			"final": "proxy-dns",
+		},
 	}
 
 	configBytes, err := json.Marshal(tmpConfig)
@@ -741,11 +750,11 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
-	// Start temporary sing-box
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec+10)*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, singboxPath, "run", "--disable-color", "-c", tmpFile.Name())
+	// Start temporary sing-box — use a plain exec.Command instead of
+	// exec.CommandContext so that a context cancellation does not
+	// TerminateProcess the sing-box while a download is still in flight
+	// (on Windows TerminateProcess is immediate and non-graceful).
+	cmd := exec.Command(singboxPath, "run", "--disable-color", "-c", tmpFile.Name())
 	SetCmdWindowHidden(cmd)
 	cmd.Env = append(os.Environ(),
 		"ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true",
@@ -759,6 +768,7 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 		return speedError("start sing-box: " + err.Error())
 	}
 	defer func() {
+		SendExitSignal(cmd.Process)
 		cmd.Process.Kill()
 		cmd.Wait()
 	}()
@@ -799,6 +809,7 @@ func speedError(msg string) FlagResult {
 // findSingboxBinaryFromEnv locates the sing-box binary using the app's base path.
 func findSingboxBinaryFromEnv() string {
 	basePath := Env.BasePath
+	exeDir := filepath.Dir(Env.ExecPath)
 	candidates := []string{}
 	if fromEnv := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_SINGBOX_PATH")); fromEnv != "" {
 		candidates = append(candidates, fromEnv)
@@ -813,6 +824,15 @@ func findSingboxBinaryFromEnv() string {
 		candidates = append(candidates,
 			filepath.Join(basePath, "data", "sing-box", "sing-box"+suffix),
 			filepath.Join(basePath, "data", "sing-box", "sing-box-latest"+suffix),
+		)
+	}
+	// On Windows the exe directory may differ from basePath (e.g. Program Files
+	// vs %LOCALAPPDATA%), so also search relative to the executable itself.
+	if exeDir != "" && exeDir != basePath {
+		candidates = append(candidates,
+			filepath.Join(exeDir, "data", "sing-box", "sing-box"+suffix),
+			filepath.Join(exeDir, "data", "sing-box", "sing-box-latest"+suffix),
+			filepath.Join(exeDir, "sing-box"+suffix),
 		)
 	}
 	for _, c := range candidates {

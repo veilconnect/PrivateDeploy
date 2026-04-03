@@ -297,10 +297,10 @@ void main() {
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Active Node'), findsOneWidget);
       expect(find.text('IN USE'), findsOneWidget);
-      expect(find.text('38 ms'), findsOneWidget);
+      expect(find.text('Speed Test'), findsOneWidget);
       expect(find.text('Fastest endpoint: Trojan'), findsOneWidget);
 
-      await tester.tap(find.text('38 ms'));
+      await tester.tap(find.text('Speed Test'));
       await tester.pump();
 
       expect(testedNode?.label, 'fra-node');
@@ -347,6 +347,51 @@ void main() {
       await tester.pump();
 
       expect(testedAll, isTrue);
+    });
+
+    testWidgets('shows Mbps label for benchmark result with throughput sample',
+        (tester) async {
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [readyCloudTestInstance(label: 'osaka')],
+            latencyChecks: {
+              'osaka': CloudLatencyCheck.success(
+                latencyMs: 24,
+                endpointLabel: 'Shadowsocks',
+                updatedAt: DateTime(2026, 3, 31, 10, 30),
+                mode: CloudProbeMode.benchmark,
+                sampleCount: 3,
+                successfulSamples: 3,
+                throughputMbps: 32.0,
+                throughputBytes: 1000000,
+                throughputElapsedMs: 250,
+              ),
+            },
+          ),
+          profileProvider: TestProfileProvider(),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+        ),
+      );
+
+      expect(find.text('32.0 Mbps'), findsOneWidget);
+      expect(
+        find.text(
+          'Benchmark leader: Shadowsocks • 3/3 probes • 32.0 Mbps • 24 ms latency',
+        ),
+        findsOneWidget,
+      );
     });
   });
 

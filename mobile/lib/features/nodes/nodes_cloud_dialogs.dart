@@ -48,6 +48,7 @@ class _NodesCloudApiKeyDialog extends StatefulWidget {
 class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
   late final TextEditingController _controller;
   var _isSaving = false;
+  var _cancelled = false;
   String? _dialogError;
 
   @override
@@ -58,6 +59,7 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
 
   @override
   void dispose() {
+    _cancelled = true;
     _controller.dispose();
     super.dispose();
   }
@@ -92,7 +94,10 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _isSaving ? null : () => Navigator.pop(context, false),
+          onPressed: () {
+            _cancelled = true;
+            Navigator.pop(context, false);
+          },
           child: const Text('Cancel'),
         ),
         ElevatedButton(
@@ -101,12 +106,13 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
               : () async {
                   setState(() {
                     _isSaving = true;
+                    _cancelled = false;
                     _dialogError = null;
                   });
 
                   final error =
                       await widget.onVerifyAndSave(_controller.text.trim());
-                  if (!mounted) {
+                  if (!mounted || _cancelled) {
                     return;
                   }
 

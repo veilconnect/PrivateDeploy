@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/widgets.dart';
 
@@ -172,6 +173,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _safeNotifyListeners();
       return false;
     }
+
+    // On Android, pre-request VPN permission via VpnService.prepare().
+    // If another VPN app is active, this shows the system consent dialog
+    // which revokes the other VPN and grants permission to this app.
+    // Doing this before startVpn() avoids a permission prompt mid-connect.
+    final permissionGranted = await _ensureVpnPermission();
+    if (!permissionGranted) {
+      _error =
+          'VPN permission was not granted. Allow VPN access and try again.';
+      _status = VpnStatus.disconnected;
+      _safeNotifyListeners();
+      return false;
+    }
+
     _cancelStartupVerification();
     _isLoading = true;
     _error = null;
@@ -539,6 +554,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (settleDelay > Duration.zero) {
       await Future<void>.delayed(settleDelay);
     }
+  }
+
+  Future<bool> _ensureVpnPermission() async {
+    if (!Platform.isAndroid) return true;
+    return await _nativeService.requestPermission();
   }
 
   String? _normalizeVpnError(String? message) {

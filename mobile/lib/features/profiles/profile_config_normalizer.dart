@@ -301,7 +301,46 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     cacheFile['enabled'] = true;
   }
 
+  // On Android, apply per-app package filtering at the TUN inbound level.
+  // This uses VpnService.Builder.addDisallowedApplication() so that direct
+  // apps' traffic never enters the TUN interface at all — a reliable bypass
+  // regardless of the sing-box network stack in use.
+  if (isAndroid) {
+    _applyTunPackageFiltering(decoded, routingSettings);
+  }
+
   return originalJson != jsonEncode(decoded);
+}
+
+void _applyTunPackageFiltering(
+  Map<String, dynamic> decoded,
+  VpnRoutingSettings routingSettings,
+) {
+  final inbounds = decoded['inbounds'];
+  if (inbounds is! List) {
+    return;
+  }
+
+  final directPackages = _dedupeStrings(
+    routingSettings.customDirectPackages.map((p) => p.trim()),
+  );
+
+  for (final inbound in inbounds) {
+    if (inbound is! Map<String, dynamic>) {
+      continue;
+    }
+    if (inbound['type']?.toString() != 'tun') {
+      continue;
+    }
+
+    if (directPackages.isNotEmpty) {
+      // Exclude direct packages from TUN so their traffic bypasses VPN
+      // entirely via Android VpnService.Builder.addDisallowedApplication().
+      final existing = _coerceStringList(inbound['exclude_package']);
+      final merged = _dedupeStrings([...existing, ...directPackages]);
+      inbound['exclude_package'] = merged;
+    }
+  }
 }
 
 Map<String, dynamic> _buildBundledRuleSet({

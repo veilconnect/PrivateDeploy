@@ -20,8 +20,12 @@ void main() async {
   // Initialize Storage
   await StorageService.init();
 
-  // Install bundled routing rule sets before any profile is normalized.
-  await BundledRuleSetRegistry.ensureInstalled();
+  // Install bundled routing rule sets after the first frame so the UI renders
+  // immediately.  The registry writes are skipped when the files already exist,
+  // so subsequent launches are nearly instant.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    BundledRuleSetRegistry.ensureInstalled();
+  });
 
   runApp(const PrivateDeployApp());
 }
@@ -36,7 +40,7 @@ class PrivateDeployApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
         ChangeNotifierProxyProvider<CloudProvider, VpnProvider>(
-          create: (_) => VpnProvider()..initialize(),
+          create: (_) => VpnProvider(),
           update: (_, cloudProvider, vpnProvider) {
             vpnProvider?.setFallbackEgressIpResolver(
               cloudProvider.resolveEgressIpForProfileName,

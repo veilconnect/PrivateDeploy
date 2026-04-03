@@ -447,5 +447,316 @@ void main() {
       expect(selection.latencyCheck?.successfulSamples, 3);
       expect(selection.usedCachedResults, isFalse);
     });
+
+    test('cached selection prefers higher throughput benchmark result',
+        () async {
+      final instances = [
+        CloudInstance(
+          id: 'osaka',
+          provider: 'vultr',
+          label: 'osaka',
+          status: 'active',
+          region: 'itm',
+          plan: 'vc2-1c-1gb',
+          ipv4: '1.1.1.1',
+          nodeInfo: const NodeInfo(
+            ssPort: 443,
+            ssPassword: 'ss',
+            hyPort: 0,
+            hyPassword: '',
+            hyServerName: '',
+            hyInsecure: null,
+            vlessPort: 0,
+            vlessUuid: '',
+            vlessPublicKey: '',
+            vlessShortId: '',
+            vlessServerName: '',
+            trojanPort: 8443,
+            trojanPassword: 'trojan',
+            trojanServerName: '',
+            trojanInsecure: null,
+          ),
+        ),
+        CloudInstance(
+          id: 'lax',
+          provider: 'vultr',
+          label: 'lax',
+          status: 'active',
+          region: 'lax',
+          plan: 'vc2-1c-1gb',
+          ipv4: '2.2.2.2',
+          nodeInfo: const NodeInfo(
+            ssPort: 443,
+            ssPassword: 'ss',
+            hyPort: 0,
+            hyPassword: '',
+            hyServerName: '',
+            hyInsecure: null,
+            vlessPort: 0,
+            vlessUuid: '',
+            vlessPublicKey: '',
+            vlessShortId: '',
+            vlessServerName: '',
+            trojanPort: 8443,
+            trojanPassword: 'trojan',
+            trojanServerName: '',
+            trojanInsecure: null,
+          ),
+        ),
+      ];
+
+      final provider = CloudProvider(autoInitialize: false);
+      provider.instances.addAll(instances);
+      provider.saveLatencyCheck(
+        'osaka',
+        CloudLatencyCheck.success(
+          latencyMs: 30,
+          endpointLabel: 'Shadowsocks',
+          updatedAt: DateTime.now(),
+          mode: CloudProbeMode.benchmark,
+          sampleCount: 3,
+          successfulSamples: 3,
+          throughputMbps: 42.0,
+          throughputBytes: 1000000,
+          throughputElapsedMs: 190,
+        ),
+      );
+      provider.saveLatencyCheck(
+        'lax',
+        CloudLatencyCheck.success(
+          latencyMs: 18,
+          endpointLabel: 'Trojan',
+          updatedAt: DateTime.now(),
+          mode: CloudProbeMode.benchmark,
+          sampleCount: 3,
+          successfulSamples: 3,
+          throughputMbps: 21.0,
+          throughputBytes: 1000000,
+          throughputElapsedMs: 381,
+        ),
+      );
+
+      final selection = provider.cachedFastestConnectableInstance(
+        maxAge: CloudProvider.connectSelectionReuseMaxAge,
+      );
+
+      expect(selection.instance?.id, 'osaka');
+      expect(selection.latencyCheck?.throughputMbps, 42.0);
+    });
+
+    test('benchmark throughput wins even when latency is slightly worse',
+        () async {
+      final instances = [
+        CloudInstance(
+          id: 'osaka',
+          provider: 'vultr',
+          label: 'osaka',
+          status: 'active',
+          region: 'itm',
+          plan: 'vc2-1c-1gb',
+          ipv4: '1.1.1.1',
+          nodeInfo: const NodeInfo(
+            ssPort: 443,
+            ssPassword: 'ss',
+            hyPort: 0,
+            hyPassword: '',
+            hyServerName: '',
+            hyInsecure: null,
+            vlessPort: 0,
+            vlessUuid: '',
+            vlessPublicKey: '',
+            vlessShortId: '',
+            vlessServerName: '',
+            trojanPort: 8443,
+            trojanPassword: 'trojan',
+            trojanServerName: '',
+            trojanInsecure: null,
+          ),
+        ),
+        CloudInstance(
+          id: 'vultr',
+          provider: 'vultr',
+          label: 'vultr',
+          status: 'active',
+          region: 'lax',
+          plan: 'vc2-1c-1gb',
+          ipv4: '2.2.2.2',
+          nodeInfo: const NodeInfo(
+            ssPort: 443,
+            ssPassword: 'ss',
+            hyPort: 0,
+            hyPassword: '',
+            hyServerName: '',
+            hyInsecure: null,
+            vlessPort: 0,
+            vlessUuid: '',
+            vlessPublicKey: '',
+            vlessShortId: '',
+            vlessServerName: '',
+            trojanPort: 8443,
+            trojanPassword: 'trojan',
+            trojanServerName: '',
+            trojanInsecure: null,
+          ),
+        ),
+      ];
+
+      final provider = CloudProvider(autoInitialize: false);
+      provider.instances.addAll(instances);
+      provider.saveLatencyCheck(
+        'osaka',
+        CloudLatencyCheck.success(
+          latencyMs: 306,
+          endpointLabel: 'Shadowsocks',
+          updatedAt: DateTime.now(),
+          mode: CloudProbeMode.benchmark,
+          sampleCount: 3,
+          successfulSamples: 3,
+          throughputMbps: 5.85,
+          throughputBytes: 1000000,
+          throughputElapsedMs: 1368,
+        ),
+      );
+      provider.saveLatencyCheck(
+        'vultr',
+        CloudLatencyCheck.success(
+          latencyMs: 231,
+          endpointLabel: 'Trojan',
+          updatedAt: DateTime.now(),
+          mode: CloudProbeMode.benchmark,
+          sampleCount: 3,
+          successfulSamples: 3,
+          throughputMbps: 5.77,
+          throughputBytes: 1000000,
+          throughputElapsedMs: 1386,
+        ),
+      );
+
+      final selection = provider.cachedFastestConnectableInstance(
+        maxAge: CloudProvider.connectSelectionReuseMaxAge,
+      );
+
+      expect(selection.instance?.id, 'osaka');
+      expect(selection.latencyCheck?.throughputMbps, 5.85);
+    });
+
+    test('quick refresh preserves existing throughput benchmark sample',
+        () async {
+      final instance = CloudInstance(
+        id: 'osaka',
+        provider: 'vultr',
+        label: 'osaka',
+        status: 'active',
+        region: 'itm',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.1.1.1',
+        nodeInfo: const NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 0,
+          vlessUuid: '',
+          vlessPublicKey: '',
+          vlessShortId: '',
+          vlessServerName: '',
+          trojanPort: 8443,
+          trojanPassword: 'trojan',
+          trojanServerName: '',
+          trojanInsecure: null,
+        ),
+      );
+
+      final provider = CloudProvider(
+        latencyProbe: (_) async => CloudLatencyCheck.success(
+          latencyMs: 18,
+          endpointLabel: 'Trojan',
+          updatedAt: DateTime.now(),
+        ),
+        autoInitialize: false,
+      );
+      provider.instances.add(instance);
+      provider.saveLatencyCheck(
+        instance.id,
+        CloudLatencyCheck.success(
+          latencyMs: 28,
+          endpointLabel: 'Shadowsocks',
+          updatedAt: DateTime.now(),
+          mode: CloudProbeMode.benchmark,
+          sampleCount: 3,
+          successfulSamples: 3,
+          throughputMbps: 40.0,
+          throughputBytes: 1000000,
+          throughputElapsedMs: 200,
+        ),
+      );
+
+      final result = await provider.testInstanceLatency(instance);
+
+      expect(result.throughputMbps, 40.0);
+      expect(result.latencyMs, 18);
+      expect(result.endpointLabel, 'Trojan');
+      expect(result.isBenchmark, isTrue);
+    });
+  });
+
+  group('supportedCloudProbeEndpointsForCurrentPlatform', () {
+    test('filters Android-incompatible VLESS endpoints from probing', () {
+      const nodeInfo = NodeInfo(
+        ssPort: 443,
+        ssPassword: 'ss',
+        hyPort: 8443,
+        hyPassword: 'hy',
+        hyServerName: 'example.com',
+        hyInsecure: true,
+        vlessPort: 443,
+        vlessUuid: 'uuid',
+        vlessPublicKey: 'public',
+        vlessShortId: 'short',
+        vlessServerName: 'www.microsoft.com',
+        trojanPort: 8444,
+        trojanPassword: 'trojan',
+        trojanServerName: 'www.microsoft.com',
+        trojanInsecure: true,
+      );
+
+      expect(
+        supportedCloudProbeEndpointsForCurrentPlatform(
+          nodeInfo: nodeInfo,
+          targetPlatform: TargetPlatform.android,
+        ),
+        ['Trojan', 'Shadowsocks'],
+      );
+    });
+
+    test('keeps VLESS probing on non-Android platforms', () {
+      const nodeInfo = NodeInfo(
+        ssPort: 443,
+        ssPassword: 'ss',
+        hyPort: 8443,
+        hyPassword: 'hy',
+        hyServerName: 'example.com',
+        hyInsecure: true,
+        vlessPort: 443,
+        vlessUuid: 'uuid',
+        vlessPublicKey: 'public',
+        vlessShortId: 'short',
+        vlessServerName: 'www.microsoft.com',
+        trojanPort: 8444,
+        trojanPassword: 'trojan',
+        trojanServerName: 'www.microsoft.com',
+        trojanInsecure: true,
+      );
+
+      expect(
+        supportedCloudProbeEndpointsForCurrentPlatform(
+          nodeInfo: nodeInfo,
+          targetPlatform: TargetPlatform.iOS,
+        ),
+        ['Trojan', 'VLESS', 'Shadowsocks'],
+      );
+    });
   });
 }

@@ -55,13 +55,16 @@ class _NodesScreenState extends State<NodesScreen> {
     final profileProvider = context.read<ProfileProvider>();
     final vpnProvider = context.read<VpnProvider>();
 
-    await profileProvider.loadProfiles();
-    if (initializeVpn) {
-      await vpnProvider.initialize();
-    } else {
-      await vpnProvider.loadStatus();
-    }
-    await cloudProvider.refreshCloudConfig();
+    // Run independent local operations in parallel to cut startup latency.
+    await Future.wait([
+      profileProvider.loadProfiles(),
+      if (initializeVpn)
+        vpnProvider.initialize()
+      else
+        vpnProvider.loadStatus(),
+      cloudProvider.refreshCloudConfig(),
+    ]);
+
     if (cloudProvider.hasApiKey) {
       await cloudProvider.loadInstances();
       unawaited(cloudProvider.loadRegions());
@@ -197,19 +200,29 @@ class _NodesScreenState extends State<NodesScreen> {
 
   Future<void> _testCloudNodeLatency(
     CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
     CloudInstance instance,
   ) {
     return testCloudNodeLatency(
       context: context,
       cloudProvider: cloudProvider,
       instance: instance,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
     );
   }
 
-  Future<void> _testAllCloudNodesLatency(CloudProvider cloudProvider) {
+  Future<void> _testAllCloudNodesLatency(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) {
     return testAllCloudNodesLatency(
       context: context,
       cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
     );
   }
 
@@ -360,9 +373,12 @@ class _NodesScreenState extends State<NodesScreen> {
                     instance,
                   ),
                   onTestCloudNodeLatency: (instance) =>
-                      _testCloudNodeLatency(cloudProvider, instance),
-                  onTestAllCloudNodesLatency: () =>
-                      _testAllCloudNodesLatency(cloudProvider),
+                      _testCloudNodeLatency(cloudProvider, profileProvider, vpnProvider, instance),
+                  onTestAllCloudNodesLatency: () => _testAllCloudNodesLatency(
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                  ),
                 ),
                 if (localProfiles.isNotEmpty) ...[
                   SizedBox(height: 20.h),

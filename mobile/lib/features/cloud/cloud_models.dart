@@ -48,6 +48,8 @@ enum CloudProbeMode {
   benchmark,
 }
 
+const Object _cloudLatencyCheckUnset = Object();
+
 class CloudLatencyCheck {
   final bool isTesting;
   final int? latencyMs;
@@ -57,6 +59,9 @@ class CloudLatencyCheck {
   final CloudProbeMode mode;
   final int? sampleCount;
   final int? successfulSamples;
+  final double? throughputMbps;
+  final int? throughputBytes;
+  final int? throughputElapsedMs;
 
   const CloudLatencyCheck({
     required this.isTesting,
@@ -67,6 +72,9 @@ class CloudLatencyCheck {
     this.mode = CloudProbeMode.quick,
     this.sampleCount,
     this.successfulSamples,
+    this.throughputMbps,
+    this.throughputBytes,
+    this.throughputElapsedMs,
   });
 
   factory CloudLatencyCheck.testing({
@@ -87,6 +95,9 @@ class CloudLatencyCheck {
     CloudProbeMode mode = CloudProbeMode.quick,
     int? sampleCount,
     int? successfulSamples,
+    double? throughputMbps,
+    int? throughputBytes,
+    int? throughputElapsedMs,
   }) {
     return CloudLatencyCheck(
       isTesting: false,
@@ -96,6 +107,9 @@ class CloudLatencyCheck {
       mode: mode,
       sampleCount: sampleCount,
       successfulSamples: successfulSamples,
+      throughputMbps: throughputMbps,
+      throughputBytes: throughputBytes,
+      throughputElapsedMs: throughputElapsedMs,
     );
   }
 
@@ -106,19 +120,74 @@ class CloudLatencyCheck {
     CloudProbeMode mode = CloudProbeMode.quick,
     int? sampleCount,
     int? successfulSamples,
+    int? latencyMs,
+    double? throughputMbps,
+    int? throughputBytes,
+    int? throughputElapsedMs,
   }) {
     return CloudLatencyCheck(
       isTesting: false,
+      latencyMs: latencyMs,
       endpointLabel: endpointLabel,
       error: error,
       updatedAt: updatedAt,
       mode: mode,
       sampleCount: sampleCount,
       successfulSamples: successfulSamples,
+      throughputMbps: throughputMbps,
+      throughputBytes: throughputBytes,
+      throughputElapsedMs: throughputElapsedMs,
     );
   }
 
   bool get isBenchmark => mode == CloudProbeMode.benchmark;
+
+  bool get hasThroughput => throughputMbps != null && throughputMbps! > 0;
+
+  CloudLatencyCheck copyWith({
+    bool? isTesting,
+    Object? latencyMs = _cloudLatencyCheckUnset,
+    Object? endpointLabel = _cloudLatencyCheckUnset,
+    Object? error = _cloudLatencyCheckUnset,
+    DateTime? updatedAt,
+    CloudProbeMode? mode,
+    Object? sampleCount = _cloudLatencyCheckUnset,
+    Object? successfulSamples = _cloudLatencyCheckUnset,
+    Object? throughputMbps = _cloudLatencyCheckUnset,
+    Object? throughputBytes = _cloudLatencyCheckUnset,
+    Object? throughputElapsedMs = _cloudLatencyCheckUnset,
+  }) {
+    return CloudLatencyCheck(
+      isTesting: isTesting ?? this.isTesting,
+      latencyMs: identical(latencyMs, _cloudLatencyCheckUnset)
+          ? this.latencyMs
+          : latencyMs as int?,
+      endpointLabel: identical(endpointLabel, _cloudLatencyCheckUnset)
+          ? this.endpointLabel
+          : endpointLabel as String?,
+      error: identical(error, _cloudLatencyCheckUnset)
+          ? this.error
+          : error as String?,
+      updatedAt: updatedAt ?? this.updatedAt,
+      mode: mode ?? this.mode,
+      sampleCount: identical(sampleCount, _cloudLatencyCheckUnset)
+          ? this.sampleCount
+          : sampleCount as int?,
+      successfulSamples: identical(successfulSamples, _cloudLatencyCheckUnset)
+          ? this.successfulSamples
+          : successfulSamples as int?,
+      throughputMbps: identical(throughputMbps, _cloudLatencyCheckUnset)
+          ? this.throughputMbps
+          : throughputMbps as double?,
+      throughputBytes: identical(throughputBytes, _cloudLatencyCheckUnset)
+          ? this.throughputBytes
+          : throughputBytes as int?,
+      throughputElapsedMs:
+          identical(throughputElapsedMs, _cloudLatencyCheckUnset)
+              ? this.throughputElapsedMs
+              : throughputElapsedMs as int?,
+    );
+  }
 }
 
 class CloudFastestNodeSelection {

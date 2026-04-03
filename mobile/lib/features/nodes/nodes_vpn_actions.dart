@@ -312,15 +312,19 @@ Future<bool> _useFastestReadyCloudNode({
   if (cachedSelection.hasSelection) {
     final cachedLatencyMs = cachedSelection.latencyCheck?.latencyMs;
     final cachedEndpoint = cachedSelection.latencyCheck?.endpointLabel;
-    final latencySuffix =
-        cachedLatencyMs != null ? ' (${cachedLatencyMs} ms)' : '';
+    final cachedThroughput = cachedSelection.latencyCheck?.throughputMbps;
+    final metricSuffix = cachedThroughput != null && cachedThroughput > 0
+        ? ' (${cachedThroughput >= 100 ? cachedThroughput.toStringAsFixed(0) : cachedThroughput >= 10 ? cachedThroughput.toStringAsFixed(1) : cachedThroughput.toStringAsFixed(2)} Mbps)'
+        : cachedLatencyMs != null
+            ? ' (${cachedLatencyMs} ms)'
+            : '';
     final endpointSuffix = cachedEndpoint != null && cachedEndpoint.isNotEmpty
         ? ' via $cachedEndpoint'
         : '';
     showNodesActionSnackBar(
       context,
       message:
-          'Using recent fastest node: ${cachedSelection.instance!.label}$latencySuffix$endpointSuffix. Refreshing ranking in background...',
+          'Using recent fastest node: ${cachedSelection.instance!.label}$metricSuffix$endpointSuffix. Refreshing ranking in background...',
       backgroundColor: Colors.blue,
       replaceCurrent: true,
     );

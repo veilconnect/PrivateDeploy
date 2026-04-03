@@ -73,6 +73,9 @@ class BundledRuleSetRegistry {
     required File targetFile,
   }) async {
     try {
+      if (await targetFile.exists() && await targetFile.length() > 0) {
+        return targetFile.path;
+      }
       final assetData = await bundle.load(assetPath);
       final bytes = assetData.buffer.asUint8List();
       await targetFile.writeAsBytes(bytes, flush: true);

@@ -3,11 +3,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../cloud/cloud_models.dart';
 
-Future<bool> showNodesDeleteConfirmationDialog({
+Future<bool> showNodesConfirmationDialog({
   required BuildContext context,
   required String title,
   required String message,
-  String confirmLabel = 'Delete',
+  String confirmLabel = 'Continue',
+  String cancelLabel = 'Cancel',
+  Color? confirmColor,
 }) async {
   return await showDialog<bool>(
         context: context,
@@ -17,13 +19,15 @@ Future<bool> showNodesDeleteConfirmationDialog({
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
+              child: Text(cancelLabel),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
+              style: confirmColor == null
+                  ? null
+                  : ElevatedButton.styleFrom(
+                      backgroundColor: confirmColor,
+                      foregroundColor: Colors.white,
+                    ),
               onPressed: () => Navigator.pop(context, true),
               child: Text(confirmLabel),
             ),
@@ -31,6 +35,21 @@ Future<bool> showNodesDeleteConfirmationDialog({
         ),
       ) ??
       false;
+}
+
+Future<bool> showNodesDeleteConfirmationDialog({
+  required BuildContext context,
+  required String title,
+  required String message,
+  String confirmLabel = 'Delete',
+}) async {
+  return showNodesConfirmationDialog(
+    context: context,
+    title: title,
+    message: message,
+    confirmLabel: confirmLabel,
+    confirmColor: Colors.red,
+  );
 }
 
 Future<CloudInstance?> showNodesCloudNodePickerSheet(

@@ -144,8 +144,15 @@ class CloudProvider with ChangeNotifier {
 
   Future<void> _init() async {
     await _initializeStorage();
-    await refreshCloudConfig(notify: false);
     await _loadNodeRecords();
+    // Load the API key from local storage so hasApiKey is accurate without
+    // waiting for a network round-trip.  The full cloud config refresh (which
+    // validates the key against the remote API) is deferred to the first
+    // workspace sync triggered by NodesScreen, avoiding a blocking network
+    // call during provider construction.
+    _apiKey = await _getStoredApiKey();
+    _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
+    _configLoaded = true;
     notifyListeners();
   }
 
@@ -344,30 +351,59 @@ class CloudProvider with ChangeNotifier {
       var recordsChanged = false;
       final parsed = <CloudInstance>[];
 
+      // Build source maps first, then recover missing records in parallel.
+      final sources = <String, Map<String, dynamic>>{};
       for (final item in rawInstances.whereType<Map>()) {
         final source = Map<String, dynamic>.from(item);
         final id = source['id']?.toString() ?? '';
-        var record = id.isNotEmpty ? knownRecords[id] : null;
-        if (id.isNotEmpty && _shouldRecoverNodeRecord(record)) {
-          final recovered = await _recoverNodeRecordFromUserData(
+        if (id.isNotEmpty) {
+          sources[id] = source;
+        } else {
+          parsed.add(CloudInstance.fromJson(source));
+        }
+      }
+
+      // Kick off all recovery requests concurrently.
+      final recoveryFutures = <String, Future<VultrNodeRecord?>>{};
+      for (final entry in sources.entries) {
+        final record = knownRecords[entry.key];
+        if (_shouldRecoverNodeRecord(record)) {
+          final s = entry.value;
+          recoveryFutures[entry.key] = _recoverNodeRecordFromUserData(
             client: client,
-            instanceId: id,
-            label: source['label']?.toString() ?? '',
-            region: source['region']?.toString() ?? '',
-            plan: source['plan']?.toString() ?? '',
-            ipv4: source['main_ip']?.toString() ?? '',
-            ipv6: source['v6_main_ip']?.toString() ?? '',
-            createdAt: source['date_created']?.toString() ??
-                source['created_at']?.toString() ??
-                source['createdAt']?.toString() ??
+            instanceId: entry.key,
+            label: s['label']?.toString() ?? '',
+            region: s['region']?.toString() ?? '',
+            plan: s['plan']?.toString() ?? '',
+            ipv4: s['main_ip']?.toString() ?? '',
+            ipv6: s['v6_main_ip']?.toString() ?? '',
+            createdAt: s['date_created']?.toString() ??
+                s['created_at']?.toString() ??
+                s['createdAt']?.toString() ??
                 '',
             existing: record,
           );
-          if (recovered != null) {
-            record = recovered;
-            knownRecords[id] = recovered;
-            recordsChanged = true;
-          }
+        }
+      }
+
+      final recoveredResults = <String, VultrNodeRecord?>{};
+      if (recoveryFutures.isNotEmpty) {
+        final keys = recoveryFutures.keys.toList();
+        final values = await Future.wait(recoveryFutures.values);
+        for (var i = 0; i < keys.length; i++) {
+          recoveredResults[keys[i]] = values[i];
+        }
+      }
+
+      for (final entry in sources.entries) {
+        final id = entry.key;
+        final source = entry.value;
+        var record = knownRecords[id];
+        final recovered = recoveredResults[id];
+        if (recovered != null) {
+          record = recovered;
+          knownRecords[id] = recovered;
+          recordsChanged = true;
         }
 
         if (record == null) {
@@ -570,6 +606,7 @@ class CloudProvider with ChangeNotifier {
     CloudInstance instance, {
     CloudProbeMode mode = CloudProbeMode.quick,
   }) async {
+    final previous = _latencyChecks[instance.id];
     final testing = CloudLatencyCheck.testing(
       updatedAt: DateTime.now(),
       mode: mode,
@@ -581,9 +618,30 @@ class CloudProvider with ChangeNotifier {
         ? _benchmarkLatencyProbe
         : _latencyProbe;
     final result = await probe(instance);
-    _latencyChecks[instance.id] = result;
+    _latencyChecks[instance.id] = mode == CloudProbeMode.quick &&
+            previous != null &&
+            previous.hasThroughput &&
+            !result.hasThroughput
+        ? previous.copyWith(
+            latencyMs: result.latencyMs,
+            endpointLabel: result.endpointLabel,
+            error: result.error,
+            updatedAt: result.updatedAt,
+          )
+        : result;
     notifyListeners();
-    return result;
+    return _latencyChecks[instance.id]!;
+  }
+
+  void saveLatencyCheck(
+    String instanceId,
+    CloudLatencyCheck check, {
+    bool notify = true,
+  }) {
+    _latencyChecks[instanceId] = check;
+    if (notify) {
+      notifyListeners();
+    }
   }
 
   Future<CloudFastestNodeSelection> selectFastestConnectableInstance({
@@ -694,9 +752,7 @@ class CloudProvider with ChangeNotifier {
       }
       if (check.latencyMs != null) {
         successCount += 1;
-        if (fastestCheck == null ||
-            _latencySelectionScore(check) <
-                _latencySelectionScore(fastestCheck)) {
+        if (fastestCheck == null || _isBetterSelection(check, fastestCheck)) {
           fastestInstance = instance;
           fastestCheck = check;
         }
@@ -721,6 +777,29 @@ class CloudProvider with ChangeNotifier {
       successCount: successCount,
       usedCachedResults: usedCachedResults,
     );
+  }
+
+  bool _isBetterSelection(
+    CloudLatencyCheck candidate,
+    CloudLatencyCheck incumbent,
+  ) {
+    final candidateThroughput = candidate.throughputMbps;
+    final incumbentThroughput = incumbent.throughputMbps;
+    if (candidateThroughput != null || incumbentThroughput != null) {
+      if (candidateThroughput == null) {
+        return false;
+      }
+      if (incumbentThroughput == null) {
+        return true;
+      }
+
+      if ((candidateThroughput - incumbentThroughput).abs() >= 0.01) {
+        return candidateThroughput > incumbentThroughput;
+      }
+    }
+
+    return _latencySelectionScore(candidate) <
+        _latencySelectionScore(incumbent);
   }
 
   int _latencySelectionScore(CloudLatencyCheck check) {
@@ -1014,9 +1093,18 @@ Future<CloudLatencyCheck> _probeCloudInstanceLatency(
     targets.add((label: label, port: port));
   }
 
-  addTarget('Trojan', nodeInfo.trojanPort);
-  addTarget('VLESS', nodeInfo.vlessPort);
-  addTarget('Shadowsocks', nodeInfo.ssPort);
+  final supportedLabels = supportedCloudProbeEndpointsForCurrentPlatform(
+    nodeInfo: nodeInfo,
+  );
+  if (supportedLabels.contains('Trojan')) {
+    addTarget('Trojan', nodeInfo.trojanPort);
+  }
+  if (supportedLabels.contains('VLESS')) {
+    addTarget('VLESS', nodeInfo.vlessPort);
+  }
+  if (supportedLabels.contains('Shadowsocks')) {
+    addTarget('Shadowsocks', nodeInfo.ssPort);
+  }
 
   if (targets.isEmpty) {
     return CloudLatencyCheck.failure(
@@ -1073,6 +1161,33 @@ Future<CloudLatencyCheck> _probeCloudInstanceLatency(
     mode: mode,
   );
 }
+
+@visibleForTesting
+List<String> supportedCloudProbeEndpointsForCurrentPlatform({
+  required NodeInfo nodeInfo,
+  TargetPlatform? targetPlatform,
+}) {
+  final platform = targetPlatform ?? defaultTargetPlatform;
+  final labels = <String>[];
+  if (nodeInfo.trojanPort > 0 && nodeInfo.trojanPassword.isNotEmpty) {
+    labels.add('Trojan');
+  }
+  final supportsVless =
+      platform != TargetPlatform.android || !_androidBuildStripsVless();
+  if (supportsVless &&
+      nodeInfo.vlessPort > 0 &&
+      nodeInfo.vlessUuid.isNotEmpty &&
+      nodeInfo.vlessPublicKey.isNotEmpty &&
+      nodeInfo.vlessShortId.isNotEmpty) {
+    labels.add('VLESS');
+  }
+  if (nodeInfo.ssPort > 0 && nodeInfo.ssPassword.isNotEmpty) {
+    labels.add('Shadowsocks');
+  }
+  return labels;
+}
+
+bool _androidBuildStripsVless() => true;
 
 Future<_CloudEndpointProbeResult> _runQuickEndpointProbe({
   required String host,

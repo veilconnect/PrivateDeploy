@@ -1,10 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_throughput_probe.dart';
+import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
+import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_dialogs.dart';
@@ -152,31 +156,233 @@ Future<void> testCloudNodeLatency({
   required BuildContext context,
   required CloudProvider cloudProvider,
   required CloudInstance instance,
+  required ProfileProvider profileProvider,
+  required VpnProvider vpnProvider,
+  Future<CloudThroughputSample> Function()? throughputProbe,
 }) async {
-  final result = await cloudProvider.testInstanceLatency(instance);
-  if (!context.mounted || result.error == null) {
+  // Phase 1: TCP latency probe (benchmark mode for multiple samples).
+  final latencyResult = await cloudProvider.testInstanceLatency(
+    instance,
+    mode: CloudProbeMode.benchmark,
+  );
+
+  // Phase 2: throughput test via a real VPN tunnel.
+  final config = cloudProvider.generateNodeConfig(instance);
+  if (config == null) {
+    final updated = latencyResult.copyWith(
+      error: latencyResult.error ?? 'Node is not ready for speed testing',
+    );
+    cloudProvider.saveLatencyCheck(instance.id, updated);
+    if (context.mounted && updated.error != null) {
+      showNodesActionSnackBar(
+        context,
+        message: updated.error!,
+        backgroundColor: Colors.orange,
+      );
+    }
     return;
   }
 
-  showNodesActionSnackBar(
-    context,
-    message: result.error!,
-    backgroundColor: Colors.orange,
+  final previouslyConnected = vpnProvider.status == VpnStatus.connected;
+  final previousProfileName = vpnProvider.activeProfile;
+  final previousConfigJson = previouslyConnected
+      ? profileProvider.getActiveConfigJson(
+          routingSettings:
+              context.read<AppSettingsProvider>().vpnRoutingSettings,
+        )
+      : null;
+
+  if (previouslyConnected) {
+    await vpnProvider.disconnect();
+  }
+
+  final benchmarkConfig = normalizeProfileConfigForCurrentPlatform(config);
+  final connected = await vpnProvider.connect(
+    configJson: benchmarkConfig,
+    profileName: cloudProfileName(instance),
+    stabilityCheckDuration: const Duration(seconds: 3),
+    statusPollInterval: const Duration(milliseconds: 500),
   );
+
+  var benchmarkResult = latencyResult;
+  if (connected) {
+    // Let the tunnel fully stabilize (DNS, routing) before probing.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final probe = throughputProbe ?? runCloudThroughputProbe;
+    final throughputSample = await probe();
+    benchmarkResult = benchmarkResult.copyWith(
+      updatedAt: DateTime.now(),
+      throughputMbps: throughputSample.speedMbps,
+      throughputBytes: throughputSample.bytes,
+      throughputElapsedMs: throughputSample.elapsedMs,
+      error: throughputSample.hasSample
+          ? benchmarkResult.error
+          : throughputSample.error ?? benchmarkResult.error,
+    );
+    await vpnProvider.disconnect();
+  } else {
+    benchmarkResult = benchmarkResult.copyWith(
+      error: vpnProvider.error ?? 'Failed to connect speed test tunnel',
+    );
+  }
+
+  cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
+
+  // Restore previous VPN connection if one was active.
+  if (previouslyConnected && previousConfigJson != null) {
+    await vpnProvider.connect(
+      configJson: previousConfigJson,
+      profileName: previousProfileName,
+      stabilityCheckDuration: const Duration(seconds: 1),
+      statusPollInterval: const Duration(milliseconds: 250),
+    );
+  }
+
+  if (context.mounted && benchmarkResult.error != null) {
+    showNodesActionSnackBar(
+      context,
+      message: benchmarkResult.error!,
+      backgroundColor: Colors.orange,
+    );
+  }
 }
 
 Future<void> testAllCloudNodesLatency({
   required BuildContext context,
   required CloudProvider cloudProvider,
+  required ProfileProvider profileProvider,
+  required VpnProvider vpnProvider,
+  Future<CloudThroughputSample> Function()? throughputProbe,
 }) async {
+  final readyNodes = connectableCloudInstances(cloudProvider);
+  if (readyNodes.isEmpty) {
+    showNodesActionSnackBar(
+      context,
+      message: 'No ready cloud node is available for testing',
+      backgroundColor: Colors.orange,
+      replaceCurrent: true,
+    );
+    return;
+  }
+
+  final previouslyConnected = vpnProvider.status == VpnStatus.connected;
+  if (previouslyConnected) {
+    final confirmed = await showNodesConfirmationDialog(
+      context: context,
+      title: 'Benchmark All Nodes',
+      message:
+          'This benchmark will temporarily disconnect your current VPN connection, test each ready cloud node with a real download sample, and then restore your previous connection.\n\nContinue?',
+      confirmLabel: 'Start Benchmark',
+      confirmColor: Colors.orange,
+    );
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  final previousProfileName = vpnProvider.activeProfile;
+  final previousConfigJson = previouslyConnected
+      ? profileProvider.getActiveConfigJson(
+          routingSettings:
+              context.read<AppSettingsProvider>().vpnRoutingSettings,
+        )
+      : null;
+  final runThroughputProbe = throughputProbe ?? runCloudThroughputProbe;
+  var restoreFailed = false;
+
   showNodesActionSnackBar(
     context,
-    message: 'Benchmarking ready nodes with repeated TCP probes...',
+    message: 'Benchmarking ready nodes with real download samples...',
     backgroundColor: Colors.blue,
     replaceCurrent: true,
   );
 
-  final selection = await cloudProvider.benchmarkConnectableInstances();
+  var selection = const CloudFastestNodeSelection(
+    error: 'No ready cloud node is available for testing',
+  );
+  try {
+    if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
+
+    for (var index = 0; index < readyNodes.length; index += 1) {
+      final instance = readyNodes[index];
+      if (context.mounted) {
+        showNodesActionSnackBar(
+          context,
+          message:
+              'Benchmarking ${instance.label} (${index + 1}/${readyNodes.length})...',
+          backgroundColor: Colors.blue,
+          replaceCurrent: true,
+        );
+      }
+
+      final latencyResult = await cloudProvider.testInstanceLatency(
+        instance,
+        mode: CloudProbeMode.benchmark,
+      );
+      var benchmarkResult = latencyResult;
+
+      final config = cloudProvider.generateNodeConfig(instance);
+      if (config == null) {
+        benchmarkResult = benchmarkResult.copyWith(
+          error: benchmarkResult.error ?? 'Node is not ready for benchmarking',
+        );
+        cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
+        continue;
+      }
+
+      final benchmarkConfig = normalizeProfileConfigForCurrentPlatform(config);
+
+      final connected = await vpnProvider.connect(
+        configJson: benchmarkConfig,
+        profileName: cloudProfileName(instance),
+        stabilityCheckDuration: const Duration(seconds: 3),
+        statusPollInterval: const Duration(milliseconds: 500),
+      );
+
+      if (!connected) {
+        benchmarkResult = benchmarkResult.copyWith(
+          error: vpnProvider.error ?? 'Failed to connect benchmark tunnel',
+        );
+        cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
+        continue;
+      }
+
+      // Let the tunnel fully stabilize before probing throughput.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final throughputSample = await runThroughputProbe();
+      benchmarkResult = benchmarkResult.copyWith(
+        updatedAt: DateTime.now(),
+        throughputMbps: throughputSample.speedMbps,
+        throughputBytes: throughputSample.bytes,
+        throughputElapsedMs: throughputSample.elapsedMs,
+        error: throughputSample.hasSample
+            ? benchmarkResult.error
+            : throughputSample.error ?? benchmarkResult.error,
+      );
+      cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
+
+      await vpnProvider.disconnect();
+    }
+
+    selection = cloudProvider.cachedFastestConnectableInstance(
+      maxAge: CloudProvider.connectSelectionReuseMaxAge,
+    );
+  } finally {
+    if (previouslyConnected && previousConfigJson != null) {
+      final restored = await vpnProvider.connect(
+        configJson: previousConfigJson,
+        profileName: previousProfileName,
+        stabilityCheckDuration: const Duration(seconds: 1),
+        statusPollInterval: const Duration(milliseconds: 250),
+      );
+      restoreFailed = !restored;
+    } else if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
+  }
+
   if (!context.mounted) {
     return;
   }
@@ -193,21 +399,27 @@ Future<void> testAllCloudNodesLatency({
   }
 
   final latencyMs = selection.latencyCheck?.latencyMs;
+  final throughputMbps = selection.latencyCheck?.throughputMbps;
   final endpoint = selection.latencyCheck?.endpointLabel;
   final sampleCount = selection.latencyCheck?.sampleCount;
   final successfulSamples = selection.latencyCheck?.successfulSamples;
-  final latencySuffix = latencyMs != null ? ' (${latencyMs} ms)' : '';
+  final throughputSuffix = throughputMbps != null && throughputMbps > 0
+      ? ' (${throughputMbps >= 100 ? throughputMbps.toStringAsFixed(0) : throughputMbps >= 10 ? throughputMbps.toStringAsFixed(1) : throughputMbps.toStringAsFixed(2)} Mbps)'
+      : '';
+  final latencySuffix = latencyMs != null ? ' • ${latencyMs} ms latency' : '';
   final endpointSuffix =
       endpoint != null && endpoint.isNotEmpty ? ' via $endpoint' : '';
   final sampleSuffix =
       sampleCount != null && successfulSamples != null && sampleCount > 0
           ? ' • $successfulSamples/$sampleCount probes'
           : '';
+  final restoreSuffix =
+      restoreFailed ? ' • Previous connection restore failed' : '';
   showNodesActionSnackBar(
     context,
     message:
-        'Best benchmark: ${selection.instance!.label}$latencySuffix$endpointSuffix$sampleSuffix',
-    backgroundColor: Colors.green,
+        'Best benchmark: ${selection.instance!.label}$throughputSuffix$endpointSuffix$sampleSuffix$latencySuffix$restoreSuffix',
+    backgroundColor: restoreFailed ? Colors.orange : Colors.green,
     replaceCurrent: true,
   );
 }
