@@ -101,7 +101,9 @@ echo "==> 第 3 步: 构建 Windows 可执行文件和 NSIS 安装程序"
 
 # amd64 版本（带 NSIS 安装程序）
 echo "==> 构建 Windows amd64 + NSIS 安装程序"
-GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build \
+GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
+  bash "$(dirname "$0")/with_clean_runtime_data.sh" \
+  wails build \
   -m -s -trimpath \
   -tags webkit2_41 \
   -nsis \

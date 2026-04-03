@@ -34,7 +34,8 @@ echo "==> 第 3 步: 构建 macOS 应用 (Universal Binary)"
 
 # 构建 arm64 版本
 echo "  -> 构建 arm64 版本"
-GOOS=darwin GOARCH=arm64 wails build \
+GOOS=darwin GOARCH=arm64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
+  wails build \
   -m -s -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
   -o "$APP_NAME.exe"
@@ -43,7 +44,8 @@ mv "build/bin/${APP_NAME}.app" "build/bin/${APP_NAME}-arm64.app"
 
 # 构建 amd64 版本
 echo "  -> 构建 amd64 版本"
-GOOS=darwin GOARCH=amd64 wails build \
+GOOS=darwin GOARCH=amd64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
+  wails build \
   -m -s -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
   -o "$APP_NAME.exe"

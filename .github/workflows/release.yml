@@ -129,7 +129,7 @@ jobs:
             $env:GOARCH=$arch
 
             Write-Host "==> Building Windows $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
 
             cd build/bin
             $zipName = "$env:APP_NAME-windows-$arch.zip"
@@ -172,7 +172,7 @@ jobs:
             export GOOS=darwin GOARCH=$arch
 
             echo "==> Building macOS $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
             cd build/bin
             zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
@@ -213,7 +213,7 @@ jobs:
             export GOOS=linux GOARCH=$arch
 
             echo "==> Building Linux $arch..."
-            ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
             cd build/bin
             mv $APP_NAME.exe $APP_NAME

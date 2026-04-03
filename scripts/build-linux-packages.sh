@@ -30,7 +30,8 @@ cd ..
 
 # 2. 构建 Linux 可执行文件
 echo "==> 第 2 步: 构建 Linux 可执行文件"
-GOOS=linux GOARCH=amd64 wails build \
+GOOS=linux GOARCH=amd64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
+  wails build \
   -m -s -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
   -o "$APP_DISPLAY_NAME"

@@ -27,6 +27,12 @@ import (
 	xproxy "golang.org/x/net/proxy"
 )
 
+var defaultSpeedTestURLs = []string{
+	"https://speed.cloudflare.com/__down?bytes=1000000",
+	"https://speed.hetzner.de/1MB.bin",
+	"https://proof.ovh.net/files/1Mb.dat",
+}
+
 func (a *App) Requests(method string, url string, headers map[string]string, body string, options RequestOptions) HTTPResult {
 	log.Printf("Requests: %v %v %v %v %v", method, url, headers, body, options)
 
@@ -535,7 +541,7 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	log.Printf("TestDownloadSpeed: proxy=%s url=%s timeout=%ds", proxyURL, testURL, timeoutSec)
 
 	if testURL == "" {
-		testURL = "https://speed.cloudflare.com/__down?bytes=1000000"
+		testURL = defaultSpeedTestURLs[0]
 	}
 	if timeoutSec <= 0 {
 		timeoutSec = 15
@@ -651,6 +657,98 @@ func expectedSpeedSampleBytes(testURL string) int64 {
 		return 0
 	}
 	return n
+}
+
+type speedTestResultPayload struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+func parseSpeedTestResultPayload(data string) speedTestResultPayload {
+	var payload speedTestResultPayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return speedTestResultPayload{}
+	}
+	return payload
+}
+
+func isRetryableSpeedFailure(message string) bool {
+	if strings.TrimSpace(message) == "" {
+		return false
+	}
+	normalized := strings.ToLower(message)
+	for _, marker := range []string{
+		"socks server failure",
+		"socks5:",
+		"proxyconnect",
+		"proxy error",
+		"connection reset",
+		"broken pipe",
+		"eof",
+		"timeout",
+		"timed out",
+		"deadline exceeded",
+		"no route to host",
+		"network is unreachable",
+		"connection refused",
+		"connect tcp",
+		"temporary failure",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func benchmarkAttemptCountForURL(index int) int {
+	if index == 0 {
+		return 3
+	}
+	return 1
+}
+
+func benchmarkRetryDelay(attempt int) time.Duration {
+	switch attempt {
+	case 0:
+		return 350 * time.Millisecond
+	case 1:
+		return 900 * time.Millisecond
+	default:
+		return 1500 * time.Millisecond
+	}
+}
+
+func (a *App) testNodeDownloadBenchmark(proxyURL string, timeoutSec int) FlagResult {
+	lastResult := speedError("speed test failed")
+
+	for urlIndex, testURL := range defaultSpeedTestURLs {
+		attempts := benchmarkAttemptCountForURL(urlIndex)
+		for attempt := 0; attempt < attempts; attempt++ {
+			if attempt > 0 {
+				time.Sleep(benchmarkRetryDelay(attempt - 1))
+			}
+
+			result := a.TestDownloadSpeed(proxyURL, testURL, timeoutSec)
+			payload := parseSpeedTestResultPayload(result.Data)
+			if payload.Status == "ok" || payload.Status == "partial" {
+				return result
+			}
+
+			lastResult = result
+			if !isRetryableSpeedFailure(payload.Error) {
+				break
+			}
+			log.Printf(
+				"TestNodeDirectSpeed retrying benchmark url=%s attempt=%d error=%s",
+				testURL,
+				attempt+1,
+				payload.Error,
+			)
+		}
+	}
+
+	return lastResult
 }
 
 // TestNodeDirectSpeed tests download speed for a node by spawning a temporary sing-box
@@ -794,8 +892,14 @@ func (a *App) TestNodeDirectSpeed(outboundsJSON string, timeoutSec int) FlagResu
 		return speedError(errMsg)
 	}
 
-	// Now run the speed test through the temporary proxy
-	result := a.TestDownloadSpeed(proxyURL, "", timeoutSec)
+	// Give the outbound stack a moment to stabilize after the local SOCKS port
+	// starts accepting connections. A listening SOCKS port does not necessarily
+	// mean the remote protocol handshake is already ready for a benchmark.
+	time.Sleep(500 * time.Millisecond)
+
+	// Run the speed test through the temporary proxy with retries and fallback
+	// URLs so a single transient endpoint/proxy race does not tank the node.
+	result := a.testNodeDownloadBenchmark(proxyURL, timeoutSec)
 	log.Printf("TestNodeDirectSpeed result: %s", result.Data)
 	return result
 }

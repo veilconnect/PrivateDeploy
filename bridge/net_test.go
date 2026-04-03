@@ -16,6 +16,15 @@ func TestExpectedSpeedSampleBytes(t *testing.T) {
 	}
 }
 
+func TestDefaultSpeedTestURLs(t *testing.T) {
+	if len(defaultSpeedTestURLs) < 2 {
+		t.Fatalf("expected multiple speed test URLs, got %d", len(defaultSpeedTestURLs))
+	}
+	if defaultSpeedTestURLs[0] != "https://speed.cloudflare.com/__down?bytes=1000000" {
+		t.Fatalf("unexpected primary speed test url: %s", defaultSpeedTestURLs[0])
+	}
+}
+
 func TestBuildPartialSpeedResult(t *testing.T) {
 	result, ok := buildPartialSpeedResult(
 		"https://speed.cloudflare.com/__down?bytes=1000000",
@@ -97,6 +106,25 @@ func TestSpeedErrorEscapesJsonErrorMessage(t *testing.T) {
 				t.Errorf("error field mismatch: got %q, want %q", got, tt.msg)
 			}
 		})
+	}
+}
+
+func TestIsRetryableSpeedFailure(t *testing.T) {
+	tests := []struct {
+		message string
+		want    bool
+	}{
+		{"socks connect tcp 127.0.0.1:1080 -> speed.cloudflare.com:443: unknown error general SOCKS server failure", true},
+		{"read tcp 127.0.0.1:12345->1.1.1.1:443: i/o timeout", true},
+		{"connection refused", true},
+		{"certificate signed by unknown authority", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		if got := isRetryableSpeedFailure(tt.message); got != tt.want {
+			t.Fatalf("isRetryableSpeedFailure(%q) = %v, want %v", tt.message, got, tt.want)
+		}
 	}
 }
 

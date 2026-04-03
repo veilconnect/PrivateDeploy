@@ -25,7 +25,7 @@ pnpm build
 # build the desktop app
 cd ..
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
-wails build
+bash scripts/with_clean_runtime_data.sh wails build
 ```
 
 ## Using the Cloud Panel
