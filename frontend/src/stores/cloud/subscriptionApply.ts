@@ -567,10 +567,10 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
         proxies: newSubscription.proxies,
         header: {
           request: {
-            ...(oldSubscription.header?.request || {}),
+            ...oldSubscription.header?.request,
           },
           response: {
-            ...(oldSubscription.header?.response || {}),
+            ...oldSubscription.header?.response,
           },
         },
       }

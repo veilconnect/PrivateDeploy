@@ -94,6 +94,7 @@ func TestCloudHandlerGetConfigRedactsAPIKey(t *testing.T) {
 	router.GET("/cloud/config", handler.GetConfig)
 
 	req := httptest.NewRequest(http.MethodGet, "/cloud/config", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
@@ -128,6 +129,60 @@ func TestCloudHandlerGetConfigRedactsAPIKey(t *testing.T) {
 	}
 }
 
+func TestCloudHandlerGetConfigRedactsSensitiveSSHExtra(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	registry := cloud.NewRegistry()
+	registry.Register("ssh", &fakeCloudProvider{
+		name: "ssh",
+		cfg: &cloud.ProviderConfig{
+			Provider: "ssh",
+			Extra: map[string]string{
+				"host":       "203.0.113.10",
+				"username":   "root",
+				"authMethod": "password",
+				"password":   "secret",
+				"privateKey": "PRIVATE",
+			},
+		},
+	})
+
+	manager := cloud.NewManager(context.Background(), registry)
+	if err := manager.SetActiveProvider("ssh"); err != nil {
+		t.Fatalf("set active provider: %v", err)
+	}
+
+	router := gin.New()
+	handler := NewCloudHandler(manager)
+	router.GET("/cloud/config", handler.GetConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/cloud/config", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	data := payload["data"].(map[string]any)
+	extra := data["extra"].(map[string]any)
+	if _, exists := extra["password"]; exists {
+		t.Fatalf("expected password to be redacted, got %#v", extra["password"])
+	}
+	if _, exists := extra["privateKey"]; exists {
+		t.Fatalf("expected privateKey to be redacted, got %#v", extra["privateKey"])
+	}
+	if extra["host"] != "203.0.113.10" {
+		t.Fatalf("expected host to be preserved, got %#v", extra["host"])
+	}
+}
+
 func TestCloudHandlerListProvidersFiltersExperimentalProviders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -141,6 +196,7 @@ func TestCloudHandlerListProvidersFiltersExperimentalProviders(t *testing.T) {
 	router.GET("/cloud/providers", handler.ListProviders)
 
 	req := httptest.NewRequest(http.MethodGet, "/cloud/providers", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
@@ -178,6 +234,7 @@ func TestCloudHandlerSetActiveProviderRejectsExperimentalProviders(t *testing.T)
 	router.POST("/cloud/provider/active", handler.SetActiveProvider)
 
 	req := httptest.NewRequest(http.MethodPost, "/cloud/provider/active", strings.NewReader(`{"provider":"oracle"}`))
+	req.RemoteAddr = "127.0.0.1:54321"
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)

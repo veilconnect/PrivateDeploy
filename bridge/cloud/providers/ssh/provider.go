@@ -3,9 +3,9 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"crypto/rand"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +26,12 @@ const (
 )
 
 var sshNodesMu sync.Mutex
+
+var sshSensitiveExtraKeys = map[string]struct{}{
+	"password":   {},
+	"privateKey": {},
+	"passphrase": {},
+}
 
 // nodeRecord stores SSH node data for JSON persistence.
 type nodeRecord struct {
@@ -102,6 +108,16 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	if cfg.Provider == "" {
+		cfg.Provider = "ssh"
+	}
+	if sanitizedExtra, changed := sanitizeSSHConfigExtra(cfg.Extra); changed {
+		cfg.Extra = sanitizedExtra
+		if err := p.writeConfig(&cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	p.config = &cfg
 	return &cfg, nil
 }
@@ -112,20 +128,13 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("invalid provider: expected ssh, got %s", config.Provider)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(p.configPath), 0o750); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	sanitized := *config
+	sanitized.Extra, _ = sanitizeSSHConfigExtra(config.Extra)
+	if err := p.writeConfig(&sanitized); err != nil {
+		return err
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
-	}
-
-	p.config = config
+	p.config = &sanitized
 	return nil
 }
 
@@ -593,6 +602,22 @@ func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
 	return os.WriteFile(p.nodesPath, data, 0o600)
 }
 
+func (p *Provider) writeConfig(config *cloud.ProviderConfig) error {
+	if err := os.MkdirAll(filepath.Dir(p.configPath), 0o750); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+	return nil
+}
+
 // --- Helpers ---
 
 func mergeExtra(base, override map[string]string) map[string]string {
@@ -604,6 +629,25 @@ func mergeExtra(base, override map[string]string) map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+func sanitizeSSHConfigExtra(extra map[string]string) (map[string]string, bool) {
+	if len(extra) == 0 {
+		return map[string]string{}, false
+	}
+
+	sanitized := make(map[string]string, len(extra))
+	changed := false
+	for key, value := range extra {
+		if _, sensitive := sshSensitiveExtraKeys[key]; sensitive {
+			if strings.TrimSpace(value) != "" {
+				changed = true
+			}
+			continue
+		}
+		sanitized[key] = value
+	}
+	return sanitized, changed
 }
 
 // generateShortID returns a cryptographically random 16-character hex string

@@ -34,6 +34,7 @@ func TestSetupRoutes_RemovesStandaloneVPNEndpoints(t *testing.T) {
 
 	healthRecorder := httptest.NewRecorder()
 	healthRequest := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthRequest.RemoteAddr = "127.0.0.1:54321"
 	router.ServeHTTP(healthRecorder, healthRequest)
 	if healthRecorder.Code != http.StatusOK {
 		t.Fatalf("expected /api/v1/health to remain available, got %d", healthRecorder.Code)
@@ -41,6 +42,7 @@ func TestSetupRoutes_RemovesStandaloneVPNEndpoints(t *testing.T) {
 
 	vpnRecorder := httptest.NewRecorder()
 	vpnRequest := httptest.NewRequest(http.MethodGet, "/api/v1/vpn/status", nil)
+	vpnRequest.RemoteAddr = "127.0.0.1:54321"
 	router.ServeHTTP(vpnRecorder, vpnRequest)
 	if vpnRecorder.Code != http.StatusNotFound {
 		t.Fatalf("expected /api/v1/vpn/status to be removed, got %d", vpnRecorder.Code)

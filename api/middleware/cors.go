@@ -23,7 +23,7 @@ func CORS(cfg *config.Config) gin.HandlerFunc {
 
 		headers := c.Writer.Header()
 		headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		headers.Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, accept, origin, Cache-Control, X-Requested-With")
+		headers.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Length, Accept-Encoding, accept, origin, Cache-Control, X-API-Key, X-PrivateDeploy-Token, X-Requested-With")
 
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

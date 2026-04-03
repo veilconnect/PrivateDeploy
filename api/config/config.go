@@ -20,6 +20,8 @@ type ServerConfig struct {
 	Port         string
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	AllowRemote  bool
+	AuthToken    string
 }
 
 // DatabaseConfig holds database configuration
@@ -39,12 +41,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	authToken, _, err := LookupEnvOrFile("API_AUTH_TOKEN", "API_AUTH_TOKEN_FILE")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Server: ServerConfig{
-			Host:         getEnv("API_HOST", "0.0.0.0"),
+			Host:         getEnv("API_HOST", "127.0.0.1"),
 			Port:         getEnv("API_PORT", "8443"),
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: writeTimeout,
+			AllowRemote:  getEnvBool("API_ALLOW_REMOTE", false),
+			AuthToken:    authToken,
 		},
 		Database: DatabaseConfig{
 			Path: getEnv("DB_PATH", "data/privatedeploy.db"),
@@ -77,6 +86,20 @@ func getEnvDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s duration %q: %w", key, value, err)
 	}
 	return duration, nil
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch value {
+	case "", "default":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 // LookupEnvOrFile reads a value from KEY or, if unset, from KEY_FILE.

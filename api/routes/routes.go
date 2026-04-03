@@ -15,6 +15,7 @@ import (
 func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *handlers.WSHub, cloudManager *cloud.Manager) {
 	// Middleware
 	router.Use(middleware.CORS(cfg))
+	router.Use(middleware.AccessControl(cfg))
 
 	// Handlers
 	systemHandler := handlers.NewSystemHandler(bridge.Env.AppVersion, "/opt/privatedeploy")

@@ -23,6 +23,25 @@ func NewCloudHandler(manager *cloud.Manager) *CloudHandler {
 	}
 }
 
+func redactProviderExtra(providerName string, extra map[string]string) map[string]string {
+	if len(extra) == 0 {
+		return map[string]string{}
+	}
+
+	redacted := make(map[string]string, len(extra))
+	for key, value := range extra {
+		redacted[key] = value
+	}
+
+	if providerName == "ssh" {
+		delete(redacted, "password")
+		delete(redacted, "privateKey")
+		delete(redacted, "passphrase")
+	}
+
+	return redacted
+}
+
 // ListProviders returns all available cloud providers
 func (h *CloudHandler) ListProviders(c *gin.Context) {
 	log.Printf("[CloudHandler] ListProviders called")
@@ -158,7 +177,7 @@ func (h *CloudHandler) GetConfig(c *gin.Context) {
 		"provider":      cfg.Provider,
 		"defaultRegion": cfg.DefaultRegion,
 		"defaultPlan":   cfg.DefaultPlan,
-		"extra":         cfg.Extra,
+		"extra":         redactProviderExtra(cfg.Provider, cfg.Extra),
 		"hasApiKey":     hasAPIKey,
 	}
 

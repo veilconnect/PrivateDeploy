@@ -23,7 +23,7 @@ func NewSession(host string, port int, user string, auth ssh.AuthMethod) (*SSHSe
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{auth},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: trustOnFirstUseHostKeyCallback(""),
 		Timeout:         15 * time.Second,
 	}
 

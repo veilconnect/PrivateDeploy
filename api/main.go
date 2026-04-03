@@ -60,7 +60,16 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("🌐 API Server listening on %s", addr)
 	log.Println("📖 API Documentation: /api/v1/health")
-	log.Println("🔓 Authentication disabled: API operates in local control mode")
+	if cfg.Server.AllowRemote {
+		log.Println("🌍 Remote API access enabled")
+	} else {
+		log.Println("🏠 Remote API access disabled; localhost clients only")
+	}
+	if strings.TrimSpace(cfg.Server.AuthToken) != "" {
+		log.Println("🔐 API token authentication enabled")
+	} else {
+		log.Println("🔓 API token authentication disabled")
+	}
 	log.Printf("🔐 CORS allowed origins: %s", strings.Join(cfg.CORS.AllowedOrigins, ","))
 
 	srv := &http.Server{

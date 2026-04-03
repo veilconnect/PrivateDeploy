@@ -81,8 +81,39 @@ func TestLoad_UsesDefaultDatabasePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Fatalf("expected localhost default host, got %q", cfg.Server.Host)
+	}
 	if cfg.Database.Path != "data/privatedeploy.db" {
 		t.Fatalf("expected default database path, got %q", cfg.Database.Path)
+	}
+}
+
+func TestLoad_ReadsAPIAuthTokenFromFile(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "token.txt")
+	if err := os.WriteFile(secretPath, []byte("shared-secret\n"), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	t.Setenv("API_AUTH_TOKEN_FILE", secretPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Server.AuthToken != "shared-secret" {
+		t.Fatalf("expected auth token from file, got %q", cfg.Server.AuthToken)
+	}
+}
+
+func TestLoad_UsesAllowRemoteBoolEnv(t *testing.T) {
+	t.Setenv("API_ALLOW_REMOTE", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Server.AllowRemote {
+		t.Fatal("expected allowRemote to be true")
 	}
 }
 
