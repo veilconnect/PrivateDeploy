@@ -255,7 +255,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             ),
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
-              initialValue: _selectedRegion,
+              value: _selectedRegion,
               decoration: const InputDecoration(labelText: 'Region'),
               isExpanded: true,
               items: provider.regions
@@ -283,7 +283,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             ),
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
-              initialValue: _selectedPlan,
+              value: _selectedPlan,
               decoration: InputDecoration(
                 labelText: 'Plan',
                 helperText:
