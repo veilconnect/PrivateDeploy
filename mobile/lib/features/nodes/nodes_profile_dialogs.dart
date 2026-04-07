@@ -112,7 +112,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                       uri.hasAuthority &&
                       (uri.scheme == 'http' || uri.scheme == 'https');
                   if (!isValidHttpUri) {
-                    return 'Please enter a valid http(s) URL';
+                    return 'Must be an http(s) URL';
                   }
                   return null;
                 },

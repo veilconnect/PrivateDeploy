@@ -40,7 +40,7 @@ class VpnRoutingSettings {
 
   bool get isSplitMode => mode == VpnRoutingMode.split;
 
-  String get modeLabel => isSplitMode ? '分流' : '全局';
+  String get modeLabel => isSplitMode ? 'Split' : 'Global';
 
   String get summary {
     if (mode == VpnRoutingMode.global) {
@@ -51,15 +51,15 @@ class VpnRoutingSettings {
           customDirectCidrs.length +
           customProxyCidrs.length;
       if (customCount == 0) {
-        return '默认全部走 VPN，仅保留局域网直连';
+        return 'All traffic via VPN, LAN bypassed';
       }
-      return '默认全部走 VPN，保留局域网直连，自定义规则 $customCount 条';
+      return 'All traffic via VPN, LAN bypassed, $customCount custom rule(s)';
     }
 
     final enabledBuiltins = <String>[
-      if (directPrivateNetworks) '局域网直连',
-      if (directCnDomains) '国内域名直连',
-      if (directCnIpRanges) '国内 IP 直连',
+      if (directPrivateNetworks) 'LAN direct',
+      if (directCnDomains) 'CN domains direct',
+      if (directCnIpRanges) 'CN IPs direct',
     ];
     final customCount = customDirectDomains.length +
         customDirectPackages.length +
@@ -67,12 +67,13 @@ class VpnRoutingSettings {
         customProxyPackages.length +
         customDirectCidrs.length +
         customProxyCidrs.length;
-    final builtinText =
-        enabledBuiltins.isEmpty ? '未启用内置规则' : enabledBuiltins.join('、');
+    final builtinText = enabledBuiltins.isEmpty
+        ? 'No built-in rules enabled'
+        : enabledBuiltins.join(' · ');
     if (customCount == 0) {
       return builtinText;
     }
-    return '$builtinText，自定义规则 $customCount 条';
+    return '$builtinText · $customCount custom rule(s)';
   }
 
   VpnRoutingSettings copyWith({

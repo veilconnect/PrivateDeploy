@@ -1,9 +1,24 @@
 import 'dart:async';
 import 'dart:io';
 
+// Cloudflare speed endpoint accepts ?bytes=N. We request a large file per
+// connection so slow-start isn't the bottleneck; combined with parallel
+// connections this more closely matches real-world multi-stream loads
+// (browsers, Netflix, etc.) than a single 2 MB download.
 const String defaultCloudBenchmarkUrl =
-    'https://speed.cloudflare.com/__down?bytes=2000000';
+    'https://speed.cloudflare.com/__down?bytes=25000000';
 const Duration defaultCloudBenchmarkTimeout = Duration(seconds: 10);
+
+/// How long the aggregate parallel download is allowed to run before we
+/// compute throughput from whatever has arrived so far. Tuned to let
+/// TCP windows grow past slow-start on a typical intercontinental path.
+const Duration defaultCloudBenchmarkSampleWindow = Duration(seconds: 6);
+
+/// Number of parallel HTTP connections used when sampling throughput. A
+/// single connection is dominated by per-RTT window growth on long paths
+/// (e.g. China -> Singapore Vultr); 4 parallel streams reliably saturate
+/// the link like a real browser/CDN workload.
+const int defaultCloudBenchmarkConcurrency = 4;
 
 class CloudThroughputSample {
   const CloudThroughputSample({
@@ -21,52 +36,93 @@ class CloudThroughputSample {
   bool get hasSample => speedMbps != null && speedMbps! > 0;
 }
 
+/// Measure effective aggregate download throughput with [concurrency]
+/// parallel HTTP streams. Aggregates bytes across all streams and divides
+/// by wall-clock elapsed time, matching how browsers load pages and how
+/// fast.com reports Netflix CDN throughput.
+///
+/// Stops once [sampleWindow] has elapsed (even if the individual downloads
+/// haven't finished their requested byte count) so the total probe time
+/// stays bounded and predictable.
 Future<CloudThroughputSample> runCloudThroughputProbe({
   String testUrl = defaultCloudBenchmarkUrl,
   Duration timeout = defaultCloudBenchmarkTimeout,
+  Duration sampleWindow = defaultCloudBenchmarkSampleWindow,
+  int concurrency = defaultCloudBenchmarkConcurrency,
   HttpClient? client,
 }) async {
-  final ownsClient = client == null;
-  final httpClient = client ?? HttpClient();
-  httpClient.connectionTimeout = timeout;
+  // If the caller passes a custom client we reuse it (and we do NOT close
+  // it); otherwise each parallel stream gets its own client so they don't
+  // serialize on a single HttpClient's connection pool.
+  final sharedClient = client;
+  final ownedClients = <HttpClient>[];
+
+  HttpClient clientForStream() {
+    if (sharedClient != null) {
+      return sharedClient;
+    }
+    final c = HttpClient();
+    c.connectionTimeout = timeout;
+    ownedClients.add(c);
+    return c;
+  }
 
   final stopwatch = Stopwatch()..start();
-  var downloadedBytes = 0;
+  final byteCounts = List<int>.filled(concurrency, 0, growable: false);
+  final errors = <String>[];
+
+  Future<void> runStream(int index) async {
+    try {
+      final streamClient = clientForStream();
+      final request =
+          await streamClient.getUrl(Uri.parse(testUrl)).timeout(timeout);
+      request.followRedirects = true;
+      request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      request.headers.set(HttpHeaders.userAgentHeader, 'PrivateDeploy-Mobile');
+
+      final response = await request.close().timeout(timeout);
+      await for (final chunk in response) {
+        byteCounts[index] += chunk.length;
+        if (stopwatch.elapsed >= sampleWindow) {
+          // Abandon remaining bytes on this stream; the sample window
+          // bounds how long the user waits.
+          break;
+        }
+      }
+    } on TimeoutException {
+      errors.add('stream $index timed out');
+    } catch (e) {
+      errors.add('stream $index failed: $e');
+    }
+  }
 
   try {
-    final request =
-        await httpClient.getUrl(Uri.parse(testUrl)).timeout(timeout);
-    request.followRedirects = true;
-    request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
-    request.headers.set(HttpHeaders.userAgentHeader, 'PrivateDeploy-Mobile');
+    final futures = List.generate(concurrency, runStream);
+    // Wait for all streams OR the sample window to elapse, whichever first.
+    await Future.any([
+      Future.wait(futures),
+      Future.delayed(sampleWindow),
+    ]);
+    stopwatch.stop();
 
-    final response = await request.close().timeout(timeout);
-    await for (final chunk in response.timeout(timeout)) {
-      downloadedBytes += chunk.length;
+    final totalBytes = byteCounts.fold<int>(0, (sum, v) => sum + v);
+    if (totalBytes == 0 && errors.isNotEmpty) {
+      return _buildThroughputSample(
+        bytes: 0,
+        elapsedMs: stopwatch.elapsedMilliseconds,
+        error: errors.first,
+      );
     }
 
-    stopwatch.stop();
     return _buildThroughputSample(
-      bytes: downloadedBytes,
+      bytes: totalBytes,
       elapsedMs: stopwatch.elapsedMilliseconds,
-    );
-  } on TimeoutException {
-    stopwatch.stop();
-    return _buildThroughputSample(
-      bytes: downloadedBytes,
-      elapsedMs: stopwatch.elapsedMilliseconds,
-      error: 'Download sample timed out',
-    );
-  } catch (e) {
-    stopwatch.stop();
-    return _buildThroughputSample(
-      bytes: downloadedBytes,
-      elapsedMs: stopwatch.elapsedMilliseconds,
-      error: 'Download sample failed: $e',
+      // Surface stream errors as a warning only if every stream got bytes.
+      error: errors.isEmpty ? null : errors.first,
     );
   } finally {
-    if (ownsClient) {
-      httpClient.close(force: true);
+    for (final c in ownedClients) {
+      c.close(force: true);
     }
   }
 }

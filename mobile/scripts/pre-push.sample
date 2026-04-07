@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Sample git pre-push hook. To install:
+#
+#   ln -sf ../../mobile/scripts/pre-push.sample .git/hooks/pre-push
+#   chmod +x .git/hooks/pre-push
+#
+# Runs check_release_apks.sh before any push. If pubspec has been bumped
+# but the release APKs haven't been rebuilt, the push is rejected so we
+# never ship mismatched artifacts again (see 2026-04-07 incident where
+# 2.0.0+12 release was built as stale 1.10.1+11 APKs).
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+exec "$REPO_ROOT/mobile/scripts/check_release_apks.sh"

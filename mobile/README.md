@@ -107,6 +107,25 @@ cd mobile
 - Debug 构建允许明文流量，主 manifest 默认不再全局开启明文流量
 - Release 构建签名可通过 `key.properties` 或环境变量注入
 
+#### 模拟器调试镜像选择（重要）
+
+在 Android 模拟器上跑 **Flutter debug APK** 时，请使用 `google_apis/x86_64` 系统镜像，**不要**用 `default/x86_64`。
+
+实测在 API 33 / API 34 的 default x86_64 镜像上，Flutter 加载 `kernel_blob.bin` 会失败：
+
+```
+E flutter : Dart Error: Can't load Kernel binary: Invalid kernel binary: Indicated size is invalid.
+E flutter : Could not prepare isolate.
+E flutter : Could not create root isolate.
+```
+
+症状：native 进程存活，但应用永远停留在 Splash Logo，看起来像启动慢。`flutter run` / `adb logcat` 里能看到上述错误。
+
+- 仅影响 **debug** 构建（JIT，运行时加载 dill）；release 走 AOT (`libapp.so`)，不读 kernel_blob，**不受影响**
+- 已验证不受影响的 API：31 / 32 / 35 / 36（无论镜像类型）和 API 34 google_apis
+- 已验证有问题的 AVD：API 33 default、API 34 default
+- 排查思路：如 UI 卡 Splash，先 `adb logcat | grep "Could not create root isolate"`，命中即换 google_apis 镜像或改用 release 构建
+
 ### iOS
 
 - `Runner/VpnPlugin.swift` 和 `VPNExtension/PacketTunnelProvider.swift` 已接入

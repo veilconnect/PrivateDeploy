@@ -20,7 +20,7 @@ Future<Uint8List> fetchSubscriptionResponseData(
       uri.hasAuthority &&
       (uri.scheme == 'http' || uri.scheme == 'https');
   if (!isValidHttpUri) {
-    throw const SubscriptionFetchException('Please enter a valid http(s) URL');
+    throw const SubscriptionFetchException('Must be an http(s) URL');
   }
 
   final httpClient = client ?? HttpClient();

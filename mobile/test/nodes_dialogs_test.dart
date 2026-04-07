@@ -146,7 +146,7 @@ void main() {
         find.text('A profile with this name already exists'),
         findsOneWidget,
       );
-      expect(find.text('Please enter a valid http(s) URL'), findsOneWidget);
+      expect(find.text('Must be an http(s) URL'), findsOneWidget);
 
       await tester.enterText(find.byType(TextFormField).first, '  Sub B  ');
       await tester.enterText(

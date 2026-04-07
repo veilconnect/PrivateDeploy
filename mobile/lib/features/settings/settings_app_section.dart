@@ -77,11 +77,11 @@ class SettingsAppSection extends StatelessWidget {
                           segments: const [
                             ButtonSegment(
                               value: VpnRoutingMode.split,
-                              label: Text('分流'),
+                              label: Text('Split'),
                             ),
                             ButtonSegment(
                               value: VpnRoutingMode.global,
-                              label: Text('全局'),
+                              label: Text('Global'),
                             ),
                           ],
                           selected: {routingSettings.mode},
@@ -104,7 +104,8 @@ class SettingsAppSection extends StatelessWidget {
                   ListTile(
                     leading: const Icon(Icons.monitor_heart_outlined),
                     title: const Text('VPN Diagnostics'),
-                    subtitle: const Text('查看当前出口 IP 和最近分流命中'),
+                    subtitle: const Text(
+                        'Check current egress IP and recent split-routing hits'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openDiagnostics(context),
                   ),
@@ -113,7 +114,7 @@ class SettingsAppSection extends StatelessWidget {
                     leading: const Icon(Icons.rule_folder_outlined),
                     title: const Text('Routing Rules'),
                     subtitle: const Text(
-                      '默认分流规则 + 可编辑域名、CIDR、App 覆盖',
+                      'Built-in split rules + custom domains, CIDRs, and apps',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => showSettingsRoutingRulesDialog(

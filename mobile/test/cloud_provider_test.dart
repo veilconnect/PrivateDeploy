@@ -817,4 +817,50 @@ void main() {
       );
     });
   });
+
+  group('CloudProvider.importBackupJson', () {
+    // Regression: importBackupJson used to call _saveApiKey without setting
+    // _hasApiKey, so Workspace UI stayed on "Cloud access not configured"
+    // until the next app restart even though the key was already in storage.
+    test('flips hasApiKey synchronously after restoring backup', () async {
+      final provider = CloudProvider(autoInitialize: false);
+      expect(provider.hasApiKey, isFalse);
+
+      const backup = '''
+{
+  "version": 1,
+  "provider": "vultr",
+  "exportedAt": "2026-04-07T00:00:00.000Z",
+  "apiKey": "TESTKEYJUSTFORUNITTESTNOTAREALONE12345",
+  "nodeRecords": {}
+}
+''';
+
+      await provider.importBackupJson(backup);
+
+      expect(provider.hasApiKey, isTrue,
+          reason:
+              'Workspace must immediately reflect the restored key without '
+              'waiting for an app restart.');
+      expect(provider.apiKey, 'TESTKEYJUSTFORUNITTESTNOTAREALONE12345');
+    });
+
+    test('hasApiKey stays false when backup contains no key', () async {
+      final provider = CloudProvider(autoInitialize: false);
+
+      const backup = '''
+{
+  "version": 1,
+  "provider": "vultr",
+  "exportedAt": "2026-04-07T00:00:00.000Z",
+  "nodeRecords": {}
+}
+''';
+
+      await provider.importBackupJson(backup);
+
+      expect(provider.hasApiKey, isFalse);
+      expect(provider.apiKey, isNull);
+    });
+  });
 }

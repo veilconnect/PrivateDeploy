@@ -95,7 +95,7 @@ class _SettingsRoutingRulesDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('分流规则'),
+      title: const Text('Edit Routing Rules'),
       content: SizedBox(
         width: 560.w,
         child: SingleChildScrollView(
@@ -104,7 +104,9 @@ class _SettingsRoutingRulesDialogState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '默认内置规则参考常见规则模式：局域网直连、国内域名直连、国内 IP 直连。全局模式下仅保留局域网和自定义规则。',
+                'Built-in defaults follow common split patterns: LAN direct, '
+                'CN domains direct, CN IPs direct. Global mode only keeps LAN '
+                'and custom rules.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               SizedBox(height: 12.h),
@@ -118,7 +120,7 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('局域网 / 私网直连'),
+                title: const Text('LAN / private networks direct'),
               ),
               CheckboxListTile(
                 value: _directCnDomains,
@@ -130,7 +132,7 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('国内域名直连'),
+                title: const Text('CN domains direct'),
               ),
               CheckboxListTile(
                 value: _directCnIpRanges,
@@ -142,19 +144,19 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('国内 IP 直连'),
+                title: const Text('CN IPs direct'),
               ),
               SizedBox(height: 12.h),
               _buildAppRuleTile(
                 context,
-                title: '直连应用',
+                title: 'Direct apps',
                 subtitle: _supportsPackageRouting
                     ? _packageSummary(_directPackages)
-                    : '仅 Android 支持按 App 分流',
+                    : 'Per-app routing is Android-only',
                 icon: Icons.phone_android_outlined,
                 enabled: _supportsPackageRouting && !_saving,
                 onTap: () => _openPackagePicker(
-                  title: '选择直连应用',
+                  title: 'Pick direct apps',
                   currentPackages: _directPackages,
                   oppositePackages: _proxyPackages,
                   onSelected: (selected) {
@@ -166,14 +168,14 @@ class _SettingsRoutingRulesDialogState
               ),
               _buildAppRuleTile(
                 context,
-                title: '代理应用',
+                title: 'Proxied apps',
                 subtitle: _supportsPackageRouting
                     ? _packageSummary(_proxyPackages)
-                    : '仅 Android 支持按 App 分流',
+                    : 'Per-app routing is Android-only',
                 icon: Icons.rocket_launch_outlined,
                 enabled: _supportsPackageRouting && !_saving,
                 onTap: () => _openPackagePicker(
-                  title: '选择代理应用',
+                  title: 'Pick proxied apps',
                   currentPackages: _proxyPackages,
                   oppositePackages: _directPackages,
                   onSelected: (selected) {
@@ -196,26 +198,26 @@ class _SettingsRoutingRulesDialogState
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _directDomainsController,
-                label: '自定义直连域名 / 后缀',
-                hint: '每行一个，例如:\nexample.cn\ncorp.local',
+                label: 'Custom direct domains / suffixes',
+                hint: 'One per line, e.g.:\nexample.cn\ncorp.local',
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _proxyDomainsController,
-                label: '自定义代理域名 / 后缀',
-                hint: '每行一个，例如:\nnetflix.com\nopenai.com',
+                label: 'Custom proxied domains / suffixes',
+                hint: 'One per line, e.g.:\nnetflix.com\nopenai.com',
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _directCidrsController,
-                label: '自定义直连 CIDR',
-                hint: '每行一个，例如:\n10.10.0.0/16',
+                label: 'Custom direct CIDRs',
+                hint: 'One per line, e.g.:\n10.10.0.0/16',
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _proxyCidrsController,
-                label: '自定义代理 CIDR',
-                hint: '每行一个，例如:\n203.0.113.0/24',
+                label: 'Custom proxied CIDRs',
+                hint: 'One per line, e.g.:\n203.0.113.0/24',
               ),
               if (_errorText != null) ...[
                 SizedBox(height: 12.h),
@@ -233,7 +235,7 @@ class _SettingsRoutingRulesDialogState
       actions: [
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('关闭'),
+          child: const Text('Close'),
         ),
         OutlinedButton(
           onPressed: _saving
@@ -248,11 +250,11 @@ class _SettingsRoutingRulesDialogState
                   }
                   Navigator.pop(context);
                 },
-          child: const Text('恢复默认'),
+          child: const Text('Reset to defaults'),
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: const Text('保存'),
+          child: const Text('Save'),
         ),
       ],
     );
@@ -316,7 +318,8 @@ class _SettingsRoutingRulesDialogState
       _installedApps = apps;
       _loadingApps = false;
       if (apps.isEmpty) {
-        _appsError = '未读取到可选 App，仍可继续保存域名和 CIDR 规则。';
+        _appsError =
+            'Could not list apps; you can still save domain and CIDR rules.';
       }
     });
   }
@@ -445,7 +448,7 @@ class _SettingsRoutingRulesDialogState
           proxyPackages.toSet(),
         );
     if (packageOverlap.isNotEmpty) {
-      return '同一个 App 不能同时设置为直连和代理';
+      return 'An app cannot be both direct and proxied';
     }
 
     for (final domain in [...directDomains, ...proxyDomains]) {
@@ -572,14 +575,14 @@ class _RoutingPackagePickerDialogState
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(
             context,
             _selectedPackages.toList(growable: false)..sort(),
           ),
-          child: const Text('确定'),
+          child: const Text('OK'),
         ),
       ],
     );

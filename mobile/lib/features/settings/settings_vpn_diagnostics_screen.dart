@@ -115,10 +115,14 @@ class _DiagnosticsStatusCard extends StatelessWidget {
     final theme = Theme.of(context);
     final showStatusError = vpn.diagnosticsError != null && !vpn.isConnected;
     final subtitle = switch (vpn.status) {
-      VpnStatus.connected => 'VPN 已连接，下面的数据来自当前活跃会话',
-      VpnStatus.connecting => 'VPN 正在建立连接，诊断结果可能会变化',
-      VpnStatus.disconnecting => 'VPN 正在断开，诊断结果可能已过期',
-      VpnStatus.disconnected => 'VPN 未连接，只显示最近一次会话的规则命中',
+      VpnStatus.connected =>
+        'VPN connected — data below is from the active session',
+      VpnStatus.connecting =>
+        'VPN is connecting — diagnostics may change shortly',
+      VpnStatus.disconnecting =>
+        'VPN is disconnecting — results may be stale',
+      VpnStatus.disconnected =>
+        'VPN disconnected — showing rule hits from the last session',
     };
 
     return Card(

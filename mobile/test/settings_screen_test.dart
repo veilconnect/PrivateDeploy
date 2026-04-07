@@ -116,7 +116,8 @@ void main() {
       );
       expect(find.text('Connected'), findsOneWidget);
       expect(find.text('Routing Mode'), findsOneWidget);
-      expect(find.text('局域网直连、国内域名直连、国内 IP 直连'), findsOneWidget);
+      expect(find.text('LAN direct · CN domains direct · CN IPs direct'),
+          findsOneWidget);
       expect(find.text('1.2.3 (45)'), findsOneWidget);
     });
 
@@ -134,12 +135,12 @@ void main() {
         settle: true,
       );
 
-      await tester.tap(find.text('全局'));
+      await tester.tap(find.text('Global'));
       await tester.pumpAndSettle();
 
       expect(
           appSettingsProvider.vpnRoutingSettings.mode, VpnRoutingMode.global);
-      expect(find.textContaining('默认全部走 VPN'), findsOneWidget);
+      expect(find.textContaining('All traffic via VPN'), findsOneWidget);
     });
 
     testWidgets('opens diagnostics screen and renders diagnostics content',
@@ -288,7 +289,7 @@ void main() {
       final fields = find.byType(TextField);
       await tester.enterText(fields.at(0), 'openai.com\ncorp.local');
       await tester.enterText(fields.at(3), '203.0.113.0/24');
-      await tester.tap(find.text('保存'));
+      await tester.tap(find.text('Save'));
       await tester.pump();
       await tester.pumpAndSettle();
 
@@ -321,11 +322,11 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).at(2), '10.0.0.0/99');
-      await tester.tap(find.text('保存'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       expect(find.text('Invalid CIDR prefix: 10.0.0.0/99'), findsOneWidget);
-      expect(find.text('分流规则'), findsOneWidget);
+      expect(find.text('Routing Rules'), findsOneWidget);
     });
 
     testWidgets('saves app-based routing selections from dialog',
@@ -345,19 +346,19 @@ void main() {
       await tester.tap(find.text('Routing Rules'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('直连应用'));
+      await tester.tap(find.text('Direct apps'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Chrome'));
-      await tester.tap(find.text('确定'));
+      await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('代理应用'));
+      await tester.tap(find.text('Proxied apps'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Telegram'));
-      await tester.tap(find.text('确定'));
+      await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('保存'));
+      await tester.tap(find.text('Save'));
       await tester.pump();
       await tester.pumpAndSettle();
 

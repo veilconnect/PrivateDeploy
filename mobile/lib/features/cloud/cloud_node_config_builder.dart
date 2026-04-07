@@ -130,7 +130,10 @@ String? buildCloudNodeConfig(
   }
 
   final config = {
-    'log': {'level': 'info'},
+    // sing-box client log level. 'warn' silences per-connection
+    // outbound/inbound INFO chatter (which dominated logcat for any normal
+    // browsing session) while still surfacing real failures.
+    'log': {'level': 'warn'},
     'dns': {
       'servers': [
         {

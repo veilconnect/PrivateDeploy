@@ -232,11 +232,17 @@ class CloudProvider with ChangeNotifier {
     return _apiKey?.trim();
   }
 
+  // Persist a new key and mark cloud access as available. Keep these flags
+  // in sync inside the helper so callers (importBackupJson, setApiKey, etc.)
+  // cannot drift — historically importBackupJson called _saveApiKey but
+  // forgot to set _hasApiKey, leaving Workspace stuck on the empty state
+  // until the app was restarted.
   Future<void> _saveApiKey(String key) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
     _apiKey = key.trim();
+    _hasApiKey = _apiKey!.isNotEmpty;
     await StorageService.saveSecureString(_apiKeyStorageKey, _apiKey!);
     await StorageService.remove(_apiKeyStorageKey);
   }
@@ -246,6 +252,7 @@ class CloudProvider with ChangeNotifier {
       await StorageService.init();
     }
     _apiKey = null;
+    _hasApiKey = false;
     await StorageService.removeSecure(_apiKeyStorageKey);
     await StorageService.remove(_apiKeyStorageKey);
   }
