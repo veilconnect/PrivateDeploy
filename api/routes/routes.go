@@ -1,6 +1,8 @@
 package routes
 
 import (
+	_ "embed"
+	"net/http"
 	"privatedeploy/api/config"
 	"privatedeploy/api/handlers"
 	"privatedeploy/api/middleware"
@@ -10,6 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+//go:embed docs/openapi.yaml
+var openAPISpec []byte
 
 // SetupRoutes configures all API routes
 func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *handlers.WSHub, cloudManager *cloud.Manager) {
@@ -31,6 +36,11 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 	{
 		// Health check
 		public.GET("/health", systemHandler.Health)
+
+		// OpenAPI spec
+		public.GET("/openapi.yaml", func(c *gin.Context) {
+			c.Data(http.StatusOK, "application/yaml", openAPISpec)
+		})
 
 		// WebSocket
 		public.GET("/ws", wsHub.HandleWS)
