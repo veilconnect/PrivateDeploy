@@ -852,52 +852,102 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("failed to determine vultr os ids: no compatible images found")
 	}
 
-	ports := deploy.AllocatePorts(tuning.PortProfile)
-	ssPort := ports.SSPort
-	hysteriaPort := ports.HysteriaPort
-	vlessPort := ports.VLESSPort
-	trojanPort := ports.TrojanPort
-
-	ssPassword := deploy.GenerateRandomPassword(22)
-	hysteriaPassword := deploy.GenerateRandomPassword(22)
-	trojanPassword := deploy.GenerateRandomPassword(22)
-	vlessUUID := deploy.GenerateUUID()
-
-	realityPrivateKey := ""
-	realityPublicKey := ""
-	realityShortID := ""
-
-	var userData string
-	if planRAM <= 600 {
-		userData = deploy.GenerateLightweightScript(ssPort, ssPassword)
-	} else {
-		realityPrivateKey, realityPublicKey, err = deploy.GenerateRealityKeyPair()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate reality key pair: %w", err)
-		}
-		realityShortID = generateShortID()
-
-		userData = deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
-			SSPort:           ssPort,
-			SSPassword:       ssPassword,
-			HysteriaPort:     hysteriaPort,
-			HysteriaPassword: hysteriaPassword,
-			HysteriaServer:   tuning.HysteriaServerName,
-			HysteriaMasqURL:  tuning.HysteriaMasqueradeURL,
-			VLESSPort:        vlessPort,
-			VLESSUUID:        vlessUUID,
-			VLESSPrivateKey:  realityPrivateKey,
-			VLESSPublicKey:   realityPublicKey,
-			VLESSShortID:     realityShortID,
-			VLESSServer:      tuning.VLESSServerName,
-			TrojanPort:       trojanPort,
-			TrojanPassword:   trojanPassword,
-			TrojanServer:     tuning.TrojanServerName,
-			SingBoxVersion:   tuning.SingBoxVersion,
-			SingBoxFallback:  tuning.SingBoxFallbackVersion,
-		})
+	// Generate credentials and user-data script
+	creds, userData, err := p.generateDeploymentPayload(planRAM, tuning)
+	if err != nil {
+		return nil, err
 	}
 
+	// Create the instance via Vultr API (with OS fallback)
+	payload, selectedOSID, err := p.createVultrInstance(ctx, opts, osIDs, userData)
+	if err != nil {
+		return nil, err
+	}
+
+	instanceID := payload.Instance.ID
+
+	// Build and persist the node record
+	record := p.buildNodeRecord(instanceID, opts, selectedOSID, planRAM, creds, tuning)
+	if err := p.persistNodeRecord(instanceID, record); err != nil {
+		return nil, err
+	}
+
+	// Wait for instance to become active, then configure firewall and verify ports
+	instance, err := p.waitForInstance(ctx, instanceID, 15*time.Minute)
+	if err == nil {
+		record = p.updateRecordFromInstance(instanceID, instance, record)
+		p.configureInstanceFirewall(ctx, instanceID, creds.ports, opts.Label)
+		p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
+	} else {
+		instance = payload.Instance
+	}
+
+	cloudInst := toCloudInstance(instance, record)
+	cloudInst.Region = payload.Instance.Region
+	cloudInst.Status = payload.Instance.Status
+	return &cloudInst, nil
+}
+
+// instanceCredentials holds generated credentials for a deployment.
+type instanceCredentials struct {
+	ssPassword       string
+	hysteriaPassword string
+	trojanPassword   string
+	vlessUUID        string
+	realityPrivateKey string
+	realityPublicKey  string
+	realityShortID    string
+	ports            deploy.PortAssignment
+}
+
+// generateDeploymentPayload creates credentials and the user-data deployment script.
+func (p *Provider) generateDeploymentPayload(planRAM int, tuning deploy.DeploymentTuning) (instanceCredentials, string, error) {
+	creds := instanceCredentials{
+		ssPassword:       deploy.GenerateRandomPassword(22),
+		hysteriaPassword: deploy.GenerateRandomPassword(22),
+		trojanPassword:   deploy.GenerateRandomPassword(22),
+		vlessUUID:        deploy.GenerateUUID(),
+		ports:            deploy.AllocatePorts(tuning.PortProfile),
+	}
+
+	if planRAM <= 600 {
+		userData := deploy.GenerateLightweightScript(creds.ports.SSPort, creds.ssPassword)
+		return creds, userData, nil
+	}
+
+	var err error
+	creds.realityPrivateKey, creds.realityPublicKey, err = deploy.GenerateRealityKeyPair()
+	if err != nil {
+		return creds, "", fmt.Errorf("failed to generate reality key pair: %w", err)
+	}
+	creds.realityShortID = generateShortID()
+
+	userData := deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
+		SSPort:           creds.ports.SSPort,
+		SSPassword:       creds.ssPassword,
+		HysteriaPort:     creds.ports.HysteriaPort,
+		HysteriaPassword: creds.hysteriaPassword,
+		HysteriaServer:   tuning.HysteriaServerName,
+		HysteriaMasqURL:  tuning.HysteriaMasqueradeURL,
+		VLESSPort:        creds.ports.VLESSPort,
+		VLESSUUID:        creds.vlessUUID,
+		VLESSPrivateKey:  creds.realityPrivateKey,
+		VLESSPublicKey:   creds.realityPublicKey,
+		VLESSShortID:     creds.realityShortID,
+		VLESSServer:      tuning.VLESSServerName,
+		TrojanPort:       creds.ports.TrojanPort,
+		TrojanPassword:   creds.trojanPassword,
+		TrojanServer:     tuning.TrojanServerName,
+		SingBoxVersion:   tuning.SingBoxVersion,
+		SingBoxFallback:  tuning.SingBoxFallbackVersion,
+	})
+	return creds, userData, nil
+}
+
+// createVultrInstance calls the Vultr API with OS ID fallback.
+func (p *Provider) createVultrInstance(ctx context.Context, opts *cloud.CreateInstanceOptions, osIDs []int, userData string) (struct {
+	Instance vultrInstance `json:"instance"`
+}, int, error) {
 	requestBody := map[string]any{
 		"region":      opts.Region,
 		"plan":        opts.Plan,
@@ -912,19 +962,16 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	var payload struct {
 		Instance vultrInstance `json:"instance"`
 	}
-
 	var lastErr error
 	selectedOSID := 0
 
 	for _, osID := range osIDs {
 		requestBody["os_id"] = osID
-
 		res, err := p.apiRequest(ctx, http.MethodPost, "/instances", requestBody)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-
 		var attempt struct {
 			Instance vultrInstance `json:"instance"`
 		}
@@ -934,116 +981,114 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 				lastErr = err
 				continue
 			}
-			return nil, err
+			return payload, 0, err
 		}
-
 		payload = attempt
 		selectedOSID = osID
 		lastErr = nil
 		break
 	}
-
 	if lastErr != nil {
-		return nil, lastErr
+		return payload, 0, lastErr
 	}
+	return payload, selectedOSID, nil
+}
 
-	instanceID := payload.Instance.ID
-
+// buildNodeRecord constructs the initial node record for persistence.
+func (p *Provider) buildNodeRecord(instanceID string, opts *cloud.CreateInstanceOptions, osID, planRAM int, creds instanceCredentials, tuning deploy.DeploymentTuning) nodeRecord {
 	record := nodeRecord{
 		InstanceID: instanceID,
 		Label:      opts.Label,
 		Region:     opts.Region,
 		InstanceRecord: cloud.InstanceRecord{
 			Plan:       opts.Plan,
-			OSID:       selectedOSID,
-			Port:       ssPort,
-			Password:   ssPassword,
+			OSID:       osID,
+			Port:       creds.ports.SSPort,
+			Password:   creds.ssPassword,
 			CreatedAt:  time.Now().UTC().Format(time.RFC3339),
-			SSPort:     ssPort,
-			SSPassword: ssPassword,
+			SSPort:     creds.ports.SSPort,
+			SSPassword: creds.ssPassword,
 		},
 	}
-
 	if planRAM > 600 {
-		record.HysteriaPort = hysteriaPort
-		record.HysteriaPassword = hysteriaPassword
+		record.HysteriaPort = creds.ports.HysteriaPort
+		record.HysteriaPassword = creds.hysteriaPassword
 		record.HysteriaServerName = tuning.HysteriaServerName
 		record.HysteriaInsecure = deploy.BoolPtr(tuning.HysteriaInsecure)
-		record.VLESSPort = vlessPort
-		record.VLESSUUID = vlessUUID
-		record.VLESSPublicKey = realityPublicKey
-		record.VLESSShortID = realityShortID
+		record.VLESSPort = creds.ports.VLESSPort
+		record.VLESSUUID = creds.vlessUUID
+		record.VLESSPublicKey = creds.realityPublicKey
+		record.VLESSShortID = creds.realityShortID
 		record.VLESSServerName = tuning.VLESSServerName
-		record.TrojanPort = trojanPort
-		record.TrojanPassword = trojanPassword
+		record.TrojanPort = creds.ports.TrojanPort
+		record.TrojanPassword = creds.trojanPassword
 		record.TrojanServerName = tuning.TrojanServerName
 		record.TrojanInsecure = deploy.BoolPtr(tuning.TrojanInsecure)
 	}
+	return record
+}
 
+// persistNodeRecord saves the node record to disk.
+func (p *Provider) persistNodeRecord(instanceID string, record nodeRecord) error {
 	records, err := p.loadNodeRecords()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	records[instanceID] = record
-	if err := p.saveNodeRecords(records); err != nil {
-		return nil, err
+	return p.saveNodeRecords(records)
+}
+
+// updateRecordFromInstance updates the persisted record with live instance data (IP, label, etc.).
+func (p *Provider) updateRecordFromInstance(instanceID string, instance vultrInstance, record nodeRecord) nodeRecord {
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return record
 	}
-
-	instance, err := p.waitForInstance(ctx, instanceID, 15*time.Minute)
-	if err == nil {
-		records, err = p.loadNodeRecords()
-		if err == nil {
-			rec := records[instanceID]
-			if instance.MainIP != "" {
-				rec.IPv4 = instance.MainIP
-			}
-			if instance.V6MainIP != "" {
-				rec.IPv6 = instance.V6MainIP
-			}
-			if instance.Label != "" && rec.Label != instance.Label {
-				rec.Label = instance.Label
-			}
-			if instance.Region != "" && rec.Region != instance.Region {
-				rec.Region = instance.Region
-			}
-			rec.InstanceID = instanceID
-			records[instanceID] = rec
-			_ = p.saveNodeRecords(records)
-			record = rec
-		}
-
-		// Configure firewall after instance is active
-		if firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ssPort, hysteriaPort, vlessPort, trojanPort)); err == nil {
-			// Add firewall rules for this instance's ports
-			if err := p.ensureFirewallRules(ctx, firewallID, ssPort, hysteriaPort, vlessPort, trojanPort, opts.Label); err == nil {
-				// Attach firewall to instance
-				if err := p.attachFirewallToInstance(ctx, instanceID, firewallID); err != nil {
-					fmt.Printf("[VultrProvider] Warning: failed to attach firewall: %v\n", err)
-				}
-			} else {
-				fmt.Printf("[VultrProvider] Warning: failed to configure firewall rules: %v\n", err)
-			}
-		} else {
-			fmt.Printf("[VultrProvider] Warning: failed to ensure firewall group: %v\n", err)
-		}
-
-		// Wait until externally reachable protocol ports are ready to reduce false "create succeeded but unusable" states.
-		readyPorts := []int{ssPort}
-		if planRAM > 600 {
-			readyPorts = append(readyPorts, vlessPort, trojanPort)
-		}
-		readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
-		if readyErr := p.waitForTCPPorts(ctx, instance.MainIP, readyPorts, readyTimeout); readyErr != nil {
-			fmt.Printf("[VultrProvider] Warning: %v\n", readyErr)
-		}
-	} else {
-		instance = payload.Instance
+	rec := records[instanceID]
+	if instance.MainIP != "" {
+		rec.IPv4 = instance.MainIP
 	}
+	if instance.V6MainIP != "" {
+		rec.IPv6 = instance.V6MainIP
+	}
+	if instance.Label != "" && rec.Label != instance.Label {
+		rec.Label = instance.Label
+	}
+	if instance.Region != "" && rec.Region != instance.Region {
+		rec.Region = instance.Region
+	}
+	rec.InstanceID = instanceID
+	records[instanceID] = rec
+	_ = p.saveNodeRecords(records)
+	return rec
+}
 
-	cloudInst := toCloudInstance(instance, record)
-	cloudInst.Region = payload.Instance.Region
-	cloudInst.Status = payload.Instance.Status
-	return &cloudInst, nil
+// configureInstanceFirewall sets up Vultr firewall rules for the instance.
+func (p *Provider) configureInstanceFirewall(ctx context.Context, instanceID string, ports deploy.PortAssignment, label string) {
+	firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort))
+	if err != nil {
+		fmt.Printf("[VultrProvider] Warning: failed to ensure firewall group: %v\n", err)
+		return
+	}
+	if err := p.ensureFirewallRules(ctx, firewallID, ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, label); err != nil {
+		fmt.Printf("[VultrProvider] Warning: failed to configure firewall rules: %v\n", err)
+		return
+	}
+	if err := p.attachFirewallToInstance(ctx, instanceID, firewallID); err != nil {
+		fmt.Printf("[VultrProvider] Warning: failed to attach firewall: %v\n", err)
+	}
+}
+
+// waitForServiceReady waits for protocol TCP ports to become reachable.
+func (p *Provider) waitForServiceReady(ctx context.Context, ip string, ports deploy.PortAssignment, planRAM int, extra map[string]string) {
+	readyPorts := []int{ports.SSPort}
+	if planRAM > 600 {
+		readyPorts = append(readyPorts, ports.VLESSPort, ports.TrojanPort)
+	}
+	readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+	if readyErr := p.waitForTCPPorts(ctx, ip, readyPorts, readyTimeout); readyErr != nil {
+		fmt.Printf("[VultrProvider] Warning: %v\n", readyErr)
+	}
 }
 
 // DestroyInstance destroys a Vultr instance
