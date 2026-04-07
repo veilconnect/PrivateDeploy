@@ -3,15 +3,18 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // Config holds the application configuration
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	CORS     CORSConfig
+	Server    ServerConfig
+	Database  DatabaseConfig
+	CORS      CORSConfig
+	RateLimit RateLimitConfig
+	Audit     AuditConfig
 }
 
 // ServerConfig holds server-related configuration
@@ -32,6 +35,20 @@ type DatabaseConfig struct {
 // CORSConfig holds cross-origin settings
 type CORSConfig struct {
 	AllowedOrigins []string
+}
+
+// RateLimitConfig holds rate limiting settings.
+// Rate is tokens added per second; Burst is the maximum token count.
+// Set Rate to 0 to disable rate limiting.
+type RateLimitConfig struct {
+	Rate  float64
+	Burst int
+}
+
+// AuditConfig holds audit logging settings.
+type AuditConfig struct {
+	Enabled bool
+	Path    string
 }
 
 // Load loads configuration from environment variables with defaults.
@@ -63,6 +80,14 @@ func Load() (*Config, error) {
 				"CORS_ALLOW_ORIGINS",
 				"http://localhost:5173,http://127.0.0.1:5173",
 			)),
+		},
+		RateLimit: RateLimitConfig{
+			Rate:  getEnvFloat("API_RATE_LIMIT", 10),
+			Burst: getEnvInt("API_RATE_BURST", 30),
+		},
+		Audit: AuditConfig{
+			Enabled: getEnvBool("API_AUDIT_LOG", false),
+			Path:    getEnv("API_AUDIT_LOG_PATH", "data/audit.log"),
 		},
 	}, nil
 }
@@ -100,6 +125,30 @@ func getEnvBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // LookupEnvOrFile reads a value from KEY or, if unset, from KEY_FILE.

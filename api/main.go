@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"privatedeploy/api/config"
 	"privatedeploy/api/handlers"
+	"privatedeploy/api/middleware"
 	"privatedeploy/api/routes"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
@@ -71,6 +72,10 @@ func main() {
 		log.Println("🔓 API token authentication disabled")
 	}
 	log.Printf("🔐 CORS allowed origins: %s", strings.Join(cfg.CORS.AllowedOrigins, ","))
+	if cfg.RateLimit.Rate > 0 {
+		log.Printf("🚦 Rate limiting: %.0f req/s, burst %d", cfg.RateLimit.Rate, cfg.RateLimit.Burst)
+	}
+	log.Printf("📝 %s", middleware.FormatAuditSummary(cfg))
 
 	srv := &http.Server{
 		Addr:              addr,
