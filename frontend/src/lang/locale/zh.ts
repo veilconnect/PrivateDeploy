@@ -1169,4 +1169,17 @@ export default {
   commands: {
     noMatching: '没有匹配到命令',
   },
+  wizard: {
+    title: '如何部署你的 VPN 节点？',
+    subtitle: '选择最适合你的部署方式',
+    method: {
+      ssh: '我有服务器',
+      sshDesc: '提供 IP + 密码/密钥，通过 SSH 自动部署',
+      cloud: '我需要服务器',
+      cloudDesc: '选择云厂商 + API Key，一键创建 + 部署',
+      manual: '我有节点信息',
+      manualDesc: '手动输入或导入协议链接 (ss://, vless://)',
+    },
+    skip: '跳过向导，直接进入',
+  },
 }

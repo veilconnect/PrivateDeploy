@@ -9,16 +9,14 @@ type CloudStoreLike = {
 }
 
 const columns = [
-  { title: 'selection', key: 'selection', width: '40px' },
-  { title: 'cloud.table.label', key: 'label', width: '11%' },
-  { title: 'cloud.table.region', key: 'region', width: '9%' },
-  { title: 'cloud.table.plan', key: 'plan', width: '11%' },
-  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '12%' },
-  { title: 'cloud.table.protocols', key: 'protocols', width: '17%' },
-  { title: 'cloud.table.status', key: 'status', width: '13%' },
-  { title: 'cloud.table.connectivity', key: 'connectivity', width: '9%' },
-  { title: 'cloud.table.createdAt', key: 'createdAt', width: '8%' },
-  { title: 'cloud.table.actions', key: 'actions', width: '11%' },
+  { title: 'selection', key: 'selection', width: '36px' },
+  { title: 'cloud.table.label', key: 'label', width: '18%' },
+  { title: 'cloud.table.region', key: 'region', width: '10%' },
+  { title: 'cloud.table.ipAddresses', key: 'ipAddresses', width: '14%' },
+  { title: 'cloud.table.protocols', key: 'protocols', width: '18%' },
+  { title: 'cloud.table.status', key: 'status', width: '14%' },
+  { title: 'cloud.table.connectivity', key: 'connectivity', width: '10%' },
+  { title: 'cloud.table.actions', key: 'actions', width: '16%' },
 ]
 
 export const useCloudViewTable = (

@@ -1,41 +1,78 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 defineEmits<{
   (event: 'select', method: 'ssh' | 'cloud' | 'manual'): void
 }>()
+
+const methods = [
+  { key: 'ssh' as const, icon: 'link', title: 'wizard.method.ssh', desc: 'wizard.method.sshDesc' },
+  { key: 'cloud' as const, icon: 'sparkle', title: 'wizard.method.cloud', desc: 'wizard.method.cloudDesc' },
+  { key: 'manual' as const, icon: 'edit', title: 'wizard.method.manual', desc: 'wizard.method.manualDesc' },
+]
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-8 py-8">
-    <h2 class="text-xl font-semibold">如何部署你的 VPN 节点？</h2>
-    <p class="text-sm text-secondary">选择最适合你的部署方式</p>
+  <div class="flex flex-col items-center gap-16 py-16">
+    <div class="text-center">
+      <h2 class="text-20 font-bold">{{ t('wizard.title') }}</h2>
+      <p class="text-14 text-secondary mt-8">{{ t('wizard.subtitle') }}</p>
+    </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-2xl mt-4">
+    <div class="method-grid">
       <button
-        class="flex flex-col items-center gap-3 p-6 rounded-lg border-2 border-secondary hover:border-primary transition-colors cursor-pointer"
-        @click="$emit('select', 'ssh')"
+        v-for="m in methods"
+        :key="m.key"
+        class="method-card"
+        @click="$emit('select', m.key)"
       >
-        <div class="text-3xl">🖥️</div>
-        <div class="font-medium">我有服务器</div>
-        <div class="text-xs text-secondary text-center">提供 IP + 密码/密钥，通过 SSH 自动部署</div>
-      </button>
-
-      <button
-        class="flex flex-col items-center gap-3 p-6 rounded-lg border-2 border-secondary hover:border-primary transition-colors cursor-pointer"
-        @click="$emit('select', 'cloud')"
-      >
-        <div class="text-3xl">☁️</div>
-        <div class="font-medium">我需要服务器</div>
-        <div class="text-xs text-secondary text-center">选择云厂商 + API Key，一键创建 + 部署</div>
-      </button>
-
-      <button
-        class="flex flex-col items-center gap-3 p-6 rounded-lg border-2 border-secondary hover:border-primary transition-colors cursor-pointer"
-        @click="$emit('select', 'manual')"
-      >
-        <div class="text-3xl">📋</div>
-        <div class="font-medium">我有节点信息</div>
-        <div class="text-xs text-secondary text-center">手动输入或导入协议链接 (ss://, vless://)</div>
+        <div class="method-icon">
+          <Icon :icon="m.icon" :size="28" />
+        </div>
+        <div class="text-16 font-bold mt-12">{{ t(m.title) }}</div>
+        <div class="text-12 text-secondary mt-6 text-center">{{ t(m.desc) }}</div>
       </button>
     </div>
   </div>
 </template>
+
+<style scoped>
+.method-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: 640px;
+}
+
+.method-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  border-radius: 12px;
+  border: 2px solid var(--border-color);
+  background: var(--card-bg);
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.method-card:hover {
+  border-color: var(--primary-color);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--primary-color) 15%, transparent);
+  transform: translateY(-2px);
+}
+
+.method-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+  color: var(--primary-color);
+}
+</style>

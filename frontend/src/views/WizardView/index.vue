@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import StepCredentials from './components/StepCredentials.vue'
 import StepDeploy from './components/StepDeploy.vue'
 import StepMethod from './components/StepMethod.vue'
 
+const { t } = useI18n()
 const router = useRouter()
 
 const currentStep = ref(1)
@@ -34,22 +36,22 @@ const handleBack = () => {
 </script>
 
 <template>
-  <div class="wizard-view flex flex-col items-center min-h-full py-12 px-4">
+  <div class="wizard-view flex flex-col items-center py-24 px-8">
     <!-- Step indicator -->
-    <div class="flex items-center gap-2 mb-8">
+    <div class="flex items-center gap-8 mb-20">
       <template v-for="step in 3" :key="step">
         <div
-          class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors"
-          :class="step <= currentStep ? 'bg-primary text-white' : 'bg-secondary/30 text-secondary'"
+          class="step-dot"
+          :class="step <= currentStep ? 'step-dot--active' : ''"
         >
           {{ step }}
         </div>
-        <div v-if="step < 3" class="w-12 h-0.5" :class="step < currentStep ? 'bg-primary' : 'bg-secondary/30'" />
+        <div v-if="step < 3" class="step-line" :class="step < currentStep ? 'step-line--active' : ''" />
       </template>
     </div>
 
     <!-- Step content -->
-    <div class="w-full max-w-2xl">
+    <div class="wizard-content">
       <StepMethod v-if="currentStep === 1" @select="handleMethodSelect" />
       <StepCredentials
         v-else-if="currentStep === 2"
@@ -66,10 +68,52 @@ const handleBack = () => {
     </div>
 
     <!-- Skip link -->
-    <div v-if="currentStep < 3" class="mt-8">
-      <button class="text-xs text-secondary hover:text-primary underline" @click="handleDone">
-        跳过向导，直接进入
-      </button>
+    <div v-if="currentStep < 3" class="mt-20">
+      <Button @click="handleDone" type="text" size="small">
+        {{ t('wizard.skip') || '跳过向导，直接进入' }}
+      </Button>
     </div>
   </div>
 </template>
+
+<style scoped>
+.wizard-view {
+  min-height: 100%;
+}
+
+.wizard-content {
+  width: 100%;
+  max-width: 680px;
+}
+
+.step-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--border-color) 60%, transparent);
+  color: var(--secondary-color, #999);
+  transition: background 0.2s, color 0.2s;
+}
+
+.step-dot--active {
+  background: var(--primary-color);
+  color: #fff;
+}
+
+.step-line {
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border-color) 60%, transparent);
+  transition: background 0.2s;
+}
+
+.step-line--active {
+  background: var(--primary-color);
+}
+</style>

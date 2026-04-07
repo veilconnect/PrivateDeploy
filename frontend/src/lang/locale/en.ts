@@ -1080,4 +1080,17 @@ export default {
   commands: {
     noMatching: 'No matching commands',
   },
+  wizard: {
+    title: 'How to deploy your VPN node?',
+    subtitle: 'Choose the method that works best for you',
+    method: {
+      ssh: 'I have a server',
+      sshDesc: 'Provide IP + password/key for automatic SSH deployment',
+      cloud: 'I need a server',
+      cloudDesc: 'Pick a cloud provider + API Key, one-click create + deploy',
+      manual: 'I have node info',
+      manualDesc: 'Manually enter or import protocol links (ss://, vless://)',
+    },
+    skip: 'Skip wizard, go straight in',
+  },
 }

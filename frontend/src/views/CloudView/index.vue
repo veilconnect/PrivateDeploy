@@ -727,11 +727,14 @@ const handleClearChartHistory = async () => {
                 />
               </div>
             </template>
+            <template #label="{ record }">
+              <div>
+                <div class="font-bold text-14">{{ record.label }}</div>
+                <div class="text-12 text-secondary mt-2">{{ planMap.get(record.plan) || record.plan }}</div>
+              </div>
+            </template>
             <template #region="{ record }">
             <div>{{ formatNodeRegion(record.region) }}</div>
-            </template>
-            <template #plan="{ record }">
-            <div>{{ planMap.get(record.plan) || record.plan }}</div>
             </template>
             <template #status="{ record }">
               <div class="flex flex-col gap-2">
@@ -851,12 +854,7 @@ const handleClearChartHistory = async () => {
               </div>
             </div>
           </template>
-          <template #createdAt="{ record }">
-            <div class="flex flex-col" style="font-size: 11px">
-              <span>{{ formatDate(record.createdAt, 'YYYY-MM-DD') }}</span>
-              <span class="text-secondary">{{ formatRelativeTime(record.createdAt) }}</span>
-            </div>
-          </template>
+          <!-- createdAt merged into sort/filter, no longer a dedicated column -->
           <template #actions="{ record }">
             <div class="flex items-center gap-4">
               <Button
