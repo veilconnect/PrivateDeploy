@@ -41,6 +41,17 @@ const config: UserConfig & { test: InlineConfig } = {
         },
       },
     },
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: './coverage',
+      reporter: ['text', 'text-summary', 'json-summary', 'html'],
+      include: ['src/**/*.{ts,vue}'],
+      exclude: [
+        'src/__mocks__/**',
+        'src/bridge/**',
+        'src/main.ts',
+      ],
+    },
   },
 }
 
