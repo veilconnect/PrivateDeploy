@@ -87,9 +87,21 @@ func (h *SystemHandler) GetInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(info))
 }
 
-// Health checks API health
+// Health checks API health. Includes version so deployed binaries can be
+// fingerprinted with a single GET (some monitoring systems only probe
+// /health and never visit /version or /system/info).
 func (h *SystemHandler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"status": "healthy",
+		"status":  "healthy",
+		"version": h.version,
+	}))
+}
+
+// Version returns just the build version. Lightweight endpoint for
+// deployment dashboards and CI smoke tests; cheaper than /system/info
+// because it doesn't read process memory stats.
+func (h *SystemHandler) Version(c *gin.Context) {
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"version": h.version,
 	}))
 }

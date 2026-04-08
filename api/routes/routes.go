@@ -34,8 +34,11 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 	// Public routes
 	public := router.Group("/api/v1")
 	{
-		// Health check
+		// Health check (also returns version for single-probe fingerprinting)
 		public.GET("/health", systemHandler.Health)
+
+		// Lightweight version endpoint for deployment dashboards / CI
+		public.GET("/version", systemHandler.Version)
 
 		// OpenAPI spec
 		public.GET("/openapi.yaml", func(c *gin.Context) {

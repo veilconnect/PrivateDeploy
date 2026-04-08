@@ -320,7 +320,7 @@ paths:
                     - name: digitalocean
                       displayName: DigitalOcean
                     - name: ssh
-                      displayName: SSH 服务器
+                      displayName: SSH Server
 
   /api/v1/cloud/provider/active:
     get:

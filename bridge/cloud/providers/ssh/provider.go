@@ -87,7 +87,7 @@ func (p *Provider) emit(event string, data ...interface{}) {
 func (p *Provider) Name() string { return "ssh" }
 
 // DisplayName returns the human-readable provider name.
-func (p *Provider) DisplayName() string { return "SSH 服务器" }
+func (p *Provider) DisplayName() string { return "SSH Server" }
 
 // LoadConfig loads the SSH configuration from file.
 func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
@@ -296,10 +296,10 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	// 4. Generate and execute deployment script
 	var script string
 	if info.Memory > 0 && info.Memory <= 600 {
-		p.emit("cloud:ssh:progress", instanceID, "deploying", "内存不足，部署轻量模式 (仅 Shadowsocks)...")
+		p.emit("cloud:ssh:progress", instanceID, "deploying", "Low memory; deploying lightweight mode (Shadowsocks only)...")
 		script = deploy.GenerateLightweightScript(ssPort, ssPassword)
 	} else {
-		p.emit("cloud:ssh:progress", instanceID, "deploying", "正在部署多协议代理 (SS + Hysteria2 + VLESS + Trojan)...")
+		p.emit("cloud:ssh:progress", instanceID, "deploying", "Deploying multi-protocol proxy (SS + Hysteria2 + VLESS + Trojan)...")
 		script = deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
 			SSPort:           ssPort,
 			SSPassword:       ssPassword,

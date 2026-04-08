@@ -119,7 +119,7 @@ func ScoreRegions(regions []Region, latencies map[string]float64) []RegionScore 
 		if continent != "" && !seenContinents[continent] {
 			seenContinents[continent] = true
 			scoredList[i].rs.Score += 100 * 0.10
-			scoredList[i].rs.Reasons = append(scoredList[i].rs.Reasons, "地理冗余")
+			scoredList[i].rs.Reasons = append(scoredList[i].rs.Reasons, "Geographic redundancy")
 		}
 		results = append(results, scoredList[i].rs)
 	}

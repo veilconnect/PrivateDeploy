@@ -12,6 +12,7 @@ import (
 	"privatedeploy/api/handlers"
 	"privatedeploy/api/middleware"
 	"privatedeploy/api/routes"
+	"privatedeploy/bridge"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
 	"strings"
@@ -23,7 +24,7 @@ import (
 )
 
 func main() {
-	log.Println("🚀 Starting PrivateDeploy API Server...")
+	log.Printf("🚀 Starting PrivateDeploy API Server %s...", bridge.AppVersion)
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -52,6 +53,20 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.Default()
+
+	// Distinguish 405 (wrong method) from 404 (no such path) so clients
+	// can tell whether to fix their verb or fix their URL. Without this,
+	// gin returns 404 for both cases which masks programming mistakes.
+	router.HandleMethodNotAllowed = true
+	router.NoMethod(func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"success": false,
+			"error": gin.H{
+				"code":    "METHOD_NOT_ALLOWED",
+				"message": "Method " + c.Request.Method + " not allowed for " + c.Request.URL.Path,
+			},
+		})
+	})
 
 	// Setup routes
 	routes.SetupRoutes(router, db, cfg, wsHub, cloudManager)

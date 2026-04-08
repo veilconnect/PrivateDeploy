@@ -37,12 +37,23 @@ const (
 	webviewGpuPolicyNever    = 2
 )
 
+// AppVersion is the build-time version of the binary. Default "dev" makes
+// it obvious when an unbranded local build is running. Override at link
+// time with:
+//
+//	go build -ldflags "-X privatedeploy/bridge.AppVersion=v2.0.0+12" ./api
+//	go build -ldflags "-X privatedeploy/bridge.AppVersion=v2.0.0+12" .
+//
+// Both /api/v1/version and /api/v1/health expose this value at runtime so
+// the deployed binary can always be queried for its build identity.
+var AppVersion = "dev"
+
 var Env = &EnvResult{
 	IsStartup:    true,
 	FromTaskSch:  false,
 	ExecPath:     "",
 	AppName:      "",
-	AppVersion:   "v1.10.1",
+	AppVersion:   AppVersion,
 	BasePath:     "",
 	OS:           sysruntime.GOOS,
 	ARCH:         sysruntime.GOARCH,
