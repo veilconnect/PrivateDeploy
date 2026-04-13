@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../profiles/profile_provider.dart';
@@ -24,7 +25,7 @@ Future<void> useCloudNodeAndConnect({
   if (config == null) {
     showNodesActionSnackBar(
       context,
-      message: 'Node is not ready yet',
+      message: AppLocalizations.of(context)!.nodeNotReady,
       backgroundColor: Colors.orange,
     );
     return;
@@ -62,7 +63,7 @@ Future<void> useCloudNodeAndConnect({
   if (!success) {
     showNodesActionSnackBar(
       context,
-      message: profileProvider.error ?? 'Failed to activate node',
+      message: profileProvider.error ?? AppLocalizations.of(context)!.failedToActivateNode,
       backgroundColor: Colors.red,
     );
     return;
@@ -80,7 +81,7 @@ Future<void> useCloudNodeAndConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
     ),
-    successMessage: 'Node is ready and connected',
+    successMessage: AppLocalizations.of(context)!.nodeReadyConnected,
   );
 }
 
@@ -99,7 +100,7 @@ Future<void> activateProfileAndConnect({
   if (!success) {
     showNodesActionSnackBar(
       context,
-      message: profileProvider.error ?? 'Failed to activate',
+      message: profileProvider.error ?? AppLocalizations.of(context)!.failedToActivate,
       backgroundColor: Colors.red,
     );
     return;
@@ -117,7 +118,7 @@ Future<void> activateProfileAndConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
     ),
-    successMessage: 'Profile activated and connected',
+    successMessage: AppLocalizations.of(context)!.profileActivatedConnected,
   );
 }
 
@@ -135,7 +136,7 @@ Future<void> handleNodesConnect({
     cloudProvider: cloudProvider,
     onUseCloudNode: onUseCloudNode,
     autoSelectFastestCloudNode: true,
-    successMessage: 'VPN connected successfully',
+    successMessage: AppLocalizations.of(context)!.vpnConnectedSuccess,
   );
 }
 
@@ -148,11 +149,12 @@ Future<void> handleNodesDisconnect({
     return;
   }
 
+  final l10nDisconnect = AppLocalizations.of(context)!;
   showNodesActionSnackBar(
     context,
     message: success
-        ? 'VPN disconnected successfully'
-        : vpnProvider.error ?? 'Failed to disconnect VPN',
+        ? l10nDisconnect.vpnDisconnectedSuccess
+        : vpnProvider.error ?? l10nDisconnect.failedToDisconnectVpn,
     backgroundColor: success ? Colors.green : Colors.red,
   );
 }
@@ -171,7 +173,7 @@ Future<void> handleNodesRestart({
     cloudProvider: cloudProvider,
     onUseCloudNode: onUseCloudNode,
     forceReconnect: true,
-    successMessage: 'VPN restarted successfully',
+    successMessage: AppLocalizations.of(context)!.vpnRestartedSuccess,
   );
 }
 
@@ -190,7 +192,7 @@ Future<void> connectSelectedProfile({
       vpnProvider.status == VpnStatus.disconnecting) {
     showNodesActionSnackBar(
       context,
-      message: 'VPN is busy, please wait a moment',
+      message: AppLocalizations.of(context)!.vpnBusyWait,
       backgroundColor: Colors.orange,
     );
     return;
@@ -232,11 +234,12 @@ Future<void> connectSelectedProfile({
       return;
     }
 
+    final l10nHint = AppLocalizations.of(context)!;
     showNodesActionSnackBar(
       context,
       message: cloudProvider.instances.isNotEmpty
-          ? 'These cloud nodes are visible, but this device does not have their connection credentials yet. Restore a cloud backup or deploy/use a node from this device first.'
-          : 'No ready node selected yet. Choose a cloud node below or create/import a profile first.',
+          ? l10nHint.noCredentialsHint
+          : l10nHint.noNodeSelectedHint,
       backgroundColor: Colors.orange,
     );
     return;
@@ -323,8 +326,11 @@ Future<bool> _useFastestReadyCloudNode({
         : '';
     showNodesActionSnackBar(
       context,
-      message:
-          'Using recent fastest node: ${cachedSelection.instance!.label}$metricSuffix$endpointSuffix. Refreshing ranking in background...',
+      message: AppLocalizations.of(context)!.usingFastestNode(
+        cachedSelection.instance!.label,
+        metricSuffix,
+        endpointSuffix,
+      ),
       backgroundColor: Colors.blue,
       replaceCurrent: true,
     );
@@ -337,7 +343,7 @@ Future<bool> _useFastestReadyCloudNode({
 
   showNodesActionSnackBar(
     context,
-    message: 'Quick-testing ready nodes and selecting the fastest one...',
+    message: AppLocalizations.of(context)!.quickTestingNodes,
     backgroundColor: Colors.blue,
     replaceCurrent: true,
   );
@@ -353,7 +359,7 @@ Future<bool> _useFastestReadyCloudNode({
   if (selectedInstance == null) {
     showNodesActionSnackBar(
       context,
-      message: selection.error ?? 'No ready cloud node is available yet',
+      message: selection.error ?? AppLocalizations.of(context)!.noReadyCloudNode,
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );
@@ -361,10 +367,13 @@ Future<bool> _useFastestReadyCloudNode({
   }
 
   if (!selection.hasSelection) {
+    final l10nFallback = AppLocalizations.of(context)!;
     showNodesActionSnackBar(
       context,
-      message:
-          '${selection.error ?? 'Latency test was unavailable.'} Using ${selectedInstance.label} instead.',
+      message: l10nFallback.usingNodeInstead(
+        selection.error ?? l10nFallback.latencyTestUnavailable,
+        selectedInstance.label,
+      ),
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );

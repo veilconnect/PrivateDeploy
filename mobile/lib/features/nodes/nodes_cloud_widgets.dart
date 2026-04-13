@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import 'nodes_common_widgets.dart';
 
@@ -30,25 +31,26 @@ class NodesCloudInstanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isReady =
         instance.isActive && instance.hasIp && instance.nodeInfo != null;
     final canUseNode = !isSelected || !isConnected;
     final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
-        ? (isConnected ? 'Active Node' : 'Connect')
-        : (isConnected ? 'Use & Switch' : 'Use & Connect');
+        ? (isConnected ? l10n.activeNode : l10n.connect)
+        : (isConnected ? l10n.useAndSwitch : l10n.useAndConnect);
     final primaryIcon = isSelected
         ? (isConnected ? Icons.check_circle : Icons.shield)
         : Icons.play_arrow;
     final throughputLabel = _formatThroughput(latencyCheck?.throughputMbps);
     final latencyLabel = isLatencyTesting
-        ? 'Testing...'
+        ? l10n.testing
         : throughputLabel != null
             ? throughputLabel
             : latencyCheck?.error != null
-                ? 'Retry Speed Test'
-                : 'Speed Test';
-    final latencyDetail = _latencyDetailText(latencyCheck);
+                ? l10n.retrySpeedTest
+                : l10n.speedTest;
+    final latencyDetail = _latencyDetailText(latencyCheck, l10n);
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
@@ -84,14 +86,12 @@ class NodesCloudInstanceCard extends StatelessWidget {
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        'Status: ${instance.status} • Region: ${instance.region}',
-                        style: TextStyle(fontSize: 12.sp),
-                      ),
-                      if (instance.hasIp)
-                        Text(
-                          'IP: ${instance.ipv4}',
-                          style: TextStyle(fontSize: 12.sp),
+                        '${instance.region.toUpperCase()}${instance.hasIp ? ' • ${instance.ipv4}' : ''}',
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: Colors.grey[600],
                         ),
+                      ),
                     ],
                   ),
                 ),
@@ -105,39 +105,42 @@ class NodesCloudInstanceCard extends StatelessWidget {
                       onDelete();
                     }
                   },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
-                      value: 'details',
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline),
-                          SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              'Node Details',
-                              overflow: TextOverflow.ellipsis,
+                  itemBuilder: (context) {
+                    final menuL10n = AppLocalizations.of(context)!;
+                    return [
+                      PopupMenuItem(
+                        value: 'details',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                menuL10n.nodeDetails,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete, color: Colors.red),
-                          SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              'Delete Node',
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: Colors.red),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.delete, color: Colors.red),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                menuL10n.deleteNode,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.red),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ];
+                  },
                 ),
               ],
             ),
@@ -147,41 +150,16 @@ class NodesCloudInstanceCard extends StatelessWidget {
               runSpacing: 8.h,
               children: [
                 NodesStatusChip(
-                  text: instance.isActive ? 'ACTIVE' : 'PROVISIONING',
+                  text: instance.isActive ? l10n.active : l10n.provisioning,
                   color: instance.isActive ? Colors.green : Colors.orange,
                 ),
-                if (instance.isActive &&
-                    instance.hasIp &&
-                    instance.nodeInfo == null)
-                  const NodesStatusChip(
-                    text: 'LOCAL CREDS MISSING',
-                    color: Colors.deepOrange,
-                  ),
-                if (isLinked)
+                if (isSelected)
                   NodesStatusChip(
-                    text: isSelected ? 'IN USE' : 'SYNCED',
-                    color: isSelected ? Colors.blue : Colors.teal,
-                  ),
-                if (instance.nodeInfo != null)
-                  const NodesStatusChip(
-                    text: 'SS / Hy2 / VLESS / Trojan',
-                    color: Colors.indigo,
+                    text: l10n.inUse,
+                    color: Colors.blue,
                   ),
               ],
             ),
-            if (instance.isActive &&
-                instance.hasIp &&
-                instance.nodeInfo == null)
-              Padding(
-                padding: EdgeInsets.only(top: 10.h),
-                child: Text(
-                  'This server was found in your Vultr account, but this phone does not have its connection credentials yet. Restore a cloud backup or deploy/use a node from this device first.',
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ),
             if (isReady) ...[
               SizedBox(height: 14.h),
               Wrap(
@@ -227,7 +205,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     );
   }
 
-  String? _latencyDetailText(CloudLatencyCheck? latencyCheck) {
+  String? _latencyDetailText(CloudLatencyCheck? latencyCheck, AppLocalizations l10n) {
     if (latencyCheck == null) {
       return null;
     }
@@ -239,18 +217,20 @@ class NodesCloudInstanceCard extends StatelessWidget {
       return null;
     }
     if (!latencyCheck.isBenchmark) {
-      return 'Fastest endpoint: $endpointLabel';
+      return endpointLabel;
     }
     final sampleCount = latencyCheck.sampleCount;
     final successfulSamples = latencyCheck.successfulSamples;
     if (sampleCount == null || successfulSamples == null || sampleCount <= 0) {
       return _buildBenchmarkDetail(
+        l10n: l10n,
         endpointLabel: endpointLabel,
         throughputMbps: latencyCheck.throughputMbps,
         latencyMs: latencyCheck.latencyMs,
       );
     }
     return _buildBenchmarkDetail(
+      l10n: l10n,
       endpointLabel: endpointLabel,
       throughputMbps: latencyCheck.throughputMbps,
       latencyMs: latencyCheck.latencyMs,
@@ -260,24 +240,25 @@ class NodesCloudInstanceCard extends StatelessWidget {
   }
 
   String _buildBenchmarkDetail({
+    required AppLocalizations l10n,
     required String endpointLabel,
     double? throughputMbps,
     int? latencyMs,
     int? sampleCount,
     int? successfulSamples,
   }) {
-    final segments = <String>['Benchmark leader: $endpointLabel'];
+    final segments = <String>[endpointLabel];
     if (sampleCount != null && successfulSamples != null && sampleCount > 0) {
-      segments.add('$successfulSamples/$sampleCount probes');
+      segments.add(l10n.probesStat(successfulSamples, sampleCount));
     }
     final throughputLabel = _formatThroughput(throughputMbps);
     if (throughputLabel != null) {
       segments.add(throughputLabel);
     }
     if (latencyMs != null) {
-      segments.add('${latencyMs} ms latency');
+      segments.add(l10n.msLatency(latencyMs));
     }
-    return segments.join(' • ');
+    return segments.join(' \u2022 ');
   }
 
   String? _formatThroughput(double? throughputMbps) {

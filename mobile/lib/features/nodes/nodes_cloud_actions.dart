@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_throughput_probe.dart';
@@ -37,11 +38,11 @@ Future<void> confirmDeleteCloudNode({
   required VpnProvider vpnProvider,
   required CloudInstance instance,
 }) async {
+  final l10n = AppLocalizations.of(context)!;
   final confirmed = await showNodesDeleteConfirmationDialog(
     context: context,
-    title: 'Delete Node',
-    message:
-        'Delete "${instance.label}"?\n\nThis will destroy the server permanently.',
+    title: l10n.deleteNodeTitle,
+    message: l10n.deleteNodeConfirm(instance.label),
   );
   if (!confirmed) {
     return;
@@ -71,13 +72,14 @@ Future<void> confirmDeleteCloudNode({
     return;
   }
 
+  final l10nFeedback = AppLocalizations.of(context)!;
   final operationSucceeded =
       success && disconnectSuccess && profileCleanupSuccess;
   final message = success
       ? operationSucceeded
-          ? 'Node deleted'
-          : 'Node deleted, but local cleanup needs attention'
-      : cloudProvider.error ?? 'Failed to delete';
+          ? l10nFeedback.nodeDeleted
+          : l10nFeedback.nodeDeletedCleanupNeeded
+      : cloudProvider.error ?? l10nFeedback.failedToDelete;
   showNodesActionSnackBar(
     context,
     message: message,
@@ -99,12 +101,19 @@ Future<void> showCloudApiKeyFlow({
     initialValue: cloudProvider.apiKey ?? '',
     onVerifyAndSave: (apiKey) async {
       final saved = await cloudProvider.setApiKey(apiKey);
-      return saved ? null : cloudProvider.error ?? 'Failed to save API key';
+      return saved ? null : cloudProvider.error ?? AppLocalizations.of(context)!.failedToSaveApiKey;
     },
   );
   if (!success || !context.mounted) {
     return;
   }
+
+  final l10nApiKey = AppLocalizations.of(context)!;
+  showNodesActionSnackBar(
+    context,
+    message: l10nApiKey.apiKeyVerifiedLoadingNodes,
+    backgroundColor: Colors.green,
+  );
 
   await onSaved();
   if (!context.mounted) {
@@ -113,8 +122,9 @@ Future<void> showCloudApiKeyFlow({
 
   showNodesActionSnackBar(
     context,
-    message: 'API key saved and verified',
+    message: AppLocalizations.of(context)!.apiKeySavedNodesLoaded,
     backgroundColor: Colors.green,
+    replaceCurrent: true,
   );
 }
 
@@ -143,11 +153,12 @@ Future<void> showCreateCloudNodeFlow({
     return;
   }
 
+  final l10nDeploy = AppLocalizations.of(context)!;
   showNodesActionSnackBar(
     context,
     message: success
-        ? 'Node deploying... It takes 3-5 minutes.'
-        : cloudProvider.error ?? 'Failed to create',
+        ? l10nDeploy.nodeDeploying
+        : cloudProvider.error ?? l10nDeploy.failedToCreate,
     backgroundColor: success ? Colors.green : Colors.red,
   );
 }
@@ -170,7 +181,7 @@ Future<void> testCloudNodeLatency({
   final config = cloudProvider.generateNodeConfig(instance);
   if (config == null) {
     final updated = latencyResult.copyWith(
-      error: latencyResult.error ?? 'Node is not ready for speed testing',
+      error: latencyResult.error ?? AppLocalizations.of(context)!.nodeNotReadyForSpeedTest,
     );
     cloudProvider.saveLatencyCheck(instance.id, updated);
     if (context.mounted && updated.error != null) {
@@ -222,7 +233,7 @@ Future<void> testCloudNodeLatency({
     await vpnProvider.disconnect();
   } else {
     benchmarkResult = benchmarkResult.copyWith(
-      error: vpnProvider.error ?? 'Failed to connect speed test tunnel',
+      error: vpnProvider.error ?? AppLocalizations.of(context)!.failedToConnectSpeedTestTunnel,
     );
   }
 
@@ -254,11 +265,12 @@ Future<void> testAllCloudNodesLatency({
   required VpnProvider vpnProvider,
   Future<CloudThroughputSample> Function()? throughputProbe,
 }) async {
+  final l10nBench = AppLocalizations.of(context)!;
   final readyNodes = connectableCloudInstances(cloudProvider);
   if (readyNodes.isEmpty) {
     showNodesActionSnackBar(
       context,
-      message: 'No ready cloud node is available for testing',
+      message: l10nBench.noReadyNodeForTesting,
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );
@@ -269,10 +281,9 @@ Future<void> testAllCloudNodesLatency({
   if (previouslyConnected) {
     final confirmed = await showNodesConfirmationDialog(
       context: context,
-      title: 'Benchmark All Nodes',
-      message:
-          'This benchmark will temporarily disconnect your current VPN connection, test each ready cloud node with a real download sample, and then restore your previous connection.\n\nContinue?',
-      confirmLabel: 'Start Benchmark',
+      title: l10nBench.benchmarkAllNodesTitle,
+      message: l10nBench.benchmarkAllNodesConfirm,
+      confirmLabel: l10nBench.startBenchmark,
       confirmColor: Colors.orange,
     );
     if (!confirmed) {
@@ -292,13 +303,13 @@ Future<void> testAllCloudNodesLatency({
 
   showNodesActionSnackBar(
     context,
-    message: 'Benchmarking ready nodes with real download samples...',
+    message: l10nBench.benchmarkingNodes,
     backgroundColor: Colors.blue,
     replaceCurrent: true,
   );
 
-  var selection = const CloudFastestNodeSelection(
-    error: 'No ready cloud node is available for testing',
+  var selection = CloudFastestNodeSelection(
+    error: l10nBench.noReadyNodeForTesting,
   );
   try {
     if (vpnProvider.status == VpnStatus.connected) {
@@ -308,10 +319,10 @@ Future<void> testAllCloudNodesLatency({
     for (var index = 0; index < readyNodes.length; index += 1) {
       final instance = readyNodes[index];
       if (context.mounted) {
+        final l10nProgress = AppLocalizations.of(context)!;
         showNodesActionSnackBar(
           context,
-          message:
-              'Benchmarking ${instance.label} (${index + 1}/${readyNodes.length})...',
+          message: l10nProgress.benchmarkingNode(instance.label, index + 1, readyNodes.length),
           backgroundColor: Colors.blue,
           replaceCurrent: true,
         );
@@ -326,7 +337,7 @@ Future<void> testAllCloudNodesLatency({
       final config = cloudProvider.generateNodeConfig(instance);
       if (config == null) {
         benchmarkResult = benchmarkResult.copyWith(
-          error: benchmarkResult.error ?? 'Node is not ready for benchmarking',
+          error: benchmarkResult.error ?? l10nBench.nodeNotReadyForBenchmark,
         );
         cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
         continue;
@@ -343,7 +354,7 @@ Future<void> testAllCloudNodesLatency({
 
       if (!connected) {
         benchmarkResult = benchmarkResult.copyWith(
-          error: vpnProvider.error ?? 'Failed to connect benchmark tunnel',
+          error: vpnProvider.error ?? l10nBench.failedToConnectBenchmarkTunnel,
         );
         cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
         continue;
@@ -386,12 +397,12 @@ Future<void> testAllCloudNodesLatency({
   if (!context.mounted) {
     return;
   }
-
+  final l10nResult = AppLocalizations.of(context)!;
   if (!selection.hasSelection) {
     showNodesActionSnackBar(
       context,
       message:
-          selection.error ?? 'No ready cloud node is available for testing',
+          selection.error ?? l10nResult.noReadyNodeForTesting,
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );
@@ -401,24 +412,18 @@ Future<void> testAllCloudNodesLatency({
   final latencyMs = selection.latencyCheck?.latencyMs;
   final throughputMbps = selection.latencyCheck?.throughputMbps;
   final endpoint = selection.latencyCheck?.endpointLabel;
-  final sampleCount = selection.latencyCheck?.sampleCount;
-  final successfulSamples = selection.latencyCheck?.successfulSamples;
   final throughputSuffix = throughputMbps != null && throughputMbps > 0
       ? ' (${throughputMbps >= 100 ? throughputMbps.toStringAsFixed(0) : throughputMbps >= 10 ? throughputMbps.toStringAsFixed(1) : throughputMbps.toStringAsFixed(2)} Mbps)'
       : '';
-  final latencySuffix = latencyMs != null ? ' • ${latencyMs} ms latency' : '';
+  final latencySuffix = latencyMs != null ? ' \u2022 ${l10nResult.msLatency(latencyMs)}' : '';
   final endpointSuffix =
       endpoint != null && endpoint.isNotEmpty ? ' via $endpoint' : '';
-  final sampleSuffix =
-      sampleCount != null && successfulSamples != null && sampleCount > 0
-          ? ' • $successfulSamples/$sampleCount probes'
-          : '';
   final restoreSuffix =
-      restoreFailed ? ' • Previous connection restore failed' : '';
+      restoreFailed ? ' \u2022 ${l10nResult.restoreConnectionFailed}' : '';
   showNodesActionSnackBar(
     context,
     message:
-        'Best benchmark: ${selection.instance!.label}$throughputSuffix$endpointSuffix$sampleSuffix$latencySuffix$restoreSuffix',
+        l10nResult.bestBenchmark(selection.instance!.label, throughputSuffix, '$endpointSuffix$latencySuffix$restoreSuffix'),
     backgroundColor: restoreFailed ? Colors.orange : Colors.green,
     replaceCurrent: true,
   );

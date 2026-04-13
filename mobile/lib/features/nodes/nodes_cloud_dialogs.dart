@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import 'nodes_dialog_models.dart';
@@ -49,6 +50,7 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
   late final TextEditingController _controller;
   var _isSaving = false;
   var _cancelled = false;
+  var _dialogSuccess = false;
   String? _dialogError;
 
   @override
@@ -66,24 +68,40 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Cloud API Key'),
+      title: Text(l10n.cloudApiKey),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
             controller: _controller,
-            decoration: const InputDecoration(
-              labelText: 'API Key',
-              hintText: 'Enter your cloud provider API key',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l10n.apiKey,
+              hintText: l10n.enterCloudApiKey,
+              border: const OutlineInputBorder(),
             ),
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
             enabled: !_isSaving,
           ),
-          if (_dialogError != null) ...[
+          if (_dialogSuccess) ...[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    l10n.apiKeyVerified,
+                    style: const TextStyle(color: Colors.green, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ] else if (_dialogError != null) ...[
             const SizedBox(height: 12),
             Text(
               _dialogError!,
@@ -98,7 +116,7 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
             _cancelled = true;
             Navigator.pop(context, false);
           },
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         ElevatedButton(
           onPressed: _isSaving
@@ -117,7 +135,15 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
                   }
 
                   if (error == null) {
-                    Navigator.pop(context, true);
+                    setState(() {
+                      _dialogError = null;
+                      _dialogSuccess = true;
+                    });
+                    await Future<void>.delayed(
+                        const Duration(milliseconds: 600));
+                    if (mounted && !_cancelled) {
+                      Navigator.pop(context, true);
+                    }
                   } else {
                     setState(() {
                       _dialogError = error;
@@ -125,9 +151,11 @@ class _NodesCloudApiKeyDialogState extends State<_NodesCloudApiKeyDialog> {
                     });
                   }
                 },
-          child: _isSaving
-              ? const Text('Verifying...')
-              : const Text('Verify & Save'),
+          child: _dialogSuccess
+              ? Text(l10n.verified)
+              : _isSaving
+                  ? Text(l10n.verifying)
+                  : Text(l10n.verifyAndSave),
         ),
       ],
     );
@@ -187,8 +215,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
     final canDeploy =
         !missingRegions && !missingPlans && _selectedRegion != null && _selectedPlan != null;
 
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Deploy Node'),
+      title: Text(l10n.deployNodeTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -221,9 +250,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                         Expanded(
                           child: Text(
                             isLoadingOptions
-                                ? 'Loading regions and plans...'
+                                ? l10n.loadingRegionsPlans
                                 : provider.error ??
-                                    'Deployment options are unavailable right now.',
+                                    l10n.deploymentUnavailable,
                             style: TextStyle(fontSize: 12.sp),
                           ),
                         ),
@@ -239,7 +268,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                             unawaited(provider.loadPlans());
                           },
                           icon: const Icon(Icons.refresh),
-                          label: const Text('Retry Loading'),
+                          label: Text(l10n.retryLoading),
                         ),
                       ),
                     ],
@@ -248,15 +277,15 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               ),
             TextField(
               controller: _labelController,
-              decoration: const InputDecoration(
-                labelText: 'Node Name (Optional)',
-                hintText: 'Auto-generate if left blank',
+              decoration: InputDecoration(
+                labelText: l10n.nodeNameOptional,
+                hintText: l10n.autoGenerateHint,
               ),
             ),
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
               value: _selectedRegion,
-              decoration: const InputDecoration(labelText: 'Region'),
+              decoration: InputDecoration(labelText: l10n.region),
               isExpanded: true,
               items: provider.regions
                   .map(
@@ -285,10 +314,10 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             DropdownButtonFormField<String>(
               value: _selectedPlan,
               decoration: InputDecoration(
-                labelText: 'Plan',
+                labelText: l10n.plan,
                 helperText:
                     !missingPlans && _selectedRegion != null && availablePlans.isEmpty
-                    ? 'No supported plans are available in this region.'
+                    ? l10n.noPlansInRegion
                     : null,
               ),
               isExpanded: true,
@@ -310,7 +339,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         ElevatedButton(
           onPressed: !canDeploy
@@ -318,8 +347,8 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               : () {
             if (_selectedRegion == null || _selectedPlan == null) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Please select region and plan'),
+                SnackBar(
+                  content: Text(l10n.selectRegionAndPlan),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -330,10 +359,8 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             );
             if (!hasValidPlan) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Selected plan is not available in the chosen region',
-                  ),
+                SnackBar(
+                  content: Text(l10n.planNotAvailableInRegion),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -349,7 +376,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               ),
             );
           },
-          child: Text(isLoadingOptions && !canDeploy ? 'Loading...' : 'Deploy'),
+          child: Text(isLoadingOptions && !canDeploy ? l10n.loading : l10n.deploy),
         ),
       ],
     );

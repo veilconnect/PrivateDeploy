@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../l10n/app_localizations.dart';
+
 class SettingsAboutSection extends StatelessWidget {
   const SettingsAboutSection({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -14,7 +17,7 @@ class SettingsAboutSection extends StatelessWidget {
           Padding(
             padding: EdgeInsets.all(16.w),
             child:
-                Text('About', style: Theme.of(context).textTheme.titleMedium),
+                Text(l10n.about, style: Theme.of(context).textTheme.titleMedium),
           ),
           FutureBuilder<PackageInfo>(
             future: PackageInfo.fromPlatform(),
@@ -22,19 +25,19 @@ class SettingsAboutSection extends StatelessWidget {
               final versionText = snapshot.hasData
                   ? '${snapshot.data!.version} (${snapshot.data!.buildNumber})'
                   : snapshot.hasError
-                      ? 'Unavailable'
-                      : 'Loading...';
+                      ? l10n.unavailable
+                      : l10n.loading;
               return ListTile(
                 leading: const Icon(Icons.info_outline),
-                title: const Text('Version'),
+                title: Text(l10n.version),
                 subtitle: Text(versionText),
               );
             },
           ),
-          const ListTile(
-            leading: Icon(Icons.code),
-            title: Text('PrivateDeploy'),
-            subtitle: Text('Multi-protocol proxy deployment tool'),
+          ListTile(
+            leading: const Icon(Icons.code),
+            title: Text(l10n.appTitle),
+            subtitle: Text(l10n.multiProtocolTool),
           ),
         ],
       ),

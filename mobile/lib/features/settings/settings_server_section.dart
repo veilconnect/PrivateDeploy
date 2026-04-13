@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_cloud_dialogs.dart';
 
@@ -19,6 +20,7 @@ class SettingsServerSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -26,52 +28,46 @@ class SettingsServerSection extends StatelessWidget {
           Padding(
             padding: EdgeInsets.all(16.w),
             child:
-                Text('Server', style: Theme.of(context).textTheme.titleMedium),
+                Text(l10n.server, style: Theme.of(context).textTheme.titleMedium),
           ),
           Consumer<CloudProvider>(
             builder: (context, cloud, _) {
               return Column(
                 children: [
-                  const ListTile(
-                    leading: Icon(Icons.link),
-                    title: Text('Standalone Cloud Access'),
-                    subtitle: Text('This device directly calls the Vultr API'),
+                  ListTile(
+                    leading: const Icon(Icons.link),
+                    title: Text(l10n.standaloneCloudAccess),
+                    subtitle: Text(l10n.standaloneCloudAccessDesc),
                   ),
                   ListTile(
                     leading: const Icon(Icons.vpn_key),
-                    title: const Text('API Key'),
-                    subtitle: Text(maskedSettingsApiKey(cloud.apiKey)),
+                    title: Text(l10n.apiKey),
+                    subtitle: Text(maskedSettingsApiKey(cloud.apiKey, notSetLabel: l10n.notSet)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onEditApiKey(cloud),
                   ),
                   ListTile(
                     leading: const Icon(Icons.cloud_outlined),
-                    title: const Text('Cloud Provider'),
-                    subtitle: Text('${cloud.providerName} (direct)'),
+                    title: Text(l10n.cloudProvider),
+                    subtitle: Text(l10n.cloudProviderDirect(cloud.providerName)),
                   ),
-                  const ListTile(
-                    leading: Icon(Icons.shield_outlined),
-                    title: Text('Sensitive Data'),
-                    subtitle: Text(
-                      'API keys stay in device secure storage. Backup export and restore can expose secrets, so rotate keys if a backup is shared.',
-                    ),
+                  ListTile(
+                    leading: const Icon(Icons.shield_outlined),
+                    title: Text(l10n.sensitiveData),
+                    subtitle: Text(l10n.sensitiveDataDesc),
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.copy_all_outlined),
-                    title: const Text('Copy Cloud Backup'),
-                    subtitle: const Text(
-                      'Review the summary first, then copy sensitive backup JSON with API key and local node records',
-                    ),
+                    title: Text(l10n.copyCloudBackup),
+                    subtitle: Text(l10n.copyCloudBackupDesc),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onExportBackup(cloud),
                   ),
                   ListTile(
                     leading: const Icon(Icons.restore_outlined),
-                    title: const Text('Restore Cloud Backup'),
-                    subtitle: const Text(
-                      'Paste a backup JSON, validate it, then confirm restoring the API key and local nodes',
-                    ),
+                    title: Text(l10n.restoreCloudBackup),
+                    subtitle: Text(l10n.restoreCloudBackupDesc),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onImportBackup(cloud),
                   ),

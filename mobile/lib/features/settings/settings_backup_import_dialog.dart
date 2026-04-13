@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_backup_preview_card.dart';
@@ -68,17 +69,16 @@ class _SettingsBackupImportDialogState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Restore Cloud Backup'),
+      title: Text(l10n.restoreCloudBackupTitle),
       content: SizedBox(
         width: 520.w,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Paste a backup JSON exported from this app. Restoring can replace the saved API key and overwrite the local cloud node cache on this device.',
-            ),
+            Text(l10n.restoreCloudBackupDesc2),
             SizedBox(height: 12.h),
             TextField(
               controller: _controller,
@@ -86,7 +86,7 @@ class _SettingsBackupImportDialogState
               maxLines: 14,
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
-                hintText: 'Paste cloud backup JSON here',
+                hintText: l10n.pasteCloudBackupHint,
                 errorText: _dialogError,
               ),
             ),
@@ -103,11 +103,11 @@ class _SettingsBackupImportDialogState
       actions: [
         OutlinedButton(
           onPressed: _restoring ? null : () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l10n.close),
         ),
         FilledButton.tonal(
           onPressed: _restoring ? null : _pasteClipboard,
-          child: const Text('Paste Clipboard'),
+          child: Text(l10n.pasteClipboard),
         ),
         FilledButton(
           onPressed: _restoring || _preview == null ? null : _restoreBackup,
@@ -117,7 +117,7 @@ class _SettingsBackupImportDialogState
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Restore'),
+              : Text(l10n.restore),
         ),
       ],
     );
@@ -181,9 +181,10 @@ class _SettingsBackupImportDialogState
 
   Future<void> _restoreBackup() async {
     final raw = _controller.text.trim();
+    final l10n = AppLocalizations.of(context)!;
     if (raw.isEmpty) {
       setState(() {
-        _dialogError = 'Backup JSON cannot be empty';
+        _dialogError = l10n.backupJsonEmpty;
       });
       return;
     }
@@ -191,43 +192,44 @@ class _SettingsBackupImportDialogState
     final preview = _preview;
     if (preview == null) {
       setState(() {
-        _dialogError ??= 'Backup JSON is not valid yet';
+        _dialogError ??= l10n.backupJsonInvalid;
       });
       return;
     }
 
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Restore This Backup?'),
-            content: SizedBox(
-              width: 460.w,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'This will overwrite the local cloud node cache on this device. If the backup contains an API key, it will replace the currently saved key.',
-                  ),
-                  SizedBox(height: 12.h),
-                  SettingsBackupPreviewCard(
-                    preview: preview,
-                    title: 'Backup To Restore',
-                  ),
-                ],
+          builder: (dialogContext) {
+            final dl10n = AppLocalizations.of(dialogContext)!;
+            return AlertDialog(
+              title: Text(dl10n.restoreThisBackupTitle),
+              content: SizedBox(
+                width: 460.w,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(dl10n.restoreThisBackupConfirm),
+                    SizedBox(height: 12.h),
+                    SettingsBackupPreviewCard(
+                      preview: preview,
+                      title: 'Backup To Restore',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            actions: [
-              OutlinedButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Restore'),
-              ),
-            ],
-          ),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(dl10n.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(dl10n.restore),
+                ),
+              ],
+            );
+          },
         ) ??
         false;
 
@@ -247,7 +249,7 @@ class _SettingsBackupImportDialogState
       }
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(
-          const SnackBar(content: Text('Cloud backup restored')),
+          SnackBar(content: Text(AppLocalizations.of(widget.rootContext)!.cloudBackupRestored)),
         );
       }
     } catch (e) {

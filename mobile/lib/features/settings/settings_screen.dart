@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_about_section.dart';
 import 'settings_app_section.dart';
@@ -22,6 +23,7 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -33,11 +35,11 @@ class SettingsScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           leading: IconButton(
-            tooltip: 'Back',
+            tooltip: l10n.back,
             icon: const Icon(Icons.arrow_back),
             onPressed: () => _popRootRoute(context),
           ),
-          title: const Text('Settings'),
+          title: Text(l10n.settings),
         ),
         body: ListView(
           padding: EdgeInsets.all(16.w),
@@ -58,22 +60,25 @@ class SettingsScreen extends StatelessWidget {
             SettingsAppSection(onClearLocalCloudData: () async {
               final confirmed = await showDialog<bool>(
                     context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      title: const Text('Clear Local Cloud Data?'),
-                      content: const Text(
-                        'This removes the saved Vultr API key and cached cloud node records from this device only. It does not delete any cloud instances.',
-                      ),
-                      actions: [
-                        OutlinedButton(
-                          onPressed: () => Navigator.pop(dialogContext, false),
-                          child: const Text('Cancel'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(dialogContext, true),
-                          child: const Text('Clear'),
-                        ),
-                      ],
-                    ),
+                    builder: (dialogContext) {
+                      final dl10n = AppLocalizations.of(dialogContext)!;
+                      return AlertDialog(
+                        title: Text(dl10n.clearLocalCloudDataTitle),
+                        content: Text(dl10n.clearLocalCloudDataConfirm),
+                        actions: [
+                          OutlinedButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, false),
+                            child: Text(dl10n.cancel),
+                          ),
+                          FilledButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, true),
+                            child: Text(dl10n.clear),
+                          ),
+                        ],
+                      );
+                    },
                   ) ??
                   false;
               if (!confirmed || !context.mounted) {
@@ -83,7 +88,9 @@ class SettingsScreen extends StatelessWidget {
               await cloud.clearLocalCloudData();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Local cloud data cleared')),
+                  SnackBar(
+                      content: Text(AppLocalizations.of(context)!
+                          .localCloudDataCleared)),
                 );
               }
             }),

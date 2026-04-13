@@ -5,6 +5,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../vpn/vpn_provider.dart';
 
 class SettingsVpnDiagnosticsScreen extends StatefulWidget {
@@ -66,41 +67,46 @@ class _SettingsVpnDiagnosticsScreenState
             }
             _popRootRoute();
           },
-          child: Scaffold(
-            appBar: AppBar(
-              leading: IconButton(
-                tooltip: 'Back',
-                icon: const Icon(Icons.arrow_back),
-                onPressed: _popRootRoute,
-              ),
-              title: const Text('VPN Diagnostics'),
-              actions: [
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: vpn.isRefreshingDiagnostics
-                      ? null
-                      : () => vpn.refreshDiagnostics(),
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-            body: RefreshIndicator(
-              onRefresh: vpn.refreshDiagnostics,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: EdgeInsets.all(16.w),
-                children: [
-                  _DiagnosticsStatusCard(vpn: vpn),
-                  SizedBox(height: 16.h),
-                  _DiagnosticsEgressCard(vpn: vpn),
-                  SizedBox(height: 16.h),
-                  _DiagnosticsDecisionCard(vpn: vpn),
-                ],
-              ),
-            ),
-          ),
+          child: _buildScaffold(context, vpn),
         );
       },
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, VpnProvider vpn) {
+    final l10n = AppLocalizations.of(context)!;
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          tooltip: l10n.back,
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _popRootRoute,
+        ),
+        title: Text(l10n.vpnDiagnosticsTitle),
+        actions: [
+          IconButton(
+            tooltip: l10n.refresh,
+            onPressed: vpn.isRefreshingDiagnostics
+                ? null
+                : () => vpn.refreshDiagnostics(),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: vpn.refreshDiagnostics,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.all(16.w),
+          children: [
+            _DiagnosticsStatusCard(vpn: vpn),
+            SizedBox(height: 16.h),
+            _DiagnosticsEgressCard(vpn: vpn),
+            SizedBox(height: 16.h),
+            _DiagnosticsDecisionCard(vpn: vpn),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -113,16 +119,13 @@ class _DiagnosticsStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     final showStatusError = vpn.diagnosticsError != null && !vpn.isConnected;
     final subtitle = switch (vpn.status) {
-      VpnStatus.connected =>
-        'VPN connected — data below is from the active session',
-      VpnStatus.connecting =>
-        'VPN is connecting — diagnostics may change shortly',
-      VpnStatus.disconnecting =>
-        'VPN is disconnecting — results may be stale',
-      VpnStatus.disconnected =>
-        'VPN disconnected — showing rule hits from the last session',
+      VpnStatus.connected => l10n.vpnConnectedDiag,
+      VpnStatus.connecting => l10n.vpnConnectingDiag,
+      VpnStatus.disconnecting => l10n.vpnDisconnectingDiag,
+      VpnStatus.disconnected => l10n.vpnDisconnectedDiag,
     };
 
     return Card(
@@ -131,7 +134,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Session', style: theme.textTheme.titleMedium),
+            Text(l10n.session, style: theme.textTheme.titleMedium),
             SizedBox(height: 8.h),
             Text(
               vpn.status.name.toUpperCase(),
@@ -145,7 +148,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
             if (vpn.diagnosticsUpdatedAt != null) ...[
               SizedBox(height: 8.h),
               Text(
-                'Last updated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(vpn.diagnosticsUpdatedAt!)}',
+                l10n.lastUpdated(DateFormat('yyyy-MM-dd HH:mm:ss').format(vpn.diagnosticsUpdatedAt!)),
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -173,17 +176,18 @@ class _DiagnosticsEgressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     final value = switch ((
       vpn.isConnected,
       vpn.isRefreshingDiagnostics,
       vpn.diagnosticsEgressIp,
       vpn.diagnosticsError
     )) {
-      (false, _, _, _) => 'Connect VPN to measure current egress IP',
-      (true, true, null, _) => 'Refreshing...',
+      (false, _, _, _) => l10n.connectVpnToMeasure,
+      (true, true, null, _) => l10n.refreshing,
       (true, _, String ip, _) => ip,
-      (true, _, null, String _) => 'Probe unavailable',
-      _ => 'Unavailable',
+      (true, _, null, String _) => l10n.probeUnavailable,
+      _ => l10n.unavailable,
     };
     final helpText = switch ((
       vpn.isConnected,
@@ -192,8 +196,7 @@ class _DiagnosticsEgressCard extends StatelessWidget {
       vpn.diagnosticsError
     )) {
       (true, false, null, String error) => error,
-      (true, true, null, _) =>
-        'Trying a short native probe first, then falling back only if needed.',
+      (true, true, null, _) => l10n.egressProbeHelp,
       _ => null,
     };
 
@@ -212,7 +215,7 @@ class _DiagnosticsEgressCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Current Egress IP', style: theme.textTheme.titleMedium),
+                  Text(l10n.currentEgressIp, style: theme.textTheme.titleMedium),
                   SizedBox(height: 6.h),
                   Text(
                     value,
@@ -247,6 +250,7 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     final decisions = vpn.recentRouteDecisions;
 
     return Card(
@@ -258,7 +262,7 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 16.w),
               child: Text(
-                'Recent Routing Decisions',
+                l10n.recentRoutingDecisions,
                 style: theme.textTheme.titleMedium,
               ),
             ),
@@ -266,9 +270,7 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
             if (decisions.isEmpty)
               Padding(
                 padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 12.h),
-                child: Text(
-                  'No routing decisions yet. Browse a few websites, then refresh this page.',
-                ),
+                child: Text(l10n.noRoutingDecisionsYet),
               )
             else
               ...decisions.map(

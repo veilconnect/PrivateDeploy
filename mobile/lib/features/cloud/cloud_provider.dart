@@ -191,6 +191,9 @@ class CloudProvider with ChangeNotifier {
   Future<void> _init() async {
     await _initializeStorage();
     await _loadNodeRecords();
+    // Immediately build the instances list from cached node records so the UI
+    // can display known nodes without waiting for a network round-trip.
+    _restoreInstancesFromCache();
     // Load the API key from local storage so hasApiKey is accurate without
     // waiting for a network round-trip.  The full cloud config refresh (which
     // validates the key against the remote API) is deferred to the first
@@ -200,6 +203,23 @@ class CloudProvider with ChangeNotifier {
     _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
     _configLoaded = true;
     notifyListeners();
+  }
+
+  /// Populate [_instances] from locally persisted [_nodeRecords] so the UI
+  /// renders cached nodes instantly, before any API call completes.
+  void _restoreInstancesFromCache() {
+    if (_nodeRecords.isEmpty) return;
+    final cached = _nodeRecords.values
+        .where((r) => r.instanceId.isNotEmpty && r.isUsable)
+        .map((record) => record.toCloudInstance())
+        .toList()
+      ..sort(
+        (a, b) =>
+            (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)),
+      );
+    if (cached.isNotEmpty) {
+      _instances = cached;
+    }
   }
 
   Future<void> _initializeStorage() async {

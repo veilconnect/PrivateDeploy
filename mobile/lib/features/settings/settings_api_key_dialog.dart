@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
 
-String maskedSettingsApiKey(String? apiKey) {
+String maskedSettingsApiKey(String? apiKey, {String notSetLabel = 'Not set'}) {
   final trimmed = apiKey?.trim() ?? '';
   if (trimmed.isEmpty) {
-    return 'Not set';
+    return notSetLabel;
   }
   final visibleLength = trimmed.length < 8 ? trimmed.length : 8;
   return '${trimmed.substring(0, visibleLength)}...';
@@ -54,8 +55,9 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('API Key'),
+      title: Text(l10n.apiKey),
       content: SizedBox(
         width: 520.w,
         child: TextField(
@@ -63,8 +65,8 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
           obscureText: true,
           enabled: !_saving,
           decoration: InputDecoration(
-            hintText: 'Paste your Vultr API key',
-            labelText: 'API Key',
+            hintText: l10n.pasteVultrApiKey,
+            labelText: l10n.apiKey,
             errorText: _dialogError,
           ),
         ),
@@ -72,13 +74,13 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       actions: [
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: _saving ? null : _verifyAndSave,
           child: _saving
-              ? const Text('Verifying...')
-              : const Text('Verify & Save'),
+              ? Text(l10n.verifying)
+              : Text(l10n.verifyAndSave),
         ),
       ],
     );
@@ -102,8 +104,8 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       }
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(
-          const SnackBar(
-            content: Text('API key saved and verified'),
+          SnackBar(
+            content: Text(AppLocalizations.of(widget.rootContext)!.apiKeySavedAndVerified),
             backgroundColor: Colors.green,
           ),
         );
@@ -113,7 +115,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
 
     setState(() {
       _saving = false;
-      _dialogError = widget.cloud.error ?? 'Failed to save API key';
+      _dialogError = widget.cloud.error ?? AppLocalizations.of(context)!.failedToSaveApiKey;
     });
   }
 }

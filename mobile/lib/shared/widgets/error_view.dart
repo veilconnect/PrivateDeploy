@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
+
 class ErrorView extends StatelessWidget {
   final String message;
   final VoidCallback? onRetry;
@@ -38,7 +40,7 @@ class ErrorView extends StatelessWidget {
                   ),
                   SizedBox(height: 16.h.clamp(12.0, 24.0)),
                   Text(
-                    'Error',
+                    AppLocalizations.of(context)!.error,
                     style: TextStyle(
                       fontSize: titleSize,
                       fontWeight: FontWeight.bold,
@@ -59,7 +61,7 @@ class ErrorView extends StatelessWidget {
                     ElevatedButton.icon(
                       onPressed: onRetry,
                       icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
+                      label: Text(AppLocalizations.of(context)!.retry),
                       style: ElevatedButton.styleFrom(
                         padding: EdgeInsets.symmetric(
                           horizontal: buttonHorizontalPadding,

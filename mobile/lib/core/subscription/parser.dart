@@ -275,6 +275,8 @@ class SubscriptionParser {
           'password': password,
           'sni': params['sni'] ?? host,
           'insecure': params['insecure'] ?? '0',
+          if (params['up_mbps'] != null) 'up_mbps': params['up_mbps'],
+          if (params['down_mbps'] != null) 'down_mbps': params['down_mbps'],
         },
       );
     } catch (_) {
@@ -352,17 +354,24 @@ class SubscriptionParser {
         'servers': [
           {
             'tag': 'dns-remote',
+            'address': '8.8.8.8',
+            'detour': 'select',
+          },
+          {
+            'tag': 'dns-remote-doh',
             'address': 'https://8.8.8.8/dns-query',
-            'detour': 'select'
+            'detour': 'select',
           },
           {'tag': 'dns-local', 'address': 'local'},
         ],
         'rules': [
           {
             'outbound': ['any'],
-            'server': 'dns-local'
+            'server': 'dns-local',
           },
         ],
+        'strategy': 'prefer_ipv4',
+        'independent_cache': true,
       },
       'inbounds': [
         {
@@ -372,7 +381,7 @@ class SubscriptionParser {
           'inet4_address': '172.19.0.1/30',
           'auto_route': true,
           'strict_route': true,
-          'stack': 'gvisor',
+          'stack': 'system',
           'sniff': true,
         },
       ],
@@ -387,8 +396,9 @@ class SubscriptionParser {
           'type': 'urltest',
           'tag': 'auto',
           'outbounds': tags,
-          'url': 'https://www.gstatic.com/generate_204',
+          'url': 'http://www.gstatic.com/generate_204',
           'interval': '5m',
+          'tolerance': 200,
         },
         ...outbounds,
         {'type': 'direct', 'tag': 'direct'},
@@ -471,11 +481,19 @@ class SubscriptionParser {
         };
 
       case 'hysteria2':
+        final upMbps = int.tryParse(
+                node.extra['up_mbps']?.toString() ?? '') ??
+            100;
+        final downMbps = int.tryParse(
+                node.extra['down_mbps']?.toString() ?? '') ??
+            100;
         return {
           'type': 'hysteria2',
           'tag': node.name,
           'server': node.server,
           'server_port': node.port,
+          'up_mbps': upMbps,
+          'down_mbps': downMbps,
           'password': node.extra['password'] ?? '',
           'tls': {
             'enabled': true,

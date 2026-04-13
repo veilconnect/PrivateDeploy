@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../profiles/profile_provider.dart';
 import 'nodes_widgets.dart';
 
 class NodesManualProfilesSection extends StatelessWidget {
   final List<Profile> profiles;
   final String? activeProfileId;
+  final bool isConnected;
+  final Map<String, ProfileSpeedResult> speedResults;
   final ValueChanged<Profile> onActivate;
+  final ValueChanged<Profile> onSpeedTest;
   final ValueChanged<Profile> onView;
   final ValueChanged<Profile> onEdit;
   final ValueChanged<Profile> onDelete;
@@ -16,7 +20,10 @@ class NodesManualProfilesSection extends StatelessWidget {
     Key? key,
     required this.profiles,
     required this.activeProfileId,
+    this.isConnected = false,
+    this.speedResults = const {},
     required this.onActivate,
+    required this.onSpeedTest,
     required this.onView,
     required this.onEdit,
     required this.onDelete,
@@ -24,12 +31,12 @@ class NodesManualProfilesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         NodesSectionHeader(
-          title: 'Manual Profiles',
-          subtitle: 'Local configs and imported subscriptions',
+          title: l10n.manualProfiles,
           count: profiles.length,
         ),
         SizedBox(height: 8.h),
@@ -37,8 +44,11 @@ class NodesManualProfilesSection extends StatelessWidget {
           (profile) => NodesProfileCard(
             profile: profile,
             isActive: profile.id == activeProfileId,
+            isConnected: profile.id == activeProfileId && isConnected,
             createdAtLabel: _formatDate(profile.createdAt),
+            speedResult: speedResults[profile.id],
             onActivate: () => onActivate(profile),
+            onSpeedTest: () => onSpeedTest(profile),
             onView: () => onView(profile),
             onEdit: () => onEdit(profile),
             onDelete: () => onDelete(profile),

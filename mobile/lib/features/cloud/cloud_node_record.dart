@@ -59,7 +59,7 @@ class VultrNodeRecord {
       id: instanceId,
       provider: 'vultr',
       label: label,
-      status: 'unknown',
+      status: isUsable ? 'active' : 'unknown',
       region: region,
       plan: plan,
       ipv4: _stringOrNull(ipv4),

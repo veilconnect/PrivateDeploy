@@ -138,6 +138,11 @@ String? buildCloudNodeConfig(
       'servers': [
         {
           'tag': 'dns-remote',
+          'address': '8.8.8.8',
+          'detour': 'select',
+        },
+        {
+          'tag': 'dns-remote-doh',
           'address': 'https://8.8.8.8/dns-query',
           'detour': 'select',
         },
@@ -146,9 +151,11 @@ String? buildCloudNodeConfig(
       'rules': [
         {
           'outbound': ['any'],
-          'server': 'dns-local'
+          'server': 'dns-local',
         },
       ],
+      'strategy': 'prefer_ipv4',
+      'independent_cache': true,
     },
     'inbounds': [
       {
@@ -173,8 +180,9 @@ String? buildCloudNodeConfig(
         'type': 'urltest',
         'tag': 'auto',
         'outbounds': tags,
-        'url': 'https://www.gstatic.com/generate_204',
+        'url': 'http://www.gstatic.com/generate_204',
         'interval': '5m',
+        'tolerance': 200,
       },
       ...outbounds,
       {'type': 'direct', 'tag': 'direct'},

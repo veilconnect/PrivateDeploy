@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_dialogs.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -41,7 +43,12 @@ void main() {
       await tester.tap(find.text('Create'));
       await tester.pump();
       expect(find.text('Please enter a profile name'), findsOneWidget);
-      expect(find.text('Invalid config: not a JSON object'), findsOneWidget);
+      expect(
+        find.text(
+          'Unrecognized format. Paste proxy links (ss://, vless://, etc.) or sing-box JSON.',
+        ),
+        findsOneWidget,
+      );
 
       await tester.enterText(
         find.byType(TextFormField).first,
@@ -106,6 +113,11 @@ void main() {
 
       await tester.tap(find.text('Verify & Save'));
       await tester.pump();
+      // Wait for the async verification to complete.
+      await tester.pump();
+      // The dialog shows a success indicator and delays before closing.
+      expect(find.text('API key verified'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
 
       expect(attempts, 2);
@@ -136,7 +148,7 @@ void main() {
 
       await tester.tap(find.text('Import'));
       await tester.pump();
-      expect(find.text('Please enter a subscription URL'), findsOneWidget);
+      expect(find.text('Please enter a URL or proxy links'), findsOneWidget);
 
       await tester.enterText(find.byType(TextFormField).first, '  Sub A  ');
       await tester.enterText(find.byType(TextFormField).last, 'not-a-url');
@@ -146,7 +158,12 @@ void main() {
         find.text('A profile with this name already exists'),
         findsOneWidget,
       );
-      expect(find.text('Must be an http(s) URL'), findsOneWidget);
+      expect(
+        find.text(
+          'Enter an http(s) URL or proxy links (ss://, vless://, etc.)',
+        ),
+        findsOneWidget,
+      );
 
       await tester.enterText(find.byType(TextFormField).first, '  Sub B  ');
       await tester.enterText(
@@ -320,6 +337,13 @@ Future<void> _pumpDialogHarness(
   addTearDown(tester.view.reset);
 
   Widget child = MaterialApp(
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
       body: Builder(
         builder: (context) {

@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 
 Future<bool> showNodesConfirmationDialog({
   required BuildContext context,
   required String title,
   required String message,
-  String confirmLabel = 'Continue',
-  String cancelLabel = 'Cancel',
+  String? confirmLabel,
+  String? cancelLabel,
   Color? confirmColor,
 }) async {
+  final l10n = AppLocalizations.of(context)!;
   return await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -19,7 +21,7 @@ Future<bool> showNodesConfirmationDialog({
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: Text(cancelLabel),
+              child: Text(cancelLabel ?? l10n.cancel),
             ),
             ElevatedButton(
               style: confirmColor == null
@@ -29,7 +31,7 @@ Future<bool> showNodesConfirmationDialog({
                       foregroundColor: Colors.white,
                     ),
               onPressed: () => Navigator.pop(context, true),
-              child: Text(confirmLabel),
+              child: Text(confirmLabel ?? l10n.continue_),
             ),
           ],
         ),
@@ -41,13 +43,14 @@ Future<bool> showNodesDeleteConfirmationDialog({
   required BuildContext context,
   required String title,
   required String message,
-  String confirmLabel = 'Delete',
+  String? confirmLabel,
 }) async {
+  final l10n = AppLocalizations.of(context)!;
   return showNodesConfirmationDialog(
     context: context,
     title: title,
     message: message,
-    confirmLabel: confirmLabel,
+    confirmLabel: confirmLabel ?? l10n.delete,
     confirmColor: Colors.red,
   );
 }
@@ -60,6 +63,7 @@ Future<CloudInstance?> showNodesCloudNodePickerSheet(
     context: context,
     showDragHandle: true,
     builder: (sheetContext) {
+      final l10n = AppLocalizations.of(sheetContext)!;
       return SafeArea(
         child: Padding(
           padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 16.h),
@@ -68,7 +72,7 @@ Future<CloudInstance?> showNodesCloudNodePickerSheet(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Choose a cloud node',
+                l10n.chooseCloudNode,
                 style: TextStyle(
                   fontSize: 18.sp,
                   fontWeight: FontWeight.bold,
@@ -76,7 +80,7 @@ Future<CloudInstance?> showNodesCloudNodePickerSheet(
               ),
               SizedBox(height: 6.h),
               Text(
-                'Connect needs one active node. Pick which cloud node to use now.',
+                l10n.chooseCloudNodeDesc,
                 style: TextStyle(
                   fontSize: 13.sp,
                   color: Colors.grey[700],

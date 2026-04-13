@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../services/vpn_native_service.dart';
 import 'app_settings_provider.dart';
 
@@ -94,8 +95,9 @@ class _SettingsRoutingRulesDialogState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Edit Routing Rules'),
+      title: Text(l10n.editRoutingRules),
       content: SizedBox(
         width: 560.w,
         child: SingleChildScrollView(
@@ -104,9 +106,7 @@ class _SettingsRoutingRulesDialogState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Built-in defaults follow common split patterns: LAN direct, '
-                'CN domains direct, CN IPs direct. Global mode only keeps LAN '
-                'and custom rules.',
+                l10n.routingRulesHelp,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               SizedBox(height: 12.h),
@@ -120,7 +120,7 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('LAN / private networks direct'),
+                title: Text(l10n.lanDirectRule),
               ),
               CheckboxListTile(
                 value: _directCnDomains,
@@ -132,7 +132,7 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('CN domains direct'),
+                title: Text(l10n.cnDomainsDirectRule),
               ),
               CheckboxListTile(
                 value: _directCnIpRanges,
@@ -144,19 +144,19 @@ class _SettingsRoutingRulesDialogState
                         });
                       },
                 contentPadding: EdgeInsets.zero,
-                title: const Text('CN IPs direct'),
+                title: Text(l10n.cnIpsDirectRule),
               ),
               SizedBox(height: 12.h),
               _buildAppRuleTile(
                 context,
-                title: 'Direct apps',
+                title: l10n.directApps,
                 subtitle: _supportsPackageRouting
-                    ? _packageSummary(_directPackages)
-                    : 'Per-app routing is Android-only',
+                    ? _packageSummary(_directPackages, l10n)
+                    : l10n.perAppAndroidOnly,
                 icon: Icons.phone_android_outlined,
                 enabled: _supportsPackageRouting && !_saving,
                 onTap: () => _openPackagePicker(
-                  title: 'Pick direct apps',
+                  title: l10n.pickDirectApps,
                   currentPackages: _directPackages,
                   oppositePackages: _proxyPackages,
                   onSelected: (selected) {
@@ -168,14 +168,14 @@ class _SettingsRoutingRulesDialogState
               ),
               _buildAppRuleTile(
                 context,
-                title: 'Proxied apps',
+                title: l10n.proxiedApps,
                 subtitle: _supportsPackageRouting
-                    ? _packageSummary(_proxyPackages)
-                    : 'Per-app routing is Android-only',
+                    ? _packageSummary(_proxyPackages, l10n)
+                    : l10n.perAppAndroidOnly,
                 icon: Icons.rocket_launch_outlined,
                 enabled: _supportsPackageRouting && !_saving,
                 onTap: () => _openPackagePicker(
-                  title: 'Pick proxied apps',
+                  title: l10n.pickProxiedApps,
                   currentPackages: _proxyPackages,
                   oppositePackages: _directPackages,
                   onSelected: (selected) {
@@ -198,26 +198,26 @@ class _SettingsRoutingRulesDialogState
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _directDomainsController,
-                label: 'Custom direct domains / suffixes',
-                hint: 'One per line, e.g.:\nexample.cn\ncorp.local',
+                label: l10n.customDirectDomains,
+                hint: l10n.customDirectDomainsHint,
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _proxyDomainsController,
-                label: 'Custom proxied domains / suffixes',
-                hint: 'One per line, e.g.:\nnetflix.com\nopenai.com',
+                label: l10n.customProxiedDomains,
+                hint: l10n.customProxiedDomainsHint,
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _directCidrsController,
-                label: 'Custom direct CIDRs',
-                hint: 'One per line, e.g.:\n10.10.0.0/16',
+                label: l10n.customDirectCidrs,
+                hint: l10n.customDirectCidrsHint,
               ),
               SizedBox(height: 12.h),
               _buildTextField(
                 controller: _proxyCidrsController,
-                label: 'Custom proxied CIDRs',
-                hint: 'One per line, e.g.:\n203.0.113.0/24',
+                label: l10n.customProxiedCidrs,
+                hint: l10n.customProxiedCidrsHint,
               ),
               if (_errorText != null) ...[
                 SizedBox(height: 12.h),
@@ -235,7 +235,7 @@ class _SettingsRoutingRulesDialogState
       actions: [
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l10n.close),
         ),
         OutlinedButton(
           onPressed: _saving
@@ -250,11 +250,11 @@ class _SettingsRoutingRulesDialogState
                   }
                   Navigator.pop(context);
                 },
-          child: const Text('Reset to defaults'),
+          child: Text(l10n.resetToDefaults),
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: const Text('Save'),
+          child: Text(l10n.save),
         ),
       ],
     );
@@ -317,9 +317,8 @@ class _SettingsRoutingRulesDialogState
     setState(() {
       _installedApps = apps;
       _loadingApps = false;
-      if (apps.isEmpty) {
-        _appsError =
-            'Could not list apps; you can still save domain and CIDR rules.';
+      if (apps.isEmpty && mounted) {
+        _appsError = AppLocalizations.of(context)!.appListError;
       }
     });
   }
@@ -408,18 +407,18 @@ class _SettingsRoutingRulesDialogState
         .toList(growable: false);
   }
 
-  String _packageSummary(List<String> packages) {
+  String _packageSummary(List<String> packages, AppLocalizations l10n) {
     if (packages.isEmpty) {
-      return '未选择 App';
+      return l10n.noAppSelected;
     }
     final labels = packages
         .map(_labelForPackage)
         .where((label) => label.isNotEmpty)
         .toList(growable: false);
     if (labels.length <= 2) {
-      return labels.join('、');
+      return labels.join(', ');
     }
-    return '${labels.take(2).join('、')} 等 ${labels.length} 个 App';
+    return l10n.appCountSelected(labels.first, labels.length - 1);
   }
 
   String _labelForPackage(String packageName) {
@@ -448,7 +447,7 @@ class _SettingsRoutingRulesDialogState
           proxyPackages.toSet(),
         );
     if (packageOverlap.isNotEmpty) {
-      return 'An app cannot be both direct and proxied';
+      return AppLocalizations.of(context)!.appBothDirectProxied;
     }
 
     for (final domain in [...directDomains, ...proxyDomains]) {
@@ -525,9 +524,9 @@ class _RoutingPackagePickerDialogState
           children: [
             TextField(
               controller: _searchController,
-              decoration: const InputDecoration(
-                labelText: '搜索 App',
-                prefixIcon: Icon(Icons.search),
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.searchApp,
+                prefixIcon: const Icon(Icons.search),
               ),
               onChanged: (value) {
                 setState(() {
@@ -575,14 +574,14 @@ class _RoutingPackagePickerDialogState
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(AppLocalizations.of(context)!.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(
             context,
             _selectedPackages.toList(growable: false)..sort(),
           ),
-          child: const Text('OK'),
+          child: Text(AppLocalizations.of(context)!.ok),
         ),
       ],
     );

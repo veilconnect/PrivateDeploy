@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import '../../shared/utils/logger.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
@@ -12,8 +13,10 @@ import 'nodes_cloud_actions.dart';
 import 'nodes_profile_actions.dart';
 import 'nodes_sections.dart';
 import 'nodes_screen_fab.dart';
+import 'nodes_test_keys.dart';
 import 'nodes_vpn_actions.dart';
 import 'nodes_widgets.dart';
+import '../../l10n/app_localizations.dart';
 import '../profiles/profile_content_screen.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/settings_screen.dart';
@@ -28,6 +31,7 @@ class NodesScreen extends StatefulWidget {
 
 class _NodesScreenState extends State<NodesScreen> {
   bool _didBootstrap = false;
+  final Map<String, ProfileSpeedResult> _profileSpeedResults = {};
 
   @override
   void initState() {
@@ -55,22 +59,54 @@ class _NodesScreenState extends State<NodesScreen> {
     final profileProvider = context.read<ProfileProvider>();
     final vpnProvider = context.read<VpnProvider>();
 
-    // Run independent local operations in parallel to cut startup latency.
+    // Run local-only operations first so the UI can render cached data fast.
     await Future.wait([
       profileProvider.loadProfiles(),
-      if (initializeVpn)
-        vpnProvider.initialize()
-      else
-        vpnProvider.loadStatus(),
-      cloudProvider.refreshCloudConfig(),
+      if (initializeVpn) vpnProvider.initialize() else vpnProvider.loadStatus(),
     ]);
 
-    if (cloudProvider.hasApiKey) {
-      await cloudProvider.loadInstances();
-      unawaited(cloudProvider.loadRegions());
-      unawaited(cloudProvider.loadPlans());
-      await _reconcileCloudProfiles(
-          cloudProvider, profileProvider, vpnProvider);
+    if (!cloudProvider.hasApiKey) {
+      // No API key — nothing to sync remotely.
+      await cloudProvider.refreshCloudConfig();
+      return;
+    }
+
+    // If we already have cached instances (restored from local storage in
+    // CloudProvider._init), kick off the API sync in the background so the
+    // user can connect immediately without waiting for a network round-trip.
+    if (cloudProvider.instances.isNotEmpty) {
+      unawaited(_backgroundCloudSync(
+          cloudProvider, profileProvider, vpnProvider));
+    } else {
+      // No cached data — must wait for API so the user sees something.
+      await cloudProvider.refreshCloudConfig();
+      if (cloudProvider.hasApiKey) {
+        await cloudProvider.loadInstances();
+        unawaited(cloudProvider.loadRegions());
+        unawaited(cloudProvider.loadPlans());
+        await _reconcileCloudProfiles(
+            cloudProvider, profileProvider, vpnProvider);
+      }
+    }
+  }
+
+  Future<void> _backgroundCloudSync(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) async {
+    try {
+      await cloudProvider.refreshCloudConfig();
+      if (cloudProvider.hasApiKey) {
+        await cloudProvider.loadInstances();
+        unawaited(cloudProvider.loadRegions());
+        unawaited(cloudProvider.loadPlans());
+        await _reconcileCloudProfiles(
+            cloudProvider, profileProvider, vpnProvider);
+      }
+    } catch (e) {
+      // Background sync failure is non-critical — cached nodes remain usable.
+      AppLogger.warning('[NodesScreen] Background cloud sync failed: $e');
     }
   }
 
@@ -263,6 +299,29 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _testProfileSpeed(
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    Profile profile,
+  ) async {
+    setState(() {
+      _profileSpeedResults[profile.id] = const ProfileSpeedResult.testing();
+    });
+
+    final result = await testProfileSpeed(
+      context: context,
+      profile: profile,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+    );
+
+    if (mounted) {
+      setState(() {
+        _profileSpeedResults[profile.id] = result;
+      });
+    }
+  }
+
   Future<void> _showImportProfileDialog() {
     return showImportProfileFlow(
       context: context,
@@ -287,25 +346,26 @@ class _NodesScreenState extends State<NodesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Workspace'),
+        title: Text(l10n.workspace),
         actions: [
           IconButton(
             icon: const Icon(Icons.key),
             onPressed: () =>
                 _showCloudApiKeyDialog(context.read<CloudProvider>()),
-            tooltip: 'Cloud API Key',
+            tooltip: l10n.cloudApiKey,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshAll,
-            tooltip: 'Refresh',
+            tooltip: l10n.refresh,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _openSettings,
-            tooltip: 'Settings',
+            tooltip: l10n.settings,
           ),
         ],
       ),
@@ -319,7 +379,7 @@ class _NodesScreenState extends State<NodesScreen> {
               profileProvider.profiles.isEmpty &&
               cloudProvider.isLoading &&
               cloudProvider.instances.isEmpty) {
-            return const LoadingIndicator(message: 'Loading nodes...');
+            return LoadingIndicator(message: l10n.loadingNodes);
           }
 
           return RefreshIndicator(
@@ -343,10 +403,13 @@ class _NodesScreenState extends State<NodesScreen> {
                 ),
                 if (vpnProvider.error != null) ...[
                   SizedBox(height: 12.h),
-                  NodesInlineInfoCard(
-                    icon: Icons.error_outline,
-                    title: 'VPN notice',
-                    message: vpnProvider.error!,
+                  KeyedSubtree(
+                    key: NodesTestKeys.vpnNoticeCard,
+                    child: NodesInlineInfoCard(
+                      icon: Icons.error_outline,
+                      title: l10n.vpnNotice,
+                      message: vpnProvider.error!,
+                    ),
                   ),
                 ],
                 SizedBox(height: 20.h),
@@ -372,8 +435,8 @@ class _NodesScreenState extends State<NodesScreen> {
                     vpnProvider,
                     instance,
                   ),
-                  onTestCloudNodeLatency: (instance) =>
-                      _testCloudNodeLatency(cloudProvider, profileProvider, vpnProvider, instance),
+                  onTestCloudNodeLatency: (instance) => _testCloudNodeLatency(
+                      cloudProvider, profileProvider, vpnProvider, instance),
                   onTestAllCloudNodesLatency: () => _testAllCloudNodesLatency(
                     cloudProvider,
                     profileProvider,
@@ -385,8 +448,15 @@ class _NodesScreenState extends State<NodesScreen> {
                   NodesManualProfilesSection(
                     profiles: localProfiles,
                     activeProfileId: profileProvider.activeProfile?.id,
+                    isConnected: vpnProvider.status == VpnStatus.connected,
+                    speedResults: _profileSpeedResults,
                     onActivate: (profile) => _activateProfile(
                       cloudProvider,
+                      profileProvider,
+                      vpnProvider,
+                      profile,
+                    ),
+                    onSpeedTest: (profile) => _testProfileSpeed(
                       profileProvider,
                       vpnProvider,
                       profile,

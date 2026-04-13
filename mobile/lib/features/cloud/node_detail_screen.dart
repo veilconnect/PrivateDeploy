@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import 'cloud_models.dart';
 
 class NodeDetailScreen extends StatelessWidget {
@@ -13,13 +14,14 @@ class NodeDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
         title: Text(node.label.isNotEmpty ? node.label : (node.ipv4 ?? 'node')),
         actions: [
           IconButton(
             icon: const Icon(Icons.copy_all),
-            tooltip: 'Copy All Links',
+            tooltip: l10n.copyAllLinks,
             onPressed: () => _copyAllLinks(context),
           ),
         ],
@@ -31,35 +33,36 @@ class NodeDetailScreen extends StatelessWidget {
           SizedBox(height: 16.h),
           if (_nodeInfo.ssPort > 0)
             _buildProtocolCard(
-                context, 'Shadowsocks', Icons.lock, _ssDetails()),
+                context, l10n.shadowsocks, Icons.lock, _ssDetails(l10n)),
           if (_nodeInfo.hyPort > 0)
             _buildProtocolCard(
-                context, 'Hysteria2', Icons.speed, _hysteriaDetails()),
+                context, l10n.hysteria2, Icons.speed, _hysteriaDetails(l10n)),
           if (_nodeInfo.vlessPort > 0)
             _buildProtocolCard(
-                context, 'VLESS-Reality', Icons.shield, _vlessDetails()),
+                context, l10n.vlessReality, Icons.shield, _vlessDetails(l10n)),
           if (_nodeInfo.trojanPort > 0)
             _buildProtocolCard(
-                context, 'Trojan', Icons.security, _trojanDetails()),
+                context, l10n.trojan, Icons.security, _trojanDetails(l10n)),
         ],
       ),
     );
   }
 
   Widget _buildInfoCard(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: Padding(
         padding: EdgeInsets.all(16.w),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Node Info', style: Theme.of(context).textTheme.titleMedium),
+            Text(l10n.nodeInfo, style: Theme.of(context).textTheme.titleMedium),
             SizedBox(height: 12.h),
-            _infoRow('IP', node.ipv4 ?? ''),
-            if ((node.ipv6 ?? '').isNotEmpty) _infoRow('IPv6', node.ipv6!),
-            _infoRow('Region', node.region),
-            _infoRow('Status', node.status),
-            _infoRow('Created', node.createdAt?.toIso8601String() ?? '-'),
+            _infoRow(l10n.ip, node.ipv4 ?? ''),
+            if ((node.ipv6 ?? '').isNotEmpty) _infoRow(l10n.ipv6, node.ipv6!),
+            _infoRow(l10n.region, node.region),
+            _infoRow(l10n.statusLabel, node.status),
+            _infoRow(l10n.created, node.createdAt?.toIso8601String() ?? '-'),
           ],
         ),
       ),
@@ -125,7 +128,7 @@ class NodeDetailScreen extends StatelessWidget {
               Clipboard.setData(ClipboardData(text: value));
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                    content: Text('$label copied'),
+                    content: Text(AppLocalizations.of(context)!.labelCopied(label)),
                     duration: const Duration(seconds: 1)),
               );
             },
@@ -135,30 +138,30 @@ class NodeDetailScreen extends StatelessWidget {
     );
   }
 
-  List<_DetailRow> _ssDetails() => [
-        _DetailRow('Port', '${_nodeInfo.ssPort}'),
-        _DetailRow('Password', _nodeInfo.ssPassword),
-        _DetailRow('Method', 'aes-256-gcm'),
+  List<_DetailRow> _ssDetails(AppLocalizations l10n) => [
+        _DetailRow(l10n.port, '${_nodeInfo.ssPort}'),
+        _DetailRow(l10n.password, _nodeInfo.ssPassword),
+        _DetailRow(l10n.method, 'aes-256-gcm'),
       ];
 
-  List<_DetailRow> _hysteriaDetails() => [
-        _DetailRow('Port', '${_nodeInfo.hyPort}'),
-        _DetailRow('Password', _nodeInfo.hyPassword),
-        _DetailRow('SNI', _nodeInfo.hyServerName),
+  List<_DetailRow> _hysteriaDetails(AppLocalizations l10n) => [
+        _DetailRow(l10n.port, '${_nodeInfo.hyPort}'),
+        _DetailRow(l10n.password, _nodeInfo.hyPassword),
+        _DetailRow(l10n.sni, _nodeInfo.hyServerName),
       ];
 
-  List<_DetailRow> _vlessDetails() => [
-        _DetailRow('Port', '${_nodeInfo.vlessPort}'),
-        _DetailRow('UUID', _nodeInfo.vlessUuid),
-        _DetailRow('Public Key', _nodeInfo.vlessPublicKey),
-        _DetailRow('Short ID', _nodeInfo.vlessShortId),
-        _DetailRow('SNI', _nodeInfo.vlessServerName),
+  List<_DetailRow> _vlessDetails(AppLocalizations l10n) => [
+        _DetailRow(l10n.port, '${_nodeInfo.vlessPort}'),
+        _DetailRow(l10n.uuid, _nodeInfo.vlessUuid),
+        _DetailRow(l10n.publicKey, _nodeInfo.vlessPublicKey),
+        _DetailRow(l10n.shortId, _nodeInfo.vlessShortId),
+        _DetailRow(l10n.sni, _nodeInfo.vlessServerName),
       ];
 
-  List<_DetailRow> _trojanDetails() => [
-        _DetailRow('Port', '${_nodeInfo.trojanPort}'),
-        _DetailRow('Password', _nodeInfo.trojanPassword),
-        _DetailRow('SNI', _nodeInfo.trojanServerName),
+  List<_DetailRow> _trojanDetails(AppLocalizations l10n) => [
+        _DetailRow(l10n.port, '${_nodeInfo.trojanPort}'),
+        _DetailRow(l10n.password, _nodeInfo.trojanPassword),
+        _DetailRow(l10n.sni, _nodeInfo.trojanServerName),
       ];
 
   void _copyAllLinks(BuildContext context) {
@@ -170,21 +173,53 @@ class NodeDetailScreen extends StatelessWidget {
       }
     }
     if (_nodeInfo.hyPort > 0 && node.ipv4 != null) {
+      final sni = _nodeInfo.hyServerName.isNotEmpty
+          ? _nodeInfo.hyServerName
+          : node.ipv4!;
+      // Cloud nodes use self-signed certs; default to insecure=true
+      final insecure = (_nodeInfo.hyInsecure ?? true) ? '1' : '0';
       links.add(
-          'hysteria2://${_nodeInfo.hyPassword}@${node.ipv4!}:${_nodeInfo.hyPort}');
+          'hysteria2://${_nodeInfo.hyPassword}@${node.ipv4!}:${_nodeInfo.hyPort}'
+          '?sni=${Uri.encodeComponent(sni)}&insecure=$insecure'
+          '&up_mbps=100&down_mbps=100'
+          '#${Uri.encodeComponent('Hy2 ${node.ipv4}')}');
     }
     if (_nodeInfo.vlessPort > 0 && node.ipv4 != null) {
+      // Reality protocol needs a real domain as SNI, not the server IP
+      final sni = _nodeInfo.vlessServerName.isNotEmpty
+          ? _nodeInfo.vlessServerName
+          : 'www.microsoft.com';
+      final params = <String>[
+        'security=reality',
+        'sni=${Uri.encodeComponent(sni)}',
+        'fp=chrome',
+        'type=tcp',
+        if (_nodeInfo.vlessPublicKey.isNotEmpty)
+          'pbk=${Uri.encodeComponent(_nodeInfo.vlessPublicKey)}',
+        if (_nodeInfo.vlessShortId.isNotEmpty)
+          'sid=${Uri.encodeComponent(_nodeInfo.vlessShortId)}',
+        'flow=xtls-rprx-vision',
+      ];
       links.add(
-          'vless://${_nodeInfo.vlessUuid}@${node.ipv4!}:${_nodeInfo.vlessPort}');
+          'vless://${_nodeInfo.vlessUuid}@${node.ipv4!}:${_nodeInfo.vlessPort}'
+          '?${params.join('&')}'
+          '#${Uri.encodeComponent('VLESS ${node.ipv4}')}');
     }
     if (_nodeInfo.trojanPort > 0 && node.ipv4 != null) {
+      final sni = _nodeInfo.trojanServerName.isNotEmpty
+          ? _nodeInfo.trojanServerName
+          : node.ipv4!;
+      // Cloud nodes use self-signed certs; default to insecure=true
+      final insecure = (_nodeInfo.trojanInsecure ?? true) ? '1' : '0';
       links.add(
-          'trojan://${_nodeInfo.trojanPassword}@${node.ipv4!}:${_nodeInfo.trojanPort}');
+          'trojan://${_nodeInfo.trojanPassword}@${node.ipv4!}:${_nodeInfo.trojanPort}'
+          '?sni=${Uri.encodeComponent(sni)}&insecure=$insecure'
+          '#${Uri.encodeComponent('Trojan ${node.ipv4}')}');
     }
 
     Clipboard.setData(ClipboardData(text: links.join('\n')));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${links.length} links copied')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.linksCopied(links.length))),
     );
   }
 
@@ -200,7 +235,9 @@ class NodeDetailScreen extends StatelessWidget {
 
     final method = 'aes-256-gcm';
     final userInfo = base64Encode(utf8.encode('$method:$password'));
-    return 'ss://$userInfo@${node.ipv4!}:${_nodeInfo.ssPort}';
+    return 'ss://$userInfo@${node.ipv4!}:${_nodeInfo.ssPort}'
+        '#${Uri.encodeComponent('SS ${node.ipv4}')}';
+
   }
 
   NodeInfo get _nodeInfo =>

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+
+import 'l10n/app_localizations.dart';
 
 import 'core/storage/storage_service.dart';
 import 'features/home/home_screen.dart';
@@ -58,6 +61,13 @@ class PrivateDeployApp extends StatelessWidget {
           return MaterialApp(
             title: 'PrivateDeploy',
             debugShowCheckedModeBanner: false,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
             theme: ThemeData(
               primarySwatch: Colors.blue,
               useMaterial3: true,

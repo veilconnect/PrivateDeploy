@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../profiles/profile_provider.dart';
@@ -38,23 +39,22 @@ class NodesCloudSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
     if (!cloudProvider.hasApiKey) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const NodesSectionHeader(
-            title: 'Cloud Nodes',
-            subtitle: 'Deploy and use nodes from your cloud account',
+          NodesSectionHeader(
+            title: l10n.cloudNodes,
             count: 0,
           ),
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
             icon: Icons.cloud_off,
-            title: 'Cloud access not configured',
-            message:
-                'Save your Vultr API key to deploy nodes directly from this device.',
-            actionLabel: 'Set API Key',
+            title: l10n.cloudAccessNotConfigured,
+            message: l10n.setVultrApiKeyHint,
+            actionLabel: l10n.setApiKey,
             onAction: onConfigureApiKey,
           ),
         ],
@@ -65,45 +65,32 @@ class NodesCloudSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         NodesSectionHeader(
-          title: 'Cloud Nodes',
-          subtitle: 'Deploy, sync, and use cloud-backed nodes',
+          title: l10n.cloudNodes,
           count: cloudProvider.instances.length,
         ),
         if (readyCloudNodes.length > 1) ...[
           SizedBox(height: 8.h),
-          Wrap(
-            spacing: 10.w,
-            runSpacing: 8.h,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              OutlinedButton.icon(
-                onPressed: onTestAllCloudNodesLatency,
-                icon: const Icon(Icons.speed),
-                label: const Text('Benchmark All Nodes'),
-              ),
-              Text(
-                'Runs a real download sample after picking the best endpoint for each node. Top Connect still reuses recent winners first.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
+          OutlinedButton.icon(
+            onPressed: onTestAllCloudNodesLatency,
+            icon: const Icon(Icons.speed),
+            label: Text(l10n.benchmarkAll),
           ),
         ],
         SizedBox(height: 8.h),
         if (cloudProvider.error != null && cloudProvider.instances.isEmpty)
           NodesInlineInfoCard(
             icon: Icons.error_outline,
-            title: 'Failed to load cloud nodes',
+            title: l10n.failedToLoad,
             message: cloudProvider.error!,
-            actionLabel: 'Retry',
+            actionLabel: l10n.retry,
             onAction: onRetryLoad,
           )
         else if (cloudProvider.instances.isEmpty)
           NodesInlineInfoCard(
             icon: Icons.cloud_queue,
-            title: 'No cloud nodes yet',
-            message:
-                'Deploy your first node here. Once it becomes active, use it directly from this page.',
-            actionLabel: 'Deploy Node',
+            title: l10n.noCloudNodesYet,
+            message: l10n.deployFirstNodeHint,
+            actionLabel: l10n.deployNode,
             onAction: onCreateCloudNode,
           )
         else

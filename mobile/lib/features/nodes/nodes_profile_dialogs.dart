@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialog_models.dart';
+import 'nodes_test_keys.dart';
 
 Future<NodesImportProfileRequest?> showNodesImportProfileDialog(
   BuildContext context, {
@@ -71,8 +74,9 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Import from URL'),
+      title: Text(l10n.importFromUrl),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -80,10 +84,11 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextFormField(
+                key: NodesTestKeys.importProfileNameField,
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Profile Name',
-                  hintText: 'e.g. My Subscription',
+                decoration: InputDecoration(
+                  labelText: l10n.profileName,
+                  hintText: l10n.egMySubscription,
                 ),
                 validator: (value) {
                   final name = value?.trim() ?? '';
@@ -95,26 +100,39 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
               ),
               SizedBox(height: 16.h),
               TextFormField(
+                key: NodesTestKeys.importProfileUrlField,
                 controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Subscription URL',
-                  hintText: 'https://example.com/sub?token=...',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.urlOrProxyLinks,
+                  hintText: l10n.urlOrProxyLinksHint,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.paste),
+                    tooltip: l10n.pasteFromClipboard,
+                    onPressed: () async {
+                      final data = await Clipboard.getData('text/plain');
+                      if (data?.text != null && data!.text!.isNotEmpty) {
+                        _urlController.text = data.text!;
+                      }
+                    },
+                  ),
                 ),
                 maxLines: 3,
                 validator: (value) {
-                  final url = value?.trim() ?? '';
-                  if (url.isEmpty) {
-                    return 'Please enter a subscription URL';
+                  final input = value?.trim() ?? '';
+                  if (input.isEmpty) {
+                    return l10n.pleaseEnterUrlOrLinks;
                   }
-                  final uri = Uri.tryParse(url);
+                  // Accept http(s) subscription URL
+                  final uri = Uri.tryParse(input);
                   final isValidHttpUri = uri != null &&
                       uri.hasAuthority &&
                       (uri.scheme == 'http' || uri.scheme == 'https');
-                  if (!isValidHttpUri) {
-                    return 'Must be an http(s) URL';
-                  }
-                  return null;
+                  if (isValidHttpUri) return null;
+                  // Accept proxy URI links
+                  final configError = validateNodeConfig(input);
+                  if (configError == null) return null;
+                  return l10n.enterHttpUrlOrLinks;
                 },
               ),
             ],
@@ -124,9 +142,10 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         ElevatedButton(
+          key: NodesTestKeys.importProfileSubmitButton,
           onPressed: () {
             if (!_formKey.currentState!.validate()) {
               return;
@@ -139,7 +158,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
               ),
             );
           },
-          child: const Text('Import'),
+          child: Text(l10n.import_),
         ),
       ],
     );
@@ -179,8 +198,9 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Create Profile'),
+      title: Text(l10n.createProfile),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -189,14 +209,14 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Profile Name',
-                  hintText: 'e.g. My VPN Config',
+                decoration: InputDecoration(
+                  labelText: l10n.profileName,
+                  hintText: l10n.egMyVpnConfig,
                 ),
                 validator: (value) {
                   final name = value?.trim() ?? '';
                   if (name.isEmpty) {
-                    return 'Please enter a profile name';
+                    return l10n.pleaseEnterProfileName;
                   }
                   final validationError = widget.validateName?.call(name);
                   if (validationError != null) {
@@ -208,10 +228,20 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
               SizedBox(height: 16.h),
               TextFormField(
                 controller: _configController,
-                decoration: const InputDecoration(
-                  labelText: 'sing-box JSON Config',
-                  hintText: 'Paste sing-box configuration JSON here...',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.config,
+                  hintText: l10n.pasteProxyLinksOrJson,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.paste),
+                    tooltip: l10n.pasteFromClipboard,
+                    onPressed: () async {
+                      final data = await Clipboard.getData('text/plain');
+                      if (data?.text != null && data!.text!.isNotEmpty) {
+                        _configController.text = data.text!;
+                      }
+                    },
+                  ),
                 ),
                 maxLines: 8,
                 style: TextStyle(
@@ -221,9 +251,9 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                 validator: (value) {
                   final config = value?.trim() ?? '';
                   if (config.isEmpty) {
-                    return 'Please paste a sing-box config';
+                    return l10n.pleasePasteConfig;
                   }
-                  return validateSingboxConfig(config);
+                  return validateNodeConfig(config);
                 },
               ),
             ],
@@ -233,7 +263,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         ElevatedButton(
           onPressed: () {
@@ -248,7 +278,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
               ),
             );
           },
-          child: const Text('Create'),
+          child: Text(l10n.create),
         ),
       ],
     );
@@ -287,17 +317,18 @@ class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Rename Profile'),
+      title: Text(l10n.renameProfile),
       content: Form(
         key: _formKey,
         child: TextFormField(
           controller: _nameController,
-          decoration: const InputDecoration(labelText: 'Profile Name'),
+          decoration: InputDecoration(labelText: l10n.profileName),
           validator: (value) {
             final name = value?.trim() ?? '';
             if (name.isEmpty) {
-              return 'Please enter a profile name';
+              return l10n.pleaseEnterProfileName;
             }
             final validationError = widget.validateName?.call(name);
             if (validationError != null) {
@@ -310,7 +341,7 @@ class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         ElevatedButton(
           onPressed: () {
@@ -319,7 +350,7 @@ class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
             }
             Navigator.pop(context, _nameController.text.trim());
           },
-          child: const Text('Save'),
+          child: Text(l10n.save),
         ),
       ],
     );

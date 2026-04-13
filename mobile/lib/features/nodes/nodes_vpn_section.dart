@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../cloud/cloud_provider.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
 import 'nodes_cloud_actions.dart';
+import 'nodes_test_keys.dart';
 import 'nodes_widgets.dart';
 
 class NodesVpnSection extends StatelessWidget {
@@ -28,6 +30,7 @@ class NodesVpnSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final statusColor = _statusColor(vpnProvider.status);
     final selectedProfile = profileProvider.activeProfile?.name;
     final stats = vpnProvider.stats;
@@ -55,7 +58,7 @@ class NodesVpnSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Connection',
+                        l10n.connection,
                         style: TextStyle(
                           fontSize: 18.sp,
                           fontWeight: FontWeight.bold,
@@ -63,7 +66,7 @@ class NodesVpnSection extends StatelessWidget {
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        _statusLabel(vpnProvider.status),
+                        _statusLabel(vpnProvider.status, l10n),
                         style: TextStyle(
                           color: statusColor,
                           fontWeight: FontWeight.bold,
@@ -72,11 +75,9 @@ class NodesVpnSection extends StatelessWidget {
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        selectedProfile != null
-                            ? 'Selected node: $selectedProfile'
-                            : _connectionHint(cloudProvider),
+                        selectedProfile ?? _connectionHint(cloudProvider, l10n),
                         style:
-                            TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                            TextStyle(fontSize: 12.sp, color: Colors.grey[600]),
                       ),
                     ],
                   ),
@@ -90,15 +91,15 @@ class NodesVpnSection extends StatelessWidget {
                 runSpacing: 8.h,
                 children: [
                   NodesStatusChip(
-                    text: 'Up ${stats.uploadFormatted}',
+                    text: l10n.upStats(stats.uploadFormatted),
                     color: Colors.blue,
                   ),
                   NodesStatusChip(
-                    text: 'Down ${stats.downloadFormatted}',
+                    text: l10n.downStats(stats.downloadFormatted),
                     color: Colors.green,
                   ),
                   NodesStatusChip(
-                    text: 'Speed ${stats.downloadSpeedFormatted}',
+                    text: l10n.speedStats(stats.downloadSpeedFormatted),
                     color: Colors.purple,
                   ),
                 ],
@@ -108,18 +109,19 @@ class NodesVpnSection extends StatelessWidget {
             if (!vpnProvider.isSupported)
               NodesInlineInfoCard(
                 icon: Icons.info_outline,
-                title: 'Native VPN unavailable',
+                title: l10n.nativeVpnUnavailable,
                 message: vpnProvider.unsupportedReason ??
-                    'This build does not include a usable native VPN runtime.',
+                    l10n.nativeVpnUnavailableMessage,
               )
             else if (vpnProvider.isLoading)
-              const LoadingIndicator(message: 'Processing VPN...')
+              LoadingIndicator(message: l10n.processingVpn)
             else
               Column(
                 children: [
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
+                      key: NodesTestKeys.connectButton,
                       onPressed: vpnProvider.status == VpnStatus.disconnected
                           ? onConnect
                           : vpnProvider.status == VpnStatus.connected
@@ -132,8 +134,8 @@ class NodesVpnSection extends StatelessWidget {
                       ),
                       label: Text(
                         vpnProvider.status == VpnStatus.connected
-                            ? 'Disconnect'
-                            : 'Connect',
+                            ? l10n.disconnect
+                            : l10n.connect,
                       ),
                     ),
                   ),
@@ -142,9 +144,10 @@ class NodesVpnSection extends StatelessWidget {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
+                        key: NodesTestKeys.restartButton,
                         onPressed: onRestart,
                         icon: const Icon(Icons.restart_alt),
-                        label: const Text('Restart VPN'),
+                        label: Text(l10n.restartVpn),
                       ),
                     ),
                   ],
@@ -181,29 +184,26 @@ IconData _statusIcon(VpnStatus status) {
   }
 }
 
-String _statusLabel(VpnStatus status) {
+String _statusLabel(VpnStatus status, AppLocalizations l10n) {
   switch (status) {
     case VpnStatus.connected:
-      return 'Connected';
+      return l10n.connected;
     case VpnStatus.connecting:
-      return 'Connecting...';
+      return l10n.connecting;
     case VpnStatus.disconnecting:
-      return 'Disconnecting...';
+      return l10n.disconnecting;
     case VpnStatus.disconnected:
-      return 'Disconnected';
+      return l10n.disconnected;
   }
 }
 
-String _connectionHint(CloudProvider cloudProvider) {
+String _connectionHint(CloudProvider cloudProvider, AppLocalizations l10n) {
   final readyCloudNodes = connectableCloudInstances(cloudProvider);
-  if (readyCloudNodes.length == 1) {
-    return 'Tap Connect to use your ready cloud node automatically.';
-  }
-  if (readyCloudNodes.length > 1) {
-    return 'Tap Connect to test your ready cloud nodes and use the fastest one automatically, or select a local profile below.';
+  if (readyCloudNodes.isNotEmpty) {
+    return l10n.tapConnectHint;
   }
   if (cloudProvider.instances.isNotEmpty) {
-    return 'Cloud nodes are visible, but this device still needs their local credentials before it can connect.';
+    return l10n.waitingForCredentials;
   }
-  return 'Choose a node or local profile below before connecting.';
+  return l10n.noNodeSelected;
 }

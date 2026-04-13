@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import '../../l10n/app_localizations.dart';
 import 'profile_provider.dart';
 
 class ProfileContentScreen extends StatefulWidget {
@@ -70,7 +71,7 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
           expands: true,
           decoration: InputDecoration(
             border: _isEditing ? const OutlineInputBorder() : InputBorder.none,
-            hintText: 'Paste sing-box JSON configuration here...',
+            hintText: AppLocalizations.of(context)!.pasteSingboxJsonHint,
           ),
           style: TextStyle(
             fontFamily: 'monospace',
@@ -92,10 +93,11 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
       return;
     }
 
+    final l10n = AppLocalizations.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          success ? 'Profile content saved' : provider.error ?? 'Save failed',
+          success ? l10n.profileContentSaved : provider.error ?? l10n.saveFailed,
         ),
         backgroundColor: success ? Colors.green : Colors.red,
       ),

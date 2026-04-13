@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_backup_preview_card.dart';
@@ -48,8 +49,9 @@ class _SettingsBackupExportDialogState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Cloud Backup Ready'),
+      title: Text(l10n.cloudBackupReady),
       content: SizedBox(
         width: 520.w,
         child: Column(
@@ -58,10 +60,10 @@ class _SettingsBackupExportDialogState
           children: [
             Text(
               _revealed
-                  ? 'Sensitive backup JSON is visible below. Store it safely because it includes your Vultr API key and node credentials.'
+                  ? l10n.backupSensitiveWarning
                   : _copied
-                      ? 'Sensitive backup copied to your clipboard. Clipboard contents may be accessible to other apps until you replace them.'
-                      : 'Review the backup summary below before copying. The backup includes sensitive data such as your Vultr API key and node credentials.',
+                      ? l10n.backupClipboardWarning
+                      : l10n.backupReviewWarning,
             ),
             SizedBox(height: 12.h),
             SettingsBackupPreviewCard(preview: _preview),
@@ -86,15 +88,15 @@ class _SettingsBackupExportDialogState
       actions: [
         OutlinedButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l10n.close),
         ),
         FilledButton.tonal(
           onPressed: _copySensitiveBackup,
-          child: Text(_copied ? 'Copy Again' : 'Copy Sensitive Backup'),
+          child: Text(_copied ? l10n.copyAgain : l10n.copySensitiveBackup),
         ),
         FilledButton(
           onPressed: _toggleSensitiveJson,
-          child: Text(_revealed ? 'Hide JSON' : 'Reveal JSON'),
+          child: Text(_revealed ? l10n.hideJson : l10n.revealJson),
         ),
       ],
     );
@@ -103,22 +105,23 @@ class _SettingsBackupExportDialogState
   Future<void> _copySensitiveBackup() async {
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Copy Sensitive Backup?'),
-            content: const Text(
-              'This will place the full backup JSON on the system clipboard, including the saved API key and node credentials.',
-            ),
-            actions: [
-              OutlinedButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Copy'),
-              ),
-            ],
-          ),
+          builder: (dialogContext) {
+            final dl10n = AppLocalizations.of(dialogContext)!;
+            return AlertDialog(
+              title: Text(dl10n.copySensitiveBackupTitle),
+              content: Text(dl10n.copySensitiveBackupConfirm),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(dl10n.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(dl10n.copy),
+                ),
+              ],
+            );
+          },
         ) ??
         false;
 
@@ -135,7 +138,7 @@ class _SettingsBackupExportDialogState
       _copied = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sensitive backup copied to clipboard')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.sensitiveBackupCopied)),
     );
   }
 
@@ -149,22 +152,23 @@ class _SettingsBackupExportDialogState
 
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Reveal Sensitive Backup?'),
-            content: const Text(
-              'This will display the full backup JSON on screen, including the saved API key and node credentials.',
-            ),
-            actions: [
-              OutlinedButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Reveal'),
-              ),
-            ],
-          ),
+          builder: (dialogContext) {
+            final dl10n = AppLocalizations.of(dialogContext)!;
+            return AlertDialog(
+              title: Text(dl10n.revealSensitiveBackupTitle),
+              content: Text(dl10n.revealSensitiveBackupConfirm),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(dl10n.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(dl10n.reveal),
+                ),
+              ],
+            );
+          },
         ) ??
         false;
 

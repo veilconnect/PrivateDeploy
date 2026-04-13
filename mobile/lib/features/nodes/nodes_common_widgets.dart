@@ -3,43 +3,28 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class NodesSectionHeader extends StatelessWidget {
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final int count;
 
   const NodesSectionHeader({
     Key? key,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.count,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 18.sp,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: 2.h),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12.sp,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 18.sp,
+            fontWeight: FontWeight.bold,
           ),
         ),
+        const Spacer(),
         Container(
           padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
           decoration: BoxDecoration(
