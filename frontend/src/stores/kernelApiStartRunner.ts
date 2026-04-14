@@ -77,7 +77,9 @@ export const runKernelStartAttempts = async ({
       }
 
       const missingCloudSubscriptionFile =
-        messageText.includes('no such file or directory') &&
+        (messageText.includes('no such file or directory') ||
+          messageText.includes('the system cannot find the file specified') ||
+          messageText.includes('the system cannot find the path specified')) &&
         messageText.includes('data/subscribes/cloud-')
 
       if (missingCloudSubscriptionFile && attempt < maxAttempts) {

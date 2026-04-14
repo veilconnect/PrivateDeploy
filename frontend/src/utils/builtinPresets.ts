@@ -27,7 +27,7 @@ import { useRulesetsStore } from '@/stores/rulesets'
 
 import type { RuleSet } from '@/stores/rulesets'
 
-export const BuiltinPresetsVersion = 1
+export const BuiltinPresetsVersion = 2
 
 export const BuiltinRulesetIds = {
   PrivateLan: 'builtin-ruleset-private-lan',
@@ -150,52 +150,205 @@ export const buildBuiltinRulesetSeeds = () => [
     payload: createRulesetPayload(
       {
         domain_suffix: [
+          // Top-level
           'cn',
+          // Carriers & Government
           '10010.com',
+          '10086.cn',
+          '189.cn',
           '12306.cn',
-          '126.net',
-          '163.com',
-          '360.cn',
-          '58.com',
+          'gov.cn',
+          // Alibaba ecosystem
+          'alibaba.com',
+          'alibabacloud.com',
           'alicdn.com',
+          'alidns.com',
           'alipay.com',
+          'alipayobjects.com',
+          'alikunlun.com',
           'aliyun.com',
           'aliyuncs.com',
-          'bilibili.com',
-          'bytedance.com',
-          'csdn.net',
-          'douyin.com',
-          'douyu.com',
+          'amap.com',
+          'cainiao.com',
+          'dingtalk.com',
           'ele.me',
-          'gtimg.com',
-          'huawei.com',
-          'iqiyi.com',
-          'jd.com',
-          'mi.com',
-          'mihoyo.com',
-          'meituan.com',
-          'netease.com',
-          'pinduoduo.com',
-          'qq.com',
-          'qpic.cn',
-          'sina.com.cn',
-          'smzdm.com',
+          'etao.com',
           'taobao.com',
+          'tbcdn.cn',
           'tmall.com',
+          'uc.cn',
+          'ucweb.com',
+          // Tencent ecosystem
+          'gtimg.com',
+          'idqqimg.com',
+          'myqcloud.com',
+          'qq.com',
+          'qcloud.com',
+          'qpic.cn',
+          'qlogo.cn',
           'tencent.com',
+          'tenpay.com',
+          'wechat.com',
+          'weixin.qq.com',
+          'wxpay.wxutil.com',
+          // JD ecosystem
+          '3.cn',
+          '360buy.com',
+          '360buyimg.com',
+          'jd.com',
+          'jd.hk',
+          'jdcloud.com',
+          'jdpay.com',
+          'jcloudec.com',
+          // ByteDance / Douyin ecosystem
+          'amemv.com',
+          'bytedance.com',
+          'byteimg.com',
+          'bytegoofy.com',
+          'bytednsdoc.com',
+          'douyin.com',
+          'douyinpic.com',
+          'douyinstatic.com',
+          'douyinvod.com',
+          'feelgood.cn',
+          'feiliao.com',
+          'gifshow.com',
+          'huoshan.com',
+          'iesdouyin.com',
+          'ixigua.com',
+          'pstatp.com',
+          'snssdk.com',
+          'toutiao.com',
+          'toutiaoimg.com',
+          'volccdn.com',
+          'volces.com',
+          // Baidu ecosystem
+          'baidu.com',
+          'baidubce.com',
+          'baiducontent.com',
+          'baidustatic.com',
+          'baike.com',
+          'bcebos.com',
+          'bdimg.com',
+          'bdstatic.com',
+          'bdydns.com',
+          'hao123.com',
+          'nuomi.com',
+          'tieba.com',
+          // NetEase
+          '126.net',
+          '127.net',
+          '163.com',
+          'netease.com',
+          'yeah.net',
+          'youdao.com',
+          // Sina / Weibo
+          'sina.com.cn',
+          'sinaimg.cn',
+          'sinajs.cn',
           'weibo.com',
-          'xiaohongshu.com',
-          'xunlei.com',
+          'weibocdn.com',
+          // Bilibili
+          'acgvideo.com',
+          'b23.tv',
+          'bilivideo.com',
+          'bilibili.com',
+          'biliapi.com',
+          'biliapi.net',
+          'hdslb.com',
+          // Video / Entertainment
+          'douyu.com',
+          'iqiyi.com',
+          'iqiyipic.com',
+          'mgtv.com',
+          'pplive.com',
+          'sohu.com',
           'youku.com',
+          'ykimg.com',
+          // E-commerce & Services
+          '58.com',
+          'ctrip.com',
+          'dianping.com',
+          'jmstatic.com',
+          'jumei.com',
+          'kaola.com',
+          'meituan.com',
+          'meituan.net',
+          'mogujie.com',
+          'pinduoduo.com',
+          'smzdm.com',
+          'suning.com',
+          'vip.com',
+          'vipshop.com',
+          'xiaohongshu.com',
+          'xhscdn.com',
+          'yangkeduo.com',
+          // Tech companies
+          '360.cn',
+          'csdn.net',
+          'huawei.com',
+          'honor.cn',
+          'lenovo.com',
+          'meizu.com',
+          'mi.com',
+          'miui.com',
+          'oppo.com',
+          'realme.com',
+          'vivo.com',
+          'xiaomi.com',
           'zhihu.com',
+          'zhimg.com',
+          // Gaming
+          'mihoyo.com',
+          'miyoushe.com',
+          'hoyoverse.com',
+          // CDN / Cloud / Infrastructure
+          'alikunlun.net',
+          'bscstorage.net',
+          'cdn20.com',
+          'chinanetcenter.com',
+          'dwstatic.com',
+          'fastcdn.com',
+          'kgimg.com',
+          'ksyun.com',
+          'kunlunaq.com',
+          'kunlunca.com',
+          'kunluncan.com',
+          'kunlunpi.com',
+          'kunlunsl.com',
+          'myalicdn.com',
+          'qiniucdn.com',
+          'qiniudn.com',
+          'qiniup.com',
+          'staticdn.net',
+          'tcdnos.com',
+          'ucloud.cn',
+          'upyun.com',
+          'wangsu.com',
+          'wscdns.com',
+          'wscloudcdn.com',
+          // Download / Tools
+          'xunlei.com',
+          // Finance
+          'eastmoney.com',
+          'hexun.com',
+          'lufax.com',
+          'pingan.com',
+          'snowballsecurities.com',
+          'xueqiu.com',
         ],
       },
       {
         ip_cidr: [
+          // China mainland public DNS servers
+          '1.12.12.12/32',
           '114.114.114.114/32',
+          '114.114.115.115/32',
           '119.29.29.29/32',
+          '120.53.53.53/32',
           '180.76.76.76/32',
           '223.5.5.5/32',
+          '223.6.6.6/32',
         ],
       },
     ),
@@ -408,10 +561,12 @@ export const buildBuiltinProfiles = () => {
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.SystemConnectivity), RuleAction.Route, DefaultDnsServersIds.LocalDns),
       createDnsRule(RuleType.ClashMode, ClashMode.Direct, RuleAction.Route, DefaultDnsServersIds.LocalDns),
       createDnsRule(RuleType.ClashMode, ClashMode.Global, RuleAction.Route, DefaultDnsServersIds.RemoteDns),
-      createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultDnsServersIds.LocalDns),
+      // Proxy rulesets first — resolve via remote DNS to avoid poisoning
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.AI), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Developer), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Global), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
+      // Mainland last — resolve via local DNS for best performance
+      createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultDnsServersIds.LocalDns),
     ]
     dns.final = finalDns
 
@@ -436,10 +591,12 @@ export const buildBuiltinProfiles = () => {
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.SystemConnectivity), RuleAction.Route, DefaultOutboundIds.Direct),
           createRouteRule(RuleType.ClashMode, ClashMode.Direct, RuleAction.Route, DefaultOutboundIds.Direct),
           createRouteRule(RuleType.ClashMode, ClashMode.Global, RuleAction.Route, DefaultOutboundIds.Global),
-          createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultOutboundIds.Direct),
+          // Proxy rulesets first — blocked sites must match before mainland fallback
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.AI), RuleAction.Route, DefaultOutboundIds.Select),
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Developer), RuleAction.Route, DefaultOutboundIds.Select),
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Global), RuleAction.Route, DefaultOutboundIds.Select),
+          // Mainland direct — everything else falls through to final (direct)
+          createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultOutboundIds.Direct),
         ],
         rule_set: routeRuleSets,
         auto_detect_interface: true,
@@ -462,8 +619,8 @@ export const buildBuiltinProfiles = () => {
       BuiltinProfileIds.Smart,
       t('presets.profiles.smart'),
       ClashMode.Rule,
-      DefaultOutboundIds.Fallback,
-      DefaultDnsServersIds.RemoteDns,
+      DefaultOutboundIds.Direct,
+      DefaultDnsServersIds.LocalDns,
     ),
     createProfile(
       BuiltinProfileIds.Global,
@@ -487,7 +644,10 @@ export const ensureBuiltinPresets = async () => {
   const profilesStore = useProfilesStore()
   const rulesetsStore = useRulesetsStore()
 
-  if (appSettingsStore.app.builtinPresetsVersion >= BuiltinPresetsVersion) {
+  const previousVersion = appSettingsStore.app.builtinPresetsVersion
+  const isUpgrade = previousVersion > 0 && previousVersion < BuiltinPresetsVersion
+
+  if (previousVersion >= BuiltinPresetsVersion) {
     const activeProfile = appSettingsStore.app.kernel.profile
     if (!activeProfile || !profilesStore.getProfileById(activeProfile)) {
       appSettingsStore.app.kernel.profile =
@@ -503,7 +663,8 @@ export const ensureBuiltinPresets = async () => {
       rulesetsStore.rulesets.push(createBuiltinRulesetMeta(seed))
       rulesetChanged = true
     }
-    if (!(await FileExists(seed.path))) {
+    // On upgrade or missing file, always overwrite ruleset content
+    if (isUpgrade || !(await FileExists(seed.path))) {
       await WriteFile(seed.path, JSON.stringify(seed.payload, null, 2))
       const current = rulesetsStore.getRulesetById(seed.id)
       if (current) {
@@ -519,7 +680,14 @@ export const ensureBuiltinPresets = async () => {
 
   let profileChanged = false
   for (const profile of buildBuiltinProfiles()) {
-    if (!profilesStore.getProfileById(profile.id)) {
+    const existing = profilesStore.getProfileById(profile.id)
+    if (existing) {
+      // On upgrade, replace builtin profiles with updated versions
+      if (isUpgrade) {
+        Object.assign(existing, profile)
+        profileChanged = true
+      }
+    } else {
       profilesStore.profiles.push(profile)
       profileChanged = true
     }

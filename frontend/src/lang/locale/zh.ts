@@ -452,8 +452,8 @@ export default {
       actions: '操作',
     },
     errors: {
-      apiKeyRequired: '请先保存可用的 Vultr API Key。',
-      apiKeyInvalid: 'Vultr API Key 无效或未授权。',
+      apiKeyRequired: '请先保存可用的云服务商 API Key。',
+      apiKeyInvalid: '云服务商 API Key 无效或未授权。',
       formIncomplete: '请先选择区域、套餐并填写实例名称。',
       ipv4Missing: '实例 IPv4 地址尚未就绪，请稍后再试。',
       planUnavailable: '所选套餐在该区域不可用，请选择其他套餐。',
@@ -510,6 +510,10 @@ export default {
       importSkippedIpv4: 'IPv4 地址 {value} 已存在。',
       importSkippedIpv6: 'IPv6 地址 {value} 已存在。',
       confirmRemove: '确定删除本地节点"{label}"？',
+      pasteLabel: '粘贴节点链接（快速填充）',
+      pastePlaceholder: '粘贴 ss://、vless://、trojan://、hysteria2:// 链接，自动填充下方表单',
+      pasteButton: '识别',
+      pasteInvalid: '无法识别该链接，请检查格式是否正确。',
     },
     recommendations: {
       title: '推荐节点',

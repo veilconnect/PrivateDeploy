@@ -318,6 +318,7 @@ export namespace cloud {
 	    password: string;
 	    // Go type: time
 	    createdAt: any;
+	    replacedInstanceId?: string;
 	    ssPort?: number;
 	    ssPassword?: string;
 	    hysteriaPort?: number;
@@ -352,6 +353,7 @@ export namespace cloud {
 	        this.port = source["port"];
 	        this.password = source["password"];
 	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.replacedInstanceId = source["replacedInstanceId"];
 	        this.ssPort = source["ssPort"];
 	        this.ssPassword = source["ssPassword"];
 	        this.hysteriaPort = source["hysteriaPort"];

@@ -451,8 +451,8 @@ export default {
       actions: 'Actions',
     },
     errors: {
-      apiKeyRequired: 'Please save a valid Vultr API key first.',
-      apiKeyInvalid: 'The Vultr API key is invalid or unauthorized.',
+      apiKeyRequired: 'Please save a valid cloud provider API key first.',
+      apiKeyInvalid: 'The cloud provider API key is invalid or unauthorized.',
       formIncomplete: 'Complete the region, plan, and label before deploying.',
       ipv4Missing: 'The instance IPv4 address is not ready yet. Please wait and try again.',
       planUnavailable: 'Selected plan is unavailable in this region. Please choose another plan.',
@@ -509,6 +509,10 @@ export default {
       importSkippedIpv4: 'IPv4 address {value} already exists.',
       importSkippedIpv6: 'IPv6 address {value} already exists.',
       confirmRemove: 'Remove local node "{label}"?',
+      pasteLabel: 'Paste node link (quick fill)',
+      pastePlaceholder: 'Paste ss://, vless://, trojan://, hysteria2:// link to auto-fill the form',
+      pasteButton: 'Parse',
+      pasteInvalid: 'Unable to parse the link. Please check the format.',
     },
     recommendations: {
       title: 'Recommended Nodes',

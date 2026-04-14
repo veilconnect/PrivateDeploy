@@ -1,13 +1,24 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
+import type { IconType } from '@/components/Icon/index.vue'
+
 const { t } = useI18n()
 
+type DeployMethod = 'ssh' | 'cloud' | 'manual'
+
+interface MethodOption {
+  key: DeployMethod
+  icon: IconType
+  title: string
+  desc: string
+}
+
 defineEmits<{
-  (event: 'select', method: 'ssh' | 'cloud' | 'manual'): void
+  (event: 'select', method: DeployMethod): void
 }>()
 
-const methods = [
+const methods: MethodOption[] = [
   { key: 'ssh' as const, icon: 'link', title: 'wizard.method.ssh', desc: 'wizard.method.sshDesc' },
   { key: 'cloud' as const, icon: 'sparkle', title: 'wizard.method.cloud', desc: 'wizard.method.cloudDesc' },
   { key: 'manual' as const, icon: 'edit', title: 'wizard.method.manual', desc: 'wizard.method.manualDesc' },
