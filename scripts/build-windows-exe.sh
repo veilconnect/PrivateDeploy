@@ -86,6 +86,7 @@ build_windows() {
       wails build \
       -m -s -trimpath \
       -tags webkit2_41 \
+      -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
       -o "$APP_NAME.exe"
 
     # 临时移除不需要打包的文件

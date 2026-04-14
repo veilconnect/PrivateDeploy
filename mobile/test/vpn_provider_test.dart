@@ -11,7 +11,7 @@ void main() {
   late VpnProvider vpnProvider;
 
   setUp(() {
-    vpnProvider = VpnProvider();
+    vpnProvider = VpnProvider(fetchEgressIp: () async => '203.0.113.42');
   });
 
   tearDown(() async {
@@ -123,7 +123,8 @@ void main() {
       expect(vpnProvider.activeProfile, 'Test');
     });
 
-    test('connect returns before stability window elapses', () async {
+    test('connect waits for the stability window before reporting success',
+        () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(methodChannel, (call) async {
         switch (call.method) {
@@ -154,7 +155,10 @@ void main() {
       stopwatch.stop();
 
       expect(success, true);
-      expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 150)));
+      expect(
+        stopwatch.elapsed,
+        greaterThanOrEqualTo(const Duration(milliseconds: 200)),
+      );
       expect(vpnProvider.isLoading, false);
       expect(vpnProvider.status, VpnStatus.connected);
     });
@@ -321,8 +325,7 @@ void main() {
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });
 
-    test(
-        'connect succeeds fast but background verification catches startup drop',
+    test('connect fails when startup verification catches a connection drop',
         () async {
       var statusCallCount = 0;
 
@@ -363,13 +366,71 @@ void main() {
         statusPollInterval: const Duration(milliseconds: 1),
       );
 
-      expect(success, true);
-      expect(vpnProvider.status, VpnStatus.connected);
-
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
+      expect(success, false);
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
+    });
+
+    test('connect fails when the startup egress probe cannot reach the node',
+        () async {
+      var stopVpnCalls = 0;
+      var tunnelStopped = false;
+
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'stopVpn':
+            stopVpnCalls += 1;
+            tunnelStopped = true;
+            return true;
+          case 'getStatus':
+            if (tunnelStopped) {
+              return {
+                'running': false,
+                'status': 'disconnected',
+                'message': null,
+                'connected_at': 0,
+                'uptime': 0,
+              };
+            }
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return !tunnelStopped;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Dead Node');
+
+      expect(success, false);
+      expect(stopVpnCalls, 1);
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.activeProfile, isNull);
+      expect(vpnProvider.isLoading, false);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupConnectivityFailureMessage,
+      );
     });
 
     test('initializes unsupported native VPN capability explicitly', () async {
@@ -579,6 +640,7 @@ void main() {
         'refreshDiagnostics falls back to active cloud node IP when probes fail',
         () async {
       var fallbackCalls = 0;
+      var egressProbeCalls = 0;
       vpnProvider = VpnProvider(
         fetchEgressIp: () async {
           fallbackCalls += 1;
@@ -608,6 +670,14 @@ void main() {
           case 'getRecentLogs':
             return const [];
           case 'getEgressIp':
+            egressProbeCalls += 1;
+            if (egressProbeCalls == 1) {
+              return {
+                'ip': '203.0.113.42',
+                'source': 'android_native',
+                'error': null,
+              };
+            }
             return {
               'ip': null,
               'source': 'android_native',

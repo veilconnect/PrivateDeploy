@@ -121,7 +121,7 @@ for rule in \
 do
   IFS=',' read -r protocol port notes <<< "$rule"
   curl -X POST "https://api.vultr.com/v2/firewalls/$FIREWALL_ID/rules" \
-    -H "Authorization: Bearer UVKHIVVAJ2VRJAGOW7GW6EP7DY3PJGKTDDZQ" \
+    -H "Authorization: Bearer YOUR_API_KEY" \
     -H "Content-Type: application/json" \
     -d "{
       \"ip_type\": \"v4\",
@@ -136,7 +136,7 @@ done
 
 # 3. 将防火墙附加到实例
 curl -X PATCH "https://api.vultr.com/v2/instances/$INSTANCE_ID" \
-  -H "Authorization: Bearer UVKHIVVAJ2VRJAGOW7GW6EP7DY3PJGKTDDZQ" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"firewall_group_id\": \"$FIREWALL_ID\"}"
 

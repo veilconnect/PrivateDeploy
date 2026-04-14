@@ -38,6 +38,7 @@ GOOS=darwin GOARCH=arm64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
   wails build \
   -m -s -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
+  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -o "$APP_NAME.exe"
 
 mv "build/bin/${APP_NAME}.app" "build/bin/${APP_NAME}-arm64.app"
@@ -48,6 +49,7 @@ GOOS=darwin GOARCH=amd64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
   wails build \
   -m -s -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
+  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -o "$APP_NAME.exe"
 
 mv "build/bin/${APP_NAME}.app" "build/bin/${APP_NAME}-amd64.app"

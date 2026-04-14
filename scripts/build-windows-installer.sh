@@ -106,6 +106,7 @@ GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
   wails build \
   -m -s -trimpath \
   -tags webkit2_41 \
+  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -nsis \
   -o "$APP_NAME.exe"
 

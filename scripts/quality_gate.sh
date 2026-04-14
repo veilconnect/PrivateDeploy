@@ -10,7 +10,7 @@ COVERAGE_DIR="$ROOT_DIR/output/coverage"
 mkdir -p "$COVERAGE_DIR"
 
 # ── Go tests with coverage (root) ─────────────────────────────────
-ROOT_PACKAGES="$(go list ./... | grep -v '^privatedeploy/tmp$')"
+ROOT_PACKAGES="$(go list ./... | grep -Ev '^privatedeploy/tmp($|/)')"
 go test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES
 echo "--- Go root coverage ---"
 go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1
@@ -31,7 +31,7 @@ go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1
   pnpm run test:coverage
 )
 
-# ── Coverage summary ──────────��───────────────────────────────────
+# ── Coverage summary ──────────────────────────────────────────────
 GO_ROOT_PCT="$(go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1 | awk '{print $NF}')"
 GO_API_PCT="$(cd api && go tool cover -func="$COVERAGE_DIR/go-api.out" | tail -1 | awk '{print $NF}')"
 

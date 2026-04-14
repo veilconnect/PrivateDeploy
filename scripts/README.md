@@ -13,6 +13,7 @@
 | `protocol_speed_compare.py` | Linux/macOS | 按协议测速（SS/HY2/VLESS/Trojan，基于 sing-box + curl） | `output/benchmarks/protocol_speed_compare_*.{json,tsv}` |
 | `local_gui_vultr_smoke.sh` | Linux | 在隔离 Xvfb 会话里通过桌面 GUI 真实创建 1 台 Vultr 节点、验端口并销毁 | `output/gui-smoke/<run-id>/` |
 | `local_gui_container_smoke.sh` | Linux | 在 Docker 容器里用隔离 Xvfb 会话做本机非破坏性 GUI smoke，并按不同缩放留图 | `output/gui-smoke/<run-id>/` |
+| `run_mobile_dead_node_integration.sh` | Linux | 在 Android 模拟器上导入一个不可达订阅、自动接受 VPN 授权并断言应用回到失败态 | 失败时保留 `/tmp/pd-dead-node-it.*` |
 
 ## 快速使用
 
@@ -51,6 +52,9 @@ python3 scripts/protocol_speed_compare.py --rounds 3
 
 # 本机容器化 GUI 非破坏性 smoke（默认读取 build/bin/data）
 ./scripts/local_gui_container_smoke.sh
+
+# Android 模拟器死节点回归（默认使用 test_pixel 和 emulator-5554）
+./scripts/run_mobile_dead_node_integration.sh
 ```
 
 ## 前置要求
@@ -78,6 +82,9 @@ sudo apt-get install xvfb xdotool imagemagick jq curl
 
 # 容器化 GUI smoke 额外依赖
 sudo apt-get install docker.io
+
+# Android 模拟器死节点回归额外依赖
+sudo apt-get install curl python3
 ```
 
 ### macOS 特定
