@@ -325,12 +325,20 @@ func extractFiles(fs embed.FS, srcDir, dstDir string) {
 	for _, file := range files {
 		fileName := file.Name()
 		dstPath := GetPath(dstDir + "/" + fileName)
-		if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+		data, _ := fs.ReadFile(srcDir + "/" + fileName)
+		existing, err := os.ReadFile(dstPath)
+		if err == nil && string(existing) == string(data) {
+			continue
+		}
+
+		if os.IsNotExist(err) {
 			log.Printf("InitResources [%s]: %s", dstDir, fileName)
-			data, _ := fs.ReadFile(srcDir + "/" + fileName)
-			if err := os.WriteFile(dstPath, data, os.ModePerm); err != nil {
-				log.Printf("Error writing file %s: %v", dstPath, err)
-			}
+		} else {
+			log.Printf("RefreshResources [%s]: %s", dstDir, fileName)
+		}
+
+		if err := os.WriteFile(dstPath, data, os.ModePerm); err != nil {
+			log.Printf("Error writing file %s: %v", dstPath, err)
 		}
 	}
 }

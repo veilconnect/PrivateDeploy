@@ -30,7 +30,19 @@ const (
 
 var (
 	vultrAPIBaseURL = "https://api.vultr.com/v2"
-	vultrHTTPClient = &http.Client{Timeout: 60 * time.Second}
+	vultrHTTPClient = &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 	nodesMu         sync.Mutex
 	osCache         []vultrOS
 	osCacheTime     time.Time
