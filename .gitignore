@@ -30,3 +30,13 @@ test-results/
 tmp/
 scripts/__pycache__/
 .claude-octopus/
+
+# Android NDK/CMake build artifacts
+mobile/android/app/.cxx/
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+
+# Claude worktrees
+.claude/worktrees/
