@@ -70,6 +70,8 @@ ManifestDPIAware true
 #!uninstfinalize 'signtool --file "%1"'
 #!finalize 'signtool --file "%1"'
 
+!include "nsDialogs.nsh"
+
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
@@ -77,6 +79,35 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+
+   ; --- Close running instance ---
+   FindWindow $0 "" "${INFO_PRODUCTNAME}"
+   ${If} $0 != 0
+       ; Try graceful WM_CLOSE first
+       SendMessage $0 ${WM_CLOSE} 0 0
+       Sleep 2000
+   ${EndIf}
+
+   ; Force kill if still running
+   nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+   ; Brief wait for process to fully exit and release file locks
+   Sleep 500
+
+   ; --- Silent uninstall previous version ---
+   SetRegView 64
+   ReadRegStr $R0 HKLM "${UNINST_KEY}" "UninstallString"
+   ${If} $R0 != ""
+       ; Extract the uninstaller path (strip surrounding quotes)
+       StrCpy $R1 $R0 "" 1   ; remove first char (quote)
+       StrLen $R2 $R1
+       IntOp $R2 $R2 - 1
+       StrCpy $R1 $R1 $R2    ; remove last char (quote)
+
+       IfFileExists "$R1" 0 skip_uninstall
+           ExecWait '"$R1" /S _?=$INSTDIR'
+           Delete "$R1"
+       skip_uninstall:
+   ${EndIf}
 FunctionEnd
 
 Section
@@ -100,6 +131,15 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    ; Close running instance before uninstalling
+    FindWindow $0 "" "${INFO_PRODUCTNAME}"
+    ${If} $0 != 0
+        SendMessage $0 ${WM_CLOSE} 0 0
+        Sleep 2000
+    ${EndIf}
+    nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+    Sleep 500
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
