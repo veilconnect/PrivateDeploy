@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
 import '../profiles/profile_provider.dart';
+import 'cloud_api_client.dart';
 import 'cloud_backup.dart';
 import 'cloud_node_config_builder.dart';
 import 'cloud_node_record.dart';
@@ -14,6 +15,7 @@ import 'cloud_provider_base.dart';
 import 'cloud_provider_id.dart';
 import 'cloud_provider_utils.dart';
 import 'cloud_provider_validation.dart';
+import 'digitalocean_client.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
@@ -22,9 +24,12 @@ typedef CloudLatencyProbe = Future<CloudLatencyCheck> Function(
     CloudInstance instance);
 
 class CloudProvider extends CloudProviderBase {
-  @override
-  CloudProviderId get providerId => CloudProviderId.vultr;
+  CloudProviderId _providerId = CloudProviderId.vultr;
 
+  @override
+  CloudProviderId get providerId => _providerId;
+
+  static const String _activeProviderStorageKey = 'mobile_cloud_active_provider';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
   static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
@@ -191,6 +196,10 @@ class CloudProvider extends CloudProviderBase {
 
   Future<void> _init() async {
     await _initializeStorage();
+    // Restore the previously selected provider before loading any per-provider
+    // data, otherwise node records and api key would be read from the wrong
+    // storage namespace on app restart.
+    await _restorePersistedActiveProvider();
     await _loadNodeRecords();
     // Immediately build the instances list from cached node records so the UI
     // can display known nodes without waiting for a network round-trip.
@@ -204,6 +213,46 @@ class CloudProvider extends CloudProviderBase {
     _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
     _configLoaded = true;
     notifyListeners();
+  }
+
+  Future<void> _restorePersistedActiveProvider() async {
+    final stored = StorageService.getString(_activeProviderStorageKey);
+    final parsed = CloudProviderId.tryParse(stored);
+    if (parsed != null) {
+      _providerId = parsed;
+    }
+  }
+
+  /// Switch the active cloud provider. Keeps both providers' persisted data
+  /// intact (storage keys are namespaced via CloudProviderId) — the
+  /// inactive provider's nodes simply aren't shown until it becomes active
+  /// again. Returns false if already on [target] or still mid-init.
+  Future<bool> setActiveProvider(CloudProviderId target) async {
+    if (_providerId == target) {
+      return false;
+    }
+    await _initializeStorage();
+    _providerId = target;
+    await StorageService.saveString(_activeProviderStorageKey, target.id);
+
+    // Reset in-memory state tied to the previous provider. Disk records
+    // remain under the old provider's storage keys and will rehydrate when
+    // the user switches back.
+    _instances = const [];
+    _regions = const [];
+    _plans = const [];
+    _nodeRecords = {};
+    _latencyChecks.clear();
+    _apiKey = null;
+    _hasApiKey = false;
+    _error = null;
+
+    await _loadNodeRecords();
+    _restoreInstancesFromCache();
+    _apiKey = await _getStoredApiKey();
+    _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
+    notifyListeners();
+    return true;
   }
 
   /// Populate [_instances] from locally persisted [_nodeRecords] so the UI
@@ -229,12 +278,17 @@ class CloudProvider extends CloudProviderBase {
     }
   }
 
-  Future<VultrCloudClient> _cloudClient() async {
+  Future<CloudApiClient> _cloudClient() async {
     final key = await _getStoredApiKey();
     if (key == null || key.isEmpty) {
-      throw StateError('Vultr API key is not configured');
+      throw StateError('${providerDisplayName} API key is not configured');
     }
-    return VultrCloudClient(key);
+    switch (_providerId) {
+      case CloudProviderId.digitalocean:
+        return DigitalOceanCloudClient(key);
+      case CloudProviderId.vultr:
+        return VultrCloudClient(key);
+    }
   }
 
   Future<String?> _getStoredApiKey() async {
@@ -596,7 +650,7 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<VultrNodeRecord?> _recoverNodeRecordFromUserData({
-    required VultrCloudClient client,
+    required CloudApiClient client,
     required String instanceId,
     required String label,
     required String region,

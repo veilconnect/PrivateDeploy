@@ -3,7 +3,9 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 
-class VultrCloudClient {
+import 'cloud_api_client.dart';
+
+class VultrCloudClient implements CloudApiClient {
   static const String baseUrl = 'https://api.vultr.com/v2';
   static const Duration _connectTimeout = Duration(seconds: 15);
   static const Duration _receiveTimeout = Duration(seconds: 90);

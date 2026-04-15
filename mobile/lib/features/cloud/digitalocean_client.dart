@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import 'cloud_api_client.dart';
+
 /// Thin REST wrapper around the DigitalOcean v2 API, matching the shape
 /// of [VultrCloudClient] so callers don't need to branch on provider.
 ///
@@ -7,7 +9,7 @@ import 'package:dio/dio.dart';
 /// (e.g. `sizes` not `plans`, `droplets` not `instances`). Normalization
 /// into Vultr-shaped keys happens at this layer so the rest of the app
 /// (region pickers, plan pickers, node list) stays provider-agnostic.
-class DigitalOceanCloudClient {
+class DigitalOceanCloudClient implements CloudApiClient {
   static const String baseUrl = 'https://api.digitalocean.com/v2';
   static const Duration _connectTimeout = Duration(seconds: 15);
   static const Duration _receiveTimeout = Duration(seconds: 90);
@@ -154,8 +156,42 @@ class DigitalOceanCloudClient {
     return const {};
   }
 
+  @override
   Future<Map<String, dynamic>> validateApiKey() {
     return _requestJson('GET', '/account', timeout: _validationTimeout);
+  }
+
+  /// DO doesn't expose a `getPlanById` equivalent. We look the slug up in
+  /// the full /sizes listing. The response is already Vultr-shaped by
+  /// [listPlans], so callers can read plan.ram / plan.vcpu_count / ... the
+  /// same way.
+  @override
+  Future<Map<String, dynamic>> getPlanById(String planId) async {
+    final response = await listPlans();
+    final plans = (response['plans'] as List?) ?? const [];
+    for (final item in plans) {
+      if (item is Map && item['id']?.toString() == planId) {
+        return Map<String, dynamic>.from(item);
+      }
+    }
+    throw StateError('Plan not found');
+  }
+
+  /// DO uses image slugs (`debian-12-x64`) not numeric ids, and the
+  /// mobile client hardcodes the slug in [createInstance]. Returning a
+  /// synthetic single-entry OS list makes preferredCloudOsIds route the
+  /// deploy loop to one iteration with osId=1 (which the body ignores).
+  @override
+  Future<Map<String, dynamic>> getOperatingSystems() async {
+    return const {
+      'os': [
+        {
+          'id': 1,
+          'name': 'Debian 12 x64',
+          'family': 'debian',
+        },
+      ],
+    };
   }
 
   /// Strips the `cloud-do-` prefix that mobile storage uses to keep DO
