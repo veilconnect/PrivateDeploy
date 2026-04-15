@@ -1,7 +1,9 @@
 import 'cloud_models.dart';
+import 'cloud_provider_id.dart';
 import 'vultr_client.dart';
 
 class VultrNodeRecord {
+  final CloudProviderId provider;
   final String instanceId;
   final String label;
   final String region;
@@ -28,6 +30,7 @@ class VultrNodeRecord {
 
   VultrNodeRecord({
     required this.instanceId,
+    this.provider = CloudProviderId.vultr,
     this.label = '',
     this.region = '',
     this.plan = '',
@@ -57,7 +60,7 @@ class VultrNodeRecord {
   CloudInstance toCloudInstance() {
     return CloudInstance(
       id: instanceId,
-      provider: 'vultr',
+      provider: provider.id,
       label: label,
       status: isUsable ? 'active' : 'unknown',
       region: region,
@@ -88,6 +91,7 @@ class VultrNodeRecord {
   VultrNodeRecord copyWithJson(Map<String, dynamic> values) {
     return VultrNodeRecord(
       instanceId: instanceId,
+      provider: provider,
       label: (values['label'] ?? label).toString(),
       region: (values['region'] ?? region).toString(),
       plan: (values['plan'] ?? plan).toString(),
@@ -118,7 +122,7 @@ class VultrNodeRecord {
   Map<String, dynamic> toMergeableJson() {
     final result = <String, dynamic>{
       'id': instanceId,
-      'provider': 'vultr',
+      'provider': provider.id,
       'ssPort': ssPort,
       'ssPassword': ssPassword,
       'hysteriaPort': hyPort,
@@ -158,6 +162,7 @@ class VultrNodeRecord {
 
   Map<String, dynamic> toJson() => {
         'instanceId': instanceId,
+        'provider': provider.id,
         'label': label,
         'region': region,
         'plan': plan,
@@ -188,6 +193,7 @@ class VultrNodeRecord {
   ) {
     return VultrNodeRecord(
       instanceId: instanceId,
+      provider: CloudProviderId.parseOrVultr(json['provider']?.toString()),
       label: (json['label'] ?? '').toString(),
       region: (json['region'] ?? '').toString(),
       plan: (json['plan'] ?? '').toString(),

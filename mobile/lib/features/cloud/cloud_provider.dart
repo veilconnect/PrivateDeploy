@@ -6,12 +6,16 @@ import 'package:flutter/foundation.dart';
 import '../../shared/utils/logger.dart';
 import '../../core/storage/storage_service.dart';
 import '../profiles/profile_provider.dart';
+import 'cloud_api_client.dart';
 import 'cloud_backup.dart';
 import 'cloud_node_config_builder.dart';
 import 'cloud_node_record.dart';
 import 'cloud_models.dart';
+import 'cloud_provider_base.dart';
+import 'cloud_provider_id.dart';
 import 'cloud_provider_utils.dart';
 import 'cloud_provider_validation.dart';
+import 'digitalocean_client.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
@@ -19,10 +23,13 @@ import 'vultr_user_data_recovery.dart';
 typedef CloudLatencyProbe = Future<CloudLatencyCheck> Function(
     CloudInstance instance);
 
-class CloudProvider with ChangeNotifier {
-  static const _providerName = 'vultr';
-  static const String _apiKeyStorageKey = 'mobile_cloud_vultr_api_key';
-  static const String _nodeRecordsStorageKey = 'mobile_cloud_vultr_nodes';
+class CloudProvider extends CloudProviderBase {
+  CloudProviderId _providerId = CloudProviderId.vultr;
+
+  @override
+  CloudProviderId get providerId => _providerId;
+
+  static const String _activeProviderStorageKey = 'mobile_cloud_active_provider';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
   static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
@@ -58,7 +65,6 @@ class CloudProvider with ChangeNotifier {
   bool get hasApiKey => _hasApiKey;
   String? get apiKey => _apiKey;
   bool get isConfigured => _hasApiKey && _configLoaded;
-  String get providerName => _providerName;
   CloudLatencyCheck? latencyCheckFor(String instanceId) =>
       _latencyChecks[instanceId];
 
@@ -190,6 +196,10 @@ class CloudProvider with ChangeNotifier {
 
   Future<void> _init() async {
     await _initializeStorage();
+    // Restore the previously selected provider before loading any per-provider
+    // data, otherwise node records and api key would be read from the wrong
+    // storage namespace on app restart.
+    await _restorePersistedActiveProvider();
     await _loadNodeRecords();
     // Immediately build the instances list from cached node records so the UI
     // can display known nodes without waiting for a network round-trip.
@@ -203,6 +213,46 @@ class CloudProvider with ChangeNotifier {
     _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
     _configLoaded = true;
     notifyListeners();
+  }
+
+  Future<void> _restorePersistedActiveProvider() async {
+    final stored = StorageService.getString(_activeProviderStorageKey);
+    final parsed = CloudProviderId.tryParse(stored);
+    if (parsed != null) {
+      _providerId = parsed;
+    }
+  }
+
+  /// Switch the active cloud provider. Keeps both providers' persisted data
+  /// intact (storage keys are namespaced via CloudProviderId) — the
+  /// inactive provider's nodes simply aren't shown until it becomes active
+  /// again. Returns false if already on [target] or still mid-init.
+  Future<bool> setActiveProvider(CloudProviderId target) async {
+    if (_providerId == target) {
+      return false;
+    }
+    await _initializeStorage();
+    _providerId = target;
+    await StorageService.saveString(_activeProviderStorageKey, target.id);
+
+    // Reset in-memory state tied to the previous provider. Disk records
+    // remain under the old provider's storage keys and will rehydrate when
+    // the user switches back.
+    _instances = const [];
+    _regions = const [];
+    _plans = const [];
+    _nodeRecords = {};
+    _latencyChecks.clear();
+    _apiKey = null;
+    _hasApiKey = false;
+    _error = null;
+
+    await _loadNodeRecords();
+    _restoreInstancesFromCache();
+    _apiKey = await _getStoredApiKey();
+    _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
+    notifyListeners();
+    return true;
   }
 
   /// Populate [_instances] from locally persisted [_nodeRecords] so the UI
@@ -228,25 +278,30 @@ class CloudProvider with ChangeNotifier {
     }
   }
 
-  Future<VultrCloudClient> _cloudClient() async {
+  Future<CloudApiClient> _cloudClient() async {
     final key = await _getStoredApiKey();
     if (key == null || key.isEmpty) {
-      throw StateError('Vultr API key is not configured');
+      throw StateError('${providerDisplayName} API key is not configured');
     }
-    return VultrCloudClient(key);
+    switch (_providerId) {
+      case CloudProviderId.digitalocean:
+        return DigitalOceanCloudClient(key);
+      case CloudProviderId.vultr:
+        return VultrCloudClient(key);
+    }
   }
 
   Future<String?> _getStoredApiKey() async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _apiKey = await StorageService.getSecureString(_apiKeyStorageKey);
+    _apiKey = await StorageService.getSecureString(apiKeyStorageKey);
     if (_apiKey == null || _apiKey!.isEmpty) {
-      final legacy = StorageService.getString(_apiKeyStorageKey);
+      final legacy = StorageService.getString(apiKeyStorageKey);
       if (legacy != null && legacy.trim().isNotEmpty) {
         _apiKey = legacy.trim();
-        await StorageService.saveSecureString(_apiKeyStorageKey, _apiKey!);
-        await StorageService.remove(_apiKeyStorageKey);
+        await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
+        await StorageService.remove(apiKeyStorageKey);
       }
     }
     return _apiKey?.trim();
@@ -263,8 +318,8 @@ class CloudProvider with ChangeNotifier {
     }
     _apiKey = key.trim();
     _hasApiKey = _apiKey!.isNotEmpty;
-    await StorageService.saveSecureString(_apiKeyStorageKey, _apiKey!);
-    await StorageService.remove(_apiKeyStorageKey);
+    await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
+    await StorageService.remove(apiKeyStorageKey);
   }
 
   Future<void> _clearApiKey() async {
@@ -273,19 +328,19 @@ class CloudProvider with ChangeNotifier {
     }
     _apiKey = null;
     _hasApiKey = false;
-    await StorageService.removeSecure(_apiKeyStorageKey);
-    await StorageService.remove(_apiKeyStorageKey);
+    await StorageService.removeSecure(apiKeyStorageKey);
+    await StorageService.remove(apiKeyStorageKey);
   }
 
   Future<Map<String, VultrNodeRecord>> _loadNodeRecords() async {
     await _initializeStorage();
-    var raw = await StorageService.getSecureString(_nodeRecordsStorageKey);
+    var raw = await StorageService.getSecureString(nodeRecordsStorageKey);
     if (raw == null || raw.isEmpty) {
-      final legacy = StorageService.getString(_nodeRecordsStorageKey);
+      final legacy = StorageService.getString(nodeRecordsStorageKey);
       if (legacy != null && legacy.isNotEmpty) {
         raw = legacy;
-        await StorageService.saveSecureString(_nodeRecordsStorageKey, legacy);
-        await StorageService.remove(_nodeRecordsStorageKey);
+        await StorageService.saveSecureString(nodeRecordsStorageKey, legacy);
+        await StorageService.remove(nodeRecordsStorageKey);
       }
     }
     if (raw == null || raw.isEmpty) {
@@ -324,8 +379,8 @@ class CloudProvider with ChangeNotifier {
       payload[item.key] = item.value.toJson();
     }
     await StorageService.saveSecureString(
-        _nodeRecordsStorageKey, jsonEncode(payload));
-    await StorageService.remove(_nodeRecordsStorageKey);
+        nodeRecordsStorageKey, jsonEncode(payload));
+    await StorageService.remove(nodeRecordsStorageKey);
   }
 
   Future<void> _updateNodeRecord(
@@ -595,7 +650,7 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<VultrNodeRecord?> _recoverNodeRecordFromUserData({
-    required VultrCloudClient client,
+    required CloudApiClient client,
     required String instanceId,
     required String label,
     required String region,
@@ -1078,8 +1133,8 @@ class CloudProvider with ChangeNotifier {
   Future<void> clearLocalCloudData() async {
     await _clearApiKey();
     _nodeRecords = {};
-    await StorageService.removeSecure(_nodeRecordsStorageKey);
-    await StorageService.remove(_nodeRecordsStorageKey);
+    await StorageService.removeSecure(nodeRecordsStorageKey);
+    await StorageService.remove(nodeRecordsStorageKey);
     reset();
   }
 
@@ -1091,7 +1146,7 @@ class CloudProvider with ChangeNotifier {
       payload[entry.key] = entry.value.toJson();
     }
     return createCloudBackupJson(
-      provider: _providerName,
+      provider: providerName,
       apiKey: key,
       nodeRecords: payload,
     );
@@ -1100,7 +1155,7 @@ class CloudProvider with ChangeNotifier {
   Future<void> importBackupJson(String raw) async {
     final backup = parseCloudBackupJson(
       raw,
-      expectedProvider: _providerName,
+      expectedProvider: providerName,
     );
 
     if (backup.apiKey != null && backup.apiKey!.isNotEmpty) {

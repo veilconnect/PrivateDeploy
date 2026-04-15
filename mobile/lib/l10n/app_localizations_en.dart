@@ -91,6 +91,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pasteVultrApiKey => 'Paste your Vultr API key';
 
   @override
+  String pasteCloudProviderApiKey(Object provider) {
+    return 'Paste your $provider API key';
+  }
+
+  @override
+  String deployToCloudProvider(Object provider) {
+    return 'Deploy to $provider';
+  }
+
+  @override
   String get loadingNodes => 'Loading nodes...';
 
   @override

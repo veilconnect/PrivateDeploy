@@ -30,6 +30,8 @@
   "apiKeySavedAndVerified": "API Key 已保存并验证通过",
   "notSet": "未设置",
   "pasteVultrApiKey": "粘贴您的 Vultr API Key",
+  "pasteCloudProviderApiKey": "粘贴您的 {provider} API Key",
+  "deployToCloudProvider": "部署到 {provider}",
 
   "loadingNodes": "加载节点中...",
   "vpnNotice": "VPN 通知",

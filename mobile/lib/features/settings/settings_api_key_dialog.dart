@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
 
 String maskedSettingsApiKey(String? apiKey, {String notSetLabel = 'Not set'}) {
   final trimmed = apiKey?.trim() ?? '';
@@ -40,10 +41,12 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
   late final TextEditingController _controller;
   bool _saving = false;
   String? _dialogError;
+  late CloudProviderId _selectedProvider;
 
   @override
   void initState() {
     super.initState();
+    _selectedProvider = widget.cloud.providerId;
     _controller = TextEditingController(text: widget.cloud.apiKey ?? '');
   }
 
@@ -53,6 +56,23 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     super.dispose();
   }
 
+  Future<void> _onProviderChanged(CloudProviderId? next) async {
+    if (next == null || next == _selectedProvider || _saving) {
+      return;
+    }
+    // Persist the switch so re-opening the dialog (and other UI surfaces)
+    // reflect the selection. setActiveProvider re-reads the per-provider
+    // API key, which we then mirror into this dialog's text field so the
+    // user sees what's currently stored for the newly selected provider.
+    await widget.cloud.setActiveProvider(next);
+    if (!mounted) return;
+    setState(() {
+      _selectedProvider = next;
+      _controller.text = widget.cloud.apiKey ?? '';
+      _dialogError = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -60,15 +80,39 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       title: Text(l10n.apiKey),
       content: SizedBox(
         width: 520.w,
-        child: TextField(
-          controller: _controller,
-          obscureText: true,
-          enabled: !_saving,
-          decoration: InputDecoration(
-            hintText: l10n.pasteVultrApiKey,
-            labelText: l10n.apiKey,
-            errorText: _dialogError,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButtonFormField<CloudProviderId>(
+              initialValue: _selectedProvider,
+              decoration: InputDecoration(
+                labelText: l10n.cloudProvider,
+                border: const OutlineInputBorder(),
+              ),
+              items: CloudProviderId.values
+                  .map(
+                    (provider) => DropdownMenuItem(
+                      value: provider,
+                      child: Text(provider.displayName),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _saving ? null : _onProviderChanged,
+            ),
+            SizedBox(height: 12.h),
+            TextField(
+              controller: _controller,
+              obscureText: true,
+              enabled: !_saving,
+              decoration: InputDecoration(
+                hintText: l10n.pasteCloudProviderApiKey(
+                    _selectedProvider.displayName),
+                labelText: l10n.apiKey,
+                errorText: _dialogError,
+              ),
+            ),
+          ],
         ),
       ),
       actions: [

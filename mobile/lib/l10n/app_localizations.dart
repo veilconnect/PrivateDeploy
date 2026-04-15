@@ -260,6 +260,20 @@ abstract class AppLocalizations {
   /// **'Paste your Vultr API key'**
   String get pasteVultrApiKey;
 
+  /// Placeholder hint for the API key text field, parameterized by the
+  /// active cloud provider's display name (e.g. Vultr, DigitalOcean).
+  ///
+  /// In en, this message translates to:
+  /// **'Paste your {provider} API key'**
+  String pasteCloudProviderApiKey(Object provider);
+
+  /// Label shown on the deploy-node dialog indicating which cloud provider
+  /// the new instance will be created under.
+  ///
+  /// In en, this message translates to:
+  /// **'Deploy to {provider}'**
+  String deployToCloudProvider(Object provider);
+
   /// No description provided for @loadingNodes.
   ///
   /// In en, this message translates to:

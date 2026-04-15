@@ -34,9 +34,14 @@ PrivateDeploy 的 Flutter 移动端，当前重点是把“在手机上直接管
   - 查看 Shadowsocks / Hysteria2 / VLESS / Trojan 参数
   - 复制单项参数和整组链接
 
+## 云服务商支持
+
+- **Vultr** — 完整流程(列 region/plan、创建、删除、节点恢复)
+- **DigitalOcean** — 完整流程(与 Vultr 对齐);设置 → API Key 对话框顶部可切换当前激活的服务商。每个服务商的 API Key 与节点记录在本地以命名空间隔离(`mobile_cloud_<provider>_api_key` / `..._nodes`),切换不会丢失另一侧数据。
+
 ## 尚未落地或尚未产品化的部分
 
-- 移动端 DigitalOcean 流程
+- 同时展示多个云服务商节点(当前为"单活服务商",UI 一次仅显示当前激活者的节点)
 - 独立的规则集管理页面
 - 完整的多语言 UI 接入
 - 图表、通知等依赖对应的产品功能
