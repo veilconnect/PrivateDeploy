@@ -90,6 +90,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get pasteVultrApiKey => '粘贴您的 Vultr API Key';
 
   @override
+  String pasteCloudProviderApiKey(Object provider) {
+    return '粘贴您的 $provider API Key';
+  }
+
+  @override
+  String deployToCloudProvider(Object provider) {
+    return '部署到 $provider';
+  }
+
+  @override
   String get loadingNodes => '加载节点中...';
 
   @override

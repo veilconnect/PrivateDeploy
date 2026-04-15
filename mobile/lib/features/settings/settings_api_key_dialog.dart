@@ -106,7 +106,8 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
               obscureText: true,
               enabled: !_saving,
               decoration: InputDecoration(
-                hintText: 'Paste your ${_selectedProvider.displayName} API key',
+                hintText: l10n.pasteCloudProviderApiKey(
+                    _selectedProvider.displayName),
                 labelText: l10n.apiKey,
                 errorText: _dialogError,
               ),

@@ -30,6 +30,10 @@
   "apiKeySavedAndVerified": "API key saved and verified",
   "notSet": "Not set",
   "pasteVultrApiKey": "Paste your Vultr API key",
+  "pasteCloudProviderApiKey": "Paste your {provider} API key",
+  "@pasteCloudProviderApiKey": { "placeholders": { "provider": {} } },
+  "deployToCloudProvider": "Deploy to {provider}",
+  "@deployToCloudProvider": { "placeholders": { "provider": {} } },
 
   "loadingNodes": "Loading nodes...",
   "vpnNotice": "VPN notice",

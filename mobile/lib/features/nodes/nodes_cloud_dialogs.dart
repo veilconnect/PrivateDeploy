@@ -218,10 +218,26 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(l10n.deployNodeTitle),
+      // Surface which provider the instance will be created under. Prevents
+      // the confusion case where a user on DigitalOcean opens the dialog
+      // expecting Vultr regions/plans — the subtitle makes it explicit
+      // before they pick anything.
+      contentPadding: EdgeInsets.fromLTRB(24.w, 12.h, 24.w, 0),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Padding(
+              padding: EdgeInsets.only(bottom: 8.h),
+              child: Text(
+                l10n.deployToCloudProvider(provider.providerDisplayName),
+                style: TextStyle(
+                  fontSize: 12.sp,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
             if (missingRegions || missingPlans)
               Container(
                 width: double.infinity,
