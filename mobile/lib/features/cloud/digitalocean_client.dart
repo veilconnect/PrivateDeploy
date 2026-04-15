@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 
 import 'cloud_api_client.dart';
@@ -13,7 +17,10 @@ class DigitalOceanCloudClient implements CloudApiClient {
   static const String baseUrl = 'https://api.digitalocean.com/v2';
   static const Duration _connectTimeout = Duration(seconds: 15);
   static const Duration _receiveTimeout = Duration(seconds: 90);
-  static const Duration _validationTimeout = Duration(seconds: 12);
+  // DO's api.digitalocean.com can take 10+ s from high-latency mobile
+  // networks under packet loss. 30s gives dio room to retry TLS without
+  // making the user re-tap "Save" unnecessarily.
+  static const Duration _validationTimeout = Duration(seconds: 30);
 
   final Dio _dio;
 
@@ -24,7 +31,16 @@ class DigitalOceanCloudClient implements CloudApiClient {
                 baseUrl: baseUrl,
                 connectTimeout: _connectTimeout,
                 receiveTimeout: _receiveTimeout,
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                  'Content-Type': 'application/json',
+                  // DO's api.digitalocean.com is behind Cloudflare. Some
+                  // Cloudflare edges drop requests missing a User-Agent or
+                  // with suspect TLS fingerprints; set a plain identifier
+                  // so the request looks like a normal API client rather
+                  // than an unbranded mobile HttpClient.
+                  'User-Agent': 'PrivateDeploy-Mobile/1.0 (dart)',
+                  'Accept': 'application/json',
+                },
               ),
             )) {
     _dio.options.headers['Authorization'] = 'Bearer $apiKey';
@@ -157,8 +173,169 @@ class DigitalOceanCloudClient implements CloudApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> validateApiKey() {
-    return _requestJson('GET', '/account', timeout: _validationTimeout);
+  Future<Map<String, dynamic>> validateApiKey() async {
+    // DO sits behind Cloudflare. On networks with broken IPv6 to
+    // Cloudflare (common on consumer Wi-Fi: AAAA resolves but TCP to
+    // 2606:4700:: is blackholed) dart:io picks AAAA first and stalls the
+    // full connect timeout — Chrome avoids this via happy-eyeballs.
+    //
+    // Workaround: resolve IPv4 ourselves, TCP-connect to it, wrap with
+    // SecureSocket.secure passing the original hostname so SNI still
+    // matches the Cloudflare certificate. Then speak HTTP/1.1 directly.
+    final apiKey = _dio.options.headers['Authorization']
+            ?.toString()
+            .replaceFirst('Bearer ', '') ??
+        '';
+    final effectiveBase = _dio.options.baseUrl.isNotEmpty
+        ? _dio.options.baseUrl
+        : baseUrl;
+    final baseUri = Uri.parse(effectiveBase);
+
+    // Tests point at 127.0.0.1 mocks — keep the simple HttpClient path.
+    if (baseUri.host == '127.0.0.1' ||
+        baseUri.host == 'localhost' ||
+        InternetAddress.tryParse(baseUri.host) != null) {
+      return _validateViaHttpClient(
+          apiKey: apiKey, effectiveBase: effectiveBase);
+    }
+
+    try {
+      final ipv4s = await InternetAddress.lookup(
+        baseUri.host,
+        type: InternetAddressType.IPv4,
+      ).timeout(const Duration(seconds: 5));
+      if (ipv4s.isEmpty) {
+        throw StateError(
+            'DigitalOcean API unreachable: no IPv4 for ${baseUri.host}');
+      }
+      final port = baseUri.hasPort ? baseUri.port : 443;
+      final rawSocket = await Socket.connect(
+        ipv4s.first.address,
+        port,
+        timeout: const Duration(seconds: 8),
+      );
+      final socket = await SecureSocket.secure(
+        rawSocket,
+        host: baseUri.host,
+        supportedProtocols: const ['http/1.1'],
+      ).timeout(_validationTimeout);
+      try {
+        final path = '${baseUri.path}/account';
+        socket.write(
+            'GET $path HTTP/1.1\r\n'
+            'Host: ${baseUri.host}\r\n'
+            'Authorization: Bearer $apiKey\r\n'
+            'User-Agent: PrivateDeploy-Mobile/1.0 (dart)\r\n'
+            'Accept: application/json\r\n'
+            'Connection: close\r\n\r\n');
+        await socket.flush();
+        final raw = await socket
+            .cast<List<int>>()
+            .transform(utf8.decoder)
+            .join()
+            .timeout(_validationTimeout);
+        return _parseHttp11Response(raw);
+      } finally {
+        await socket.close();
+      }
+    } on TimeoutException {
+      throw StateError(
+          'DigitalOcean API request timed out after ${_validationTimeout.inSeconds}s');
+    } on SocketException catch (e) {
+      throw StateError('DigitalOcean API unreachable: ${e.message}');
+    } on HandshakeException catch (e) {
+      throw StateError('DigitalOcean TLS handshake failed: ${e.message}');
+    }
+  }
+
+  Future<Map<String, dynamic>> _validateViaHttpClient({
+    required String apiKey,
+    required String effectiveBase,
+  }) async {
+    final client = HttpClient();
+    try {
+      client.connectionTimeout = const Duration(seconds: 6);
+      client.userAgent = 'PrivateDeploy-Mobile/1.0 (dart)';
+      final request = await client
+          .getUrl(Uri.parse('$effectiveBase/account'))
+          .timeout(_validationTimeout);
+      request.headers.set('Authorization', 'Bearer $apiKey');
+      request.headers.set('Accept', 'application/json');
+      final response = await request.close().timeout(_validationTimeout);
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_validationTimeout);
+      if (response.statusCode >= 400) {
+        String? message;
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map && decoded['message'] is String) {
+            message = decoded['message'] as String;
+          }
+        } catch (_) {}
+        throw StateError(
+            message ?? 'DigitalOcean API error (${response.statusCode})');
+      }
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return const {};
+    } on TimeoutException {
+      throw StateError(
+          'DigitalOcean API request timed out after ${_validationTimeout.inSeconds}s');
+    } on SocketException catch (e) {
+      throw StateError('DigitalOcean API unreachable: ${e.message}');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Map<String, dynamic> _parseHttp11Response(String raw) {
+    final headerEnd = raw.indexOf('\r\n\r\n');
+    if (headerEnd < 0) {
+      throw StateError('DigitalOcean API returned malformed response');
+    }
+    final headerBlock = raw.substring(0, headerEnd);
+    var body = raw.substring(headerEnd + 4);
+
+    final statusLine = headerBlock.split('\r\n').first;
+    final parts = statusLine.split(' ');
+    final statusCode = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+
+    if (headerBlock.toLowerCase().contains('transfer-encoding: chunked')) {
+      final sb = StringBuffer();
+      var cursor = 0;
+      while (cursor < body.length) {
+        final lineEnd = body.indexOf('\r\n', cursor);
+        if (lineEnd < 0) break;
+        final size = int.tryParse(body.substring(cursor, lineEnd).trim(),
+                radix: 16) ??
+            0;
+        if (size == 0) break;
+        final chunkStart = lineEnd + 2;
+        final chunkEnd = chunkStart + size;
+        if (chunkEnd > body.length) break;
+        sb.write(body.substring(chunkStart, chunkEnd));
+        cursor = chunkEnd + 2;
+      }
+      body = sb.toString();
+    }
+
+    if (statusCode >= 400) {
+      String? message;
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map && decoded['message'] is String) {
+          message = decoded['message'] as String;
+        }
+      } catch (_) {}
+      throw StateError(message ?? 'DigitalOcean API error ($statusCode)');
+    }
+    final decoded = jsonDecode(body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    return const {};
   }
 
   /// DO doesn't expose a `getPlanById` equivalent. We look the slug up in
@@ -267,16 +444,39 @@ class DigitalOceanCloudClient implements CloudApiClient {
       _dio.options.connectTimeout = timeout;
     }
 
+    // One retry on pure connect-timeout protects against Cloudflare edge
+    // connection churn on mobile networks — a second fresh TCP/TLS attempt
+    // often lands on a healthy edge when the first hung.
+    Future<dynamic> runWithRetry() async {
+      try {
+        return await _dio.request<dynamic>(
+          path,
+          data: data,
+          options: Options(
+            method: method,
+            receiveTimeout: timeout ?? _receiveTimeout,
+            sendTimeout: timeout ?? _receiveTimeout,
+          ),
+        );
+      } on DioException catch (error) {
+        if (error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.connectionError) {
+          return await _dio.request<dynamic>(
+            path,
+            data: data,
+            options: Options(
+              method: method,
+              receiveTimeout: timeout ?? _receiveTimeout,
+              sendTimeout: timeout ?? _receiveTimeout,
+            ),
+          );
+        }
+        rethrow;
+      }
+    }
+
     try {
-      final response = await _dio.request<dynamic>(
-        path,
-        data: data,
-        options: Options(
-          method: method,
-          receiveTimeout: timeout ?? _receiveTimeout,
-          sendTimeout: timeout ?? _receiveTimeout,
-        ),
-      );
+      final response = await runWithRetry() as dynamic;
       final normalized = response.data;
       if (response.statusCode != null &&
           response.statusCode! >= 400 &&
