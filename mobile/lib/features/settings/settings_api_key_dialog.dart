@@ -155,7 +155,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
 
     if (success) {
       _savedSuccessfully = true;
-      await widget.cloud.loadInstances(notify: false);
+      await widget.cloud.loadInstances();
       if (mounted) {
         Navigator.pop(context, true);
       }
