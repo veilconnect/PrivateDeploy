@@ -388,12 +388,57 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         })
       }
 
-      instances.value = enriched
+      // Preserve in-use nodes that the provider API didn't return this cycle.
+      // Only remove a managed node when a verified list call explicitly omits it
+      // AND it's not referenced by any existing subscription / active profile —
+      // otherwise a partial / region-scoped / transiently-filtered response would
+      // wipe working nodes out of the UI.
+      const enrichedIds = new Set(
+        enriched.filter((node) => node.instanceId).map((node) => node.instanceId),
+      )
+      const subscribedInstanceIds = new Set<string>(
+        deps.subscribesStore.subscribes
+          .filter((sub: any) => typeof sub.id === 'string' && sub.id.startsWith('cloud-'))
+          .map((sub: any) => String(sub.id).slice('cloud-'.length)),
+      )
+      const profileSubscriptionChildIds = new Set<string>()
+      const preMergeProfile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
+      preMergeProfile?.outbounds?.forEach((outbound: any) => {
+        ;(outbound.outbounds || []).forEach((child: any) => {
+          if (typeof child?.id === 'string' && child.id.startsWith('cloud-')) {
+            profileSubscriptionChildIds.add(child.id.slice('cloud-'.length))
+          }
+        })
+      })
+      const isInUse = (instanceId: string): boolean =>
+        !!instanceId
+        && (subscribedInstanceIds.has(instanceId) || profileSubscriptionChildIds.has(instanceId))
+
+      const retainedFromPrevious: ManagedCloudNode[] = previousInstances.filter((prev) => {
+        if (!prev.instanceId) return false
+        if (enrichedIds.has(prev.instanceId)) return false
+        if (migratedInstanceIds.has(prev.instanceId)) return false
+        return isInUse(prev.instanceId)
+      }).map((node) => ({
+        ...node,
+        // Mark as unknown so UI can indicate the node wasn't in the latest list,
+        // but don't flip to 'error' / remove it automatically.
+        statusText: node.statusText === 'error' ? 'error' : 'unknown',
+      }))
+      if (retainedFromPrevious.length > 0) {
+        logInfo(
+          `[CloudStore] Retained ${retainedFromPrevious.length} in-use node(s) missing from provider list:`,
+          retainedFromPrevious.map((n) => n.label || n.instanceId),
+        )
+      }
+
+      const merged = [...enriched, ...retainedFromPrevious]
+      instances.value = merged
       instancesUpdatedAt.value = Date.now()
 
-      saveToOfflineCache('nodes', enriched)
+      saveToOfflineCache('nodes', merged)
 
-      logInfo(`[CloudStore] Set instances.value to ${enriched.length} nodes:`, JSON.stringify(enriched.map(n => ({ id: n.instanceId, label: n.label, ipv4: n.ipv4 }))))
+      logInfo(`[CloudStore] Set instances.value to ${merged.length} nodes (${enriched.length} from provider + ${retainedFromPrevious.length} retained):`, JSON.stringify(merged.map(n => ({ id: n.instanceId, label: n.label, ipv4: n.ipv4 }))))
 
       await loadManualNodes()
       syncManualNodesIntoInstances()
@@ -462,27 +507,25 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
         }
       }
 
+      // Only prune subscriptions for previousInstances that the provider list
+      // verifiably omitted AND that aren't still being used by the app. This
+      // prevents transient / partial list responses from wiping subscriptions
+      // of nodes the user actively has deployed.
       const removedNodes = previousInstances.filter(
         (prev) =>
           prev.instanceId &&
           !migratedInstanceIds.has(prev.instanceId) &&
-          !nodesToProcess.some((node) => node.instanceId === prev.instanceId),
+          !nodesToProcess.some((node) => node.instanceId === prev.instanceId) &&
+          !isInUse(prev.instanceId),
       )
       if (removedNodes.length > 0) {
         await Promise.all(removedNodes.map((node) => removeSubscriptionForNode(node.instanceId)))
       }
 
-      const activeSubscriptionIds = new Set(
-        enriched
-          .filter((node) => node.instanceId)
-          .map((node) => subscriptionId(node.instanceId)),
-      )
-      const staleSubscriptions = deps.subscribesStore.subscribes.filter(
-        (sub: any) => sub.id.startsWith('cloud-') && !activeSubscriptionIds.has(sub.id),
-      )
-      if (staleSubscriptions.length > 0) {
-        await Promise.all(staleSubscriptions.map((sub: any) => removeSubscriptionForNode(sub.id)))
-      }
+      // Do NOT auto-delete "stale" cloud-* subscriptions here: absence from the
+      // provider list is not sufficient proof that a node was deleted (see
+      // feedback memory on retaining in-use nodes). Subscriptions are cleaned
+      // up explicitly via destroyInstance / user-initiated delete.
 
       // Ensure there is at least one active cloud subscription when nodes exist
       const refreshedProfile = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)

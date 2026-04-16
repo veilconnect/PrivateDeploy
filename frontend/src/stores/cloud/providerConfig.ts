@@ -96,13 +96,27 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
   const saveConfig = async () => {
     savingConfig.value = true
     try {
+      // Align with backend's active provider to avoid "provider mismatch" when
+      // the frontend's currentProvider lags behind a concurrent SetCloudProvider.
+      try {
+        const active = await GetCloudProvider()
+        if (active?.name) {
+          currentProvider.value = active.name as CloudProvider
+        }
+      } catch (err) {
+        logError('[CloudStore] saveConfig: failed to resync active provider', err)
+      }
       const payload = deepClone(config) as CloudConfig
       payload.provider = currentProvider.value
       payload.extra = payload.extra ?? {}
       await retryWithBackoff(
         () => SaveCloudConfig(payload),
         'SaveCloudConfig',
-        { maxAttempts: 3, baseDelay: 1000 }
+        {
+          maxAttempts: 3,
+          baseDelay: 1000,
+          shouldRetry: (err) => !String(err).toLowerCase().includes('provider mismatch'),
+        }
       )
       if (payload.apiKey && payload.apiKey.trim() !== '') {
         startAutoRefresh(true)
@@ -243,9 +257,20 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
   const switchProvider = async (provider: CloudProvider) => {
     try {
-      // Save current provider's API key before switching
+      // Save current provider's API key before switching — but only if the
+      // backend's active provider still matches our local currentProvider,
+      // otherwise saveConfig would write the old key to a different slot.
       if (config.apiKey && currentProvider.value) {
-        await saveConfig()
+        let activeName: string | undefined
+        try {
+          const active = await GetCloudProvider()
+          activeName = active?.name
+        } catch (err) {
+          logError('[CloudStore] switchProvider: active provider lookup failed', err)
+        }
+        if (activeName === currentProvider.value) {
+          await saveConfig()
+        }
       }
 
       // Reset config while loading new provider to avoid using stale credentials
@@ -268,11 +293,13 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
       currentProvider.value = current.name as CloudProvider
       console.log('[CloudStore] Switched to provider:', current)
 
-      // Clear current data when switching providers
+      // Clear provider-scoped display data (regions/plans/availability) but
+      // PRESERVE instances across provider switches. Nodes that were already
+      // loaded should remain visible until a verified delete (explicit destroy
+      // or connection probe confirming the node is gone). refreshInstances()
+      // will merge the new provider's list with retained in-use nodes.
       regions.value = []
       plans.value = []
-      instances.value = []
-      instancesUpdatedAt.value = Date.now()
       Object.keys(availability).forEach((key) => delete availability[key])
 
       // Reload config and data for new provider (will load saved API key)
@@ -284,12 +311,15 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
       config.defaultPlan = ''
       console.log('[CloudStore] Cleared defaults, defaultRegion:', config.defaultRegion, 'defaultPlan:', config.defaultPlan)
 
+      // Force-refresh instances on provider switch: retained cross-provider
+      // nodes in instances.value would otherwise satisfy the cache-hit guard
+      // in refreshInstances() and the new provider's list would never load.
       if (provider === 'ssh') {
-        await refreshInstances(true)
+        await refreshInstances(true, true)
       } else if (config.apiKey) {
         await Promise.all([fetchRegions(), fetchPlans()])
         console.log('[CloudStore] After fetching, regions count:', regions.value.length, 'plans count:', plans.value.length)
-        await refreshInstances(true)
+        await refreshInstances(true, true)
       }
     } catch (error) {
       logError('[CloudStore] Failed to switch provider:', error)

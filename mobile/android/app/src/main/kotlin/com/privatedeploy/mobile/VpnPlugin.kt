@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -198,6 +200,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "getStats" -> getStats(result)
             "getRecentLogs" -> getRecentLogs(result)
             "getEgressIp" -> getEgressIp(result)
+            "httpJsonRequest" -> httpJsonRequest(call, result)
             "getInstalledApps" -> getInstalledApps(result)
             "resetStats" -> resetStats(result)
             "updateConfig" -> updateConfig(call, result)
@@ -386,6 +389,102 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                 )
             }
         }.start()
+    }
+
+    private fun httpJsonRequest(call: MethodCall, result: MethodChannel.Result) {
+        val urlString = call.argument<String>("url")
+        if (urlString.isNullOrBlank()) {
+            result.error("INVALID_URL", "URL is required", null)
+            return
+        }
+
+        val method = (call.argument<String>("method") ?: "GET").uppercase()
+        val body = call.argument<String>("body")
+        val connectTimeoutMs = call.argument<Int>("connectTimeoutMs") ?: 15000
+        val readTimeoutMs = call.argument<Int>("readTimeoutMs") ?: 90000
+        val rawHeaders = call.argument<Map<*, *>>("headers") ?: emptyMap<Any?, Any?>()
+        val headers = rawHeaders.entries.mapNotNull { entry ->
+            val key = entry.key?.toString()?.trim()
+            if (key.isNullOrEmpty()) {
+                null
+            } else {
+                key to (entry.value?.toString() ?: "")
+            }
+        }
+
+        Thread {
+            try {
+                Log.i(TAG, "Native HTTP request: $method $urlString")
+                val connection = openHttpConnection(URL(urlString))
+                try {
+                    connection.instanceFollowRedirects = true
+                    connection.connectTimeout = connectTimeoutMs
+                    connection.readTimeout = readTimeoutMs
+                    connection.requestMethod = method
+                    connection.doInput = true
+                    for ((key, value) in headers) {
+                        connection.setRequestProperty(key, value)
+                    }
+
+                    if (!body.isNullOrEmpty() && method != "GET" && method != "HEAD") {
+                        connection.doOutput = true
+                        connection.outputStream.use { output ->
+                            output.write(body.toByteArray(Charsets.UTF_8))
+                        }
+                    }
+
+                    val statusCode = connection.responseCode
+                    val stream =
+                        if (statusCode >= 400) connection.errorStream ?: connection.inputStream
+                        else connection.inputStream
+                    val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                    Log.i(TAG, "Native HTTP response: $statusCode $urlString")
+
+                    mainHandler.post {
+                        result.success(
+                            mapOf(
+                                "statusCode" to statusCode,
+                                "body" to responseBody,
+                            )
+                        )
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            } catch (timeout: SocketTimeoutException) {
+                Log.w(TAG, "Native HTTP timeout for $method $urlString", timeout)
+                mainHandler.post {
+                    result.error(
+                        "HTTP_TIMEOUT",
+                        timeout.message ?: "HTTP request timed out",
+                        null
+                    )
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Native HTTP failure for $method $urlString", error)
+                mainHandler.post {
+                    result.error(
+                        "HTTP_REQUEST_FAILED",
+                        error.message ?: "HTTP request failed",
+                        null
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun openHttpConnection(url: URL): HttpURLConnection {
+        val connectivityManager =
+            context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val preferredNetwork = connectivityManager?.let(::findPreferredValidatedNetwork)
+        if (preferredNetwork != null) {
+            Log.i(TAG, "Native HTTP using validated network $preferredNetwork for $url")
+        } else {
+            Log.i(TAG, "Native HTTP using default network for $url")
+        }
+        val connection = preferredNetwork?.openConnection(url) ?: url.openConnection()
+        return connection as? HttpURLConnection
+            ?: throw IllegalStateException("Unsupported HTTP connection type for $url")
     }
 
     private fun getInstalledApps(result: MethodChannel.Result) {
@@ -611,15 +710,102 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     private fun openProbeConnection(url: URL): HttpURLConnection {
         val connectivityManager =
             context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val activeNetwork = connectivityManager?.activeNetwork
-        val connection = if (activeNetwork != null) {
-            activeNetwork.openConnection(url)
+        val preferredNetwork = connectivityManager?.let(::findPreferredNetwork)
+        val connection = if (preferredNetwork != null) {
+            preferredNetwork.openConnection(url)
         } else {
             url.openConnection()
         }
 
         return connection as? HttpURLConnection
             ?: throw IllegalStateException("Unsupported probe connection type for $url")
+    }
+
+    private fun findPreferredNetwork(connectivityManager: ConnectivityManager): Network? {
+        val activeNetwork = connectivityManager.activeNetwork
+        var bestNetwork: Network? = null
+        var bestScore = Int.MIN_VALUE
+
+        connectivityManager.allNetworks.forEach { network ->
+            val capabilities =
+                connectivityManager.getNetworkCapabilities(network) ?: return@forEach
+            if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                return@forEach
+            }
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                return@forEach
+            }
+
+            var score = 0
+            if (network == activeNetwork) {
+                score += 1000
+            }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                score += 200
+            }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
+                score += 50
+            }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)) {
+                score += 25
+            }
+            score += when {
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 30
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 20
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 10
+                else -> 0
+            }
+
+            if (score > bestScore) {
+                bestNetwork = network
+                bestScore = score
+            }
+        }
+
+        return bestNetwork
+    }
+
+    private fun findPreferredValidatedNetwork(connectivityManager: ConnectivityManager): Network? {
+        var bestNetwork: Network? = null
+        var bestScore = Int.MIN_VALUE
+
+        connectivityManager.allNetworks.forEach { network ->
+            val capabilities =
+                connectivityManager.getNetworkCapabilities(network) ?: return@forEach
+            if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                return@forEach
+            }
+            if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                return@forEach
+            }
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                return@forEach
+            }
+
+            var score = 0
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
+                score += 50
+            }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)) {
+                score += 25
+            }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND)) {
+                score += 10
+            }
+            score += when {
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 30
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 20
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 10
+                else -> 0
+            }
+
+            if (score > bestScore) {
+                bestNetwork = network
+                bestScore = score
+            }
+        }
+
+        return bestNetwork
     }
 
     private fun extractIpFromProbePayload(payload: String): String? {
