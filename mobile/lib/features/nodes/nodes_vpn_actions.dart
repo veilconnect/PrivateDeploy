@@ -129,6 +129,7 @@ Future<void> handleNodesConnect({
   required CloudProvider cloudProvider,
   required Future<void> Function(CloudInstance instance) onUseCloudNode,
 }) async {
+  final successMessage = AppLocalizations.of(context)!.vpnConnectedSuccess;
   await connectSelectedProfile(
     context: context,
     vpnProvider: vpnProvider,
@@ -136,8 +137,104 @@ Future<void> handleNodesConnect({
     cloudProvider: cloudProvider,
     onUseCloudNode: onUseCloudNode,
     autoSelectFastestCloudNode: true,
-    successMessage: AppLocalizations.of(context)!.vpnConnectedSuccess,
+    successMessage: successMessage,
   );
+
+  // Cold-start / first-node-unreachable fallback: if the primary attempt
+  // left the VPN disconnected (egress probe failed, node unreachable on the
+  // current network, etc.), cycle through the remaining ready cloud nodes.
+  // Tests show the initial node is often a stale favourite that no longer
+  // reaches the user's network; auto-rotating salvages the connect button
+  // instead of making the user manually tap "使用并切换".
+  if (vpnProvider.status == VpnStatus.connected) {
+    return;
+  }
+
+  final tried = <String>{};
+  final activeName = profileProvider.activeProfile?.name;
+  if (activeName != null) tried.add(activeName);
+
+  var remaining = connectableCloudInstances(cloudProvider)
+      .where((inst) => !tried.contains(cloudProfileName(inst)))
+      .toList();
+  // Prefer nodes with prior successful latency samples, then by creation
+  // time. This biases toward nodes the app has seen working before.
+  remaining.sort((a, b) {
+    final la = cloudProvider.latencyCheckFor(a.id);
+    final lb = cloudProvider.latencyCheckFor(b.id);
+    final aHas = la?.latencyMs != null && la!.error == null;
+    final bHas = lb?.latencyMs != null && lb!.error == null;
+    if (aHas != bHas) return aHas ? -1 : 1;
+    if (aHas && bHas) return la.latencyMs!.compareTo(lb.latencyMs!);
+    return 0;
+  });
+
+  // Record that the first attempt failed so future fastest-node selection
+  // scores past failures lower. latencyCheckFor is read-only; saveLatencyCheck
+  // persists the failure into the same map the scorer reads from.
+  final firstTried = connectableCloudInstances(cloudProvider)
+      .where((inst) => cloudProfileName(inst) == activeName)
+      .firstOrNull;
+  if (firstTried != null) {
+    cloudProvider.saveLatencyCheck(
+      firstTried.id,
+      CloudLatencyCheck.failure(
+        error: AppLocalizations.of(context)!.restoreConnectionFailed,
+        updatedAt: DateTime.now(),
+        mode: CloudProbeMode.quick,
+      ),
+      notify: false,
+    );
+  }
+
+  final total = remaining.length;
+  for (var i = 0; i < remaining.length; i += 1) {
+    final next = remaining[i];
+    if (!context.mounted) return;
+    if (vpnProvider.status == VpnStatus.connected) return;
+    tried.add(cloudProfileName(next));
+    if (context.mounted) {
+      showNodesActionSnackBar(
+        context,
+        message: AppLocalizations.of(context)!.tryingBackupNode(
+          i + 1,
+          total,
+          next.label,
+        ),
+        backgroundColor: Colors.blue,
+        replaceCurrent: true,
+      );
+    }
+    await useCloudNodeAndConnect(
+      context: context,
+      instance: next,
+      cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+    );
+    if (vpnProvider.status == VpnStatus.connected) return;
+    // Record this failure too so the next cold-start auto-fastest can
+    // deprioritise it.
+    cloudProvider.saveLatencyCheck(
+      next.id,
+      CloudLatencyCheck.failure(
+        error: AppLocalizations.of(context)!.restoreConnectionFailed,
+        updatedAt: DateTime.now(),
+        mode: CloudProbeMode.quick,
+      ),
+      notify: false,
+    );
+  }
+
+  if (!context.mounted) return;
+  if (vpnProvider.status != VpnStatus.connected) {
+    showNodesActionSnackBar(
+      context,
+      message: AppLocalizations.of(context)!.allNodesFailedCheckNetwork,
+      backgroundColor: Colors.red,
+      replaceCurrent: true,
+    );
+  }
 }
 
 Future<void> handleNodesDisconnect({
@@ -187,6 +284,21 @@ Future<void> connectSelectedProfile({
   bool forceReconnect = false,
   bool autoSelectFastestCloudNode = false,
 }) async {
+  // If a benchmark-all pass is in progress, abort it so the user's explicit
+  // connect request wins. Wait briefly for the benchmark loop to unwind its
+  // current VPN transition before proceeding.
+  if (cloudProvider.isBenchmarkingAll) {
+    cloudProvider.requestBenchmarkAllAbort();
+    final deadline = DateTime.now().add(const Duration(seconds: 8));
+    while (cloudProvider.isBenchmarkingAll &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
+  }
+
   if (vpnProvider.isLoading ||
       vpnProvider.status == VpnStatus.connecting ||
       vpnProvider.status == VpnStatus.disconnecting) {
@@ -210,6 +322,21 @@ Future<void> connectSelectedProfile({
     );
     if (usedFastestNode) {
       return;
+    }
+    // Cold-start fallback: auto-fastest may have failed because the quick
+    // latency probe returned nothing yet (first launch, no cached results),
+    // but we still have an active cloud profile. Regenerate that node's
+    // config from current nodeInfo instead of reusing a potentially stale
+    // configJson — stale configs have been observed to bring the VPN up
+    // without actually forwarding traffic.
+    if (activeProfile != null && isCloudManagedProfile(activeProfile)) {
+      final matching = readyCloudNodes
+          .where((inst) => cloudProfileName(inst) == activeProfile.name)
+          .firstOrNull;
+      if (matching != null) {
+        await onUseCloudNode(matching);
+        return;
+      }
     }
   }
 
@@ -237,7 +364,7 @@ Future<void> connectSelectedProfile({
     final l10nHint = AppLocalizations.of(context)!;
     showNodesActionSnackBar(
       context,
-      message: cloudProvider.instances.isNotEmpty
+      message: cloudProvider.allInstances.isNotEmpty
           ? l10nHint.noCredentialsHint
           : l10nHint.noNodeSelectedHint,
       backgroundColor: Colors.orange,

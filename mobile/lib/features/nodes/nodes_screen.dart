@@ -74,7 +74,7 @@ class _NodesScreenState extends State<NodesScreen> {
     // If we already have cached instances (restored from local storage in
     // CloudProvider._init), kick off the API sync in the background so the
     // user can connect immediately without waiting for a network round-trip.
-    if (cloudProvider.instances.isNotEmpty) {
+    if (cloudProvider.allInstances.isNotEmpty) {
       unawaited(_backgroundCloudSync(
           cloudProvider, profileProvider, vpnProvider));
     } else {
@@ -120,7 +120,7 @@ class _NodesScreenState extends State<NodesScreen> {
     }
 
     final existingCloudProfiles =
-        cloudProvider.instances.map(cloudProfileName).toSet();
+        cloudProvider.allInstances.map(cloudProfileName).toSet();
     final staleActiveProfile = profileProvider.activeProfile;
     final shouldDisconnect = staleActiveProfile != null &&
         isCloudManagedProfile(staleActiveProfile) &&
@@ -378,7 +378,7 @@ class _NodesScreenState extends State<NodesScreen> {
           if (profileProvider.isLoading &&
               profileProvider.profiles.isEmpty &&
               cloudProvider.isLoading &&
-              cloudProvider.instances.isEmpty) {
+              cloudProvider.allInstances.isEmpty) {
             return LoadingIndicator(message: l10n.loadingNodes);
           }
 
@@ -419,7 +419,7 @@ class _NodesScreenState extends State<NodesScreen> {
                   vpnProvider: vpnProvider,
                   onConfigureApiKey: () =>
                       _showCloudApiKeyDialog(cloudProvider),
-                  onRetryLoad: cloudProvider.loadInstances,
+                  onRetryLoad: () => _refreshAll(),
                   onCreateCloudNode: () =>
                       _showCreateCloudNodeDialog(cloudProvider),
                   onViewDetails: _openCloudNodeDetails,

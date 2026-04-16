@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -14,14 +16,15 @@ String maskedSettingsApiKey(String? apiKey, {String notSetLabel = 'Not set'}) {
   return '${trimmed.substring(0, visibleLength)}...';
 }
 
-Future<void> showSettingsApiKeyDialog({
+Future<bool> showSettingsApiKeyDialog({
   required BuildContext context,
   required CloudProvider cloud,
 }) async {
-  await showDialog(
+  final saved = await showDialog<bool>(
     context: context,
     builder: (_) => _SettingsApiKeyDialog(rootContext: context, cloud: cloud),
   );
+  return saved ?? false;
 }
 
 class _SettingsApiKeyDialog extends StatefulWidget {
@@ -40,18 +43,29 @@ class _SettingsApiKeyDialog extends StatefulWidget {
 class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
   late final TextEditingController _controller;
   bool _saving = false;
+  bool _savedSuccessfully = false;
   String? _dialogError;
   late CloudProviderId _selectedProvider;
+  late final CloudProviderId _originalProvider;
 
   @override
   void initState() {
     super.initState();
-    _selectedProvider = widget.cloud.providerId;
+    _originalProvider = widget.cloud.providerId;
+    _selectedProvider = _originalProvider;
     _controller = TextEditingController(text: widget.cloud.apiKey ?? '');
   }
 
   @override
   void dispose() {
+    // If the user dismissed the dialog without saving (Cancel, system back,
+    // or dismiss-by-tap), roll the active provider back to what it was when
+    // the dialog opened. Switching the dropdown is a preview action, not a
+    // commit — only "Verify & Save" persists the change.
+    if (!_savedSuccessfully &&
+        widget.cloud.providerId != _originalProvider) {
+      unawaited(widget.cloud.setActiveProvider(_originalProvider));
+    }
     _controller.dispose();
     super.dispose();
   }
@@ -60,10 +74,8 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     if (next == null || next == _selectedProvider || _saving) {
       return;
     }
-    // Persist the switch so re-opening the dialog (and other UI surfaces)
-    // reflect the selection. setActiveProvider re-reads the per-provider
-    // API key, which we then mirror into this dialog's text field so the
-    // user sees what's currently stored for the newly selected provider.
+    // Switch the active provider so the text field can preview the per-
+    // provider stored key. If the user cancels, dispose() rolls this back.
     await widget.cloud.setActiveProvider(next);
     if (!mounted) return;
     setState(() {
@@ -142,9 +154,10 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     }
 
     if (success) {
+      _savedSuccessfully = true;
       await widget.cloud.loadInstances(notify: false);
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context, true);
       }
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(

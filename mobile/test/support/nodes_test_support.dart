@@ -3,9 +3,11 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 Future<void> pumpNodesTestApp(
@@ -24,6 +26,8 @@ Future<void> pumpNodesTestApp(
       appSettingsProvider ?? TestAppSettingsProvider();
 
   final app = MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: wrapInScaffold ? Scaffold(body: child) : child,
   );
 
@@ -194,6 +198,15 @@ class TestCloudProvider extends ChangeNotifier
 
   @override
   final String providerName;
+
+  @override
+  CloudProviderId get providerId => CloudProviderId.vultr;
+
+  @override
+  bool get isBenchmarkingAll => false;
+
+  @override
+  bool get benchmarkAbortRequested => false;
 
   @override
   List<CloudInstance> instances;

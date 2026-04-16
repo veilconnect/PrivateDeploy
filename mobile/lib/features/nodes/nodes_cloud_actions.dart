@@ -11,6 +11,7 @@ import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../settings/settings_api_key_dialog.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_dialogs.dart';
 
@@ -23,7 +24,7 @@ String cloudProfileName(CloudInstance instance) {
 }
 
 List<CloudInstance> connectableCloudInstances(CloudProvider cloudProvider) {
-  return cloudProvider.instances
+  return cloudProvider.allInstances
       .where(
         (instance) =>
             instance.isActive && instance.hasIp && instance.nodeInfo != null,
@@ -96,36 +97,14 @@ Future<void> showCloudApiKeyFlow({
   required CloudProvider cloudProvider,
   required Future<void> Function() onSaved,
 }) async {
-  final success = await showNodesCloudApiKeyDialog(
+  final saved = await showSettingsApiKeyDialog(
     context: context,
-    initialValue: cloudProvider.apiKey ?? '',
-    onVerifyAndSave: (apiKey) async {
-      final saved = await cloudProvider.setApiKey(apiKey);
-      return saved ? null : cloudProvider.error ?? AppLocalizations.of(context)!.failedToSaveApiKey;
-    },
+    cloud: cloudProvider,
   );
-  if (!success || !context.mounted) {
+  if (!saved || !context.mounted) {
     return;
   }
-
-  final l10nApiKey = AppLocalizations.of(context)!;
-  showNodesActionSnackBar(
-    context,
-    message: l10nApiKey.apiKeyVerifiedLoadingNodes,
-    backgroundColor: Colors.green,
-  );
-
   await onSaved();
-  if (!context.mounted) {
-    return;
-  }
-
-  showNodesActionSnackBar(
-    context,
-    message: AppLocalizations.of(context)!.apiKeySavedNodesLoaded,
-    backgroundColor: Colors.green,
-    replaceCurrent: true,
-  );
 }
 
 Future<void> showCreateCloudNodeFlow({
@@ -308,6 +287,7 @@ Future<void> testAllCloudNodesLatency({
     replaceCurrent: true,
   );
 
+  cloudProvider.markBenchmarkAllStart();
   var selection = CloudFastestNodeSelection(
     error: l10nBench.noReadyNodeForTesting,
   );
@@ -317,6 +297,9 @@ Future<void> testAllCloudNodesLatency({
     }
 
     for (var index = 0; index < readyNodes.length; index += 1) {
+      if (cloudProvider.benchmarkAbortRequested) {
+        break;
+      }
       final instance = readyNodes[index];
       if (context.mounted) {
         final l10nProgress = AppLocalizations.of(context)!;
@@ -381,7 +364,11 @@ Future<void> testAllCloudNodesLatency({
       maxAge: CloudProvider.connectSelectionReuseMaxAge,
     );
   } finally {
-    if (previouslyConnected && previousConfigJson != null) {
+    final aborted = cloudProvider.benchmarkAbortRequested;
+    cloudProvider.markBenchmarkAllEnd();
+    // When the user aborted to start their own connection, don't restore the
+    // previous tunnel — the new connect flow will handle it.
+    if (!aborted && previouslyConnected && previousConfigJson != null) {
       final restored = await vpnProvider.connect(
         configJson: previousConfigJson,
         profileName: previousProfileName,
@@ -389,7 +376,7 @@ Future<void> testAllCloudNodesLatency({
         statusPollInterval: const Duration(milliseconds: 250),
       );
       restoreFailed = !restored;
-    } else if (vpnProvider.status == VpnStatus.connected) {
+    } else if (!aborted && vpnProvider.status == VpnStatus.connected) {
       await vpnProvider.disconnect();
     }
   }

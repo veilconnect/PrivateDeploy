@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_dialogs.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
@@ -71,57 +72,6 @@ void main() {
 
       expect(request?.name, 'Manual SG');
       expect(request?.config, '{"outbounds":[{"type":"direct"}]}');
-    });
-
-    testWidgets('cloud api key dialog obscures input and then saves',
-        (tester) async {
-      bool? saved;
-      var attempts = 0;
-
-      await _pumpDialogHarness(
-        tester,
-        onLaunch: (context) async {
-          saved = await showNodesCloudApiKeyDialog(
-            context: context,
-            initialValue: '',
-            onVerifyAndSave: (apiKey) async {
-              attempts += 1;
-              if (attempts == 1) {
-                return 'Invalid API key';
-              }
-              return null;
-            },
-          );
-        },
-      );
-
-      await tester.tap(find.text('Open'));
-      await tester.pumpAndSettle();
-
-      expect(
-        tester.widget<EditableText>(find.byType(EditableText)).obscureText,
-        isTrue,
-      );
-
-      await tester.enterText(find.byType(TextField), 'key-123');
-      await tester.tap(find.text('Verify & Save'));
-      await tester.pump();
-      await tester.pump();
-
-      expect(find.text('Invalid API key'), findsOneWidget);
-      expect(saved, isNull);
-
-      await tester.tap(find.text('Verify & Save'));
-      await tester.pump();
-      // Wait for the async verification to complete.
-      await tester.pump();
-      // The dialog shows a success indicator and delays before closing.
-      expect(find.text('API key verified'), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 700));
-      await tester.pumpAndSettle();
-
-      expect(attempts, 2);
-      expect(saved, isTrue);
     });
 
     testWidgets('import dialog validates http url and trims fields',
@@ -393,6 +343,15 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   @override
   bool get isLoadingPlans => false;
+
+  @override
+  CloudProviderId get providerId => CloudProviderId.vultr;
+
+  @override
+  bool get isBenchmarkingAll => false;
+
+  @override
+  bool get benchmarkAbortRequested => false;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

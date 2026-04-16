@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
@@ -463,6 +465,8 @@ Future<void> _pumpCloudActionHarness(
         splitScreenMode: true,
         builder: (context, _) {
           return MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             home: Scaffold(
               body: Builder(
                 builder: (context) {
@@ -690,6 +694,34 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   @override
   String? generateNodeConfig(CloudInstance instance) {
     return '{"outbounds":[{"type":"direct","tag":"test"}]}';
+  }
+
+  @override
+  CloudProviderId get providerId => CloudProviderId.vultr;
+
+  bool _benchmarkAll = false;
+  bool _benchmarkAbort = false;
+  @override
+  bool get isBenchmarkingAll => _benchmarkAll;
+  @override
+  bool get benchmarkAbortRequested => _benchmarkAbort;
+  @override
+  void markBenchmarkAllStart() {
+    _benchmarkAll = true;
+    _benchmarkAbort = false;
+    notifyListeners();
+  }
+  @override
+  void markBenchmarkAllEnd() {
+    _benchmarkAll = false;
+    _benchmarkAbort = false;
+    notifyListeners();
+  }
+  @override
+  void requestBenchmarkAllAbort() {
+    if (!_benchmarkAll) return;
+    _benchmarkAbort = true;
+    notifyListeners();
   }
 
   @override

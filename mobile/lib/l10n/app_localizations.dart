@@ -194,18 +194,6 @@ abstract class AppLocalizations {
   /// **'API Key'**
   String get apiKey;
 
-  /// No description provided for @enterCloudApiKey.
-  ///
-  /// In en, this message translates to:
-  /// **'Enter your cloud provider API key'**
-  String get enterCloudApiKey;
-
-  /// No description provided for @apiKeyVerified.
-  ///
-  /// In en, this message translates to:
-  /// **'API key verified'**
-  String get apiKeyVerified;
-
   /// No description provided for @verifyAndSave.
   ///
   /// In en, this message translates to:
@@ -217,24 +205,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Verifying...'**
   String get verifying;
-
-  /// No description provided for @verified.
-  ///
-  /// In en, this message translates to:
-  /// **'Verified'**
-  String get verified;
-
-  /// No description provided for @apiKeyVerifiedLoadingNodes.
-  ///
-  /// In en, this message translates to:
-  /// **'API key verified. Loading cloud nodes...'**
-  String get apiKeyVerifiedLoadingNodes;
-
-  /// No description provided for @apiKeySavedNodesLoaded.
-  ///
-  /// In en, this message translates to:
-  /// **'API key saved. Cloud nodes loaded.'**
-  String get apiKeySavedNodesLoaded;
 
   /// No description provided for @failedToSaveApiKey.
   ///
@@ -254,21 +224,13 @@ abstract class AppLocalizations {
   /// **'Not set'**
   String get notSet;
 
-  /// No description provided for @pasteVultrApiKey.
-  ///
-  /// In en, this message translates to:
-  /// **'Paste your Vultr API key'**
-  String get pasteVultrApiKey;
-
-  /// Placeholder hint for the API key text field, parameterized by the
-  /// active cloud provider's display name (e.g. Vultr, DigitalOcean).
+  /// No description provided for @pasteCloudProviderApiKey.
   ///
   /// In en, this message translates to:
   /// **'Paste your {provider} API key'**
   String pasteCloudProviderApiKey(Object provider);
 
-  /// Label shown on the deploy-node dialog indicating which cloud provider
-  /// the new instance will be created under.
+  /// No description provided for @deployToCloudProvider.
   ///
   /// In en, this message translates to:
   /// **'Deploy to {provider}'**
@@ -400,11 +362,11 @@ abstract class AppLocalizations {
   /// **'Cloud access not configured'**
   String get cloudAccessNotConfigured;
 
-  /// No description provided for @setVultrApiKeyHint.
+  /// No description provided for @setCloudProviderApiKeyHint.
   ///
   /// In en, this message translates to:
-  /// **'Set your Vultr API key to get started.'**
-  String get setVultrApiKeyHint;
+  /// **'Set your {provider} API key to get started.'**
+  String setCloudProviderApiKeyHint(Object provider);
 
   /// No description provided for @setApiKey.
   ///
@@ -609,6 +571,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'VPN is busy, please wait a moment'**
   String get vpnBusyWait;
+
+  /// No description provided for @tryingBackupNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Trying backup node {index}/{total}: {label}'**
+  String tryingBackupNode(Object index, Object total, Object label);
+
+  /// No description provided for @allNodesFailedCheckNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'All ready nodes failed to connect. Check your network (try Wi-Fi) or refresh the node list.'**
+  String get allNodesFailedCheckNetwork;
 
   /// No description provided for @noCredentialsHint.
   ///

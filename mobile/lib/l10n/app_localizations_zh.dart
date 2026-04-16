@@ -57,25 +57,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get apiKey => 'API Key';
 
   @override
-  String get enterCloudApiKey => '输入云服务商 API Key';
-
-  @override
-  String get apiKeyVerified => 'API Key 验证成功';
-
-  @override
   String get verifyAndSave => '验证并保存';
 
   @override
   String get verifying => '验证中...';
-
-  @override
-  String get verified => '已验证';
-
-  @override
-  String get apiKeyVerifiedLoadingNodes => 'API Key 验证通过，正在加载云节点...';
-
-  @override
-  String get apiKeySavedNodesLoaded => 'API Key 已保存，云节点加载完成。';
 
   @override
   String get failedToSaveApiKey => '保存 API Key 失败';
@@ -85,9 +70,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get notSet => '未设置';
-
-  @override
-  String get pasteVultrApiKey => '粘贴您的 Vultr API Key';
 
   @override
   String pasteCloudProviderApiKey(Object provider) {
@@ -169,7 +151,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudAccessNotConfigured => '云端访问未配置';
 
   @override
-  String get setVultrApiKeyHint => '设置 Vultr API Key 以开始使用。';
+  String setCloudProviderApiKeyHint(Object provider) {
+    return '设置 $provider API Key 以开始使用。';
+  }
 
   @override
   String get setApiKey => '设置 API Key';
@@ -278,6 +262,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get vpnBusyWait => 'VPN 正忙，请稍候';
+
+  @override
+  String tryingBackupNode(Object index, Object total, Object label) {
+    return '正在尝试备用节点 $index/$total: $label';
+  }
+
+  @override
+  String get allNodesFailedCheckNetwork =>
+      '所有就绪节点都连接失败。请检查网络（可切到 Wi-Fi）或刷新节点列表。';
 
   @override
   String get noCredentialsHint => '这些云节点可见，但此设备尚无其连接凭据。请恢复云备份或从此设备部署/使用节点。';

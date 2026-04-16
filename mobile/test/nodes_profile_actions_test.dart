@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_profile_actions.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 
 void main() {
@@ -338,6 +339,8 @@ Future<void> _pumpProfileActionHarness(
       splitScreenMode: true,
       builder: (context, _) {
         return MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Builder(
               builder: (context) {

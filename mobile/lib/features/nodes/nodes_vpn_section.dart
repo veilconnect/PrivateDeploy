@@ -202,7 +202,7 @@ String _connectionHint(CloudProvider cloudProvider, AppLocalizations l10n) {
   if (readyCloudNodes.isNotEmpty) {
     return l10n.tapConnectHint;
   }
-  if (cloudProvider.instances.isNotEmpty) {
+  if (cloudProvider.allInstances.isNotEmpty) {
     return l10n.waitingForCredentials;
   }
   return l10n.noNodeSelected;

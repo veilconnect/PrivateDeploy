@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_screen_fab.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -70,6 +71,8 @@ Future<void> _pumpFab(
       designSize: const Size(390, 844),
       minTextAdapt: true,
       builder: (_, __) => MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           floatingActionButton: child,
           body: const SizedBox.shrink(),

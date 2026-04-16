@@ -53,17 +53,62 @@ class CloudProvider extends CloudProviderBase {
   Future<void>? _plansLoadFuture;
   final CloudLatencyProbe _latencyProbe;
   final CloudLatencyProbe _benchmarkLatencyProbe;
+  bool _benchmarkAllRunning = false;
+  bool _benchmarkAbortRequested = false;
+  // Cached CloudInstance lists for providers OTHER than the active one, so
+  // the UI can show all nodes from every configured provider in one list.
+  // Populated by loadInstances alongside the active provider's live fetch.
+  final Map<CloudProviderId, List<CloudInstance>> _otherProviderInstances = {};
 
   List<CloudInstance> get instances => _instances;
+
+  /// Merged view: active provider's live instances + cached instances from
+  /// every other configured provider. Deduped by id; sorted newest-first.
+  List<CloudInstance> get allInstances {
+    final merged = <String, CloudInstance>{};
+    for (final inst in _instances) {
+      merged[inst.id] = inst;
+    }
+    for (final other in _otherProviderInstances.values) {
+      for (final inst in other) {
+        merged.putIfAbsent(inst.id, () => inst);
+      }
+    }
+    final list = merged.values.toList()
+      ..sort((a, b) => (b.createdAt ?? DateTime(0))
+          .compareTo(a.createdAt ?? DateTime(0)));
+    return list;
+  }
   List<CloudRegion> get regions => _regions;
   List<CloudPlan> get plans => _plans;
   bool get isLoading => _isLoading;
   bool get configLoaded => _configLoaded;
   bool get isLoadingRegions => _isLoadingRegions;
   bool get isLoadingPlans => _isLoadingPlans;
+  bool get isBenchmarkingAll => _benchmarkAllRunning;
+  bool get benchmarkAbortRequested => _benchmarkAbortRequested;
   String? get error => _error;
+
+  void markBenchmarkAllStart() {
+    _benchmarkAllRunning = true;
+    _benchmarkAbortRequested = false;
+    notifyListeners();
+  }
+
+  void markBenchmarkAllEnd() {
+    _benchmarkAllRunning = false;
+    _benchmarkAbortRequested = false;
+    notifyListeners();
+  }
+
+  void requestBenchmarkAllAbort() {
+    if (!_benchmarkAllRunning || _benchmarkAbortRequested) return;
+    _benchmarkAbortRequested = true;
+    notifyListeners();
+  }
   bool get hasApiKey => _hasApiKey;
   String? get apiKey => _apiKey;
+  bool get hasStoredApiKey => _apiKey?.trim().isNotEmpty == true;
   bool get isConfigured => _hasApiKey && _configLoaded;
   CloudLatencyCheck? latencyCheckFor(String instanceId) =>
       _latencyChecks[instanceId];
@@ -204,6 +249,7 @@ class CloudProvider extends CloudProviderBase {
     // Immediately build the instances list from cached node records so the UI
     // can display known nodes without waiting for a network round-trip.
     _restoreInstancesFromCache();
+    await _loadOtherProviderInstancesFromCache();
     // Load the API key from local storage so hasApiKey is accurate without
     // waiting for a network round-trip.  The full cloud config refresh (which
     // validates the key against the remote API) is deferred to the first
@@ -249,6 +295,7 @@ class CloudProvider extends CloudProviderBase {
 
     await _loadNodeRecords();
     _restoreInstancesFromCache();
+    await _loadOtherProviderInstancesFromCache();
     _apiKey = await _getStoredApiKey();
     _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
     notifyListeners();
@@ -283,12 +330,26 @@ class CloudProvider extends CloudProviderBase {
     if (key == null || key.isEmpty) {
       throw StateError('${providerDisplayName} API key is not configured');
     }
-    switch (_providerId) {
+    return _buildClient(_providerId, key);
+  }
+
+  /// Build a one-off client for any provider id + key. Used for cross-
+  /// provider actions (e.g. deleting a node from the non-active provider's
+  /// list) without disturbing the current active-provider state.
+  CloudApiClient _buildClient(CloudProviderId id, String key) {
+    switch (id) {
       case CloudProviderId.digitalocean:
         return DigitalOceanCloudClient(key);
       case CloudProviderId.vultr:
         return VultrCloudClient(key);
     }
+  }
+
+  Future<CloudApiClient?> _clientForProvider(CloudProviderId id) async {
+    final key = await StorageService.getSecureString(id.apiKeyStorageKey) ??
+        StorageService.getString(id.apiKeyStorageKey);
+    if (key == null || key.isEmpty) return null;
+    return _buildClient(id, key);
   }
 
   Future<String?> _getStoredApiKey() async {
@@ -333,18 +394,25 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<Map<String, VultrNodeRecord>> _loadNodeRecords() async {
+    final records = await _loadNodeRecordsFor(_providerId);
+    _nodeRecords = records;
+    return records;
+  }
+
+  Future<Map<String, VultrNodeRecord>> _loadNodeRecordsFor(
+      CloudProviderId providerId) async {
     await _initializeStorage();
-    var raw = await StorageService.getSecureString(nodeRecordsStorageKey);
+    final storageKey = providerId.nodeRecordsStorageKey;
+    var raw = await StorageService.getSecureString(storageKey);
     if (raw == null || raw.isEmpty) {
-      final legacy = StorageService.getString(nodeRecordsStorageKey);
+      final legacy = StorageService.getString(storageKey);
       if (legacy != null && legacy.isNotEmpty) {
         raw = legacy;
-        await StorageService.saveSecureString(nodeRecordsStorageKey, legacy);
-        await StorageService.remove(nodeRecordsStorageKey);
+        await StorageService.saveSecureString(storageKey, legacy);
+        await StorageService.remove(storageKey);
       }
     }
     if (raw == null || raw.isEmpty) {
-      _nodeRecords = {};
       return {};
     }
 
@@ -359,14 +427,13 @@ class CloudProvider extends CloudProviderBase {
                 id, Map<String, dynamic>.from(entry.value as Map));
           }
         }
-        _nodeRecords = output;
         return output;
       }
     } catch (e) {
-      AppLogger.error('[CloudProvider] Failed to parse local node records', e);
+      AppLogger.error(
+          '[CloudProvider] Failed to parse local node records for ${providerId.id}',
+          e);
     }
-
-    _nodeRecords = {};
     return {};
   }
 
@@ -483,6 +550,10 @@ class CloudProvider extends CloudProviderBase {
       final sources = <String, Map<String, dynamic>>{};
       for (final item in rawInstances.whereType<Map>()) {
         final source = Map<String, dynamic>.from(item);
+        // The API clients don't inject a provider field, so stamp it here —
+        // we know these rows came from the active provider's API. Without
+        // this, CloudInstance.fromJson falls back to 'vultr' for everything.
+        source['provider'] = _providerId.id;
         final id = source['id']?.toString() ?? '';
         if (id.isNotEmpty) {
           sources[id] = source;
@@ -591,10 +662,27 @@ class CloudProvider extends CloudProviderBase {
         parsed.add(CloudInstance.fromJson(merged));
       }
 
+      final apiReturnedInstances = liveInstanceIds.isNotEmpty;
       if (parsed.isEmpty && knownRecords.isNotEmpty) {
         parsed.addAll(knownRecords.values
             .where((r) => r.instanceId.isNotEmpty)
             .map((record) => record.toCloudInstance()));
+      } else if (apiReturnedInstances) {
+        // Prune records for instances deleted on the cloud side. We only do
+        // this when the API returned a non-empty list to avoid wiping local
+        // records on a transient empty response.
+        final stale = knownRecords.keys
+            .where((id) => !liveInstanceIds.contains(id))
+            .toList();
+        if (stale.isNotEmpty) {
+          for (final id in stale) {
+            knownRecords.remove(id);
+          }
+          recordsChanged = true;
+          AppLogger.info(
+            '[CloudProvider] Pruned ${stale.length} local record(s) for instances no longer on cloud',
+          );
+        }
       }
 
       _instances = parsed;
@@ -611,7 +699,7 @@ class CloudProvider extends CloudProviderBase {
         if (item.id.isNotEmpty) {
           final record = knownRecords[item.id];
           if (record != null) {
-            final updated = record.copyWithJson({
+            var updated = record.copyWithJson({
               'label': item.label,
               'region': item.region,
               'ipv4': item.ipv4 ?? record.ipv4,
@@ -620,10 +708,57 @@ class CloudProvider extends CloudProviderBase {
               'createdAt':
                   item.createdAt?.toIso8601String() ?? record.createdAt,
             });
+            // Self-heal: older builds never stamped the source provider, so
+            // some records still claim provider=vultr despite being stored
+            // under, e.g., the DigitalOcean namespace. We know the authoritative
+            // provider here — correct it so the merged-view chip is accurate.
+            if (updated.provider != _providerId) {
+              updated = VultrNodeRecord(
+                instanceId: updated.instanceId,
+                provider: _providerId,
+                label: updated.label,
+                region: updated.region,
+                plan: updated.plan,
+                osId: updated.osId,
+                ssPort: updated.ssPort,
+                ssPassword: updated.ssPassword,
+                hyPort: updated.hyPort,
+                hyPassword: updated.hyPassword,
+                hyServerName: updated.hyServerName,
+                vlessPort: updated.vlessPort,
+                vlessUuid: updated.vlessUuid,
+                vlessPublicKey: updated.vlessPublicKey,
+                vlessShortId: updated.vlessShortId,
+                vlessServerName: updated.vlessServerName,
+                trojanPort: updated.trojanPort,
+                trojanPassword: updated.trojanPassword,
+                trojanServerName: updated.trojanServerName,
+                ipv4: updated.ipv4,
+                ipv6: updated.ipv6,
+                createdAt: updated.createdAt,
+                portProfile: updated.portProfile,
+                planRam: updated.planRam,
+              );
+            }
             if (updated.toJson().toString() != record.toJson().toString()) {
               knownRecords[item.id] = updated;
               recordsChanged = true;
             }
+          } else {
+            // Persist a minimal record (no credentials) for every cloud-
+            // reported instance so the node stays visible in the merged
+            // all-providers view after the user switches active provider.
+            knownRecords[item.id] = VultrNodeRecord(
+              instanceId: item.id,
+              provider: _providerId,
+              label: item.label,
+              region: item.region,
+              plan: item.plan,
+              ipv4: item.ipv4 ?? '',
+              ipv6: item.ipv6 ?? '',
+              createdAt: item.createdAt?.toIso8601String() ?? '',
+            );
+            recordsChanged = true;
           }
         }
       }
@@ -638,9 +773,34 @@ class CloudProvider extends CloudProviderBase {
       _error = 'Failed to load instances: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load instances error', e);
     } finally {
+      // Refresh the merged-view cache for every non-active provider from its
+      // persisted node records so the UI can show all providers' nodes at
+      // once. This reads from local storage only (no API calls) — switching
+      // active provider is still the way to force a live refresh for it.
+      await _loadOtherProviderInstancesFromCache();
       _isLoading = false;
       if (notify) {
         notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _loadOtherProviderInstancesFromCache() async {
+    _otherProviderInstances.clear();
+    for (final pid in CloudProviderId.values) {
+      if (pid == _providerId) continue;
+      final records = await _loadNodeRecordsFor(pid);
+      if (records.isEmpty) continue;
+      // Show every record with a non-empty id, not just ones with full SS
+      // credentials. DigitalOcean records often lack recovered credentials
+      // (DO doesn't expose user-data) but are still useful to list so the
+      // user can see, delete, or refresh them.
+      final list = records.values
+          .where((r) => r.instanceId.isNotEmpty)
+          .map((record) => record.toCloudInstance())
+          .toList();
+      if (list.isNotEmpty) {
+        _otherProviderInstances[pid] = list;
       }
     }
   }
@@ -1092,8 +1252,15 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<bool> deleteInstance(String id) async {
-    if (!await _ensureAuthorizedCloudAccess()) {
-      return false;
+    // Find the instance in the merged view so we can route the delete call
+    // to whichever provider actually owns it, even if it's not the active
+    // provider. Falls back to the active provider's client for unknown ids.
+    final owner = _findInstanceOwner(id);
+
+    if (owner == null || owner == _providerId) {
+      if (!await _ensureAuthorizedCloudAccess()) {
+        return false;
+      }
     }
 
     _isLoading = true;
@@ -1101,12 +1268,32 @@ class CloudProvider extends CloudProviderBase {
     notifyListeners();
 
     try {
-      final client = await _cloudClient();
+      final client = owner != null && owner != _providerId
+          ? await _clientForProvider(owner)
+          : await _cloudClient();
+      if (client == null) {
+        _error = 'Failed to delete instance: API key not configured for '
+            '${owner?.displayName ?? 'provider'}';
+        return false;
+      }
       await client.deleteInstance(id);
-      _nodeRecords.remove(id);
-      _latencyChecks.remove(id);
-      await _saveNodeRecords();
-      _instances = _instances.where((instance) => instance.id != id).toList();
+      if (owner == null || owner == _providerId) {
+        _nodeRecords.remove(id);
+        _latencyChecks.remove(id);
+        await _saveNodeRecords();
+        _instances =
+            _instances.where((instance) => instance.id != id).toList();
+      } else {
+        // Prune the instance from the other-provider cache and its on-disk
+        // records so the merged view updates immediately.
+        final list = _otherProviderInstances[owner];
+        if (list != null) {
+          _otherProviderInstances[owner] =
+              list.where((instance) => instance.id != id).toList();
+        }
+        await _removeNodeRecordFor(owner, id);
+        _latencyChecks.remove(id);
+      }
       return true;
     } catch (e) {
       _error = 'Failed to delete instance: ${cloudProviderMessageFromError(e)}';
@@ -1116,6 +1303,27 @@ class CloudProvider extends CloudProviderBase {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  CloudProviderId? _findInstanceOwner(String id) {
+    if (_instances.any((i) => i.id == id)) return _providerId;
+    for (final entry in _otherProviderInstances.entries) {
+      if (entry.value.any((i) => i.id == id)) return entry.key;
+    }
+    return null;
+  }
+
+  Future<void> _removeNodeRecordFor(
+      CloudProviderId providerId, String instanceId) async {
+    final records = await _loadNodeRecordsFor(providerId);
+    if (!records.containsKey(instanceId)) return;
+    records.remove(instanceId);
+    final payload = <String, dynamic>{};
+    for (final item in records.entries) {
+      payload[item.key] = item.value.toJson();
+    }
+    await StorageService.saveSecureString(
+        providerId.nodeRecordsStorageKey, jsonEncode(payload));
   }
 
   void reset() {
@@ -1201,7 +1409,11 @@ class CloudProvider extends CloudProviderBase {
     }
 
     if (!_hasApiKey) {
-      _error = null;
+      // Keep the last validation/loading error visible when a key is still
+      // stored locally but cloud authorization is currently failing.
+      if (!hasStoredApiKey) {
+        _error = null;
+      }
       if (notify) {
         notifyListeners();
       }

@@ -77,12 +77,21 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        instance.label,
-                        style: TextStyle(
-                          fontSize: 16.sp,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              instance.label,
+                              style: TextStyle(
+                                fontSize: 16.sp,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          SizedBox(width: 6.w),
+                          _ProviderChip(providerId: instance.provider),
+                        ],
                       ),
                       SizedBox(height: 4.h),
                       Text(
@@ -272,5 +281,34 @@ class NodesCloudInstanceCard extends StatelessWidget {
       return '${throughputMbps.toStringAsFixed(1)} Mbps';
     }
     return '${throughputMbps.toStringAsFixed(2)} Mbps';
+  }
+}
+
+class _ProviderChip extends StatelessWidget {
+  final String providerId;
+  const _ProviderChip({required this.providerId});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (providerId) {
+      'digitalocean' => ('DO', const Color(0xFF0080FF)),
+      'vultr' => ('Vultr', const Color(0xFF007BFC)),
+      _ => (providerId, Colors.grey),
+    };
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4.r),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.sp,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
   }
 }

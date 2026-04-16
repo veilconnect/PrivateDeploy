@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_vpn_actions.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
@@ -297,6 +298,8 @@ Future<void> _pumpActionHarness(
         return ChangeNotifierProvider<AppSettingsProvider>.value(
           value: appSettingsProvider ?? _FakeAppSettingsProvider(),
           child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             home: Scaffold(
               body: Builder(
                 builder: (context) {
@@ -398,6 +401,15 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
   }) {
     return cachedSelection;
   }
+
+  @override
+  bool get isBenchmarkingAll => false;
+
+  @override
+  bool get benchmarkAbortRequested => false;
+
+  @override
+  void requestBenchmarkAllAbort() {}
 }
 
 class _FakeProfileProvider extends Fake implements ProfileProvider {

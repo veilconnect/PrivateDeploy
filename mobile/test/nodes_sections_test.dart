@@ -412,6 +412,7 @@ void main() {
           onView: (_) {},
           onEdit: (_) {},
           onDelete: (_) {},
+          onSpeedTest: (_) {},
         ),
       );
 

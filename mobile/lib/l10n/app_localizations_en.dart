@@ -57,26 +57,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get apiKey => 'API Key';
 
   @override
-  String get enterCloudApiKey => 'Enter your cloud provider API key';
-
-  @override
-  String get apiKeyVerified => 'API key verified';
-
-  @override
   String get verifyAndSave => 'Verify & Save';
 
   @override
   String get verifying => 'Verifying...';
-
-  @override
-  String get verified => 'Verified';
-
-  @override
-  String get apiKeyVerifiedLoadingNodes =>
-      'API key verified. Loading cloud nodes...';
-
-  @override
-  String get apiKeySavedNodesLoaded => 'API key saved. Cloud nodes loaded.';
 
   @override
   String get failedToSaveApiKey => 'Failed to save API key';
@@ -86,9 +70,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get notSet => 'Not set';
-
-  @override
-  String get pasteVultrApiKey => 'Paste your Vultr API key';
 
   @override
   String pasteCloudProviderApiKey(Object provider) {
@@ -171,7 +152,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudAccessNotConfigured => 'Cloud access not configured';
 
   @override
-  String get setVultrApiKeyHint => 'Set your Vultr API key to get started.';
+  String setCloudProviderApiKeyHint(Object provider) {
+    return 'Set your $provider API key to get started.';
+  }
 
   @override
   String get setApiKey => 'Set API Key';
@@ -281,6 +264,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vpnBusyWait => 'VPN is busy, please wait a moment';
+
+  @override
+  String tryingBackupNode(Object index, Object total, Object label) {
+    return 'Trying backup node $index/$total: $label';
+  }
+
+  @override
+  String get allNodesFailedCheckNetwork =>
+      'All ready nodes failed to connect. Check your network (try Wi-Fi) or refresh the node list.';
 
   @override
   String get noCredentialsHint =>

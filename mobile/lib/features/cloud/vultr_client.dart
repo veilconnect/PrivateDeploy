@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
 
+import '../../services/native_http_service.dart';
 import 'cloud_api_client.dart';
 
 class VultrCloudClient implements CloudApiClient {
@@ -10,6 +13,8 @@ class VultrCloudClient implements CloudApiClient {
   static const Duration _connectTimeout = Duration(seconds: 15);
   static const Duration _receiveTimeout = Duration(seconds: 90);
   static const Duration _validationTimeout = Duration(seconds: 12);
+  static const Duration _dnsTimeout = Duration(seconds: 5);
+  static const String _userAgent = 'PrivateDeploy-Mobile/1.0 (dart)';
 
   final Dio _dio;
 
@@ -40,7 +45,8 @@ class VultrCloudClient implements CloudApiClient {
   }
 
   Future<String?> getInstanceUserData(String instanceId) async {
-    final response = await _requestJson('GET', '/instances/$instanceId/user-data');
+    final response =
+        await _requestJson('GET', '/instances/$instanceId/user-data');
     final rawUserData = response['user_data'];
     if (rawUserData is String && rawUserData.isNotEmpty) {
       return utf8.decode(base64Decode(rawUserData));
@@ -118,24 +124,52 @@ class VultrCloudClient implements CloudApiClient {
           sendTimeout: timeout ?? _receiveTimeout,
         ),
       );
-      final normalized = response.data;
-      if (response.statusCode != null &&
-          response.statusCode! >= 400 &&
-          response.statusCode! <= 599) {
-        throw StateError(_extractVultrError(normalized) ??
-            'Vultr API error (${response.statusCode})');
-      }
-      if (normalized == null) {
-        return const {};
-      }
-      if (normalized is Map<String, dynamic>) {
-        return normalized;
-      }
-      if (normalized is Map) {
-        return Map<String, dynamic>.from(normalized);
-      }
-      return {'data': normalized};
+      return _normalizeResponseBody(response.statusCode, response.data);
     } on DioException catch (error) {
+      if (_shouldRetryViaIpv4(error)) {
+        print(
+          '[VultrCloudClient] retrying $method $path after Dio ${error.type}: ${error.message}',
+        );
+        try {
+          final nativeResponse = await _requestJsonViaNativeStack(
+            method,
+            path,
+            data: data,
+            timeout: timeout,
+          );
+          if (nativeResponse != null) {
+            print(
+                '[VultrCloudClient] native fallback succeeded for $method $path');
+            return nativeResponse;
+          }
+          print(
+              '[VultrCloudClient] native fallback returned null for $method $path');
+        } on StateError {
+          rethrow;
+        } catch (nativeError) {
+          print(
+            '[VultrCloudClient] native fallback failed for $method $path: $nativeError',
+          );
+          // Continue to the lower-level socket fallback when the native stack
+          // path is unavailable or fails unexpectedly.
+        }
+
+        try {
+          print(
+              '[VultrCloudClient] trying raw IPv4 fallback for $method $path');
+          return await _requestJsonViaIpv4(
+            method,
+            path,
+            data: data,
+            timeout: timeout,
+          );
+        } on StateError {
+          rethrow;
+        } catch (_) {
+          // Fall through to the original Dio-derived message below when the
+          // fallback path also fails for a non-StateError reason.
+        }
+      }
       final message = _extractDioErrorMessage(error);
       throw StateError(message);
     } finally {
@@ -143,6 +177,207 @@ class VultrCloudClient implements CloudApiClient {
         _dio.options.connectTimeout = previousConnectTimeout;
       }
     }
+  }
+
+  Future<Map<String, dynamic>?> _requestJsonViaNativeStack(
+    String method,
+    String path, {
+    dynamic data,
+    Duration? timeout,
+  }) async {
+    final resolvedUri = _resolveRequestUri(path);
+    final requestTimeout = timeout ?? _receiveTimeout;
+    final connectTimeout = timeout ?? _connectTimeout;
+    final authorization =
+        _dio.options.headers['Authorization']?.toString() ?? '';
+    final response = await NativeHttpService.request(
+      method: method,
+      url: resolvedUri.toString(),
+      headers: <String, String>{
+        'Authorization': authorization,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': _userAgent,
+      },
+      body: data == null ? null : jsonEncode(data),
+      connectTimeout: connectTimeout,
+      readTimeout: requestTimeout,
+    );
+    if (response == null) {
+      return null;
+    }
+
+    dynamic decoded;
+    if (response.body.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(response.body);
+      } catch (_) {
+        decoded = response.body;
+      }
+    }
+    return _normalizeResponseBody(response.statusCode, decoded);
+  }
+
+  bool _shouldRetryViaIpv4(DioException error) {
+    return error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.connectionError;
+  }
+
+  Future<Map<String, dynamic>> _requestJsonViaIpv4(
+    String method,
+    String path, {
+    dynamic data,
+    Duration? timeout,
+  }) async {
+    final resolvedUri = _resolveRequestUri(path);
+    final baseUri = resolvedUri;
+
+    if (baseUri.host == '127.0.0.1' ||
+        baseUri.host == 'localhost' ||
+        InternetAddress.tryParse(baseUri.host) != null) {
+      throw StateError('Vultr API request failed');
+    }
+
+    final requestTimeout = timeout ?? _receiveTimeout;
+    final connectTimeout = timeout ?? _connectTimeout;
+    final body = data == null ? '' : jsonEncode(data);
+
+    try {
+      final ipv4s = await InternetAddress.lookup(
+        baseUri.host,
+        type: InternetAddressType.IPv4,
+      ).timeout(_dnsTimeout);
+      if (ipv4s.isEmpty) {
+        throw StateError('Vultr API unreachable: no IPv4 for ${baseUri.host}');
+      }
+
+      final rawSocket = await Socket.connect(
+        ipv4s.first.address,
+        baseUri.hasPort ? baseUri.port : 443,
+        timeout: connectTimeout,
+      );
+      final socket = await SecureSocket.secure(
+        rawSocket,
+        host: baseUri.host,
+        supportedProtocols: const ['http/1.1'],
+      ).timeout(connectTimeout);
+
+      try {
+        final requestPath = resolvedUri.path.isEmpty ? '/' : resolvedUri.path;
+        final fullPath = resolvedUri.hasQuery
+            ? '$requestPath?${resolvedUri.query}'
+            : requestPath;
+        final contentLength = utf8.encode(body).length;
+        final authorization =
+            _dio.options.headers['Authorization']?.toString() ?? '';
+        socket.write(
+          '$method $fullPath HTTP/1.1\r\n'
+          'Host: ${baseUri.host}\r\n'
+          'Authorization: $authorization\r\n'
+          'User-Agent: $_userAgent\r\n'
+          'Accept: application/json\r\n'
+          'Accept-Encoding: identity\r\n'
+          'Content-Type: application/json\r\n'
+          'Connection: close\r\n'
+          'Content-Length: $contentLength\r\n\r\n'
+          '$body',
+        );
+        await socket.flush();
+        final raw = await socket
+            .cast<List<int>>()
+            .transform(utf8.decoder)
+            .join()
+            .timeout(requestTimeout);
+        return _parseHttp11Response(raw);
+      } finally {
+        await socket.close();
+      }
+    } on TimeoutException {
+      throw StateError(
+        'Vultr API request timed out after ${connectTimeout.inSeconds}s',
+      );
+    } on SocketException catch (e) {
+      throw StateError('Vultr API unreachable: ${e.message}');
+    } on HandshakeException catch (e) {
+      throw StateError('Vultr TLS handshake failed: ${e.message}');
+    }
+  }
+
+  Uri _resolveRequestUri(String path) {
+    final effectiveBase =
+        _dio.options.baseUrl.isNotEmpty ? _dio.options.baseUrl : baseUrl;
+    final baseUri = Uri.parse(effectiveBase);
+    final trimmedBasePath = baseUri.path.endsWith('/')
+        ? baseUri.path.substring(0, baseUri.path.length - 1)
+        : baseUri.path;
+    final trimmedRequestPath = path.startsWith('/') ? path.substring(1) : path;
+    final joinedPath = [trimmedBasePath, trimmedRequestPath]
+        .where((segment) => segment.isNotEmpty)
+        .join('/');
+    final normalizedPath =
+        joinedPath.startsWith('/') ? joinedPath : '/$joinedPath';
+    return baseUri.replace(path: normalizedPath);
+  }
+
+  Map<String, dynamic> _parseHttp11Response(String raw) {
+    final headerEnd = raw.indexOf('\r\n\r\n');
+    if (headerEnd < 0) {
+      throw StateError('Vultr API returned malformed response');
+    }
+
+    final headerBlock = raw.substring(0, headerEnd);
+    var body = raw.substring(headerEnd + 4);
+    final statusLine = headerBlock.split('\r\n').first;
+    final parts = statusLine.split(' ');
+    final statusCode = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+
+    if (headerBlock.toLowerCase().contains('transfer-encoding: chunked')) {
+      final buffer = StringBuffer();
+      var cursor = 0;
+      while (cursor < body.length) {
+        final lineEnd = body.indexOf('\r\n', cursor);
+        if (lineEnd < 0) break;
+        final size =
+            int.tryParse(body.substring(cursor, lineEnd).trim(), radix: 16) ??
+                0;
+        if (size == 0) break;
+        final chunkStart = lineEnd + 2;
+        final chunkEnd = chunkStart + size;
+        if (chunkEnd > body.length) break;
+        buffer.write(body.substring(chunkStart, chunkEnd));
+        cursor = chunkEnd + 2;
+      }
+      body = buffer.toString();
+    }
+
+    dynamic decoded;
+    if (body.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(body);
+      } catch (_) {
+        decoded = body;
+      }
+    }
+
+    return _normalizeResponseBody(statusCode, decoded);
+  }
+
+  Map<String, dynamic> _normalizeResponseBody(int? statusCode, dynamic body) {
+    if (statusCode != null && statusCode >= 400 && statusCode <= 599) {
+      throw StateError(
+        _extractVultrError(body) ?? 'Vultr API error ($statusCode)',
+      );
+    }
+    if (body == null) {
+      return const {};
+    }
+    if (body is Map<String, dynamic>) {
+      return body;
+    }
+    if (body is Map) {
+      return Map<String, dynamic>.from(body);
+    }
+    return {'data': body};
   }
 
   String _extractDioErrorMessage(DioException error) {
