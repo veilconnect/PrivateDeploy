@@ -183,6 +183,7 @@ String? buildCloudNodeConfig(
         'url': 'http://www.gstatic.com/generate_204',
         'interval': '5m',
         'tolerance': 200,
+        'idle_timeout': '30m',
       },
       ...outbounds,
       {'type': 'direct', 'tag': 'direct'},
