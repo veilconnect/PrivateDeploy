@@ -362,9 +362,18 @@ class SubscriptionParser {
             'address': 'https://8.8.8.8/dns-query',
             'detour': 'select',
           },
+          {
+            'tag': 'dns-direct',
+            'address': '8.8.8.8',
+            'detour': 'direct',
+          },
           {'tag': 'dns-local', 'address': 'local'},
         ],
         'rules': [
+          {
+            'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+            'server': 'dns-direct',
+          },
           {
             'outbound': ['any'],
             'server': 'dns-local',
@@ -412,6 +421,10 @@ class SubscriptionParser {
           {
             'geoip': ['private'],
             'outbound': 'direct'
+          },
+          {
+            'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+            'outbound': 'direct',
           },
         ],
         'auto_detect_interface': true,

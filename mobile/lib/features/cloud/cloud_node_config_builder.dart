@@ -146,9 +146,22 @@ String? buildCloudNodeConfig(
           'address': 'https://8.8.8.8/dns-query',
           'detour': 'select',
         },
+        // Cloud-provider API lookups must resolve via the underlying network
+        // rather than dns-local: sing-box's local resolver opens sockets via
+        // the Go runtime which on Android re-enters the TUN (auto_route),
+        // producing "context canceled" for these specific queries.
+        {
+          'tag': 'dns-direct',
+          'address': '8.8.8.8',
+          'detour': 'direct',
+        },
         {'tag': 'dns-local', 'address': 'local'},
       ],
       'rules': [
+        {
+          'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+          'server': 'dns-direct',
+        },
         {
           'outbound': ['any'],
           'server': 'dns-local',
@@ -196,6 +209,14 @@ String? buildCloudNodeConfig(
         {
           'geoip': ['private'],
           'outbound': 'direct'
+        },
+        // Cloud-provider management APIs must bypass the tunnel so the user
+        // can still validate/refresh API keys while VPN is connected.
+        // Otherwise requests egress via the proxy node, whose path to these
+        // endpoints is often slow enough to hit the 12s timeout.
+        {
+          'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+          'outbound': 'direct',
         },
       ],
       'auto_detect_interface': true,

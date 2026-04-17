@@ -214,6 +214,17 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     });
   }
 
+  // Always bypass the tunnel for cloud-provider management APIs so API key
+  // validation/refresh works while VPN is connected. Without this, requests
+  // egress via the proxy node whose path to these endpoints often exceeds
+  // the 12s client timeout.
+  if (hasDirectOutbound) {
+    managedRules.add({
+      'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+      'outbound': 'direct',
+    });
+  }
+
   if (proxyOutboundTag != null) {
     _appendDomainSuffixRule(
       managedRules,
@@ -580,11 +591,26 @@ bool _isManagedOrLegacyRule(Map<String, dynamic> rule) {
     return true;
   }
 
+  if (outbound == 'direct' && _isCloudProviderApiBypassRule(rule)) {
+    return true;
+  }
+
   final ruleSet = rule['rule_set'];
   if (ruleSet == _managedGeositeCnTag || ruleSet == _managedGeoipCnTag) {
     return true;
   }
   return false;
+}
+
+bool _isCloudProviderApiBypassRule(Map<String, dynamic> rule) {
+  final suffixes = rule['domain_suffix'];
+  if (suffixes is! List) {
+    return false;
+  }
+  final set = suffixes.map((e) => e?.toString()).toSet();
+  return set.contains('api.vultr.com') &&
+      set.contains('api.digitalocean.com') &&
+      set.length == 2;
 }
 
 bool _isManagedRuleSet(Map<String, dynamic> ruleSet) {
