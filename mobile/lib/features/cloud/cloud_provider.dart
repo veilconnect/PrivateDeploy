@@ -479,10 +479,17 @@ class CloudProvider extends CloudProviderBase {
       _error = null;
       _configLoaded = true;
     } catch (e) {
-      _hasApiKey = false;
       _configLoaded = true;
       _error =
           'Failed to load cloud configuration: ${cloudProviderMessageFromError(e)}';
+      // Only flip hasApiKey to false when we have no cached instances to fall
+      // back on. A transient validation failure (API timeout, TLS hiccup)
+      // shouldn't evict a stored key and usable cached nodes from the UI —
+      // otherwise the Workspace shows a blocking "failed to load" card on top
+      // of nodes that are fully connectable.
+      _hasApiKey = _instances.isNotEmpty &&
+          _apiKey != null &&
+          _apiKey!.trim().isNotEmpty;
       AppLogger.error('[CloudProvider] Load cloud config error', e);
     }
 

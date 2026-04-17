@@ -57,12 +57,20 @@ class VultrNodeRecord {
 
   bool get isUsable => ssPort > 0 && ssPassword.isNotEmpty;
 
+  // A node that has been assigned a real public IPv4 has been provisioned
+  // by the cloud provider, even when we couldn't recover its Shadowsocks
+  // credentials (DigitalOcean doesn't surface user-data, so SS creds are
+  // often missing until a profile is deployed). Treat these as 'active' so
+  // the UI stops claiming "部署中" for instances that have been running for
+  // hours or days.
+  bool get _hasProvisionedIp => ipv4.isNotEmpty && ipv4 != '0.0.0.0';
+
   CloudInstance toCloudInstance() {
     return CloudInstance(
       id: instanceId,
       provider: provider.id,
       label: label,
-      status: isUsable ? 'active' : 'unknown',
+      status: (isUsable || _hasProvisionedIp) ? 'active' : 'unknown',
       region: region,
       plan: plan,
       ipv4: _stringOrNull(ipv4),
