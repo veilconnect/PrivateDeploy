@@ -1652,19 +1652,23 @@ List<String> supportedCloudProbeEndpointsForCurrentPlatform({
 }) {
   final platform = targetPlatform ?? defaultTargetPlatform;
   final labels = <String>[];
-  if (nodeInfo.trojanPort > 0 && nodeInfo.trojanPassword.isNotEmpty) {
+  // Intentionally do NOT require passwords/UUIDs here: the latency probe
+  // below is a plain TCP Socket.connect measurement, not a protocol
+  // handshake, so reachability is meaningful even when creds are empty in
+  // the local record. This matters for DigitalOcean droplets — DO doesn't
+  // expose user-data, so the app can't always recover every protocol's
+  // secrets, leaving populated ports with empty passwords. Without this,
+  // DO nodes show "No TCP endpoint is available for testing" even though
+  // the ports are open and listening.
+  if (nodeInfo.trojanPort > 0) {
     labels.add('Trojan');
   }
   final supportsVless =
       platform != TargetPlatform.android || !_androidBuildStripsVless();
-  if (supportsVless &&
-      nodeInfo.vlessPort > 0 &&
-      nodeInfo.vlessUuid.isNotEmpty &&
-      nodeInfo.vlessPublicKey.isNotEmpty &&
-      nodeInfo.vlessShortId.isNotEmpty) {
+  if (supportsVless && nodeInfo.vlessPort > 0) {
     labels.add('VLESS');
   }
-  if (nodeInfo.ssPort > 0 && nodeInfo.ssPassword.isNotEmpty) {
+  if (nodeInfo.ssPort > 0) {
     labels.add('Shadowsocks');
   }
   return labels;
