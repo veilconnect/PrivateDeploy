@@ -1590,8 +1590,14 @@ Future<CloudLatencyCheck> _probeCloudInstanceLatency(
   }
 
   if (targets.isEmpty) {
+    final hasAnyPort = nodeInfo.ssPort > 0 ||
+        nodeInfo.trojanPort > 0 ||
+        nodeInfo.vlessPort > 0 ||
+        nodeInfo.hyPort > 0;
     return CloudLatencyCheck.failure(
-      error: 'No TCP endpoint is available for testing',
+      error: hasAnyPort
+          ? 'No TCP endpoint is available for testing'
+          : '节点凭证已丢失(可能因重装应用)。请销毁后重建,或从备份恢复。',
       updatedAt: DateTime.now(),
       mode: mode,
     );
