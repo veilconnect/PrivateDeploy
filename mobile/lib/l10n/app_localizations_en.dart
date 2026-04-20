@@ -212,6 +212,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get inUse => 'In Use';
 
   @override
+  String get saved => 'Saved';
+
+  @override
   String get nodeDetails => 'Node Details';
 
   @override

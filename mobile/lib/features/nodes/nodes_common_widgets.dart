@@ -117,14 +117,16 @@ class NodesInlineInfoCard extends StatelessWidget {
               style: TextStyle(fontSize: 13.sp, color: Colors.grey[700]),
             ),
             if ((actionLabel != null && onAction != null) ||
-                (secondaryActionLabel != null && onSecondaryAction != null)) ...[
+                (secondaryActionLabel != null &&
+                    onSecondaryAction != null)) ...[
               SizedBox(height: 14.h),
               Wrap(
                 spacing: 8.w,
                 runSpacing: 8.h,
                 children: [
                   if (actionLabel != null && onAction != null)
-                    FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+                    FilledButton(
+                        onPressed: onAction, child: Text(actionLabel!)),
                   if (secondaryActionLabel != null && onSecondaryAction != null)
                     OutlinedButton(
                       onPressed: onSecondaryAction,
@@ -188,65 +190,119 @@ class NodesMetricTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(14.w),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: color.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 34.w,
-            height: 34.w,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12.r),
-            ),
-            child: Icon(icon, size: 18.sp, color: color),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 150.w;
+        return Container(
+          padding: EdgeInsets.all(14.w),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(18.r),
+            border: Border.all(color: color.withValues(alpha: 0.12)),
           ),
-          SizedBox(width: 10.w),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11.sp,
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 4.h),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (hint != null) ...[
-                  SizedBox(height: 2.h),
-                  Text(
-                    hint!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      color: Colors.grey[600],
+          child: isCompact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _MetricTileIcon(color: color, icon: icon),
+                    SizedBox(height: 10.h),
+                    _MetricTileCopy(
+                      label: label,
+                      value: value,
+                      hint: hint,
                     ),
-                  ),
-                ],
-              ],
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _MetricTileIcon(color: color, icon: icon),
+                    SizedBox(width: 10.w),
+                    Expanded(
+                      child: _MetricTileCopy(
+                        label: label,
+                        value: value,
+                        hint: hint,
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _MetricTileIcon extends StatelessWidget {
+  const _MetricTileIcon({
+    required this.color,
+    required this.icon,
+  });
+
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 34.w,
+      height: 34.w,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12.r),
+      ),
+      child: Icon(icon, size: 18.sp, color: color),
+    );
+  }
+}
+
+class _MetricTileCopy extends StatelessWidget {
+  const _MetricTileCopy({
+    required this.label,
+    required this.value,
+    required this.hint,
+  });
+
+  final String label;
+  final String value;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.sp,
+            color: Colors.grey[700],
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        SizedBox(height: 4.h),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 14.sp,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        if (hint != null) ...[
+          SizedBox(height: 2.h),
+          Text(
+            hint!,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.sp,
+              color: Colors.grey[600],
             ),
           ),
         ],
-      ),
+      ],
     );
   }
 }

@@ -84,6 +84,16 @@ press_home() {
   adb -s "$DEVICE" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
 }
 
+unlock_device() {
+  adb -s "$DEVICE" shell svc power stayon true >/dev/null 2>&1 || true
+  adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+  adb -s "$DEVICE" shell cmd statusbar collapse >/dev/null 2>&1 || true
+  adb -s "$DEVICE" shell input swipe 540 1900 540 500 180 >/dev/null 2>&1 || true
+  sleep 1
+  adb -s "$DEVICE" shell cmd statusbar collapse >/dev/null 2>&1 || true
+}
+
 dump_ui() {
   adb -s "$DEVICE" shell uiautomator dump "$UI_XML" >/dev/null 2>&1
   adb -s "$DEVICE" shell cat "$UI_XML" 2>/dev/null || true
@@ -189,13 +199,19 @@ vpn_egress_logged() {
 }
 
 launch_app_cold() {
+  unlock_device
   adb -s "$DEVICE" shell am force-stop "$PKG" >/dev/null 2>&1 || true
   sleep 1
   adb -s "$DEVICE" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  sleep 1
+  unlock_device
 }
 
 launch_app_warm() {
+  unlock_device
   adb -s "$DEVICE" shell am start -n "$ACTIVITY" >/dev/null 2>&1 || true
+  sleep 1
+  unlock_device
 }
 
 ensure_app_workspace() {
@@ -456,8 +472,7 @@ SCREEN=$(adb -s "$DEVICE" shell wm size 2>/dev/null | grep "Physical" | awk '{pr
 
 log "Starting real-user soak on $MODEL Android $ANDROID_VER screen=$SCREEN duration=${DURATION_MINUTES}m"
 
-adb -s "$DEVICE" shell svc power stayon true >/dev/null 2>&1 || true
-adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+unlock_device
 
 COLD_START_BEGIN=$(date +%s)
 launch_app_cold

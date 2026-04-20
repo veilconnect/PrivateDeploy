@@ -49,6 +49,17 @@ class NodesCloudSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
+    final orderedCloudInstances = List<CloudInstance>.from(
+      cloudProvider.allInstances,
+    )..sort(
+        (a, b) => _compareCloudInstances(
+          a: a,
+          b: b,
+          activeProfileName: profileProvider.activeProfile?.name,
+          profiles: profileProvider.profiles,
+          cloudProvider: cloudProvider,
+        ),
+      );
     final pendingCloudNodes =
         cloudProvider.allInstances.length - readyCloudNodes.length;
     final selectedCloudProfile = profileProvider.activeProfile;
@@ -107,7 +118,7 @@ class NodesCloudSection extends StatelessWidget {
           ),
           if (cloudProvider.allInstances.isNotEmpty) ...[
             SizedBox(height: 10.h),
-            ...cloudProvider.allInstances.map(_buildCloudInstanceCard),
+            ...orderedCloudInstances.map(_buildCloudInstanceCard),
           ],
         ],
       );
@@ -207,7 +218,7 @@ class NodesCloudSection extends StatelessWidget {
             accentColor: const Color(0xFF1452CC),
           )
         else
-          ...cloudProvider.allInstances.map(_buildCloudInstanceCard),
+          ...orderedCloudInstances.map(_buildCloudInstanceCard),
       ],
     );
   }
@@ -231,6 +242,88 @@ class NodesCloudSection extends StatelessWidget {
       onTestLatency: () => onTestCloudNodeLatency(instance),
     );
   }
+}
+
+int _compareCloudInstances({
+  required CloudInstance a,
+  required CloudInstance b,
+  required String? activeProfileName,
+  required List<Profile> profiles,
+  required CloudProvider cloudProvider,
+}) {
+  final aProfileName = cloudProfileName(a);
+  final bProfileName = cloudProfileName(b);
+  final aSelected = activeProfileName == aProfileName;
+  final bSelected = activeProfileName == bProfileName;
+  if (aSelected != bSelected) {
+    return aSelected ? -1 : 1;
+  }
+
+  final aReady = a.isActive && a.hasIp && a.nodeInfo != null;
+  final bReady = b.isActive && b.hasIp && b.nodeInfo != null;
+  if (aReady != bReady) {
+    return aReady ? -1 : 1;
+  }
+
+  final aLinked = profiles.any((profile) => profile.name == aProfileName);
+  final bLinked = profiles.any((profile) => profile.name == bProfileName);
+  if (aLinked != bLinked) {
+    return aLinked ? -1 : 1;
+  }
+
+  final latencyPriority = _compareLatencyPriority(
+    cloudProvider.latencyCheckFor(a.id),
+    cloudProvider.latencyCheckFor(b.id),
+  );
+  if (latencyPriority != 0) {
+    return latencyPriority;
+  }
+
+  final createdAtPriority = (b.createdAt ?? DateTime(0)).compareTo(
+    a.createdAt ?? DateTime(0),
+  );
+  if (createdAtPriority != 0) {
+    return createdAtPriority;
+  }
+
+  return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+}
+
+int _compareLatencyPriority(CloudLatencyCheck? a, CloudLatencyCheck? b) {
+  final aHasUsableResult = _hasUsableLatencyResult(a);
+  final bHasUsableResult = _hasUsableLatencyResult(b);
+  if (aHasUsableResult != bHasUsableResult) {
+    return aHasUsableResult ? -1 : 1;
+  }
+  if (!aHasUsableResult) {
+    return 0;
+  }
+
+  final updatedAtPriority = (b!.updatedAt ?? DateTime(0)).compareTo(
+    a!.updatedAt ?? DateTime(0),
+  );
+  if (updatedAtPriority != 0) {
+    return updatedAtPriority;
+  }
+
+  if (a.isBenchmark != b.isBenchmark) {
+    return a.isBenchmark ? -1 : 1;
+  }
+
+  final throughputPriority =
+      (b.throughputMbps ?? -1).compareTo(a.throughputMbps ?? -1);
+  if (throughputPriority != 0) {
+    return throughputPriority;
+  }
+
+  return (a.latencyMs ?? (1 << 30)).compareTo(b.latencyMs ?? (1 << 30));
+}
+
+bool _hasUsableLatencyResult(CloudLatencyCheck? check) {
+  if (check == null || check.isTesting || check.error != null) {
+    return false;
+  }
+  return check.latencyMs != null || check.hasThroughput;
 }
 
 String _selectedNodeHint({

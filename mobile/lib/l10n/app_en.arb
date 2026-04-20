@@ -76,6 +76,7 @@
   "active": "Ready",
   "provisioning": "Starting",
   "inUse": "In Use",
+  "saved": "Saved",
   "nodeDetails": "Node Details",
   "deleteNode": "Delete Node",
   "probesStat": "{successful}/{total} probes",

@@ -32,6 +32,8 @@ class NodesManualProfilesSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final orderedProfiles = List<Profile>.from(profiles)
+      ..sort((a, b) => _compareProfiles(a, b, activeProfileId));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -41,12 +43,12 @@ class NodesManualProfilesSection extends StatelessWidget {
           count: profiles.length,
         ),
         SizedBox(height: 8.h),
-        ...profiles.map(
+        ...orderedProfiles.map(
           (profile) => NodesProfileCard(
             profile: profile,
             isActive: profile.id == activeProfileId,
             isConnected: profile.id == activeProfileId && isConnected,
-            createdAtLabel: _formatDate(profile.createdAt),
+            timestampLabel: _timestampLabel(l10n, profile),
             speedResult: speedResults[profile.id],
             onActivate: () => onActivate(profile),
             onSpeedTest: () => onSpeedTest(profile),
@@ -58,6 +60,39 @@ class NodesManualProfilesSection extends StatelessWidget {
       ],
     );
   }
+}
+
+int _compareProfiles(Profile a, Profile b, String? activeProfileId) {
+  final aIsActive = a.id == activeProfileId;
+  final bIsActive = b.id == activeProfileId;
+  if (aIsActive != bIsActive) {
+    return aIsActive ? -1 : 1;
+  }
+
+  final aRecency = a.lastUpdated ?? a.updatedAt;
+  final bRecency = b.lastUpdated ?? b.updatedAt;
+  final recencyPriority = bRecency.compareTo(aRecency);
+  if (recencyPriority != 0) {
+    return recencyPriority;
+  }
+
+  final createdAtPriority = b.createdAt.compareTo(a.createdAt);
+  if (createdAtPriority != 0) {
+    return createdAtPriority;
+  }
+
+  return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+}
+
+String _timestampLabel(AppLocalizations l10n, Profile profile) {
+  final lastUpdated = profile.lastUpdated ?? profile.updatedAt;
+  final wasUpdated = profile.lastUpdated != null ||
+      profile.updatedAt
+          .isAfter(profile.createdAt.add(const Duration(minutes: 1)));
+  if (wasUpdated) {
+    return l10n.lastUpdated(_formatDate(lastUpdated));
+  }
+  return l10n.createdAt(_formatDate(profile.createdAt));
 }
 
 String _formatDate(DateTime date) {

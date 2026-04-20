@@ -32,10 +32,22 @@ current_focus() { adb -s "$DEVICE" shell dumpsys window 2>/dev/null | grep -E 'm
 app_is_foreground() { current_focus | grep -q "$ACTIVITY"; }
 app_is_running() { [ -n "$(app_pid)" ]; }
 
+unlock_device() {
+    adb -s "$DEVICE" shell svc power stayon true >/dev/null 2>&1 || true
+    adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb -s "$DEVICE" shell cmd statusbar collapse >/dev/null 2>&1 || true
+    adb -s "$DEVICE" shell input swipe 540 1900 540 500 180 >/dev/null 2>&1 || true
+    sleep 1
+    adb -s "$DEVICE" shell cmd statusbar collapse >/dev/null 2>&1 || true
+}
+
 launch_app() {
+    unlock_device
     adb -s "$DEVICE" shell am force-stop "$PKG" 2>/dev/null >/dev/null
     adb -s "$DEVICE" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 2>/dev/null >/dev/null
     sleep 3
+    unlock_device
 }
 
 ensure_foreground() {
@@ -102,6 +114,7 @@ ANDROID_VER=$(adb -s "$DEVICE" shell getprop ro.build.version.release 2>/dev/nul
 MODEL=$(adb -s "$DEVICE" shell getprop ro.product.model 2>/dev/null | tr -d '\r')
 SCREEN=$(adb -s "$DEVICE" shell wm size 2>/dev/null | grep "Physical" | awk '{print $3}')
 log "Device: $MODEL, Android $ANDROID_VER, Screen: $SCREEN"
+unlock_device
 
 # Clear any previous data
 adb -s "$DEVICE" shell pm clear "$PKG" 2>/dev/null > /dev/null

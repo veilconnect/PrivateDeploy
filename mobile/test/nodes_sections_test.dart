@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
@@ -421,9 +422,11 @@ void main() {
 
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('In Use'), findsOneWidget);
+      expect(find.text('Saved'), findsOneWidget);
       expect(find.text('Ready'), findsWidgets);
       expect(find.text('Speed Test'), findsOneWidget);
       expect(find.text('Trojan'), findsOneWidget);
+      expect(find.textContaining('Vultr · SGP · 1.2.3.4'), findsOneWidget);
 
       await tester.tap(find.text('Speed Test'));
       await tester.pump();
@@ -514,6 +517,81 @@ void main() {
       expect(find.text('Waiting for node credentials…'), findsOneWidget);
     });
 
+    testWidgets(
+        'orders cloud nodes by current route, saved status, latency history, and readiness',
+        (tester) async {
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [
+              readyCloudTestInstance(
+                label: 'fresh-node',
+                createdAt: DateTime(2026, 4, 4),
+              ),
+              testCloudInstance(
+                label: 'pending-node',
+                status: 'active',
+                createdAt: DateTime(2026, 4, 5),
+                nodeInfo: null,
+              ),
+              readyCloudTestInstance(
+                label: 'bench-node',
+                createdAt: DateTime(2026, 4, 1),
+              ),
+              readyCloudTestInstance(
+                label: 'saved-node',
+                createdAt: DateTime(2026, 4, 3),
+              ),
+              readyCloudTestInstance(
+                label: 'current-node',
+                createdAt: DateTime(2026, 3, 31),
+              ),
+            ],
+            latencyChecks: {
+              'bench-node': CloudLatencyCheck.success(
+                latencyMs: 31,
+                updatedAt: DateTime(2026, 4, 6, 8, 0),
+                mode: CloudProbeMode.benchmark,
+                throughputMbps: 58.5,
+              ),
+            },
+          ),
+          profileProvider: TestProfileProvider(
+            profiles: [
+              testProfile(name: 'Cloud: saved-node'),
+              testProfile(name: 'Cloud: current-node'),
+            ],
+            activeProfile: testProfile(name: 'Cloud: current-node'),
+          ),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
+        ),
+      );
+
+      final currentY = tester.getTopLeft(find.text('current-node')).dy;
+      final savedY = tester.getTopLeft(find.text('saved-node')).dy;
+      final benchY = tester.getTopLeft(find.text('bench-node')).dy;
+      final freshY = tester.getTopLeft(find.text('fresh-node')).dy;
+      final pendingY = tester.getTopLeft(find.text('pending-node')).dy;
+
+      expect(currentY, lessThan(savedY));
+      expect(savedY, lessThan(benchY));
+      expect(benchY, lessThan(freshY));
+      expect(freshY, lessThan(pendingY));
+    });
+
     testWidgets('shows import profile fallback when no cloud nodes exist',
         (tester) async {
       var deployTapped = false;
@@ -593,7 +671,7 @@ void main() {
         ),
       );
 
-      expect(find.text('32.0 Mbps'), findsOneWidget);
+      expect(find.text('32.0 Mbps'), findsNWidgets(2));
       expect(
         find.text(
           'Shadowsocks • 3/3 probes • 32.0 Mbps • 24 ms latency',
@@ -654,7 +732,7 @@ void main() {
             testProfile(id: '1', name: 'Manual A'),
             testProfile(id: '2', name: 'Manual B'),
           ],
-          activeProfileId: '2',
+          activeProfileId: '1',
           onActivate: (profile) => activated = profile,
           onView: (profile) => viewed = profile,
           onEdit: (_) {},
@@ -669,15 +747,79 @@ void main() {
       expect(find.text('Ready'), findsOneWidget);
       expect(find.text('Open Config'), findsWidgets);
 
-      await tester.tap(find.text('Open Config').first);
+      final manualACard = find.ancestor(
+        of: find.text('Manual A'),
+        matching: find.byType(Card),
+      );
+      final manualBCard = find.ancestor(
+        of: find.text('Manual B'),
+        matching: find.byType(Card),
+      );
+
+      await tester.tap(
+        find.descendant(
+          of: manualACard.first,
+          matching: find.text('Open Config'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(viewed?.name, 'Manual A');
 
-      await tester.tap(find.text('Use & Connect').first);
+      await tester.tap(
+        find.descendant(
+          of: manualBCard.first,
+          matching: find.text('Use & Connect'),
+        ),
+      );
       await tester.pumpAndSettle();
 
-      expect(activated?.name, 'Manual A');
+      expect(activated?.name, 'Manual B');
+    });
+
+    testWidgets('sorts active profile first and then by recent updates',
+        (tester) async {
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesManualProfilesSection(
+          profiles: [
+            testProfile(
+              id: 'older',
+              name: 'Older Profile',
+              createdAt: DateTime(2026, 3, 20, 9, 0),
+              updatedAt: DateTime(2026, 3, 20, 9, 0),
+            ),
+            testProfile(
+              id: 'recent',
+              name: 'Recent Profile',
+              createdAt: DateTime(2026, 3, 19, 9, 0),
+              updatedAt: DateTime(2026, 4, 4, 8, 30),
+            ),
+            testProfile(
+              id: 'active',
+              name: 'Active Profile',
+              createdAt: DateTime(2026, 3, 18, 9, 0),
+              updatedAt: DateTime(2026, 3, 21, 9, 0),
+            ),
+          ],
+          activeProfileId: 'active',
+          onActivate: (_) {},
+          onView: (_) {},
+          onEdit: (_) {},
+          onDelete: (_) {},
+          onSpeedTest: (_) {},
+        ),
+      );
+
+      final activeY = tester.getTopLeft(find.text('Active Profile')).dy;
+      final recentY = tester.getTopLeft(find.text('Recent Profile')).dy;
+      final olderY = tester.getTopLeft(find.text('Older Profile')).dy;
+
+      expect(activeY, lessThan(recentY));
+      expect(recentY, lessThan(olderY));
+      expect(find.textContaining('Last updated: 2026-04-04 08:30'),
+          findsOneWidget);
     });
   });
 }

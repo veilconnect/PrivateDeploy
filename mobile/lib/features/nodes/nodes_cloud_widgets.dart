@@ -34,8 +34,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final isReady =
         instance.isActive && instance.hasIp && instance.nodeInfo != null;
-    final readinessMessage =
-        _readinessMessage(l10n: l10n, isReady: isReady);
+    final readinessMessage = _readinessMessage(l10n: l10n, isReady: isReady);
     final canUseNode = !isSelected || !isConnected;
     final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
@@ -54,6 +53,8 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 : l10n.speedTest;
     final latencyDetail = _latencyDetailText(latencyCheck, l10n);
     final planLabel = _normalizedPlanLabel(instance.plan);
+    final metadataLine = _metadataLine(instance, planLabel);
+    final quickPerformanceChips = _quickPerformanceChips(l10n);
     final accentColor = isSelected
         ? const Color(0xFF1452CC)
         : isReady
@@ -82,9 +83,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 CircleAvatar(
                   backgroundColor: accentColor.withValues(alpha: 0.16),
                   child: Icon(
-                    isReady
-                        ? Icons.cloud_done
-                        : Icons.hourglass_empty,
+                    isReady ? Icons.cloud_done : Icons.hourglass_empty,
                     color: accentColor,
                   ),
                 ),
@@ -105,17 +104,24 @@ class NodesCloudInstanceCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          SizedBox(width: 6.w),
-                          _ProviderChip(providerId: instance.provider),
+                          if (isLinked) ...[
+                            SizedBox(width: 8.w),
+                            NodesStatusChip(
+                              text: l10n.saved,
+                              color: const Color(0xFF475467),
+                            ),
+                          ],
                         ],
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        '${instance.region.toUpperCase()}${instance.hasIp ? ' • ${instance.ipv4}' : ''}',
+                        metadataLine,
                         style: TextStyle(
                           fontSize: 12.sp,
                           color: Colors.grey[600],
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -171,6 +177,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
                     text: planLabel,
                     color: const Color(0xFF475467),
                   ),
+                ...quickPerformanceChips,
               ],
             ),
             if (readinessMessage != null) ...[
@@ -357,6 +364,52 @@ class NodesCloudInstanceCard extends StatelessWidget {
     return normalized;
   }
 
+  String _metadataLine(CloudInstance instance, String? planLabel) {
+    final segments = <String>[
+      _providerLabel(instance.provider),
+      instance.region.toUpperCase(),
+      if (instance.hasIp) instance.ipv4!,
+      if (planLabel != null) planLabel,
+    ];
+    return segments.join(' \u00b7 ');
+  }
+
+  List<Widget> _quickPerformanceChips(AppLocalizations l10n) {
+    if (latencyCheck == null ||
+        latencyCheck!.isTesting ||
+        latencyCheck!.error != null) {
+      return const [];
+    }
+
+    final chips = <Widget>[];
+    final throughputLabel = _formatThroughput(latencyCheck!.throughputMbps);
+    if (throughputLabel != null) {
+      chips.add(
+        NodesStatusChip(
+          text: throughputLabel,
+          color: const Color(0xFF0F766E),
+        ),
+      );
+    }
+    if (latencyCheck!.latencyMs != null) {
+      chips.add(
+        NodesStatusChip(
+          text: l10n.msLatency(latencyCheck!.latencyMs!),
+          color: const Color(0xFF7C3AED),
+        ),
+      );
+    }
+    return chips;
+  }
+
+  String _providerLabel(String providerId) {
+    return switch (providerId) {
+      'digitalocean' => 'DigitalOcean',
+      'vultr' => 'Vultr',
+      _ => providerId,
+    };
+  }
+
   String? _readinessMessage({
     required AppLocalizations l10n,
     required bool isReady,
@@ -368,34 +421,5 @@ class NodesCloudInstanceCard extends StatelessWidget {
       return l10n.waitingForCredentials;
     }
     return null;
-  }
-}
-
-class _ProviderChip extends StatelessWidget {
-  final String providerId;
-  const _ProviderChip({required this.providerId});
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (providerId) {
-      'digitalocean' => ('DO', const Color(0xFF0080FF)),
-      'vultr' => ('Vultr', const Color(0xFF007BFC)),
-      _ => (providerId, Colors.grey),
-    };
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4.r),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10.sp,
-          color: color,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
   }
 }

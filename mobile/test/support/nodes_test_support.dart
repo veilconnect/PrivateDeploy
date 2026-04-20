@@ -17,12 +17,13 @@ Future<void> pumpNodesTestApp(
   required Widget child,
   bool settle = false,
   bool wrapInScaffold = true,
+  Size surfaceSize = const Size(1440, 2400),
   CloudProvider? cloudProvider,
   ProfileProvider? profileProvider,
   VpnProvider? vpnProvider,
   AppSettingsProvider? appSettingsProvider,
 }) async {
-  await tester.binding.setSurfaceSize(const Size(1440, 2400));
+  await tester.binding.setSurfaceSize(surfaceSize);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final resolvedAppSettingsProvider =
       appSettingsProvider ?? TestAppSettingsProvider();
@@ -96,25 +97,42 @@ class TestAppSettingsProvider extends ChangeNotifier
 
 CloudInstance readyCloudTestInstance({
   required String label,
+  String provider = 'vultr',
+  String region = 'sgp',
+  String plan = 'vc2-1c-1gb',
+  String? ipv4 = '1.2.3.4',
+  DateTime? createdAt,
 }) {
-  return testCloudInstance(label: label, nodeInfo: defaultTestNodeInfo);
+  return testCloudInstance(
+    label: label,
+    provider: provider,
+    region: region,
+    plan: plan,
+    ipv4: ipv4,
+    createdAt: createdAt,
+    nodeInfo: defaultTestNodeInfo,
+  );
 }
 
 CloudInstance testCloudInstance({
   required String label,
+  String provider = 'vultr',
+  String region = 'sgp',
+  String plan = 'vc2-1c-1gb',
   String status = 'active',
   String? ipv4 = '1.2.3.4',
+  DateTime? createdAt,
   NodeInfo? nodeInfo,
 }) {
   return CloudInstance(
     id: label,
-    provider: 'vultr',
+    provider: provider,
     label: label,
     status: status,
-    region: 'sgp',
-    plan: 'vc2-1c-1gb',
+    region: region,
+    plan: plan,
     ipv4: ipv4,
-    createdAt: DateTime(2026, 3, 29),
+    createdAt: createdAt ?? DateTime(2026, 3, 29),
     nodeInfo: nodeInfo,
   );
 }
@@ -140,13 +158,18 @@ const NodeInfo defaultTestNodeInfo = NodeInfo(
 Profile testProfile({
   String id = 'profile-1',
   required String name,
+  DateTime? createdAt,
+  DateTime? updatedAt,
+  DateTime? lastUpdated,
 }) {
+  final created = createdAt ?? DateTime(2026, 3, 29, 12, 30);
   return Profile(
     id: id,
     name: name,
     isActive: false,
-    createdAt: DateTime(2026, 3, 29, 12, 30),
-    updatedAt: DateTime(2026, 3, 29, 12, 30),
+    createdAt: created,
+    updatedAt: updatedAt ?? created,
+    lastUpdated: lastUpdated,
   );
 }
 

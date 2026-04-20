@@ -476,6 +476,12 @@ abstract class AppLocalizations {
   /// **'In Use'**
   String get inUse;
 
+  /// No description provided for @saved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get saved;
+
   /// No description provided for @nodeDetails.
   ///
   /// In en, this message translates to:

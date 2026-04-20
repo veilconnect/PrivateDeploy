@@ -210,6 +210,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get inUse => '正在使用';
 
   @override
+  String get saved => '已保存';
+
+  @override
   String get nodeDetails => '节点详情';
 
   @override

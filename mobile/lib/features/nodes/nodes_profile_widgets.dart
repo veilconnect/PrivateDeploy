@@ -30,7 +30,7 @@ class NodesProfileCard extends StatelessWidget {
   final Profile profile;
   final bool isActive;
   final bool isConnected;
-  final String createdAtLabel;
+  final String timestampLabel;
   final ProfileSpeedResult? speedResult;
   final VoidCallback onActivate;
   final VoidCallback? onSpeedTest;
@@ -43,7 +43,7 @@ class NodesProfileCard extends StatelessWidget {
     required this.profile,
     required this.isActive,
     this.isConnected = false,
-    required this.createdAtLabel,
+    required this.timestampLabel,
     this.speedResult,
     required this.onActivate,
     this.onSpeedTest,
@@ -117,7 +117,7 @@ class NodesProfileCard extends StatelessWidget {
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        l10n.createdAt(createdAtLabel),
+                        timestampLabel,
                         style: TextStyle(
                           fontSize: 12.sp,
                           color: Colors.grey[600],
