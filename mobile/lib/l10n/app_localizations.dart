@@ -248,6 +248,12 @@ abstract class AppLocalizations {
   /// **'VPN notice'**
   String get vpnNotice;
 
+  /// No description provided for @nextStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Next step'**
+  String get nextStep;
+
   /// No description provided for @connection.
   ///
   /// In en, this message translates to:
@@ -395,7 +401,7 @@ abstract class AppLocalizations {
   /// No description provided for @deployFirstNodeHint.
   ///
   /// In en, this message translates to:
-  /// **'Deploy your first node to get started.'**
+  /// **'Create one cloud node to start routing traffic from this device.'**
   String get deployFirstNodeHint;
 
   /// No description provided for @deployNode.
@@ -403,6 +409,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Deploy Node'**
   String get deployNode;
+
+  /// No description provided for @manualProfilesDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Profiles stored only on this device'**
+  String get manualProfilesDesc;
 
   /// No description provided for @activeNode.
   ///
@@ -443,19 +455,19 @@ abstract class AppLocalizations {
   /// No description provided for @active.
   ///
   /// In en, this message translates to:
-  /// **'ACTIVE'**
+  /// **'Ready'**
   String get active;
 
   /// No description provided for @provisioning.
   ///
   /// In en, this message translates to:
-  /// **'PROVISIONING'**
+  /// **'Starting'**
   String get provisioning;
 
   /// No description provided for @inUse.
   ///
   /// In en, this message translates to:
-  /// **'IN USE'**
+  /// **'Selected'**
   String get inUse;
 
   /// No description provided for @nodeDetails.
@@ -613,6 +625,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No ready cloud node is available yet'**
   String get noReadyCloudNode;
+
+  /// No description provided for @workspaceGuideSetupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add cloud access'**
+  String get workspaceGuideSetupTitle;
+
+  /// No description provided for @workspaceGuideSetupMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Save your {provider} API key so this device can list nodes, deploy new ones, and reconnect later.'**
+  String workspaceGuideSetupMessage(Object provider);
+
+  /// No description provided for @workspaceGuideDeployTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Create your first route'**
+  String get workspaceGuideDeployTitle;
+
+  /// No description provided for @workspaceGuideDeployMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Start with one cloud node, or import an existing profile if you already have one.'**
+  String get workspaceGuideDeployMessage;
+
+  /// No description provided for @workspaceGuideChooseTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ready to connect'**
+  String get workspaceGuideChooseTitle;
+
+  /// No description provided for @workspaceGuideChooseMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap Connect to pick the fastest ready node automatically, or choose one below first.'**
+  String get workspaceGuideChooseMessage;
+
+  /// No description provided for @workspaceGuideSyncTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish node setup'**
+  String get workspaceGuideSyncTitle;
+
+  /// No description provided for @workspaceGuideSyncMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.'**
+  String get workspaceGuideSyncMessage;
 
   /// No description provided for @latencyTestUnavailable.
   ///

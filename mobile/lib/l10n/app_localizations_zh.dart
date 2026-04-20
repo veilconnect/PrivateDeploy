@@ -88,6 +88,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get vpnNotice => 'VPN 通知';
 
   @override
+  String get nextStep => '下一步';
+
+  @override
   String get connection => '连接状态';
 
   @override
@@ -168,10 +171,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get noCloudNodesYet => '暂无云节点';
 
   @override
-  String get deployFirstNodeHint => '部署您的第一个节点以开始使用。';
+  String get deployFirstNodeHint => '先创建一个云节点，再从这台设备发起连接。';
 
   @override
   String get deployNode => '部署节点';
+
+  @override
+  String get manualProfilesDesc => '仅保存在本设备上的配置';
 
   @override
   String get activeNode => '当前节点';
@@ -192,13 +198,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get testing => '测试中...';
 
   @override
-  String get active => '运行中';
+  String get active => '已就绪';
 
   @override
-  String get provisioning => '部署中';
+  String get provisioning => '准备中';
 
   @override
-  String get inUse => '使用中';
+  String get inUse => '当前使用';
 
   @override
   String get nodeDetails => '节点详情';
@@ -288,6 +294,34 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get noReadyCloudNode => '目前没有就绪的云节点';
+
+  @override
+  String get workspaceGuideSetupTitle => '先接入云服务';
+
+  @override
+  String workspaceGuideSetupMessage(Object provider) {
+    return '保存 $provider API Key 后，这台设备就能拉取节点、部署新节点，并在稍后重新连接。';
+  }
+
+  @override
+  String get workspaceGuideDeployTitle => '先建立第一条线路';
+
+  @override
+  String get workspaceGuideDeployMessage => '先部署一个云节点；如果你已经有现成配置，也可以直接导入使用。';
+
+  @override
+  String get workspaceGuideChooseTitle => '已经可以连接';
+
+  @override
+  String get workspaceGuideChooseMessage =>
+      '直接点“连接”会自动选择最快节点；如果你想手动挑选，也可以先在下方选节点。';
+
+  @override
+  String get workspaceGuideSyncTitle => '等待节点同步完成';
+
+  @override
+  String get workspaceGuideSyncMessage =>
+      '节点已经显示出来，但这台设备还在等待连接信息。可以先刷新，或者等节点就绪后从这台设备激活。';
 
   @override
   String get latencyTestUnavailable => '延迟测试不可用。';

@@ -75,8 +75,8 @@ class _NodesScreenState extends State<NodesScreen> {
     // CloudProvider._init), kick off the API sync in the background so the
     // user can connect immediately without waiting for a network round-trip.
     if (cloudProvider.allInstances.isNotEmpty) {
-      unawaited(_backgroundCloudSync(
-          cloudProvider, profileProvider, vpnProvider));
+      unawaited(
+          _backgroundCloudSync(cloudProvider, profileProvider, vpnProvider));
     } else {
       // No cached data — must wait for API so the user sees something.
       await cloudProvider.refreshCloudConfig();
@@ -344,6 +344,85 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Widget? _buildWorkspaceGuide({
+    required AppLocalizations l10n,
+    required CloudProvider cloudProvider,
+    required ProfileProvider profileProvider,
+    required VpnProvider vpnProvider,
+    required List<Profile> localProfiles,
+  }) {
+    if (vpnProvider.status == VpnStatus.connected) {
+      return null;
+    }
+
+    final readyCloudNodes = connectableCloudInstances(cloudProvider);
+    final hasAnyProfiles = profileProvider.profiles.isNotEmpty;
+    final hasActiveProfile = profileProvider.activeProfile != null;
+
+    if (!cloudProvider.hasApiKey && localProfiles.isEmpty) {
+      return NodesJourneyCard(
+        eyebrow: l10n.nextStep,
+        title: l10n.workspaceGuideSetupTitle,
+        message: l10n
+            .workspaceGuideSetupMessage(cloudProvider.providerId.displayName),
+        icon: Icons.key_rounded,
+        color: const Color(0xFF1452CC),
+        primaryLabel: l10n.setApiKey,
+        onPrimary: () => _showCloudApiKeyDialog(cloudProvider),
+        secondaryLabel: l10n.importProfile,
+        onSecondary: _showImportProfileDialog,
+      );
+    }
+
+    if (cloudProvider.hasApiKey &&
+        cloudProvider.allInstances.isEmpty &&
+        !hasAnyProfiles) {
+      return NodesJourneyCard(
+        eyebrow: l10n.nextStep,
+        title: l10n.workspaceGuideDeployTitle,
+        message: l10n.workspaceGuideDeployMessage,
+        icon: Icons.rocket_launch_outlined,
+        color: const Color(0xFF7C3AED),
+        primaryLabel: l10n.deployNode,
+        onPrimary: () => _showCreateCloudNodeDialog(cloudProvider),
+        secondaryLabel: l10n.importProfile,
+        onSecondary: _showImportProfileDialog,
+      );
+    }
+
+    if (cloudProvider.allInstances.isNotEmpty &&
+        readyCloudNodes.isEmpty &&
+        !hasAnyProfiles) {
+      return NodesJourneyCard(
+        eyebrow: l10n.nextStep,
+        title: l10n.workspaceGuideSyncTitle,
+        message: l10n.workspaceGuideSyncMessage,
+        icon: Icons.sync_problem_outlined,
+        color: const Color(0xFFF59E0B),
+        primaryLabel: l10n.refresh,
+        onPrimary: _refreshAll,
+      );
+    }
+
+    if (!hasActiveProfile && readyCloudNodes.isNotEmpty) {
+      return NodesJourneyCard(
+        eyebrow: l10n.nextStep,
+        title: l10n.workspaceGuideChooseTitle,
+        message: l10n.workspaceGuideChooseMessage,
+        icon: Icons.flash_on_outlined,
+        color: const Color(0xFF0E9F6E),
+        primaryLabel: l10n.connect,
+        onPrimary: () => _handleConnect(
+          cloudProvider,
+          profileProvider,
+          vpnProvider,
+        ),
+      );
+    }
+
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -374,6 +453,13 @@ class _NodesScreenState extends State<NodesScreen> {
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
+          final workspaceGuide = _buildWorkspaceGuide(
+            l10n: l10n,
+            cloudProvider: cloudProvider,
+            profileProvider: profileProvider,
+            vpnProvider: vpnProvider,
+            localProfiles: localProfiles,
+          );
 
           if (profileProvider.isLoading &&
               profileProvider.profiles.isEmpty &&
@@ -388,6 +474,10 @@ class _NodesScreenState extends State<NodesScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.all(16.w),
               children: [
+                if (workspaceGuide != null) ...[
+                  workspaceGuide,
+                  SizedBox(height: 14.h),
+                ],
                 NodesVpnSection(
                   vpnProvider: vpnProvider,
                   profileProvider: profileProvider,

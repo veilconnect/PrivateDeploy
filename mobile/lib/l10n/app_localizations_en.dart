@@ -88,6 +88,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get vpnNotice => 'VPN notice';
 
   @override
+  String get nextStep => 'Next step';
+
+  @override
   String get connection => 'Connection';
 
   @override
@@ -169,10 +172,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get noCloudNodesYet => 'No cloud nodes yet';
 
   @override
-  String get deployFirstNodeHint => 'Deploy your first node to get started.';
+  String get deployFirstNodeHint =>
+      'Create one cloud node to start routing traffic from this device.';
 
   @override
   String get deployNode => 'Deploy Node';
+
+  @override
+  String get manualProfilesDesc => 'Profiles stored only on this device';
 
   @override
   String get activeNode => 'Active Node';
@@ -193,13 +200,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get testing => 'Testing...';
 
   @override
-  String get active => 'ACTIVE';
+  String get active => 'Ready';
 
   @override
-  String get provisioning => 'PROVISIONING';
+  String get provisioning => 'Starting';
 
   @override
-  String get inUse => 'IN USE';
+  String get inUse => 'Selected';
 
   @override
   String get nodeDetails => 'Node Details';
@@ -293,6 +300,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get noReadyCloudNode => 'No ready cloud node is available yet';
+
+  @override
+  String get workspaceGuideSetupTitle => 'Add cloud access';
+
+  @override
+  String workspaceGuideSetupMessage(Object provider) {
+    return 'Save your $provider API key so this device can list nodes, deploy new ones, and reconnect later.';
+  }
+
+  @override
+  String get workspaceGuideDeployTitle => 'Create your first route';
+
+  @override
+  String get workspaceGuideDeployMessage =>
+      'Start with one cloud node, or import an existing profile if you already have one.';
+
+  @override
+  String get workspaceGuideChooseTitle => 'Ready to connect';
+
+  @override
+  String get workspaceGuideChooseMessage =>
+      'Tap Connect to pick the fastest ready node automatically, or choose one below first.';
+
+  @override
+  String get workspaceGuideSyncTitle => 'Finish node setup';
+
+  @override
+  String get workspaceGuideSyncMessage =>
+      'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.';
 
   @override
   String get latencyTestUnavailable => 'Latency test was unavailable.';

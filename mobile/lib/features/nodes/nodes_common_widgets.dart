@@ -231,3 +231,132 @@ class NodesMetricTile extends StatelessWidget {
     );
   }
 }
+
+class NodesJourneyCard extends StatelessWidget {
+  const NodesJourneyCard({
+    Key? key,
+    required this.eyebrow,
+    required this.title,
+    required this.message,
+    required this.icon,
+    required this.color,
+    this.primaryLabel,
+    this.onPrimary,
+    this.secondaryLabel,
+    this.onSecondary,
+  }) : super(key: key);
+
+  final String eyebrow;
+  final String title;
+  final String message;
+  final IconData icon;
+  final Color color;
+  final String? primaryLabel;
+  final VoidCallback? onPrimary;
+  final String? secondaryLabel;
+  final VoidCallback? onSecondary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24.r),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withValues(alpha: 0.12),
+              Colors.white,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(18.w),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999.r),
+                ),
+                child: Text(
+                  eyebrow,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              SizedBox(height: 14.h),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 20.sp,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                          ),
+                        ),
+                        SizedBox(height: 8.h),
+                        Text(
+                          message,
+                          style: TextStyle(
+                            fontSize: 13.sp,
+                            color: Colors.grey[800],
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 12.w),
+                  Container(
+                    width: 52.w,
+                    height: 52.w,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(18.r),
+                    ),
+                    child: Icon(icon, color: color, size: 28.sp),
+                  ),
+                ],
+              ),
+              if (primaryLabel != null && onPrimary != null) ...[
+                SizedBox(height: 16.h),
+                Wrap(
+                  spacing: 8.w,
+                  runSpacing: 8.h,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: onPrimary,
+                      icon: const Icon(Icons.arrow_forward),
+                      label: Text(primaryLabel!),
+                    ),
+                    if (secondaryLabel != null && onSecondary != null)
+                      OutlinedButton(
+                        onPressed: onSecondary,
+                        child: Text(secondaryLabel!),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -37,6 +37,7 @@ class NodesManualProfilesSection extends StatelessWidget {
       children: [
         NodesSectionHeader(
           title: l10n.manualProfiles,
+          subtitle: l10n.manualProfilesDesc,
           count: profiles.length,
         ),
         SizedBox(height: 8.h),

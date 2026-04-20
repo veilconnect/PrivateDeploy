@@ -22,7 +22,8 @@ class _NodesCreateCloudDialog extends StatefulWidget {
   const _NodesCreateCloudDialog();
 
   @override
-  State<_NodesCreateCloudDialog> createState() => _NodesCreateCloudDialogState();
+  State<_NodesCreateCloudDialog> createState() =>
+      _NodesCreateCloudDialogState();
 }
 
 class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
@@ -68,8 +69,10 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
         provider.isLoadingRegions || provider.isLoadingPlans;
     final missingRegions = provider.regions.isEmpty;
     final missingPlans = provider.plans.isEmpty;
-    final canDeploy =
-        !missingRegions && !missingPlans && _selectedRegion != null && _selectedPlan != null;
+    final canDeploy = !missingRegions &&
+        !missingPlans &&
+        _selectedRegion != null &&
+        _selectedPlan != null;
 
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
@@ -123,8 +126,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                           child: Text(
                             isLoadingOptions
                                 ? l10n.loadingRegionsPlans
-                                : provider.error ??
-                                    l10n.deploymentUnavailable,
+                                : provider.error ?? l10n.deploymentUnavailable,
                             style: TextStyle(fontSize: 12.sp),
                           ),
                         ),
@@ -156,7 +158,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             ),
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
-              value: _selectedRegion,
+              initialValue: _selectedRegion,
               decoration: InputDecoration(labelText: l10n.region),
               isExpanded: true,
               items: provider.regions
@@ -170,25 +172,27 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               onChanged: missingRegions
                   ? null
                   : (value) {
-                setState(() {
-                  _selectedRegion = value;
-                  final availablePlanIds = _availablePlans(provider, value)
-                      .map((plan) => plan.id)
-                      .toSet();
-                  if (_selectedPlan != null &&
-                      !availablePlanIds.contains(_selectedPlan)) {
-                    _selectedPlan = null;
-                  }
-                });
-              },
+                      setState(() {
+                        _selectedRegion = value;
+                        final availablePlanIds =
+                            _availablePlans(provider, value)
+                                .map((plan) => plan.id)
+                                .toSet();
+                        if (_selectedPlan != null &&
+                            !availablePlanIds.contains(_selectedPlan)) {
+                          _selectedPlan = null;
+                        }
+                      });
+                    },
             ),
             SizedBox(height: 16.h),
             DropdownButtonFormField<String>(
-              value: _selectedPlan,
+              initialValue: _selectedPlan,
               decoration: InputDecoration(
                 labelText: l10n.plan,
-                helperText:
-                    !missingPlans && _selectedRegion != null && availablePlans.isEmpty
+                helperText: !missingPlans &&
+                        _selectedRegion != null &&
+                        availablePlans.isEmpty
                     ? l10n.noPlansInRegion
                     : null,
               ),
@@ -217,38 +221,39 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
           onPressed: !canDeploy
               ? null
               : () {
-            if (_selectedRegion == null || _selectedPlan == null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(l10n.selectRegionAndPlan),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
-            final hasValidPlan = availablePlans.any(
-              (plan) => plan.id == _selectedPlan,
-            );
-            if (!hasValidPlan) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(l10n.planNotAvailableInRegion),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
+                  if (_selectedRegion == null || _selectedPlan == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(l10n.selectRegionAndPlan),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  final hasValidPlan = availablePlans.any(
+                    (plan) => plan.id == _selectedPlan,
+                  );
+                  if (!hasValidPlan) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(l10n.planNotAvailableInRegion),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
 
-            Navigator.pop(
-              context,
-              NodesCreateCloudRequest(
-                label: _labelController.text.trim(),
-                region: _selectedRegion!,
-                plan: _selectedPlan!,
-              ),
-            );
-          },
-          child: Text(isLoadingOptions && !canDeploy ? l10n.loading : l10n.deploy),
+                  Navigator.pop(
+                    context,
+                    NodesCreateCloudRequest(
+                      label: _labelController.text.trim(),
+                      region: _selectedRegion!,
+                      plan: _selectedPlan!,
+                    ),
+                  );
+                },
+          child:
+              Text(isLoadingOptions && !canDeploy ? l10n.loading : l10n.deploy),
         ),
       ],
     );
