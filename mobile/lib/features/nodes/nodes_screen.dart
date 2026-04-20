@@ -345,6 +345,17 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _handleWorkspaceMenuAction(_WorkspaceMenuAction action) async {
+    switch (action) {
+      case _WorkspaceMenuAction.cloudApiKey:
+        await _showCloudApiKeyDialog(context.read<CloudProvider>());
+        break;
+      case _WorkspaceMenuAction.refresh:
+        await _refreshAll();
+        break;
+    }
+  }
+
   Future<void> _switchManagedCloudProvider(
     CloudProvider cloudProvider,
     CloudProviderId providerId,
@@ -479,16 +490,33 @@ class _NodesScreenState extends State<NodesScreen> {
       appBar: AppBar(
         title: Text(l10n.workspace),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.key),
-            onPressed: () =>
-                _showCloudApiKeyDialog(context.read<CloudProvider>()),
-            tooltip: l10n.cloudApiKey,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshAll,
-            tooltip: l10n.refresh,
+          PopupMenuButton<_WorkspaceMenuAction>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (action) {
+              unawaited(_handleWorkspaceMenuAction(action));
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: _WorkspaceMenuAction.cloudApiKey,
+                child: Row(
+                  children: [
+                    const Icon(Icons.key, size: 18),
+                    const SizedBox(width: 10),
+                    Text(l10n.cloudApiKey),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: _WorkspaceMenuAction.refresh,
+                child: Row(
+                  children: [
+                    const Icon(Icons.refresh, size: 18),
+                    const SizedBox(width: 10),
+                    Text(l10n.refresh),
+                  ],
+                ),
+              ),
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -539,6 +567,12 @@ class _NodesScreenState extends State<NodesScreen> {
                   ),
                   onRestart: () => _handleRestart(
                       cloudProvider, profileProvider, vpnProvider),
+                  onConfigureApiKey: () =>
+                      _showCloudApiKeyDialog(cloudProvider),
+                  onImportProfile: _showImportProfileDialog,
+                  onCreateCloudNode: () =>
+                      _showCreateCloudNodeDialog(cloudProvider),
+                  onRefreshRoutes: _refreshAll,
                 ),
                 if (vpnProvider.error != null) ...[
                   SizedBox(height: 12.h),
@@ -644,4 +678,9 @@ class _NodesScreenState extends State<NodesScreen> {
       ),
     );
   }
+}
+
+enum _WorkspaceMenuAction {
+  cloudApiKey,
+  refresh,
 }

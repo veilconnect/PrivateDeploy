@@ -87,6 +87,10 @@ void main() {
           onConnect: () {},
           onDisconnect: () {},
           onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
         ),
       );
 
@@ -109,6 +113,10 @@ void main() {
           onConnect: () {},
           onDisconnect: () {},
           onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
         ),
       );
 
@@ -132,6 +140,10 @@ void main() {
           onConnect: () => connectTapped = true,
           onDisconnect: () {},
           onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
         ),
       );
 
@@ -146,6 +158,82 @@ void main() {
       await tester.pump();
 
       expect(connectTapped, isTrue);
+    });
+
+    testWidgets('shows setup shortcuts when no routes are available',
+        (tester) async {
+      var configureTapped = false;
+      var importTapped = false;
+
+      await pumpNodesTestApp(
+        tester,
+        child: NodesVpnSection(
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: TestProfileProvider(),
+          cloudProvider: TestCloudProvider(hasApiKey: false),
+          onConnect: () {},
+          onDisconnect: () {},
+          onRestart: () {},
+          onConfigureApiKey: () => configureTapped = true,
+          onImportProfile: () => importTapped = true,
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
+        ),
+      );
+
+      expect(find.text('Available Routes'), findsOneWidget);
+      expect(find.text('Set API Key'), findsOneWidget);
+      expect(find.text('Import profile'), findsOneWidget);
+
+      await tester.tap(find.text('Set API Key'));
+      await tester.pump();
+      await tester.tap(find.text('Import profile'));
+      await tester.pump();
+
+      expect(configureTapped, isTrue);
+      expect(importTapped, isTrue);
+    });
+
+    testWidgets('shows refresh shortcuts while waiting for cloud credentials',
+        (tester) async {
+      var refreshTapped = false;
+      var importTapped = false;
+
+      await pumpNodesTestApp(
+        tester,
+        child: NodesVpnSection(
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: TestProfileProvider(),
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [
+              testCloudInstance(
+                label: 'warming-node',
+                status: 'active',
+                nodeInfo: null,
+              ),
+            ],
+          ),
+          onConnect: () {},
+          onDisconnect: () {},
+          onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () => importTapped = true,
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () => refreshTapped = true,
+        ),
+      );
+
+      expect(find.text('Refresh'), findsOneWidget);
+      expect(find.text('Import profile'), findsOneWidget);
+
+      await tester.tap(find.text('Refresh'));
+      await tester.pump();
+      await tester.tap(find.text('Import profile'));
+      await tester.pump();
+
+      expect(refreshTapped, isTrue);
+      expect(importTapped, isTrue);
     });
 
     testWidgets('shows disconnect and restart controls when connected',
@@ -184,6 +272,10 @@ void main() {
           onConnect: () {},
           onDisconnect: () => disconnectTapped = true,
           onRestart: () => restartTapped = true,
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
         ),
       );
 
@@ -192,10 +284,10 @@ void main() {
       expect(find.textContaining('Up '), findsWidgets);
       expect(find.textContaining('Down '), findsWidgets);
       expect(find.textContaining('Speed '), findsOneWidget);
-      expect(find.text('Session'), findsOneWidget);
-      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(find.text('Connection Time'), findsOneWidget);
+      expect(find.text('Exit IP'), findsOneWidget);
       expect(find.text('203.0.113.7'), findsOneWidget);
-      expect(find.text('Latest Route'), findsOneWidget);
+      expect(find.text('Latest Route Match'), findsOneWidget);
       expect(find.text('Proxy · auto'), findsOneWidget);
       expect(find.text('PROXY'), findsOneWidget);
       expect(find.text('Disconnect'), findsOneWidget);
@@ -328,7 +420,7 @@ void main() {
       );
 
       expect(find.text('fra-node'), findsOneWidget);
-      expect(find.text('Selected'), findsOneWidget);
+      expect(find.text('In Use'), findsOneWidget);
       expect(find.text('Ready'), findsWidgets);
       expect(find.text('Speed Test'), findsOneWidget);
       expect(find.text('Trojan'), findsOneWidget);
@@ -417,7 +509,7 @@ void main() {
         ),
       );
 
-      expect(find.text('Active Node'), findsOneWidget);
+      expect(find.text('Current Route'), findsOneWidget);
       expect(find.text('Cloud: ready-node'), findsOneWidget);
       expect(find.text('Waiting for node credentials…'), findsOneWidget);
     });
@@ -571,13 +663,13 @@ void main() {
         ),
       );
 
-      expect(find.text('Manual Profiles'), findsOneWidget);
+      expect(find.text('Saved Profiles'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
       expect(find.text('Manual B'), findsOneWidget);
       expect(find.text('Ready'), findsOneWidget);
-      expect(find.text('View / Edit Config'), findsWidgets);
+      expect(find.text('Open Config'), findsWidgets);
 
-      await tester.tap(find.text('View / Edit Config').first);
+      await tester.tap(find.text('Open Config').first);
       await tester.pumpAndSettle();
 
       expect(viewed?.name, 'Manual A');

@@ -97,7 +97,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             DropdownButtonFormField<CloudProviderId>(
-              value: _selectedProvider,
+              initialValue: _selectedProvider,
               decoration: InputDecoration(
                 labelText: l10n.cloudProvider,
                 border: const OutlineInputBorder(),

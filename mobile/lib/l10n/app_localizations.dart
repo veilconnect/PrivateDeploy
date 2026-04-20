@@ -362,6 +362,12 @@ abstract class AppLocalizations {
   /// **'Cloud Nodes'**
   String get cloudNodes;
 
+  /// No description provided for @availableRoutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Available Routes'**
+  String get availableRoutes;
+
   /// No description provided for @cloudAccessNotConfigured.
   ///
   /// In en, this message translates to:
@@ -419,7 +425,7 @@ abstract class AppLocalizations {
   /// No description provided for @activeNode.
   ///
   /// In en, this message translates to:
-  /// **'Active Node'**
+  /// **'Current Route'**
   String get activeNode;
 
   /// No description provided for @useAndConnect.
@@ -467,7 +473,7 @@ abstract class AppLocalizations {
   /// No description provided for @inUse.
   ///
   /// In en, this message translates to:
-  /// **'Selected'**
+  /// **'In Use'**
   String get inUse;
 
   /// No description provided for @nodeDetails.
@@ -995,7 +1001,7 @@ abstract class AppLocalizations {
   /// No description provided for @manualProfiles.
   ///
   /// In en, this message translates to:
-  /// **'Manual Profiles'**
+  /// **'Saved Profiles'**
   String get manualProfiles;
 
   /// No description provided for @createdAt.
@@ -1007,7 +1013,7 @@ abstract class AppLocalizations {
   /// No description provided for @viewEditConfig.
   ///
   /// In en, this message translates to:
-  /// **'View / Edit Config'**
+  /// **'Open Config'**
   String get viewEditConfig;
 
   /// No description provided for @rename.
@@ -1637,7 +1643,7 @@ abstract class AppLocalizations {
   /// No description provided for @session.
   ///
   /// In en, this message translates to:
-  /// **'Session'**
+  /// **'Connection Time'**
   String get session;
 
   /// No description provided for @vpnConnectedDiag.
@@ -1673,7 +1679,7 @@ abstract class AppLocalizations {
   /// No description provided for @currentEgressIp.
   ///
   /// In en, this message translates to:
-  /// **'Current Egress IP'**
+  /// **'Exit IP'**
   String get currentEgressIp;
 
   /// No description provided for @connectVpnToMeasure.
@@ -1703,7 +1709,7 @@ abstract class AppLocalizations {
   /// No description provided for @latestRoute.
   ///
   /// In en, this message translates to:
-  /// **'Latest Route'**
+  /// **'Latest Route Match'**
   String get latestRoute;
 
   /// No description provided for @directRoute.

@@ -151,6 +151,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudNodes => '云节点';
 
   @override
+  String get availableRoutes => '可用线路';
+
+  @override
   String get cloudAccessNotConfigured => '云端访问未配置';
 
   @override
@@ -177,10 +180,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deployNode => '部署节点';
 
   @override
-  String get manualProfilesDesc => '仅保存在本设备上的配置';
+  String get manualProfilesDesc => '仅保存在这台设备上的配置';
 
   @override
-  String get activeNode => '当前节点';
+  String get activeNode => '当前线路';
 
   @override
   String get useAndConnect => '使用并连接';
@@ -204,7 +207,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get provisioning => '准备中';
 
   @override
-  String get inUse => '当前使用';
+  String get inUse => '正在使用';
 
   @override
   String get nodeDetails => '节点详情';
@@ -490,7 +493,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get renameProfile => '重命名配置';
 
   @override
-  String get manualProfiles => '手动配置';
+  String get manualProfiles => '本地配置';
 
   @override
   String createdAt(Object date) {
@@ -498,7 +501,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get viewEditConfig => '查看/编辑配置';
+  String get viewEditConfig => '打开配置';
 
   @override
   String get rename => '重命名';
@@ -832,7 +835,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get vpnDiagnosticsTitle => 'VPN 诊断';
 
   @override
-  String get session => '会话';
+  String get session => '连接时长';
 
   @override
   String get vpnConnectedDiag => 'VPN 已连接 — 以下数据来自当前会话';
@@ -867,7 +870,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get egressProbeHelp => '先尝试短时原生探测，仅在需要时回退。';
 
   @override
-  String get latestRoute => '最近命中';
+  String get latestRoute => '最近命中规则';
 
   @override
   String get directRoute => '直连';

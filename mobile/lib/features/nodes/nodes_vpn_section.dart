@@ -17,6 +17,10 @@ class NodesVpnSection extends StatelessWidget {
   final VoidCallback onConnect;
   final VoidCallback onDisconnect;
   final VoidCallback onRestart;
+  final VoidCallback onConfigureApiKey;
+  final VoidCallback onImportProfile;
+  final VoidCallback onCreateCloudNode;
+  final VoidCallback onRefreshRoutes;
 
   const NodesVpnSection({
     Key? key,
@@ -26,6 +30,10 @@ class NodesVpnSection extends StatelessWidget {
     required this.onConnect,
     required this.onDisconnect,
     required this.onRestart,
+    required this.onConfigureApiKey,
+    required this.onImportProfile,
+    required this.onCreateCloudNode,
+    required this.onRefreshRoutes,
   }) : super(key: key);
 
   @override
@@ -36,6 +44,10 @@ class NodesVpnSection extends StatelessWidget {
     final stats = vpnProvider.stats;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
     final allCloudNodes = cloudProvider.allInstances.length;
+    final savedProfileCount = profileProvider.profiles
+        .where((profile) => !isCloudManagedProfile(profile))
+        .length;
+    final availableRouteCount = readyCloudNodes.length + savedProfileCount;
     final profileValue = selectedProfile ?? l10n.noNodeSelected;
     final profileHint = selectedProfile == null
         ? _connectionHint(cloudProvider, l10n)
@@ -43,6 +55,17 @@ class NodesVpnSection extends StatelessWidget {
     final latestDecision = vpnProvider.recentRouteDecisions.isNotEmpty
         ? vpnProvider.recentRouteDecisions.first
         : null;
+    final quickActions = _buildQuickActions(
+      l10n: l10n,
+      savedProfileCount: savedProfileCount,
+      readyCloudNodeCount: readyCloudNodes.length,
+      allCloudNodeCount: allCloudNodes,
+      hasCloudAccess: cloudProvider.hasApiKey,
+      onConfigureApiKey: onConfigureApiKey,
+      onImportProfile: onImportProfile,
+      onCreateCloudNode: onCreateCloudNode,
+      onRefreshRoutes: onRefreshRoutes,
+    );
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -136,9 +159,13 @@ class NodesVpnSection extends StatelessWidget {
                       width: tileWidth,
                       child: NodesMetricTile(
                         icon: Icons.hub_outlined,
-                        label: l10n.cloudNodes,
-                        value: '$readyCloudNodes.length / $allCloudNodes',
-                        hint: cloudProvider.providerId.displayName,
+                        label: l10n.availableRoutes,
+                        value: '$availableRouteCount',
+                        hint: _availableRoutesHint(
+                          l10n: l10n,
+                          readyCloudNodeCount: readyCloudNodes.length,
+                          savedProfileCount: savedProfileCount,
+                        ),
                         color: const Color(0xFF1452CC),
                       ),
                     ),
@@ -266,6 +293,10 @@ class NodesVpnSection extends StatelessWidget {
                         label: Text(l10n.connect),
                       ),
                     ),
+                  if (quickActions != null) ...[
+                    SizedBox(height: 10.h),
+                    quickActions,
+                  ],
                 ],
               ),
           ],
@@ -273,6 +304,88 @@ class NodesVpnSection extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget? _buildQuickActions({
+  required AppLocalizations l10n,
+  required int savedProfileCount,
+  required int readyCloudNodeCount,
+  required int allCloudNodeCount,
+  required bool hasCloudAccess,
+  required VoidCallback onConfigureApiKey,
+  required VoidCallback onImportProfile,
+  required VoidCallback onCreateCloudNode,
+  required VoidCallback onRefreshRoutes,
+}) {
+  final needsSavedRoute = savedProfileCount == 0;
+  if (!hasCloudAccess && needsSavedRoute) {
+    return Wrap(
+      spacing: 8.w,
+      runSpacing: 8.h,
+      children: [
+        OutlinedButton.icon(
+          onPressed: onConfigureApiKey,
+          icon: const Icon(Icons.key_outlined),
+          label: Text(l10n.setApiKey),
+        ),
+        TextButton.icon(
+          onPressed: onImportProfile,
+          icon: const Icon(Icons.link),
+          label: Text(l10n.importProfile),
+        ),
+      ],
+    );
+  }
+
+  if (hasCloudAccess && allCloudNodeCount == 0 && needsSavedRoute) {
+    return Wrap(
+      spacing: 8.w,
+      runSpacing: 8.h,
+      children: [
+        OutlinedButton.icon(
+          onPressed: onCreateCloudNode,
+          icon: const Icon(Icons.add_circle_outline),
+          label: Text(l10n.deployNode),
+        ),
+        TextButton.icon(
+          onPressed: onImportProfile,
+          icon: const Icon(Icons.link),
+          label: Text(l10n.importProfile),
+        ),
+      ],
+    );
+  }
+
+  if (allCloudNodeCount > 0 &&
+      readyCloudNodeCount == 0 &&
+      needsSavedRoute) {
+    return Wrap(
+      spacing: 8.w,
+      runSpacing: 8.h,
+      children: [
+        OutlinedButton.icon(
+          onPressed: onRefreshRoutes,
+          icon: const Icon(Icons.refresh),
+          label: Text(l10n.refresh),
+        ),
+        TextButton.icon(
+          onPressed: onImportProfile,
+          icon: const Icon(Icons.link),
+          label: Text(l10n.importProfile),
+        ),
+      ],
+    );
+  }
+
+  return null;
+}
+
+String _availableRoutesHint({
+  required AppLocalizations l10n,
+  required int readyCloudNodeCount,
+  required int savedProfileCount,
+}) {
+  return '$readyCloudNodeCount ${l10n.cloudNodes} · $savedProfileCount ${l10n.manualProfiles}';
 }
 
 String _egressValue(VpnProvider vpnProvider, AppLocalizations l10n) {

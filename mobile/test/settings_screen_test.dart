@@ -187,7 +187,7 @@ void main() {
       expect(vpnProvider.activateDiagnosticsSessionCalls, 1);
       expect(vpnProvider.refreshDiagnosticsCalls, 1);
       expect(find.text('VPN Diagnostics'), findsWidgets);
-      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(find.text('Exit IP'), findsOneWidget);
       expect(find.text('203.0.113.42'), findsOneWidget);
       expect(find.text('www.baidu.com -> 45.113.192.102:443'), findsOneWidget);
       expect(
@@ -234,7 +234,7 @@ void main() {
       await tester.pumpAndSettle();
       vpnProvider.stopNotifications();
 
-      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(find.text('Exit IP'), findsOneWidget);
       expect(vpnProvider.activateDiagnosticsSessionCalls, 1);
       expect(vpnProvider.refreshDiagnosticsCalls, 1);
     });

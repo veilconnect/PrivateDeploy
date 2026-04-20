@@ -46,7 +46,7 @@ void main() {
 
       expect(find.text('Workspace'), findsOneWidget);
       expect(find.text('Cloud Nodes'), findsWidgets);
-      expect(find.text('Manual Profiles'), findsOneWidget);
+      expect(find.text('Saved Profiles'), findsOneWidget);
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
       expect(find.byIcon(Icons.link), findsOneWidget);
@@ -81,7 +81,14 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Refresh'));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byIcon(Icons.more_vert),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Refresh').last);
       await tester.pump();
       await tester.pumpAndSettle();
 
@@ -166,6 +173,36 @@ void main() {
 
       expect(find.text('Workspace'), findsOneWidget);
       expect(find.text('Settings'), findsNothing);
+    });
+
+    testWidgets('opens cloud api key flow from workspace menu',
+        (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: false,
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const NodesScreen(),
+        cloudProvider: cloudProvider,
+        profileProvider: TestProfileProvider(),
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byIcon(Icons.more_vert),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cloud API Key').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('API Key'), findsWidgets);
     });
 
     testWidgets('shows journey progress for first-time cloud setup',

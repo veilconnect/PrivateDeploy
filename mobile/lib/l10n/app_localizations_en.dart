@@ -152,6 +152,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudNodes => 'Cloud Nodes';
 
   @override
+  String get availableRoutes => 'Available Routes';
+
+  @override
   String get cloudAccessNotConfigured => 'Cloud access not configured';
 
   @override
@@ -182,7 +185,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get manualProfilesDesc => 'Profiles stored only on this device';
 
   @override
-  String get activeNode => 'Active Node';
+  String get activeNode => 'Current Route';
 
   @override
   String get useAndConnect => 'Use & Connect';
@@ -206,7 +209,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get provisioning => 'Starting';
 
   @override
-  String get inUse => 'Selected';
+  String get inUse => 'In Use';
 
   @override
   String get nodeDetails => 'Node Details';
@@ -506,7 +509,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get renameProfile => 'Rename Profile';
 
   @override
-  String get manualProfiles => 'Manual Profiles';
+  String get manualProfiles => 'Saved Profiles';
 
   @override
   String createdAt(Object date) {
@@ -514,7 +517,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get viewEditConfig => 'View / Edit Config';
+  String get viewEditConfig => 'Open Config';
 
   @override
   String get rename => 'Rename';
@@ -857,7 +860,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get vpnDiagnosticsTitle => 'VPN Diagnostics';
 
   @override
-  String get session => 'Session';
+  String get session => 'Connection Time';
 
   @override
   String get vpnConnectedDiag =>
@@ -881,7 +884,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get currentEgressIp => 'Current Egress IP';
+  String get currentEgressIp => 'Exit IP';
 
   @override
   String get connectVpnToMeasure => 'Connect VPN to measure current egress IP';
@@ -897,7 +900,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Trying a short native probe first, then falling back only if needed.';
 
   @override
-  String get latestRoute => 'Latest Route';
+  String get latestRoute => 'Latest Route Match';
 
   @override
   String get directRoute => 'Direct';

@@ -50,6 +50,7 @@
   "speedStats": "速度 {value}",
 
   "cloudNodes": "云节点",
+  "availableRoutes": "可用线路",
   "cloudAccessNotConfigured": "云端访问未配置",
   "setCloudProviderApiKeyHint": "设置 {provider} API Key 以开始使用。",
   "@setCloudProviderApiKeyHint": { "placeholders": { "provider": {} } },
@@ -59,9 +60,9 @@
   "noCloudNodesYet": "暂无云节点",
   "deployFirstNodeHint": "先创建一个云节点，再从这台设备发起连接。",
   "deployNode": "部署节点",
-  "manualProfilesDesc": "仅保存在本设备上的配置",
+  "manualProfilesDesc": "仅保存在这台设备上的配置",
 
-  "activeNode": "当前节点",
+  "activeNode": "当前线路",
   "useAndConnect": "使用并连接",
   "useAndSwitch": "使用并切换",
   "speedTest": "速度测试",
@@ -69,7 +70,7 @@
   "testing": "测试中...",
   "active": "已就绪",
   "provisioning": "准备中",
-  "inUse": "当前使用",
+  "inUse": "正在使用",
   "nodeDetails": "节点详情",
   "deleteNode": "删除节点",
   "probesStat": "{successful}/{total} 次探测",
@@ -164,9 +165,9 @@
   "pleasePasteConfig": "请粘贴配置或代理链接",
   "renameProfile": "重命名配置",
 
-  "manualProfiles": "手动配置",
+  "manualProfiles": "本地配置",
   "createdAt": "创建于：{date}",
-  "viewEditConfig": "查看/编辑配置",
+  "viewEditConfig": "打开配置",
   "rename": "重命名",
 
   "deployCloudNode": "部署云节点",
@@ -280,7 +281,7 @@
   "cloudBackupRestored": "云备份已恢复",
 
   "vpnDiagnosticsTitle": "VPN 诊断",
-  "session": "会话",
+  "session": "连接时长",
   "vpnConnectedDiag": "VPN 已连接 — 以下数据来自当前会话",
   "vpnConnectingDiag": "VPN 连接中 — 诊断数据可能即将变化",
   "vpnDisconnectingDiag": "VPN 断开中 — 结果可能已过时",
@@ -291,7 +292,7 @@
   "refreshing": "刷新中...",
   "probeUnavailable": "探测不可用",
   "egressProbeHelp": "先尝试短时原生探测，仅在需要时回退。",
-  "latestRoute": "最近命中",
+  "latestRoute": "最近命中规则",
   "directRoute": "直连",
   "proxyRoute": "代理 · {tag}",
   "@proxyRoute": { "placeholders": { "tag": {} } },
