@@ -47,6 +47,12 @@ class NodesCloudSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
+    final pendingCloudNodes = cloudProvider.allInstances.length - readyCloudNodes.length;
+    final selectedCloudProfile = profileProvider.activeProfile;
+    final selectedCloudProfileName =
+        selectedCloudProfile != null && isCloudManagedProfile(selectedCloudProfile)
+            ? selectedCloudProfile.name
+            : l10n.noNodeSelected;
     final headerSubtitle =
         '${cloudProvider.providerId.displayName} · ${readyCloudNodes.length}/${cloudProvider.allInstances.length}';
     if (!cloudProvider.hasApiKey &&
@@ -67,6 +73,21 @@ class NodesCloudSection extends StatelessWidget {
               unawaited(onManageProviderChanged(providerId));
             },
           ),
+          if (cloudProvider.allInstances.isNotEmpty) ...[
+            SizedBox(height: 10.h),
+            _CloudOverviewMetrics(
+              readyCount: readyCloudNodes.length,
+              pendingCount: pendingCloudNodes,
+              selectedNodeLabel: selectedCloudProfileName,
+              selectedNodeHint: _selectedNodeHint(
+                l10n: l10n,
+                selectedNodeLabel: selectedCloudProfileName,
+                readyCount: readyCloudNodes.length,
+                pendingCount: pendingCloudNodes,
+                providerName: cloudProvider.providerId.displayName,
+              ),
+            ),
+          ],
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
             icon: Icons.error_outline,
@@ -135,6 +156,21 @@ class NodesCloudSection extends StatelessWidget {
             unawaited(onManageProviderChanged(providerId));
           },
         ),
+        if (cloudProvider.allInstances.isNotEmpty) ...[
+          SizedBox(height: 10.h),
+          _CloudOverviewMetrics(
+            readyCount: readyCloudNodes.length,
+            pendingCount: pendingCloudNodes,
+            selectedNodeLabel: selectedCloudProfileName,
+            selectedNodeHint: _selectedNodeHint(
+              l10n: l10n,
+              selectedNodeLabel: selectedCloudProfileName,
+              readyCount: readyCloudNodes.length,
+              pendingCount: pendingCloudNodes,
+              providerName: cloudProvider.providerId.displayName,
+            ),
+          ),
+        ],
         SizedBox(height: 10.h),
         _SectionActionsRow(
           readyCloudNodeCount: readyCloudNodes.length,
@@ -187,6 +223,25 @@ class NodesCloudSection extends StatelessWidget {
   }
 }
 
+String _selectedNodeHint({
+  required AppLocalizations l10n,
+  required String selectedNodeLabel,
+  required int readyCount,
+  required int pendingCount,
+  required String providerName,
+}) {
+  if (selectedNodeLabel != l10n.noNodeSelected) {
+    return providerName;
+  }
+  if (readyCount > 0) {
+    return l10n.tapConnectHint;
+  }
+  if (pendingCount > 0) {
+    return l10n.waitingForCredentials;
+  }
+  return l10n.noNodeSelectedHint;
+}
+
 class _SectionActionsRow extends StatelessWidget {
   const _SectionActionsRow({
     required this.readyCloudNodeCount,
@@ -218,6 +273,67 @@ class _SectionActionsRow extends StatelessWidget {
             label: Text(l10n.benchmarkAll),
           ),
       ],
+    );
+  }
+}
+
+class _CloudOverviewMetrics extends StatelessWidget {
+  const _CloudOverviewMetrics({
+    required this.readyCount,
+    required this.pendingCount,
+    required this.selectedNodeLabel,
+    required this.selectedNodeHint,
+  });
+
+  final int readyCount;
+  final int pendingCount;
+  final String selectedNodeLabel;
+  final String selectedNodeHint;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final halfWidth = (constraints.maxWidth - 10.w) / 2;
+        return Wrap(
+          spacing: 10.w,
+          runSpacing: 10.h,
+          children: [
+            SizedBox(
+              width: halfWidth,
+              child: NodesMetricTile(
+                icon: Icons.check_circle_outline,
+                label: l10n.active,
+                value: '$readyCount',
+                hint: l10n.cloudNodes,
+                color: const Color(0xFF0E9F6E),
+              ),
+            ),
+            SizedBox(
+              width: halfWidth,
+              child: NodesMetricTile(
+                icon: Icons.hourglass_bottom,
+                label: l10n.provisioning,
+                value: '$pendingCount',
+                hint: l10n.refresh,
+                color: const Color(0xFFF59E0B),
+              ),
+            ),
+            SizedBox(
+              width: constraints.maxWidth,
+              child: NodesMetricTile(
+                icon: Icons.route_outlined,
+                label: l10n.activeNode,
+                value: selectedNodeLabel,
+                hint: selectedNodeHint,
+                color: const Color(0xFF1452CC),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

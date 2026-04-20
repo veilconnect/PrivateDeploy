@@ -34,6 +34,8 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final isReady =
         instance.isActive && instance.hasIp && instance.nodeInfo != null;
+    final readinessMessage =
+        _readinessMessage(l10n: l10n, isReady: isReady);
     final canUseNode = !isSelected || !isConnected;
     final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
@@ -54,7 +56,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final planLabel = _normalizedPlanLabel(instance.plan);
     final accentColor = isSelected
         ? const Color(0xFF1452CC)
-        : instance.isActive
+        : isReady
             ? const Color(0xFF0E9F6E)
             : const Color(0xFFF59E0B);
 
@@ -80,7 +82,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 CircleAvatar(
                   backgroundColor: accentColor.withValues(alpha: 0.16),
                   child: Icon(
-                    instance.isActive
+                    isReady
                         ? Icons.cloud_done
                         : Icons.hourglass_empty,
                     color: accentColor,
@@ -173,8 +175,8 @@ class NodesCloudInstanceCard extends StatelessWidget {
               runSpacing: 8.h,
               children: [
                 NodesStatusChip(
-                  text: instance.isActive ? l10n.active : l10n.provisioning,
-                  color: instance.isActive
+                  text: isReady ? l10n.active : l10n.provisioning,
+                  color: isReady
                       ? const Color(0xFF0E9F6E)
                       : const Color(0xFFF59E0B),
                 ),
@@ -190,6 +192,37 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   ),
               ],
             ),
+            if (readinessMessage != null) ...[
+              SizedBox(height: 10.h),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(14.r),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 18.sp,
+                      color: Colors.orange[900],
+                    ),
+                    SizedBox(width: 8.w),
+                    Expanded(
+                      child: Text(
+                        readinessMessage,
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (isReady) ...[
               SizedBox(height: 14.h),
               Wrap(
@@ -323,6 +356,19 @@ class NodesCloudInstanceCard extends StatelessWidget {
       return null;
     }
     return normalized;
+  }
+
+  String? _readinessMessage({
+    required AppLocalizations l10n,
+    required bool isReady,
+  }) {
+    if (isReady) {
+      return null;
+    }
+    if (instance.isActive) {
+      return l10n.waitingForCredentials;
+    }
+    return null;
   }
 }
 

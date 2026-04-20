@@ -300,7 +300,7 @@ void main() {
 
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Selected'), findsOneWidget);
-      expect(find.text('Ready'), findsOneWidget);
+      expect(find.text('Ready'), findsWidgets);
       expect(find.text('Speed Test'), findsOneWidget);
       expect(find.text('Trojan'), findsOneWidget);
 
@@ -352,6 +352,45 @@ void main() {
       await tester.pump();
 
       expect(testedAll, isTrue);
+    });
+
+    testWidgets('shows overview metrics and waiting message for pending nodes',
+        (tester) async {
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [
+              readyCloudTestInstance(label: 'ready-node'),
+              testCloudInstance(
+                label: 'warming-node',
+                status: 'active',
+                nodeInfo: null,
+              ),
+            ],
+          ),
+          profileProvider: TestProfileProvider(
+            profiles: [testProfile(name: 'Cloud: ready-node')],
+            activeProfile: testProfile(name: 'Cloud: ready-node'),
+          ),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
+        ),
+      );
+
+      expect(find.text('Active Node'), findsOneWidget);
+      expect(find.text('Cloud: ready-node'), findsOneWidget);
+      expect(find.text('Waiting for node credentials…'), findsOneWidget);
     });
 
     testWidgets('shows Mbps label for benchmark result with throughput sample',
