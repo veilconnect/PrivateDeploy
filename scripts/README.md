@@ -63,6 +63,18 @@ PD_WIN_USER=Administrator \
 PD_WIN_PASS='secret' \
 python3 scripts/windows_remote_vpn_browser_smoke.py
 
+# 远端 Windows VPN 浏览 smoke（默认恢复到基线代理和 user.yaml 开关）
+# 如需严格恢复采集前状态，可显式加 --restore-mode original
+PD_WIN_HOST=192.168.10.11 \
+PD_WIN_USER=Administrator \
+PD_WIN_PASS='secret' \
+python3 scripts/windows_remote_vpn_browser_smoke.py \
+  --restore-mode baseline \
+  --restore-proxy-enable 1 \
+  --restore-proxy-server 127.0.0.1:7890 \
+  --restore-auto-set-system-proxy false \
+  --restore-system-proxy-policy-initialized false
+
 # 远端 Windows 30 分钟真实用户 soak（浏览 + 周期性切回应用检查）
 PD_WIN_HOST=192.168.10.11 \
 PD_WIN_USER=Administrator \
