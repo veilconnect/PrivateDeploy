@@ -166,6 +166,17 @@ void main() {
               downloadSpeed: 256,
               connectionTime: const Duration(minutes: 5),
             ),
+            diagnosticsEgressIp: '203.0.113.7',
+            recentRouteDecisions: [
+              VpnRouteDecision(
+                timestamp: DateTime(2026, 4, 20, 12, 0),
+                type: VpnRouteDecisionType.proxy,
+                outboundType: 'selector',
+                outboundTag: 'auto',
+                target: '104.18.33.45:443',
+                domain: 'openai.com',
+              ),
+            ],
           ),
           profileProvider: TestProfileProvider(
             activeProfile: testProfile(name: 'Cloud: ready-node'),
@@ -179,9 +190,15 @@ void main() {
 
       expect(find.text('Connected'), findsWidgets);
       expect(find.text('Cloud: ready-node'), findsWidgets);
-      expect(find.textContaining('Up '), findsOneWidget);
-      expect(find.textContaining('Down '), findsOneWidget);
+      expect(find.textContaining('Up '), findsWidgets);
+      expect(find.textContaining('Down '), findsWidgets);
       expect(find.textContaining('Speed '), findsOneWidget);
+      expect(find.text('Session'), findsOneWidget);
+      expect(find.text('Current Egress IP'), findsOneWidget);
+      expect(find.text('203.0.113.7'), findsOneWidget);
+      expect(find.text('Latest Route'), findsOneWidget);
+      expect(find.text('Proxy · auto'), findsOneWidget);
+      expect(find.text('PROXY'), findsOneWidget);
       expect(find.text('Disconnect'), findsOneWidget);
       expect(find.text('Restart VPN'), findsOneWidget);
 

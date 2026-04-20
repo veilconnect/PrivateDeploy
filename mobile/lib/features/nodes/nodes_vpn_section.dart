@@ -40,6 +40,9 @@ class NodesVpnSection extends StatelessWidget {
     final profileHint = selectedProfile == null
         ? _connectionHint(cloudProvider, l10n)
         : _statusLabel(vpnProvider.status, l10n);
+    final latestDecision = vpnProvider.recentRouteDecisions.isNotEmpty
+        ? vpnProvider.recentRouteDecisions.first
+        : null;
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -154,6 +157,45 @@ class NodesVpnSection extends StatelessWidget {
               },
             ),
             if (vpnProvider.isConnected) ...[
+              SizedBox(height: 10.h),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final tileWidth = (constraints.maxWidth - 10.w) / 2;
+                  return Wrap(
+                    spacing: 10.w,
+                    runSpacing: 10.h,
+                    children: [
+                      SizedBox(
+                        width: tileWidth,
+                        child: NodesMetricTile(
+                          icon: Icons.timer_outlined,
+                          label: l10n.session,
+                          value: stats.connectionTimeFormatted,
+                          hint:
+                              '${l10n.downStats(stats.downloadFormatted)} · ${l10n.upStats(stats.uploadFormatted)}',
+                          color: const Color(0xFF7C3AED),
+                        ),
+                      ),
+                      SizedBox(
+                        width: tileWidth,
+                        child: NodesMetricTile(
+                          icon: Icons.public_outlined,
+                          label: l10n.currentEgressIp,
+                          value: _egressValue(vpnProvider, l10n),
+                          hint: _egressHint(vpnProvider, l10n),
+                          color: const Color(0xFF155EEF),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              if (latestDecision != null) ...[
+                SizedBox(height: 12.h),
+                _LatestRouteCard(decision: latestDecision),
+              ],
+            ],
+            if (vpnProvider.isConnected) ...[
               SizedBox(height: 14.h),
               Wrap(
                 spacing: 8.w,
@@ -233,6 +275,34 @@ class NodesVpnSection extends StatelessWidget {
   }
 }
 
+String _egressValue(VpnProvider vpnProvider, AppLocalizations l10n) {
+  return switch ((
+    vpnProvider.isConnected,
+    vpnProvider.isRefreshingDiagnostics,
+    vpnProvider.diagnosticsEgressIp,
+    vpnProvider.diagnosticsError,
+  )) {
+    (false, _, _, _) => l10n.connectVpnToMeasure,
+    (true, true, null, _) => l10n.refreshing,
+    (true, _, String ip, _) => ip,
+    (true, _, null, String _) => l10n.probeUnavailable,
+    _ => l10n.unavailable,
+  };
+}
+
+String? _egressHint(VpnProvider vpnProvider, AppLocalizations l10n) {
+  return switch ((
+    vpnProvider.isConnected,
+    vpnProvider.isRefreshingDiagnostics,
+    vpnProvider.diagnosticsEgressIp,
+    vpnProvider.diagnosticsError,
+  )) {
+    (true, false, null, String error) => error,
+    (true, true, null, _) => l10n.egressProbeHelp,
+    _ => null,
+  };
+}
+
 Color _statusColor(VpnStatus status) {
   switch (status) {
     case VpnStatus.connected:
@@ -279,4 +349,96 @@ String _connectionHint(CloudProvider cloudProvider, AppLocalizations l10n) {
     return l10n.waitingForCredentials;
   }
   return l10n.noNodeSelected;
+}
+
+class _LatestRouteCard extends StatelessWidget {
+  const _LatestRouteCard({required this.decision});
+
+  final VpnRouteDecision decision;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final color = decision.isDirect ? Colors.teal : Colors.indigo;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34.w,
+            height: 34.w,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(12.r),
+            ),
+            child: Icon(
+              decision.isDirect
+                  ? Icons.subdirectory_arrow_left
+                  : Icons.cloud_outlined,
+              size: 18.sp,
+              color: color,
+            ),
+          ),
+          SizedBox(width: 10.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.latestRoute,
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  decision.displayTarget,
+                  style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey[900],
+                  ),
+                ),
+                SizedBox(height: 2.h),
+                Text(
+                  decision.isDirect
+                      ? l10n.directRoute
+                      : l10n.proxyRoute(decision.outboundTag),
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999.r),
+            ),
+            child: Text(
+              decision.typeLabel,
+              style: TextStyle(
+                fontSize: 10.sp,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

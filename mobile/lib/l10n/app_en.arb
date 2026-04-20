@@ -311,6 +311,10 @@
   "refreshing": "Refreshing...",
   "probeUnavailable": "Probe unavailable",
   "egressProbeHelp": "Trying a short native probe first, then falling back only if needed.",
+  "latestRoute": "Latest Route",
+  "directRoute": "Direct",
+  "proxyRoute": "Proxy · {tag}",
+  "@proxyRoute": { "placeholders": { "tag": {} } },
   "recentRoutingDecisions": "Recent Routing Decisions",
   "noRoutingDecisionsYet": "No routing decisions yet. Browse a few websites, then refresh this page.",
 

@@ -867,6 +867,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get egressProbeHelp => '先尝试短时原生探测，仅在需要时回退。';
 
   @override
+  String get latestRoute => '最近命中';
+
+  @override
+  String get directRoute => '直连';
+
+  @override
+  String proxyRoute(Object tag) {
+    return '代理 · $tag';
+  }
+
+  @override
   String get recentRoutingDecisions => '最近路由决策';
 
   @override

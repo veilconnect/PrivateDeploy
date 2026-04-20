@@ -1700,6 +1700,24 @@ abstract class AppLocalizations {
   /// **'Trying a short native probe first, then falling back only if needed.'**
   String get egressProbeHelp;
 
+  /// No description provided for @latestRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Latest Route'**
+  String get latestRoute;
+
+  /// No description provided for @directRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct'**
+  String get directRoute;
+
+  /// No description provided for @proxyRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Proxy · {tag}'**
+  String proxyRoute(Object tag);
+
   /// No description provided for @recentRoutingDecisions.
   ///
   /// In en, this message translates to:

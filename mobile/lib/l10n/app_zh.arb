@@ -291,6 +291,10 @@
   "refreshing": "刷新中...",
   "probeUnavailable": "探测不可用",
   "egressProbeHelp": "先尝试短时原生探测，仅在需要时回退。",
+  "latestRoute": "最近命中",
+  "directRoute": "直连",
+  "proxyRoute": "代理 · {tag}",
+  "@proxyRoute": { "placeholders": { "tag": {} } },
   "recentRoutingDecisions": "最近路由决策",
   "noRoutingDecisionsYet": "暂无路由决策。浏览一些网站，然后刷新此页面。",
 

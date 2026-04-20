@@ -897,6 +897,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Trying a short native probe first, then falling back only if needed.';
 
   @override
+  String get latestRoute => 'Latest Route';
+
+  @override
+  String get directRoute => 'Direct';
+
+  @override
+  String proxyRoute(Object tag) {
+    return 'Proxy · $tag';
+  }
+
+  @override
   String get recentRoutingDecisions => 'Recent Routing Decisions';
 
   @override
