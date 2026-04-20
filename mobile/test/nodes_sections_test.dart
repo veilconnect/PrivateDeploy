@@ -214,6 +214,7 @@ void main() {
   group('NodesCloudSection', () {
     testWidgets('shows retry state when cloud loading failed', (tester) async {
       var retryTapped = false;
+      var configureTapped = false;
 
       await pumpNodesTestApp(
         tester,
@@ -224,7 +225,8 @@ void main() {
           ),
           profileProvider: TestProfileProvider(),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
-          onConfigureApiKey: () {},
+          onConfigureApiKey: () => configureTapped = true,
+          onImportProfile: () {},
           onRetryLoad: () => retryTapped = true,
           onCreateCloudNode: () {},
           onViewDetails: (_) {},
@@ -238,16 +240,21 @@ void main() {
 
       expect(find.text('Failed to load'), findsOneWidget);
       expect(find.text('boom'), findsOneWidget);
+      expect(find.text('Set API Key'), findsOneWidget);
 
       await tester.tap(find.text('Retry'));
       await tester.pump();
+      await tester.tap(find.text('Set API Key'));
+      await tester.pump();
 
       expect(retryTapped, isTrue);
+      expect(configureTapped, isTrue);
     });
 
     testWidgets('shows API key CTA when cloud is not configured',
         (tester) async {
       var configureTapped = false;
+      var importTapped = false;
 
       await pumpNodesTestApp(
         tester,
@@ -256,6 +263,7 @@ void main() {
           profileProvider: TestProfileProvider(),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
           onConfigureApiKey: () => configureTapped = true,
+          onImportProfile: () => importTapped = true,
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (_) {},
@@ -269,11 +277,15 @@ void main() {
 
       expect(find.text('Cloud access not configured'), findsOneWidget);
       expect(find.text('Set API Key'), findsOneWidget);
+      expect(find.text('Import profile'), findsOneWidget);
 
       await tester.tap(find.text('Set API Key'));
       await tester.pump();
+      await tester.tap(find.text('Import profile'));
+      await tester.pump();
 
       expect(configureTapped, isTrue);
+      expect(importTapped, isTrue);
     });
 
     testWidgets('shows ready cloud node and forwards callbacks',
@@ -303,6 +315,7 @@ void main() {
           ),
           vpnProvider: TestVpnProvider(status: VpnStatus.connected),
           onConfigureApiKey: () {},
+          onImportProfile: () {},
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (instance) => detailedNode = instance,
@@ -350,6 +363,7 @@ void main() {
           profileProvider: TestProfileProvider(),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
           onConfigureApiKey: () {},
+          onImportProfile: () {},
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (_) {},
@@ -391,6 +405,7 @@ void main() {
           ),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
           onConfigureApiKey: () {},
+          onImportProfile: () {},
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (_) {},
@@ -405,6 +420,47 @@ void main() {
       expect(find.text('Active Node'), findsOneWidget);
       expect(find.text('Cloud: ready-node'), findsOneWidget);
       expect(find.text('Waiting for node credentials…'), findsOneWidget);
+    });
+
+    testWidgets('shows import profile fallback when no cloud nodes exist',
+        (tester) async {
+      var deployTapped = false;
+      var importTapped = false;
+
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: const [],
+          ),
+          profileProvider: TestProfileProvider(),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onImportProfile: () => importTapped = true,
+          onRetryLoad: () {},
+          onCreateCloudNode: () => deployTapped = true,
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
+        ),
+      );
+
+      expect(find.text('No cloud nodes yet'), findsOneWidget);
+      expect(find.text('Deploy Node'), findsWidgets);
+      expect(find.text('Import profile'), findsOneWidget);
+
+      await tester.tap(find.text('Deploy Node').first);
+      await tester.pump();
+      await tester.tap(find.text('Import profile'));
+      await tester.pump();
+
+      expect(deployTapped, isTrue);
+      expect(importTapped, isTrue);
     });
 
     testWidgets('shows Mbps label for benchmark result with throughput sample',
@@ -433,6 +489,7 @@ void main() {
           profileProvider: TestProfileProvider(),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
           onConfigureApiKey: () {},
+          onImportProfile: () {},
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (_) {},
@@ -468,6 +525,7 @@ void main() {
           profileProvider: TestProfileProvider(),
           vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
           onConfigureApiKey: () {},
+          onImportProfile: () {},
           onRetryLoad: () {},
           onCreateCloudNode: () {},
           onViewDetails: (_) {},

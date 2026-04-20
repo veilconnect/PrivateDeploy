@@ -558,6 +558,7 @@ class _NodesScreenState extends State<NodesScreen> {
                   vpnProvider: vpnProvider,
                   onConfigureApiKey: () =>
                       _showCloudApiKeyDialog(cloudProvider),
+                  onImportProfile: _showImportProfileDialog,
                   onRetryLoad: () => _refreshAll(),
                   onCreateCloudNode: () =>
                       _showCreateCloudNodeDialog(cloudProvider),

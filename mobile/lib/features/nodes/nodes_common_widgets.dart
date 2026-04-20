@@ -72,6 +72,8 @@ class NodesInlineInfoCard extends StatelessWidget {
   final String message;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final String? secondaryActionLabel;
+  final VoidCallback? onSecondaryAction;
   final Color accentColor;
 
   const NodesInlineInfoCard({
@@ -81,6 +83,8 @@ class NodesInlineInfoCard extends StatelessWidget {
     required this.message,
     this.actionLabel,
     this.onAction,
+    this.secondaryActionLabel,
+    this.onSecondaryAction,
     this.accentColor = const Color(0xFF3F5E88),
   }) : super(key: key);
 
@@ -112,9 +116,22 @@ class NodesInlineInfoCard extends StatelessWidget {
               message,
               style: TextStyle(fontSize: 13.sp, color: Colors.grey[700]),
             ),
-            if (actionLabel != null && onAction != null) ...[
+            if ((actionLabel != null && onAction != null) ||
+                (secondaryActionLabel != null && onSecondaryAction != null)) ...[
               SizedBox(height: 14.h),
-              FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+              Wrap(
+                spacing: 8.w,
+                runSpacing: 8.h,
+                children: [
+                  if (actionLabel != null && onAction != null)
+                    FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+                  if (secondaryActionLabel != null && onSecondaryAction != null)
+                    OutlinedButton(
+                      onPressed: onSecondaryAction,
+                      child: Text(secondaryActionLabel!),
+                    ),
+                ],
+              ),
             ],
           ],
         ),

@@ -17,6 +17,7 @@ class NodesCloudSection extends StatelessWidget {
   final ProfileProvider profileProvider;
   final VpnProvider vpnProvider;
   final VoidCallback onConfigureApiKey;
+  final VoidCallback onImportProfile;
   final VoidCallback onRetryLoad;
   final VoidCallback onCreateCloudNode;
   final ValueChanged<CloudInstance> onViewDetails;
@@ -33,6 +34,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.profileProvider,
     required this.vpnProvider,
     required this.onConfigureApiKey,
+    required this.onImportProfile,
     required this.onRetryLoad,
     required this.onCreateCloudNode,
     required this.onViewDetails,
@@ -95,6 +97,8 @@ class NodesCloudSection extends StatelessWidget {
             message: cloudProvider.error!,
             actionLabel: l10n.retry,
             onAction: onRetryLoad,
+            secondaryActionLabel: l10n.setApiKey,
+            onSecondaryAction: onConfigureApiKey,
             accentColor: Colors.orange,
           ),
           if (cloudProvider.allInstances.isNotEmpty) ...[
@@ -135,6 +139,8 @@ class NodesCloudSection extends StatelessWidget {
                 cloudProvider.providerId.displayName),
             actionLabel: l10n.setApiKey,
             onAction: onConfigureApiKey,
+            secondaryActionLabel: l10n.importProfile,
+            onSecondaryAction: onImportProfile,
             accentColor: const Color(0xFF1452CC),
           ),
         ],
@@ -185,6 +191,8 @@ class NodesCloudSection extends StatelessWidget {
             message: cloudProvider.error!,
             actionLabel: l10n.retry,
             onAction: onRetryLoad,
+            secondaryActionLabel: l10n.setApiKey,
+            onSecondaryAction: onConfigureApiKey,
             accentColor: Colors.orange,
           )
         else if (cloudProvider.allInstances.isEmpty)
@@ -194,6 +202,8 @@ class NodesCloudSection extends StatelessWidget {
             message: l10n.deployFirstNodeHint,
             actionLabel: l10n.deployNode,
             onAction: onCreateCloudNode,
+            secondaryActionLabel: l10n.importProfile,
+            onSecondaryAction: onImportProfile,
             accentColor: const Color(0xFF1452CC),
           )
         else
