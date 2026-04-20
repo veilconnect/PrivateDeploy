@@ -8,45 +8,36 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('NodesScreenFab', () {
-    testWidgets('shows deploy action when cloud deploy is enabled',
+    testWidgets('shows import and create actions',
         (tester) async {
-      var deployTapped = false;
       var importTapped = false;
       var createTapped = false;
 
       await _pumpFab(
         tester,
         child: NodesScreenFab(
-          showDeployNode: true,
-          onDeployNode: () => deployTapped = true,
           onImportProfile: () => importTapped = true,
           onCreateProfile: () => createTapped = true,
         ),
       );
 
-      expect(find.byIcon(Icons.cloud_upload), findsOneWidget);
       expect(find.byIcon(Icons.link), findsOneWidget);
       expect(find.byIcon(Icons.add), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.cloud_upload));
-      await tester.pump();
       await tester.tap(find.byIcon(Icons.link));
       await tester.pump();
       await tester.tap(find.byIcon(Icons.add));
       await tester.pump();
 
-      expect(deployTapped, isTrue);
       expect(importTapped, isTrue);
       expect(createTapped, isTrue);
     });
 
-    testWidgets('hides deploy action when cloud deploy is disabled',
+    testWidgets('does not render deploy action shortcut',
         (tester) async {
       await _pumpFab(
         tester,
         child: NodesScreenFab(
-          showDeployNode: false,
-          onDeployNode: () {},
           onImportProfile: () {},
           onCreateProfile: () {},
         ),

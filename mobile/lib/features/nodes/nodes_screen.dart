@@ -616,10 +616,8 @@ class _NodesScreenState extends State<NodesScreen> {
         },
       ),
       floatingActionButton: Consumer<CloudProvider>(
-        builder: (context, cloudProvider, _) {
+        builder: (context, _cloudProvider, child) {
           return NodesScreenFab(
-            showDeployNode: cloudProvider.hasApiKey,
-            onDeployNode: () => _showCreateCloudNodeDialog(cloudProvider),
             onImportProfile: _showImportProfileDialog,
             onCreateProfile: _showCreateProfileDialog,
           );

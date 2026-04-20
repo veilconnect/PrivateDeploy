@@ -49,7 +49,9 @@ void main() {
       expect(find.text('Manual Profiles'), findsOneWidget);
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
-      expect(find.byIcon(Icons.cloud_upload), findsOneWidget);
+      expect(find.byIcon(Icons.link), findsOneWidget);
+      expect(find.byIcon(Icons.add), findsOneWidget);
+      expect(find.byIcon(Icons.cloud_upload), findsNothing);
     });
 
     testWidgets('refresh uses loadStatus instead of reinitializing vpn',
