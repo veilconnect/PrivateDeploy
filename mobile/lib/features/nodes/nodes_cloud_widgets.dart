@@ -51,9 +51,24 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 ? l10n.retrySpeedTest
                 : l10n.speedTest;
     final latencyDetail = _latencyDetailText(latencyCheck, l10n);
+    final planLabel = _normalizedPlanLabel(instance.plan);
+    final accentColor = isSelected
+        ? const Color(0xFF1452CC)
+        : instance.isActive
+            ? const Color(0xFF0E9F6E)
+            : const Color(0xFFF59E0B);
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20.r),
+        side: BorderSide(
+          color: isSelected
+              ? accentColor.withValues(alpha: 0.34)
+              : Colors.black.withValues(alpha: 0.05),
+        ),
+      ),
       child: Padding(
         padding: EdgeInsets.all(16.w),
         child: Column(
@@ -63,13 +78,12 @@ class NodesCloudInstanceCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 CircleAvatar(
-                  backgroundColor:
-                      instance.isActive ? Colors.green : Colors.orange,
+                  backgroundColor: accentColor.withValues(alpha: 0.16),
                   child: Icon(
                     instance.isActive
                         ? Icons.cloud_done
                         : Icons.hourglass_empty,
-                    color: Colors.white,
+                    color: accentColor,
                   ),
                 ),
                 SizedBox(width: 12.w),
@@ -160,12 +174,19 @@ class NodesCloudInstanceCard extends StatelessWidget {
               children: [
                 NodesStatusChip(
                   text: instance.isActive ? l10n.active : l10n.provisioning,
-                  color: instance.isActive ? Colors.green : Colors.orange,
+                  color: instance.isActive
+                      ? const Color(0xFF0E9F6E)
+                      : const Color(0xFFF59E0B),
                 ),
                 if (isSelected)
                   NodesStatusChip(
                     text: l10n.inUse,
-                    color: Colors.blue,
+                    color: const Color(0xFF1452CC),
+                  ),
+                if (planLabel != null)
+                  NodesStatusChip(
+                    text: planLabel,
+                    color: const Color(0xFF475467),
                   ),
               ],
             ),
@@ -197,13 +218,25 @@ class NodesCloudInstanceCard extends StatelessWidget {
               ),
               if (latencyDetail != null) ...[
                 SizedBox(height: 10.h),
-                Text(
-                  latencyDetail,
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    color: latencyCheck?.error == null
-                        ? Colors.grey[700]
-                        : Colors.orange[800],
+                Container(
+                  width: double.infinity,
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                  decoration: BoxDecoration(
+                    color: (latencyCheck?.error == null
+                            ? const Color(0xFF1452CC)
+                            : const Color(0xFFF59E0B))
+                        .withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14.r),
+                  ),
+                  child: Text(
+                    latencyDetail,
+                    style: TextStyle(
+                      fontSize: 12.sp,
+                      color: latencyCheck?.error == null
+                          ? Colors.grey[800]
+                          : Colors.orange[900],
+                    ),
                   ),
                 ),
               ],
@@ -214,7 +247,8 @@ class NodesCloudInstanceCard extends StatelessWidget {
     );
   }
 
-  String? _latencyDetailText(CloudLatencyCheck? latencyCheck, AppLocalizations l10n) {
+  String? _latencyDetailText(
+      CloudLatencyCheck? latencyCheck, AppLocalizations l10n) {
     if (latencyCheck == null) {
       return null;
     }
@@ -281,6 +315,14 @@ class NodesCloudInstanceCard extends StatelessWidget {
       return '${throughputMbps.toStringAsFixed(1)} Mbps';
     }
     return '${throughputMbps.toStringAsFixed(2)} Mbps';
+  }
+
+  String? _normalizedPlanLabel(String rawPlan) {
+    final normalized = rawPlan.trim();
+    if (normalized.isEmpty || normalized.toLowerCase() == 'unknown') {
+      return null;
+    }
+    return normalized;
   }
 }
 

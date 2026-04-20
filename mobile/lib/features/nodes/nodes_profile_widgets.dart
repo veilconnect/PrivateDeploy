@@ -76,6 +76,15 @@ class NodesProfileCard extends StatelessWidget {
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20.r),
+        side: BorderSide(
+          color: isActive
+              ? const Color(0xFF1452CC).withValues(alpha: 0.24)
+              : Colors.black.withValues(alpha: 0.05),
+        ),
+      ),
       child: Padding(
         padding: EdgeInsets.all(16.w),
         child: Column(
@@ -85,10 +94,13 @@ class NodesProfileCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 CircleAvatar(
-                  backgroundColor: isActive ? Colors.green : Colors.grey,
+                  backgroundColor: isActive
+                      ? const Color(0xFF1452CC).withValues(alpha: 0.12)
+                      : Colors.grey.withValues(alpha: 0.16),
                   child: Icon(
                     isActive ? Icons.check : Icons.description,
-                    color: Colors.white,
+                    color:
+                        isActive ? const Color(0xFF1452CC) : Colors.grey[700],
                   ),
                 ),
                 SizedBox(width: 12.w),
@@ -190,12 +202,12 @@ class NodesProfileCard extends StatelessWidget {
                 if (isActive)
                   NodesStatusChip(
                     text: l10n.active,
-                    color: Colors.green,
+                    color: const Color(0xFF1452CC),
                   ),
                 if (isActive && isConnected)
                   NodesStatusChip(
                     text: l10n.inUse,
-                    color: Colors.blue,
+                    color: const Color(0xFF0E9F6E),
                   ),
               ],
             ),
@@ -226,13 +238,24 @@ class NodesProfileCard extends StatelessWidget {
             ),
             if (speedDetail != null) ...[
               SizedBox(height: 10.h),
-              Text(
-                speedDetail,
-                style: TextStyle(
-                  fontSize: 12.sp,
-                  color: speedResult?.error == null
-                      ? Colors.grey[700]
-                      : Colors.orange[800],
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                decoration: BoxDecoration(
+                  color: (speedResult?.error == null
+                          ? const Color(0xFF1452CC)
+                          : const Color(0xFFF59E0B))
+                      .withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14.r),
+                ),
+                child: Text(
+                  speedDetail,
+                  style: TextStyle(
+                    fontSize: 12.sp,
+                    color: speedResult?.error == null
+                        ? Colors.grey[800]
+                        : Colors.orange[900],
+                  ),
                 ),
               ),
             ],

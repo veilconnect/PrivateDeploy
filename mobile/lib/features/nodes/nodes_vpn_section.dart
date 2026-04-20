@@ -34,8 +34,15 @@ class NodesVpnSection extends StatelessWidget {
     final statusColor = _statusColor(vpnProvider.status);
     final selectedProfile = profileProvider.activeProfile?.name;
     final stats = vpnProvider.stats;
+    final readyCloudNodes = connectableCloudInstances(cloudProvider);
+    final allCloudNodes = cloudProvider.allInstances.length;
+    final profileValue = selectedProfile ?? l10n.noNodeSelected;
+    final profileHint = selectedProfile == null
+        ? _connectionHint(cloudProvider, l10n)
+        : _statusLabel(vpnProvider.status, l10n);
 
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: EdgeInsets.all(16.w),
         child: Column(
@@ -44,12 +51,31 @@ class NodesVpnSection extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 24.r,
-                  backgroundColor: statusColor,
+                Container(
+                  width: 54.w,
+                  height: 54.w,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        statusColor,
+                        statusColor.withValues(alpha: 0.72),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18.r),
+                    boxShadow: [
+                      BoxShadow(
+                        color: statusColor.withValues(alpha: 0.24),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
                   child: Icon(
                     _statusIcon(vpnProvider.status),
                     color: Colors.white,
+                    size: 28.sp,
                   ),
                 ),
                 SizedBox(width: 12.w),
@@ -57,32 +83,75 @@ class NodesVpnSection extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Wrap(
+                        spacing: 8.w,
+                        runSpacing: 8.h,
+                        children: [
+                          NodesStatusChip(
+                            text: _statusLabel(vpnProvider.status, l10n),
+                            color: statusColor,
+                          ),
+                          NodesStatusChip(
+                            text: cloudProvider.providerId.displayName,
+                            color: const Color(0xFF155EEF),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 10.h),
                       Text(
-                        l10n.connection,
+                        profileValue,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 18.sp,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 21.sp,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      SizedBox(height: 4.h),
+                      SizedBox(height: 6.h),
                       Text(
-                        _statusLabel(vpnProvider.status, l10n),
+                        profileHint,
                         style: TextStyle(
-                          color: statusColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14.sp,
+                          fontSize: 12.sp,
+                          color: Colors.grey[700],
+                          height: 1.35,
                         ),
-                      ),
-                      SizedBox(height: 4.h),
-                      Text(
-                        selectedProfile ?? _connectionHint(cloudProvider, l10n),
-                        style:
-                            TextStyle(fontSize: 12.sp, color: Colors.grey[600]),
                       ),
                     ],
                   ),
                 ),
               ],
+            ),
+            SizedBox(height: 16.h),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final tileWidth = (constraints.maxWidth - 10.w) / 2;
+                return Wrap(
+                  spacing: 10.w,
+                  runSpacing: 10.h,
+                  children: [
+                    SizedBox(
+                      width: tileWidth,
+                      child: NodesMetricTile(
+                        icon: Icons.hub_outlined,
+                        label: l10n.cloudNodes,
+                        value: '$readyCloudNodes.length / $allCloudNodes',
+                        hint: cloudProvider.providerId.displayName,
+                        color: const Color(0xFF1452CC),
+                      ),
+                    ),
+                    SizedBox(
+                      width: tileWidth,
+                      child: NodesMetricTile(
+                        icon: Icons.route,
+                        label: l10n.activeNode,
+                        value: profileValue,
+                        hint: _statusLabel(vpnProvider.status, l10n),
+                        color: statusColor,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             if (vpnProvider.isConnected) ...[
               SizedBox(height: 14.h),
@@ -91,16 +160,16 @@ class NodesVpnSection extends StatelessWidget {
                 runSpacing: 8.h,
                 children: [
                   NodesStatusChip(
-                    text: l10n.upStats(stats.uploadFormatted),
-                    color: Colors.blue,
+                    text: l10n.speedStats(stats.downloadSpeedFormatted),
+                    color: const Color(0xFF7C3AED),
                   ),
                   NodesStatusChip(
                     text: l10n.downStats(stats.downloadFormatted),
-                    color: Colors.green,
+                    color: const Color(0xFF0E9F6E),
                   ),
                   NodesStatusChip(
-                    text: l10n.speedStats(stats.downloadSpeedFormatted),
-                    color: Colors.purple,
+                    text: l10n.upStats(stats.uploadFormatted),
+                    color: const Color(0xFF1452CC),
                   ),
                 ],
               ),
@@ -112,45 +181,49 @@ class NodesVpnSection extends StatelessWidget {
                 title: l10n.nativeVpnUnavailable,
                 message: vpnProvider.unsupportedReason ??
                     l10n.nativeVpnUnavailableMessage,
+                accentColor: Colors.orange,
               )
             else if (vpnProvider.isLoading)
               LoadingIndicator(message: l10n.processingVpn)
             else
               Column(
                 children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      key: NodesTestKeys.connectButton,
-                      onPressed: vpnProvider.status == VpnStatus.disconnected
-                          ? onConnect
-                          : vpnProvider.status == VpnStatus.connected
-                              ? onDisconnect
-                              : null,
-                      icon: Icon(
-                        vpnProvider.status == VpnStatus.connected
-                            ? Icons.power_settings_new
-                            : Icons.shield,
-                      ),
-                      label: Text(
-                        vpnProvider.status == VpnStatus.connected
-                            ? l10n.disconnect
-                            : l10n.connect,
-                      ),
-                    ),
-                  ),
-                  if (vpnProvider.status == VpnStatus.connected) ...[
-                    SizedBox(height: 10.h),
+                  if (vpnProvider.status == VpnStatus.connected)
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: FilledButton.icon(
+                            key: NodesTestKeys.connectButton,
+                            onPressed: onDisconnect,
+                            icon: const Icon(Icons.power_settings_new),
+                            label: Text(l10n.disconnect),
+                          ),
+                        ),
+                        SizedBox(width: 10.w),
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton.icon(
+                            key: NodesTestKeys.restartButton,
+                            onPressed: onRestart,
+                            icon: const Icon(Icons.restart_alt),
+                            label: Text(l10n.restartVpn),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
                     SizedBox(
                       width: double.infinity,
-                      child: OutlinedButton.icon(
-                        key: NodesTestKeys.restartButton,
-                        onPressed: onRestart,
-                        icon: const Icon(Icons.restart_alt),
-                        label: Text(l10n.restartVpn),
+                      child: FilledButton.icon(
+                        key: NodesTestKeys.connectButton,
+                        onPressed: vpnProvider.status == VpnStatus.disconnected
+                            ? onConnect
+                            : null,
+                        icon: const Icon(Icons.shield),
+                        label: Text(l10n.connect),
                       ),
                     ),
-                  ],
                 ],
               ),
           ],
