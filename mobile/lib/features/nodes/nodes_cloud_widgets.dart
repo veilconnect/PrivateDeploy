@@ -122,10 +122,6 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 ),
                 PopupMenuButton<String>(
                   onSelected: (value) {
-                    if (value == 'details') {
-                      onViewDetails();
-                      return;
-                    }
                     if (value == 'delete') {
                       onDelete();
                     }
@@ -133,21 +129,6 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   itemBuilder: (context) {
                     final menuL10n = AppLocalizations.of(context)!;
                     return [
-                      PopupMenuItem(
-                        value: 'details',
-                        child: Row(
-                          children: [
-                            const Icon(Icons.info_outline),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                menuL10n.nodeDetails,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                       PopupMenuItem(
                         value: 'delete',
                         child: Row(
@@ -222,18 +203,31 @@ class NodesCloudInstanceCard extends StatelessWidget {
                   ],
                 ),
               ),
+              SizedBox(height: 8.h),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: onViewDetails,
+                  icon: const Icon(Icons.info_outline),
+                  label: Text(l10n.nodeDetails),
+                ),
+              ),
             ],
             if (isReady) ...[
               SizedBox(height: 14.h),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: canUseNode ? onUseNode : null,
+                  icon: Icon(primaryIcon),
+                  label: Text(primaryLabel),
+                ),
+              ),
+              SizedBox(height: 8.h),
               Wrap(
                 spacing: 8.w,
                 runSpacing: 8.h,
                 children: [
-                  FilledButton.icon(
-                    onPressed: canUseNode ? onUseNode : null,
-                    icon: Icon(primaryIcon),
-                    label: Text(primaryLabel),
-                  ),
                   OutlinedButton.icon(
                     onPressed: isLatencyTesting ? null : onTestLatency,
                     icon: isLatencyTesting
@@ -246,6 +240,11 @@ class NodesCloudInstanceCard extends StatelessWidget {
                           )
                         : const Icon(Icons.speed),
                     label: Text(latencyLabel),
+                  ),
+                  TextButton.icon(
+                    onPressed: onViewDetails,
+                    icon: const Icon(Icons.info_outline),
+                    label: Text(l10n.nodeDetails),
                   ),
                 ],
               ),

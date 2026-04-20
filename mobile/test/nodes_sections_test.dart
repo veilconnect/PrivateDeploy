@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
@@ -326,8 +325,6 @@ void main() {
 
       expect(testedNode?.label, 'fra-node');
 
-      await tester.tap(find.byIcon(Icons.more_vert));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('Node Details'));
       await tester.pumpAndSettle();
 
@@ -497,6 +494,7 @@ void main() {
   group('NodesManualProfilesSection', () {
     testWidgets('renders profiles and routes popup actions', (tester) async {
       Profile? activated;
+      Profile? viewed;
 
       await pumpNodesTestApp(
         tester,
@@ -508,7 +506,7 @@ void main() {
           ],
           activeProfileId: '2',
           onActivate: (profile) => activated = profile,
-          onView: (_) {},
+          onView: (profile) => viewed = profile,
           onEdit: (_) {},
           onDelete: (_) {},
           onSpeedTest: (_) {},
@@ -519,6 +517,12 @@ void main() {
       expect(find.text('Manual A'), findsOneWidget);
       expect(find.text('Manual B'), findsOneWidget);
       expect(find.text('Ready'), findsOneWidget);
+      expect(find.text('View / Edit Config'), findsWidgets);
+
+      await tester.tap(find.text('View / Edit Config').first);
+      await tester.pumpAndSettle();
+
+      expect(viewed?.name, 'Manual A');
 
       await tester.tap(find.text('Use & Connect').first);
       await tester.pumpAndSettle();

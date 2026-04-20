@@ -129,9 +129,6 @@ class NodesProfileCard extends StatelessWidget {
                 PopupMenuButton<String>(
                   onSelected: (value) {
                     switch (value) {
-                      case 'view':
-                        onView();
-                        break;
                       case 'edit':
                         onEdit();
                         break;
@@ -143,21 +140,6 @@ class NodesProfileCard extends StatelessWidget {
                   itemBuilder: (context) {
                     final menuL10n = AppLocalizations.of(context)!;
                     return [
-                      PopupMenuItem(
-                        value: 'view',
-                        child: Row(
-                          children: [
-                            const Icon(Icons.visibility),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                menuL10n.viewEditConfig,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                       PopupMenuItem(
                         value: 'edit',
                         child: Row(
@@ -212,15 +194,19 @@ class NodesProfileCard extends StatelessWidget {
               ],
             ),
             SizedBox(height: 14.h),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: canUseNode ? onActivate : null,
+                icon: Icon(primaryIcon),
+                label: Text(primaryLabel),
+              ),
+            ),
+            SizedBox(height: 8.h),
             Wrap(
               spacing: 8.w,
               runSpacing: 8.h,
               children: [
-                FilledButton.icon(
-                  onPressed: canUseNode ? onActivate : null,
-                  icon: Icon(primaryIcon),
-                  label: Text(primaryLabel),
-                ),
                 OutlinedButton.icon(
                   onPressed: isSpeedTesting ? null : onSpeedTest,
                   icon: isSpeedTesting
@@ -233,6 +219,11 @@ class NodesProfileCard extends StatelessWidget {
                         )
                       : const Icon(Icons.speed),
                   label: Text(speedLabel),
+                ),
+                TextButton.icon(
+                  onPressed: onView,
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: Text(l10n.viewEditConfig),
                 ),
               ],
             ),
