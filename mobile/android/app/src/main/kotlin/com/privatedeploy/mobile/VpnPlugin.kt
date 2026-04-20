@@ -42,10 +42,10 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         private const val START_TIMEOUT_MS = 30000L
         private const val EGRESS_PROBE_TIMEOUT_MS = 1500
         private val EGRESS_PROBE_ENDPOINTS = listOf(
-            NativeEgressProbeEndpoint("http://1.1.1.1/cdn-cgi/trace"),
-            NativeEgressProbeEndpoint("http://1.0.0.1/cdn-cgi/trace"),
             NativeEgressProbeEndpoint("https://api.ipify.org?format=json"),
+            NativeEgressProbeEndpoint("https://api64.ipify.org?format=json"),
             NativeEgressProbeEndpoint("https://ifconfig.me/ip"),
+            NativeEgressProbeEndpoint("https://icanhazip.com"),
         )
     }
 
@@ -732,13 +732,12 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
                 return@forEach
             }
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                return@forEach
-            }
-
             var score = 0
             if (network == activeNetwork) {
                 score += 1000
+            }
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                score += 500
             }
             if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
                 score += 200

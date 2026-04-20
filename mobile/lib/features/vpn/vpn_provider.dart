@@ -471,6 +471,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     }
 
+    if (Platform.isAndroid) {
+      AppLogger.info(
+        '[VpnProvider] Skipping startup egress probe on Android; '
+        'native probe sockets cannot bind to the VPN network on physical devices',
+      );
+      return true;
+    }
+
     final egressReachable = await _verifyStartupEgressConnectivity(
       generation: generation,
     );

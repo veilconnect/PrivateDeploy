@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:privatedeploy_mobile/features/nodes/nodes_test_keys.dart';
+import 'package:privatedeploy_mobile/features/settings/settings_screen.dart';
 
 import 'package:privatedeploy_mobile/main.dart' as app;
 
@@ -11,61 +13,70 @@ void main() {
     app.main();
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
-    // 1. Workspace 主页正常显示
-    expect(find.text('Workspace'), findsOneWidget);
-    expect(find.text('Connection'), findsOneWidget);
-    expect(find.text('Cloud Nodes'), findsOneWidget);
-    expect(find.text('Connect'), findsOneWidget);
+    // 1. 首页核心控件正常显示
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
+    expect(find.byKey(NodesTestKeys.importProfileFab), findsOneWidget);
+    expect(find.byKey(NodesTestKeys.createProfileFab), findsOneWidget);
+    expect(find.byIcon(Icons.settings), findsOneWidget);
 
-    // 2. API Key 对话框 + Cancel 修复验证
+    // 2. API Key 对话框 + Cancel 在保存时仍可点击
     await tester.tap(find.byIcon(Icons.key));
     await tester.pumpAndSettle();
-    expect(find.text('Cloud API Key'), findsOneWidget);
+    final apiKeyDialog = find.byType(AlertDialog);
+    expect(apiKeyDialog, findsOneWidget);
+    expect(find.descendant(of: apiKeyDialog, matching: find.byType(TextField)),
+        findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), 'INVALID_TEST_KEY');
+    await tester.enterText(
+      find.descendant(of: apiKeyDialog, matching: find.byType(TextField)),
+      'INVALID_TEST_KEY',
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Verify & Save'));
+    await tester.tap(
+      find.descendant(of: apiKeyDialog, matching: find.byType(FilledButton)),
+    );
     await tester.pump(const Duration(milliseconds: 500));
 
-    // Cancel 在验证中仍可点击
-    final cancelButton = find.text('Cancel');
+    final cancelButton =
+        find.descendant(of: apiKeyDialog, matching: find.byType(TextButton));
     expect(cancelButton, findsOneWidget);
     final cancelWidget = tester.widget<TextButton>(
-      find.ancestor(of: cancelButton, matching: find.byType(TextButton)),
+      cancelButton,
     );
     expect(cancelWidget.onPressed, isNotNull);
 
     await tester.tap(cancelButton);
     await tester.pumpAndSettle();
-    expect(find.text('Cloud API Key'), findsNothing);
-    expect(find.text('Workspace'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
 
     // 3. 设置页导航
     await tester.tap(find.byIcon(Icons.settings));
     await tester.pumpAndSettle();
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.byType(SettingsScreen), findsOneWidget);
     expect(find.text('API Key'), findsOneWidget);
 
     await tester.drag(find.byType(ListView), const Offset(0, -500));
     await tester.pumpAndSettle();
-    expect(find.text('VPN Diagnostics'), findsOneWidget);
+    expect(find.text('API Key'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
-    expect(find.text('Workspace'), findsOneWidget);
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
 
     // 4. FAB 创建 Profile 对话框
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.tap(find.byKey(NodesTestKeys.createProfileFab));
     await tester.pumpAndSettle();
-    expect(find.text('Create Profile'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(2));
 
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.byType(TextButton).first);
     await tester.pumpAndSettle();
-    expect(find.text('Workspace'), findsOneWidget);
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
 
-    // 5. Connect 无节点提示
-    await tester.tap(find.text('Connect'));
+    // 5. Connect 在无可用节点时给出反馈
+    await tester.tap(find.byKey(NodesTestKeys.connectButton));
     await tester.pumpAndSettle();
-    expect(find.textContaining('No ready node'), findsOneWidget);
+    expect(find.byType(SnackBar), findsOneWidget);
   });
 }

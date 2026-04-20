@@ -306,11 +306,13 @@ class NodeInfo {
     return NodeInfo(
       ssPort: _intValue(json, const ['ssPort', 'ss_port']),
       ssPassword: _stringValue(json, const ['ssPassword', 'ss_password']),
-      hyPort: _intValue(json, const ['hysteriaPort', 'hy_port']),
-      hyPassword: _stringValue(json, const ['hysteriaPassword', 'hy_password']),
+      hyPort: _intValue(json, const ['hyPort', 'hysteriaPort', 'hy_port']),
+      hyPassword:
+          _stringValue(json, const ['hyPassword', 'hysteriaPassword', 'hy_password']),
       hyServerName:
-          _stringValue(json, const ['hysteriaServerName', 'hy_server_name']),
-      hyInsecure: _boolValue(json, const ['hysteriaInsecure', 'hy_insecure']),
+          _stringValue(json, const ['hyServerName', 'hysteriaServerName', 'hy_server_name']),
+      hyInsecure:
+          _boolValue(json, const ['hyInsecure', 'hysteriaInsecure', 'hy_insecure']),
       vlessPort: _intValue(json, const ['vlessPort', 'vless_port']),
       vlessUuid:
           _stringValue(json, const ['vlessUUID', 'vlessUuid', 'vless_uuid']),

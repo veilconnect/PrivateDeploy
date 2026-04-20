@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_vpn_actions.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
@@ -384,8 +386,19 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
   @override
   final List<CloudInstance> instances;
 
+  @override
+  List<CloudInstance> get allInstances => instances;
+
   final CloudFastestNodeSelection fastestSelection;
   final CloudFastestNodeSelection cachedSelection;
+
+  @override
+  String? generateNodeConfig(CloudInstance instance) {
+    return buildCloudNodeConfig(
+      instance,
+      targetPlatform: defaultTargetPlatform,
+    );
+  }
 
   @override
   Future<CloudFastestNodeSelection> selectFastestConnectableInstance({

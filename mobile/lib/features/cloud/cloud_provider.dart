@@ -29,7 +29,8 @@ class CloudProvider extends CloudProviderBase {
   @override
   CloudProviderId get providerId => _providerId;
 
-  static const String _activeProviderStorageKey = 'mobile_cloud_active_provider';
+  static const String _activeProviderStorageKey =
+      'mobile_cloud_active_provider';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
   static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
@@ -55,6 +56,7 @@ class CloudProvider extends CloudProviderBase {
   final CloudLatencyProbe _benchmarkLatencyProbe;
   bool _benchmarkAllRunning = false;
   bool _benchmarkAbortRequested = false;
+  int _providerRequestEpoch = 0;
   // Cached CloudInstance lists for providers OTHER than the active one, so
   // the UI can show all nodes from every configured provider in one list.
   // Populated by loadInstances alongside the active provider's live fetch.
@@ -75,10 +77,11 @@ class CloudProvider extends CloudProviderBase {
       }
     }
     final list = merged.values.toList()
-      ..sort((a, b) => (b.createdAt ?? DateTime(0))
-          .compareTo(a.createdAt ?? DateTime(0)));
+      ..sort((a, b) =>
+          (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
     return list;
   }
+
   List<CloudRegion> get regions => _regions;
   List<CloudPlan> get plans => _plans;
   bool get isLoading => _isLoading;
@@ -106,6 +109,7 @@ class CloudProvider extends CloudProviderBase {
     _benchmarkAbortRequested = true;
     notifyListeners();
   }
+
   bool get hasApiKey => _hasApiKey;
   String? get apiKey => _apiKey;
   bool get hasStoredApiKey => _apiKey?.trim().isNotEmpty == true;
@@ -278,6 +282,7 @@ class CloudProvider extends CloudProviderBase {
       return false;
     }
     await _initializeStorage();
+    _providerRequestEpoch += 1;
     _providerId = target;
     await StorageService.saveString(_activeProviderStorageKey, target.id);
 
@@ -289,8 +294,14 @@ class CloudProvider extends CloudProviderBase {
     _plans = const [];
     _nodeRecords = {};
     _latencyChecks.clear();
+    _isLoading = false;
+    _isLoadingRegions = false;
+    _isLoadingPlans = false;
+    _regionsLoadFuture = null;
+    _plansLoadFuture = null;
     _apiKey = null;
     _hasApiKey = false;
+    _configLoaded = false;
     _error = null;
 
     await _loadNodeRecords();
@@ -353,19 +364,28 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<String?> _getStoredApiKey() async {
+    return _getStoredApiKeyFor(_providerId);
+  }
+
+  Future<String?> _getStoredApiKeyFor(CloudProviderId providerId) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _apiKey = await StorageService.getSecureString(apiKeyStorageKey);
-    if (_apiKey == null || _apiKey!.isEmpty) {
-      final legacy = StorageService.getString(apiKeyStorageKey);
+    var key = await StorageService.getSecureString(providerId.apiKeyStorageKey);
+    if (key == null || key.isEmpty) {
+      final legacy = StorageService.getString(providerId.apiKeyStorageKey);
       if (legacy != null && legacy.trim().isNotEmpty) {
-        _apiKey = legacy.trim();
-        await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
-        await StorageService.remove(apiKeyStorageKey);
+        key = legacy.trim();
+        await StorageService.saveSecureString(providerId.apiKeyStorageKey, key);
+        await StorageService.remove(providerId.apiKeyStorageKey);
       }
     }
-    return _apiKey?.trim();
+
+    final normalized = key?.trim();
+    if (_providerId == providerId) {
+      _apiKey = (normalized == null || normalized.isEmpty) ? null : normalized;
+    }
+    return (normalized == null || normalized.isEmpty) ? null : normalized;
   }
 
   // Persist a new key and mark cloud access as available. Keep these flags
@@ -438,16 +458,27 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<void> _saveNodeRecords() async {
+    await _saveNodeRecordsFor(_providerId, _nodeRecords);
+  }
+
+  Future<void> _saveNodeRecordsFor(
+    CloudProviderId providerId,
+    Map<String, VultrNodeRecord> records,
+  ) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
     final payload = <String, dynamic>{};
-    for (final item in _nodeRecords.entries) {
+    for (final item in records.entries) {
       payload[item.key] = item.value.toJson();
     }
     await StorageService.saveSecureString(
-        nodeRecordsStorageKey, jsonEncode(payload));
-    await StorageService.remove(nodeRecordsStorageKey);
+        providerId.nodeRecordsStorageKey, jsonEncode(payload));
+    await StorageService.remove(providerId.nodeRecordsStorageKey);
+  }
+
+  bool _isStaleProviderRequest(CloudProviderId providerId, int requestEpoch) {
+    return _providerId != providerId || _providerRequestEpoch != requestEpoch;
   }
 
   Future<void> _updateNodeRecord(
@@ -461,8 +492,13 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<void> refreshCloudConfig({bool notify = true}) async {
+    final providerId = _providerId;
+    final requestEpoch = _providerRequestEpoch;
     try {
-      final key = await _getStoredApiKey();
+      final key = await _getStoredApiKeyFor(providerId);
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       if (key == null || key.isEmpty) {
         _hasApiKey = false;
         _configLoaded = true;
@@ -473,12 +509,19 @@ class CloudProvider extends CloudProviderBase {
         return;
       }
 
-      final client = await _cloudClient();
+      final client = _buildClient(providerId, key);
       await client.validateApiKey();
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
+      _apiKey = key;
       _hasApiKey = true;
       _error = null;
       _configLoaded = true;
     } catch (e) {
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       _configLoaded = true;
       _error =
           'Failed to load cloud configuration: ${cloudProviderMessageFromError(e)}';
@@ -493,7 +536,7 @@ class CloudProvider extends CloudProviderBase {
       AppLogger.error('[CloudProvider] Load cloud config error', e);
     }
 
-    if (notify) {
+    if (notify && !_isStaleProviderRequest(providerId, requestEpoch)) {
       notifyListeners();
     }
   }
@@ -535,7 +578,16 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<void> loadInstances({bool notify = true}) async {
-    if (!await _ensureAuthorizedCloudAccess(notify: notify)) {
+    final providerId = _providerId;
+    final requestEpoch = _providerRequestEpoch;
+    if (!await _ensureAuthorizedCloudAccess(
+      notify: notify,
+      expectedProvider: providerId,
+      requestEpoch: requestEpoch,
+    )) {
+      return;
+    }
+    if (_isStaleProviderRequest(providerId, requestEpoch)) {
       return;
     }
 
@@ -546,10 +598,24 @@ class CloudProvider extends CloudProviderBase {
     }
 
     try {
-      final client = await _cloudClient();
+      final key = await _getStoredApiKeyFor(providerId);
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
+      if (key == null || key.isEmpty) {
+        throw StateError('${providerId.displayName} API key is not configured');
+      }
+      final client = _buildClient(providerId, key);
       final data = await client.listInstances();
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       final rawInstances = (data['instances'] as List?) ?? const [];
-      final knownRecords = await _loadNodeRecords();
+      final knownRecords = await _loadNodeRecordsFor(providerId);
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
+      _nodeRecords = knownRecords;
       var recordsChanged = false;
       final parsed = <CloudInstance>[];
 
@@ -560,7 +626,7 @@ class CloudProvider extends CloudProviderBase {
         // The API clients don't inject a provider field, so stamp it here —
         // we know these rows came from the active provider's API. Without
         // this, CloudInstance.fromJson falls back to 'vultr' for everything.
-        source['provider'] = _providerId.id;
+        source['provider'] = providerId.id;
         final id = source['id']?.toString() ?? '';
         if (id.isNotEmpty) {
           sources[id] = source;
@@ -643,6 +709,9 @@ class CloudProvider extends CloudProviderBase {
       if (recoveryFutures.isNotEmpty) {
         final keys = recoveryFutures.keys.toList();
         final values = await Future.wait(recoveryFutures.values);
+        if (_isStaleProviderRequest(providerId, requestEpoch)) {
+          return;
+        }
         for (var i = 0; i < keys.length; i++) {
           recoveredResults[keys[i]] = values[i];
         }
@@ -669,27 +738,21 @@ class CloudProvider extends CloudProviderBase {
         parsed.add(CloudInstance.fromJson(merged));
       }
 
-      final apiReturnedInstances = liveInstanceIds.isNotEmpty;
-      if (parsed.isEmpty && knownRecords.isNotEmpty) {
-        parsed.addAll(knownRecords.values
-            .where((r) => r.instanceId.isNotEmpty)
-            .map((record) => record.toCloudInstance()));
-      } else if (apiReturnedInstances) {
-        // Prune records for instances deleted on the cloud side. We only do
-        // this when the API returned a non-empty list to avoid wiping local
-        // records on a transient empty response.
-        final stale = knownRecords.keys
-            .where((id) => !liveInstanceIds.contains(id))
-            .toList();
-        if (stale.isNotEmpty) {
-          for (final id in stale) {
-            knownRecords.remove(id);
-          }
-          recordsChanged = true;
-          AppLogger.info(
-            '[CloudProvider] Pruned ${stale.length} local record(s) for instances no longer on cloud',
-          );
+      // The API call above succeeded, so an empty instance list is
+      // authoritative: the user may have deleted every node in the cloud.
+      // Keep cached records only on request failure (handled by catch), not on
+      // successful empty responses, otherwise deleted nodes linger forever.
+      final stale = knownRecords.keys
+          .where((id) => !liveInstanceIds.contains(id))
+          .toList();
+      if (stale.isNotEmpty) {
+        for (final id in stale) {
+          knownRecords.remove(id);
         }
+        recordsChanged = true;
+        AppLogger.info(
+          '[CloudProvider] Pruned ${stale.length} local record(s) for instances no longer on cloud',
+        );
       }
 
       _instances = parsed;
@@ -719,10 +782,10 @@ class CloudProvider extends CloudProviderBase {
             // some records still claim provider=vultr despite being stored
             // under, e.g., the DigitalOcean namespace. We know the authoritative
             // provider here — correct it so the merged-view chip is accurate.
-            if (updated.provider != _providerId) {
+            if (updated.provider != providerId) {
               updated = VultrNodeRecord(
                 instanceId: updated.instanceId,
-                provider: _providerId,
+                provider: providerId,
                 label: updated.label,
                 region: updated.region,
                 plan: updated.plan,
@@ -757,7 +820,7 @@ class CloudProvider extends CloudProviderBase {
             // all-providers view after the user switches active provider.
             knownRecords[item.id] = VultrNodeRecord(
               instanceId: item.id,
-              provider: _providerId,
+              provider: providerId,
               label: item.label,
               region: item.region,
               plan: item.plan,
@@ -772,19 +835,28 @@ class CloudProvider extends CloudProviderBase {
 
       if (recordsChanged) {
         _nodeRecords = knownRecords;
-        await _saveNodeRecords();
+        await _saveNodeRecordsFor(providerId, knownRecords);
       }
 
       AppLogger.info('[CloudProvider] Loaded ${_instances.length} instances');
     } catch (e) {
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       _error = 'Failed to load instances: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load instances error', e);
     } finally {
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       // Refresh the merged-view cache for every non-active provider from its
       // persisted node records so the UI can show all providers' nodes at
       // once. This reads from local storage only (no API calls) — switching
       // active provider is still the way to force a live refresh for it.
       await _loadOtherProviderInstancesFromCache();
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
       _isLoading = false;
       if (notify) {
         notifyListeners();
@@ -1288,8 +1360,7 @@ class CloudProvider extends CloudProviderBase {
         _nodeRecords.remove(id);
         _latencyChecks.remove(id);
         await _saveNodeRecords();
-        _instances =
-            _instances.where((instance) => instance.id != id).toList();
+        _instances = _instances.where((instance) => instance.id != id).toList();
       } else {
         // Prune the instance from the other-provider cache and its on-disk
         // records so the merged view updates immediately.
@@ -1400,19 +1471,34 @@ class CloudProvider extends CloudProviderBase {
     _configLoaded = false;
     notifyListeners();
 
-    unawaited(_refreshImportedBackupCloudState());
+    unawaited(
+      _refreshImportedBackupCloudState(_providerId, _providerRequestEpoch),
+    );
   }
 
   String? generateNodeConfig(CloudInstance instance) {
     return buildCloudNodeConfig(
       instance,
       preferredEndpointLabel: _latencyChecks[instance.id]?.endpointLabel,
+      targetPlatform: defaultTargetPlatform,
     );
   }
 
-  Future<bool> _ensureAuthorizedCloudAccess({bool notify = true}) async {
+  Future<bool> _ensureAuthorizedCloudAccess({
+    bool notify = true,
+    CloudProviderId? expectedProvider,
+    int? requestEpoch,
+  }) async {
+    final providerId = expectedProvider ?? _providerId;
+    final epoch = requestEpoch ?? _providerRequestEpoch;
+    if (_isStaleProviderRequest(providerId, epoch)) {
+      return false;
+    }
     if (!_configLoaded) {
       await refreshCloudConfig(notify: false);
+    }
+    if (_isStaleProviderRequest(providerId, epoch)) {
+      return false;
     }
 
     if (!_hasApiKey) {
@@ -1430,10 +1516,22 @@ class CloudProvider extends CloudProviderBase {
     return true;
   }
 
-  Future<void> _refreshImportedBackupCloudState() async {
+  Future<void> _refreshImportedBackupCloudState(
+    CloudProviderId importedProvider,
+    int requestEpoch,
+  ) async {
+    if (_isStaleProviderRequest(importedProvider, requestEpoch)) {
+      return;
+    }
     await refreshCloudConfig(notify: false);
+    if (_isStaleProviderRequest(importedProvider, requestEpoch)) {
+      return;
+    }
     if (_hasApiKey) {
       await loadInstances(notify: false);
+    }
+    if (_isStaleProviderRequest(importedProvider, requestEpoch)) {
+      return;
     }
     notifyListeners();
   }

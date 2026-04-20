@@ -9,6 +9,7 @@ EMULATOR_BIN="${ANDROID_EMULATOR_BIN:-/home/user/Android/Sdk/emulator/emulator}"
 ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"
 ANDROID_AVD="${ANDROID_AVD:-test_pixel}"
 SUB_PORT="${PD_TEST_SUB_PORT:-8765}"
+SUB_HOST="${PD_TEST_SUB_HOST:-10.0.2.2}"
 PROFILE_NAME="${PD_TEST_PROFILE_NAME:-sstest}"
 KEEP_EMULATOR="${PD_KEEP_EMULATOR:-0}"
 KEEP_ARTIFACTS="${PD_KEEP_TEST_ARTIFACTS:-0}"
@@ -38,6 +39,8 @@ cleanup() {
   if [[ -n "$HTTP_PID" ]]; then
     kill "$HTTP_PID" >/dev/null 2>&1 || true
   fi
+
+  adb -s "$ANDROID_SERIAL" reverse --remove "tcp:${SUB_PORT}" >/dev/null 2>&1 || true
 
   if [[ "$TEST_EXIT_CODE" -ne 0 ]]; then
     adb -s "$ANDROID_SERIAL" logcat -d >"$LOGCAT_FILE" 2>/dev/null || true
@@ -172,12 +175,15 @@ run_test() {
 
   "$FLUTTER_BIN" pub get >/dev/null
   adb -s "$ANDROID_SERIAL" shell pm clear com.privatedeploy.mobile >/dev/null 2>&1 || true
+  if [[ "$SUB_HOST" == "127.0.0.1" ]]; then
+    adb -s "$ANDROID_SERIAL" reverse "tcp:${SUB_PORT}" "tcp:${SUB_PORT}" >/dev/null
+  fi
 
   "$FLUTTER_BIN" drive \
     --driver=test_driver/integration_test.dart \
     --target=integration_test/vpn_dead_node_failure_test.dart \
     -d "$ANDROID_SERIAL" \
-    --dart-define="PD_TEST_SUBSCRIPTION_URL=http://10.0.2.2:${SUB_PORT}/sub.txt" \
+    --dart-define="PD_TEST_SUBSCRIPTION_URL=http://${SUB_HOST}:${SUB_PORT}/sub.txt" \
     --dart-define="PD_TEST_PROFILE_NAME=${PROFILE_NAME}" &
   DRIVE_PID=$!
 

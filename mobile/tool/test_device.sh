@@ -9,6 +9,15 @@ OUTDIR="$2"
 PKG="com.privatedeploy.mobile"
 ACTIVITY="$PKG/.MainActivity"
 UI_XML="/sdcard/ui.xml"
+WORKSPACE_PATTERN='content-desc="(Workspace|工作区)"|text="(Workspace|工作区)"'
+CONNECT_PATTERN='content-desc="(Connect|连接)"|text="(Connect|连接)"'
+CREATE_PROFILE_PATTERN='content-desc="(Create [Pp]rofile|Create profile|创建配置)"|text="(Create [Pp]rofile|Create profile|创建配置)"'
+IMPORT_PROFILE_PATTERN='content-desc="(Import [Pp]rofile|Import profile|导入配置)"|text="(Import [Pp]rofile|Import profile|导入配置)"'
+SETTINGS_PATTERN='content-desc="(Settings|设置)"|text="(Settings|设置)"'
+CLOUD_API_KEY_PATTERN='content-desc="(Cloud API Key|云端 API Key|Set API Key|设置 API Key)"|text="(Cloud API Key|云端 API Key|Set API Key|设置 API Key)"'
+CANCEL_PATTERN='content-desc="(Cancel|取消)"|text="(Cancel|取消)"'
+CREATE_BUTTON_PATTERN='content-desc="(Create|创建)"|text="(Create|创建)"'
+VERIFY_SAVE_PATTERN='content-desc="(Verify (&amp;|&) Save|验证并保存)"|text="(Verify (&amp;|&) Save|验证并保存)"'
 
 mkdir -p "$OUTDIR"
 
@@ -46,11 +55,46 @@ find_bounds() {
     dump_ui | tr '>' '\n' | grep -E "$pattern" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1
 }
 
+find_nth_bounds() {
+    local pattern="$1"
+    local index="${2:-1}"
+    dump_ui | tr '>' '\n' | grep -E "$pattern" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | sed -n "${index}p"
+}
+
+wait_for_bounds() {
+    local pattern="$1"
+    local attempts="${2:-10}"
+    local delay="${3:-1}"
+    local bounds=""
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        bounds=$(find_bounds "$pattern")
+        if [ -n "$bounds" ]; then
+            echo "$bounds"
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    return 1
+}
+
 tap_bounds() {
     local bounds="$1"
     local center
     center=$(bounds_center "$bounds")
     tap $(echo "$center" | awk '{print $1}') $(echo "$center" | awk '{print $2}')
+}
+
+enter_text_at_bounds() {
+    local bounds="$1"
+    local text="$2"
+
+    tap_bounds "$bounds"
+    sleep 1
+    adb -s "$DEVICE" shell input text "$text" 2>/dev/null
+    sleep 1
 }
 
 # Get device info
@@ -70,7 +114,8 @@ screenshot "01_launch"
 
 # Check app is running in foreground
 PID=$(app_pid)
-if [ -z "$PID" ] || ! app_is_foreground; then
+WORKSPACE_BOUNDS=$(wait_for_bounds "$WORKSPACE_PATTERN" 10 1 || true)
+if [ -z "$PID" ] || ! app_is_foreground || [ -z "$WORKSPACE_BOUNDS" ]; then
     log "FAIL: App did not launch"
     echo "TEST1_LAUNCH=FAIL" > "$OUTDIR/results.txt"
     exit 1
@@ -81,7 +126,7 @@ echo "TEST1_LAUNCH=PASS" > "$OUTDIR/results.txt"
 # ========== TEST 2: Connect without config ==========
 log "TEST 2: Connect without config"
 ensure_foreground || true
-CONNECT_BOUNDS=$(find_bounds 'content-desc="Connect"')
+CONNECT_BOUNDS=$(wait_for_bounds "$CONNECT_PATTERN" 5 1 || true)
 
 if [ -n "$CONNECT_BOUNDS" ]; then
     tap_bounds "$CONNECT_BOUNDS"
@@ -96,139 +141,136 @@ if [ -n "$CONNECT_BOUNDS" ]; then
         record_result "TEST2_NO_CONFIG" "PASS"
     fi
 else
-    log "FAIL: Could not find Connect button on VPN screen"
+    log "FAIL: Could not find Connect button on workspace screen"
     record_result "TEST2_NO_CONFIG" "FAIL"
 fi
 
 # ========== TEST 3: Create profile with invalid config ==========
 log "TEST 3: Create invalid profile"
-
-# Navigate to Profiles tab - find from UI dump
 ensure_foreground || true
-PROFILES_BOUNDS=$(find_bounds 'content-desc="Profiles')
+CREATE_FAB_BOUNDS=$(wait_for_bounds "$CREATE_PROFILE_PATTERN" 5 1 || true)
 
-if [ -n "$PROFILES_BOUNDS" ]; then
-    tap_bounds "$PROFILES_BOUNDS"
+if [ -n "$CREATE_FAB_BOUNDS" ]; then
+    tap_bounds "$CREATE_FAB_BOUNDS"
     sleep 2
 
-    # Find and tap Create Profile button
-    CREATE_BOUNDS=$(find_bounds 'content-desc="Create Profile"')
+    NAME_BOUNDS=$(wait_for_bounds 'class="android.widget.EditText"' 5 1 || true)
+    CONFIG_BOUNDS=$(find_nth_bounds 'class="android.widget.EditText"' 2)
+    CREATE_BTN=$(wait_for_bounds "$CREATE_BUTTON_PATTERN" 5 1 || true)
 
-    if [ -n "$CREATE_BOUNDS" ]; then
-        tap_bounds "$CREATE_BOUNDS"
+    if [ -n "$NAME_BOUNDS" ] && [ -n "$CONFIG_BOUNDS" ] && [ -n "$CREATE_BTN" ]; then
+        enter_text_at_bounds "$NAME_BOUNDS" "test-invalid"
+        enter_text_at_bounds "$CONFIG_BOUNDS" "not-json"
+
+        adb -s "$DEVICE" shell input keyevent KEYCODE_BACK 2>/dev/null
+        sleep 1
+        tap_bounds "$CREATE_BTN"
         sleep 2
+        screenshot "03_invalid_profile"
 
-        # Find Profile Name field and type
-        NAME_BOUNDS=$(find_bounds 'hint="Profile Name')
-
-        if [ -n "$NAME_BOUNDS" ]; then
-            tap_bounds "$NAME_BOUNDS"
-            sleep 0.5
-            adb -s "$DEVICE" shell input text "test-invalid" 2>/dev/null
-            sleep 0.5
-
-            # Find config field and type invalid JSON
-            CONFIG_BOUNDS=$(find_bounds 'hint="sing-box JSON Config')
-            if [ -n "$CONFIG_BOUNDS" ]; then
-                tap_bounds "$CONFIG_BOUNDS"
-                sleep 0.5
-                adb -s "$DEVICE" shell input text 'not-json' 2>/dev/null
-                sleep 0.5
-            fi
-
-            # Dismiss keyboard and tap Create
-            adb -s "$DEVICE" shell input keyevent KEYCODE_BACK 2>/dev/null
-            sleep 0.5
-            CREATE_BTN=$(find_bounds 'content-desc="Create"|text="Create"')
-
-            if [ -n "$CREATE_BTN" ]; then
-                tap_bounds "$CREATE_BTN"
-                sleep 2
-                screenshot "03_profile_created"
-            fi
+        if ! app_is_running || ! app_is_foreground; then
+            log "FAIL: App crashed while creating invalid profile"
+            record_result "TEST3_INVALID_PROFILE" "FAIL"
+        else
+            log "PASS: Invalid profile flow did not crash"
+            record_result "TEST3_INVALID_PROFILE" "PASS"
         fi
+    else
+        log "FAIL: Could not find create profile dialog fields"
+        record_result "TEST3_INVALID_PROFILE" "FAIL"
     fi
+else
+    log "FAIL: Could not find Create Profile action"
+    record_result "TEST3_INVALID_PROFILE" "FAIL"
 fi
 
 # Best-effort dismiss any open modal before the next screen-level test.
-press_back
-sleep 1
+CANCEL_BOUNDS=$(find_bounds "$CANCEL_PATTERN")
+if [ -n "$CANCEL_BOUNDS" ]; then
+    tap_bounds "$CANCEL_BOUNDS"
+    sleep 1
+else
+    press_back
+    sleep 1
+fi
 ensure_foreground || true
 
-# ========== TEST 4: Connect with invalid config ==========
-log "TEST 4: Connect with invalid/no-outbounds config"
+# ========== TEST 4: Invalid API key dialog ==========
+log "TEST 4: Invalid API key dialog"
 
-# Go to VPN tab
 ensure_foreground || true
-VPN_BOUNDS=$(find_bounds 'content-desc="VPN')
+API_KEY_BOUNDS=$(wait_for_bounds "$CLOUD_API_KEY_PATTERN" 5 1 || true)
 
-if [ -n "$VPN_BOUNDS" ]; then
-    tap_bounds "$VPN_BOUNDS"
+if [ -n "$API_KEY_BOUNDS" ]; then
+    tap_bounds "$API_KEY_BOUNDS"
     sleep 2
 
-    # Tap Connect
-    CONNECT_BOUNDS=$(find_bounds 'content-desc="Connect"')
+    API_KEY_FIELD_BOUNDS=$(wait_for_bounds 'class="android.widget.EditText"' 5 1 || true)
+    VERIFY_SAVE_BOUNDS=$(wait_for_bounds "$VERIFY_SAVE_PATTERN" 5 1 || true)
 
-    if [ -n "$CONNECT_BOUNDS" ]; then
-        tap_bounds "$CONNECT_BOUNDS"
+    if [ -n "$API_KEY_FIELD_BOUNDS" ] && [ -n "$VERIFY_SAVE_BOUNDS" ]; then
+        enter_text_at_bounds "$API_KEY_FIELD_BOUNDS" "INVALID_TEST_KEY"
+        adb -s "$DEVICE" shell input keyevent KEYCODE_BACK 2>/dev/null
+        sleep 1
+        tap_bounds "$VERIFY_SAVE_BOUNDS"
         sleep 4
-        screenshot "04_invalid_connect"
+        screenshot "04_invalid_api_key"
 
         if ! app_is_running || ! app_is_foreground; then
-            log "FAIL: App crashed on connect with invalid config"
-            record_result "TEST4_INVALID_CONFIG" "FAIL"
+            log "FAIL: App crashed on invalid API key flow"
+            record_result "TEST4_INVALID_API_KEY" "FAIL"
         else
-            log "PASS: No crash on connect with invalid config"
-            record_result "TEST4_INVALID_CONFIG" "PASS"
+            log "PASS: Invalid API key flow did not crash"
+            record_result "TEST4_INVALID_API_KEY" "PASS"
         fi
     else
-        log "FAIL: Could not find Connect button on VPN screen"
-        record_result "TEST4_INVALID_CONFIG" "FAIL"
+        log "FAIL: Could not find API key dialog controls"
+        record_result "TEST4_INVALID_API_KEY" "FAIL"
     fi
 else
-    log "FAIL: Could not find VPN tab"
-    record_result "TEST4_INVALID_CONFIG" "FAIL"
+    log "FAIL: Could not find API key action"
+    record_result "TEST4_INVALID_API_KEY" "FAIL"
 fi
 
-# ========== TEST 5: Tab navigation ==========
-log "TEST 5: Tab navigation"
-TABS_OK=true
+# Best-effort dismiss any open modal before navigating to settings.
+CANCEL_BOUNDS=$(find_bounds "$CANCEL_PATTERN")
+if [ -n "$CANCEL_BOUNDS" ]; then
+    tap_bounds "$CANCEL_BOUNDS"
+    sleep 1
+else
+    press_back
+    sleep 1
+fi
+ensure_foreground || true
 
-for TAB_NAME in "Profiles" "Cloud" "Settings" "VPN"; do
-    ensure_foreground || true
-    TAB_BOUNDS=$(find_bounds "content-desc=\"$TAB_NAME")
-    if [ -n "$TAB_BOUNDS" ]; then
-        tap_bounds "$TAB_BOUNDS"
-        sleep 1
-    fi
+# ========== TEST 5: Settings navigation ==========
+log "TEST 5: Settings navigation"
+SETTINGS_BOUNDS=$(wait_for_bounds "$SETTINGS_PATTERN" 5 1 || true)
+
+if [ -n "$SETTINGS_BOUNDS" ]; then
+    tap_bounds "$SETTINGS_BOUNDS"
+    sleep 2
+    screenshot "05_settings_open"
 
     if ! app_is_running || ! app_is_foreground; then
-        log "WARN: App lost foreground on $TAB_NAME tab, retrying once"
-        launch_app
-        TAB_BOUNDS=$(find_bounds "content-desc=\"$TAB_NAME")
-        if [ -n "$TAB_BOUNDS" ]; then
-            tap_bounds "$TAB_BOUNDS"
-            sleep 1
-        fi
-
-        if ! app_is_running || ! app_is_foreground; then
-            log "FAIL: App crashed on $TAB_NAME tab"
-            current_focus | while read -r line; do
-                log "  focus: $line"
-            done
-            TABS_OK=false
-            break
+        log "FAIL: App crashed while opening settings"
+        record_result "TEST5_SETTINGS" "FAIL"
+    else
+        press_back
+        sleep 2
+        ensure_foreground || true
+        WORKSPACE_BOUNDS=$(find_bounds "$WORKSPACE_PATTERN")
+        if [ -n "$WORKSPACE_BOUNDS" ] && app_is_running && app_is_foreground; then
+            log "PASS: Settings opened and returned to workspace"
+            record_result "TEST5_SETTINGS" "PASS"
+        else
+            log "FAIL: Could not return from settings to workspace"
+            record_result "TEST5_SETTINGS" "FAIL"
         fi
     fi
-done
-
-screenshot "05_tabs_done"
-if $TABS_OK; then
-    log "PASS: All tabs navigable"
-    record_result "TEST5_TABS" "PASS"
 else
-    log "FAIL: Tab navigation failed"
-    record_result "TEST5_TABS" "FAIL"
+    log "FAIL: Could not find Settings action"
+    record_result "TEST5_SETTINGS" "FAIL"
 fi
 
 # ========== TEST 6: Check logcat for crashes ==========

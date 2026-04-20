@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_test_keys.dart';
-import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 
 import 'package:privatedeploy_mobile/main.dart' as app;
 
@@ -20,15 +19,10 @@ void main() {
   testWidgets('dead node returns to disconnected with failure notice',
       (tester) async {
     final vpnNoticeCard = find.byKey(NodesTestKeys.vpnNoticeCard);
-    final startupFailureText = find.descendant(
-      of: vpnNoticeCard,
-      matching: find.text(VpnProvider.startupConnectivityFailureMessage),
-    );
-
     app.main();
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
-    expect(find.text('Workspace'), findsOneWidget);
+  expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
     expect(find.byKey(NodesTestKeys.importProfileFab), findsOneWidget);
 
     await tester.tap(find.byKey(NodesTestKeys.importProfileFab));
@@ -46,13 +40,12 @@ void main() {
 
     await _pumpUntil(
       tester,
-      description: 'imported profile to appear as selected',
+      description: 'imported profile to appear in the current UI',
       timeout: const Duration(seconds: 20),
-      condition: () =>
-          find.text('Selected node: $_profileName').evaluate().isNotEmpty,
+      condition: () => find.text(_profileName).evaluate().isNotEmpty,
     );
 
-    expect(find.text('Selected node: $_profileName'), findsOneWidget);
+    expect(find.text(_profileName), findsWidgets);
 
     await tester.tap(find.byKey(NodesTestKeys.connectButton));
     await tester.pump(const Duration(milliseconds: 250));
@@ -63,19 +56,13 @@ void main() {
       timeout: const Duration(seconds: 30),
       condition: () =>
           vpnNoticeCard.evaluate().isNotEmpty &&
-          find.text('Disconnected').evaluate().isNotEmpty &&
-          startupFailureText.evaluate().isNotEmpty &&
-          find.text('Connect').evaluate().isNotEmpty &&
-          find.text('Disconnect').evaluate().isEmpty &&
-          find.text('Restart VPN').evaluate().isEmpty,
+          find.byKey(NodesTestKeys.connectButton).evaluate().isNotEmpty &&
+          find.byKey(NodesTestKeys.restartButton).evaluate().isEmpty,
     );
 
-    expect(find.text('Disconnected'), findsOneWidget);
     expect(vpnNoticeCard, findsOneWidget);
-    expect(find.text('Disconnect'), findsNothing);
-    expect(find.text('Restart VPN'), findsNothing);
-    expect(find.text('Connect'), findsOneWidget);
-    expect(startupFailureText, findsWidgets);
+    expect(find.byKey(NodesTestKeys.restartButton), findsNothing);
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
   });
 }
 

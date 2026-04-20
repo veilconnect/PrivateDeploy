@@ -1,10 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'cloud_models.dart';
 
 String? buildCloudNodeConfig(
   CloudInstance instance, {
   String? preferredEndpointLabel,
+  TargetPlatform? targetPlatform,
 }) {
   if (!instance.hasIp || instance.nodeInfo == null) {
     return null;
@@ -13,6 +16,7 @@ String? buildCloudNodeConfig(
   final ip = instance.ipv4!;
   final info = instance.nodeInfo!;
   final label = instance.label;
+  final isAndroid = targetPlatform == TargetPlatform.android;
   final outbounds = <Map<String, dynamic>>[];
   final tags = <String>[];
   final endpointTagByLabel = <String, String>{};
@@ -31,7 +35,7 @@ String? buildCloudNodeConfig(
     endpointTagByLabel['Shadowsocks'] = tag;
   }
 
-  if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
+  if (!isAndroid && info.hyPort > 0 && info.hyPassword.isNotEmpty) {
     final tag = '$label-Hy2';
     outbounds.add({
       'type': 'hysteria2',
@@ -51,7 +55,8 @@ String? buildCloudNodeConfig(
     endpointTagByLabel['Hysteria2'] = tag;
   }
 
-  if (info.vlessPort > 0 &&
+  if (!isAndroid &&
+      info.vlessPort > 0 &&
       info.vlessUuid.isNotEmpty &&
       info.vlessPublicKey.isNotEmpty &&
       info.vlessShortId.isNotEmpty) {
@@ -112,21 +117,29 @@ String? buildCloudNodeConfig(
   }
 
   final preferredTag = endpointTagByLabel[preferredEndpointLabel?.trim() ?? ''];
-  if (preferredTag != null) {
+  final shouldIgnorePreferredEndpoint =
+      isAndroid &&
+      info.ssPort > 0 &&
+      info.ssPassword.isNotEmpty &&
+      preferredEndpointLabel?.trim().isNotEmpty == true &&
+      preferredEndpointLabel?.trim() != 'Shadowsocks';
+  final effectivePreferredTag =
+      shouldIgnorePreferredEndpoint ? null : preferredTag;
+  if (effectivePreferredTag != null) {
     outbounds.sort((a, b) {
       final aTag = a['tag']?.toString();
       final bTag = b['tag']?.toString();
-      if (aTag == preferredTag && bTag != preferredTag) {
+      if (aTag == effectivePreferredTag && bTag != effectivePreferredTag) {
         return -1;
       }
-      if (aTag != preferredTag && bTag == preferredTag) {
+      if (aTag != effectivePreferredTag && bTag == effectivePreferredTag) {
         return 1;
       }
       return 0;
     });
     tags
-      ..remove(preferredTag)
-      ..insert(0, preferredTag);
+      ..remove(effectivePreferredTag)
+      ..insert(0, effectivePreferredTag);
   }
 
   final config = {
@@ -138,12 +151,16 @@ String? buildCloudNodeConfig(
       'servers': [
         {
           'tag': 'dns-remote',
-          'address': '8.8.8.8',
+          // libbox/sing-box v1.11 still uses the legacy DNS server syntax, so
+          // we can't set a separate TLS server_name here. Use Cloudflare's
+          // IP-literal DoH endpoint to avoid recursively bootstrapping the DNS
+          // server hostname through another resolver on Android.
+          'address': 'https://1.1.1.1/dns-query',
           'detour': 'select',
         },
         {
           'tag': 'dns-remote-doh',
-          'address': 'https://8.8.8.8/dns-query',
+          'address': 'https://1.1.1.1/dns-query',
           'detour': 'select',
         },
         // Cloud-provider API lookups must resolve via the underlying network
@@ -155,7 +172,11 @@ String? buildCloudNodeConfig(
           'address': '8.8.8.8',
           'detour': 'direct',
         },
-        {'tag': 'dns-local', 'address': 'local'},
+        {
+          'tag': 'dns-local',
+          'address': 'local',
+          'detour': 'direct',
+        },
       ],
       'rules': [
         {
@@ -164,7 +185,7 @@ String? buildCloudNodeConfig(
         },
         {
           'outbound': ['any'],
-          'server': 'dns-local',
+          'server': 'dns-remote',
         },
       ],
       'strategy': 'prefer_ipv4',
@@ -187,7 +208,7 @@ String? buildCloudNodeConfig(
         'type': 'selector',
         'tag': 'select',
         'outbounds': ['auto', ...tags],
-        'default': 'auto',
+        'default': tags.first,
       },
       {
         'type': 'urltest',

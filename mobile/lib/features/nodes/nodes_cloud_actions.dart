@@ -26,8 +26,7 @@ String cloudProfileName(CloudInstance instance) {
 List<CloudInstance> connectableCloudInstances(CloudProvider cloudProvider) {
   return cloudProvider.allInstances
       .where(
-        (instance) =>
-            instance.isActive && instance.hasIp && instance.nodeInfo != null,
+        (instance) => instance.isActive && cloudProvider.generateNodeConfig(instance) != null,
       )
       .toList();
 }

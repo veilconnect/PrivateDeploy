@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_record.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -839,8 +842,7 @@ void main() {
       await provider.importBackupJson(backup);
 
       expect(provider.hasApiKey, isTrue,
-          reason:
-              'Workspace must immediately reflect the restored key without '
+          reason: 'Workspace must immediately reflect the restored key without '
               'waiting for an app restart.');
       expect(provider.apiKey, 'TESTKEYJUSTFORUNITTESTNOTAREALONE12345');
     });
@@ -861,6 +863,74 @@ void main() {
 
       expect(provider.hasApiKey, isFalse);
       expect(provider.apiKey, isNull);
+    });
+
+    test(
+        'ignores stale imported-backup refresh after switching active provider',
+        () async {
+      final provider = CloudProvider(autoInitialize: false);
+      final vultrReadStarted = Completer<void>();
+      final releaseVultrRead = Completer<void>();
+      var delayedVultrRead = false;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(secureStorageChannel, (call) async {
+        final key = call.arguments['key'] as String?;
+        switch (call.method) {
+          case 'read':
+            if (key == CloudProviderId.vultr.apiKeyStorageKey &&
+                !delayedVultrRead) {
+              delayedVultrRead = true;
+              if (!vultrReadStarted.isCompleted) {
+                vultrReadStarted.complete();
+              }
+              await releaseVultrRead.future;
+            }
+            return key == null ? null : secureValues[key];
+          case 'write':
+            if (key != null) {
+              secureValues[key] = call.arguments['value'] as String?;
+            }
+            return null;
+          case 'delete':
+            if (key != null) {
+              secureValues.remove(key);
+            }
+            return null;
+          case 'deleteAll':
+            secureValues.clear();
+            return null;
+          default:
+            return null;
+        }
+      });
+
+      const backup = '''
+{
+  "version": 1,
+  "provider": "vultr",
+  "exportedAt": "2026-04-20T00:00:00.000Z",
+  "apiKey": "TESTKEYJUSTFORUNITTESTNOTAREALONE12345",
+  "nodeRecords": {}
+}
+''';
+
+      await provider.importBackupJson(backup);
+      await vultrReadStarted.future;
+      await provider.setActiveProvider(CloudProviderId.digitalocean);
+      releaseVultrRead.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(provider.providerId, CloudProviderId.digitalocean);
+      expect(provider.error, isNull,
+          reason:
+              'A stale Vultr refresh must not surface a DigitalOcean API key '
+              'error after the user already switched providers.');
+      expect(provider.hasApiKey, isFalse);
+
+      await provider.setActiveProvider(CloudProviderId.vultr);
+      expect(provider.apiKey, 'TESTKEYJUSTFORUNITTESTNOTAREALONE12345');
+      expect(provider.hasApiKey, isTrue);
     });
   });
 }

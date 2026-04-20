@@ -23,12 +23,9 @@ void main() async {
   // Initialize Storage
   await StorageService.init();
 
-  // Install bundled routing rule sets after the first frame so the UI renders
-  // immediately.  The registry writes are skipped when the files already exist,
-  // so subsequent launches are nearly instant.
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    BundledRuleSetRegistry.ensureInstalled();
-  });
+  // Install bundled routing rule sets before the app starts so the first VPN
+  // connection can immediately apply CN split-routing rules.
+  await BundledRuleSetRegistry.ensureInstalled();
 
   runApp(const PrivateDeployApp());
 }

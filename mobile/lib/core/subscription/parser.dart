@@ -354,12 +354,12 @@ class SubscriptionParser {
         'servers': [
           {
             'tag': 'dns-remote',
-            'address': '8.8.8.8',
+            'address': 'https://1.1.1.1/dns-query',
             'detour': 'select',
           },
           {
             'tag': 'dns-remote-doh',
-            'address': 'https://8.8.8.8/dns-query',
+            'address': 'https://1.1.1.1/dns-query',
             'detour': 'select',
           },
           {
@@ -367,7 +367,11 @@ class SubscriptionParser {
             'address': '8.8.8.8',
             'detour': 'direct',
           },
-          {'tag': 'dns-local', 'address': 'local'},
+          {
+            'tag': 'dns-local',
+            'address': 'local',
+            'detour': 'direct',
+          },
         ],
         'rules': [
           {
@@ -376,7 +380,7 @@ class SubscriptionParser {
           },
           {
             'outbound': ['any'],
-            'server': 'dns-local',
+            'server': 'dns-remote',
           },
         ],
         'strategy': 'prefer_ipv4',
@@ -399,7 +403,7 @@ class SubscriptionParser {
           'type': 'selector',
           'tag': 'select',
           'outbounds': ['auto', ...tags],
-          'default': 'auto',
+          'default': tags.first,
         },
         {
           'type': 'urltest',

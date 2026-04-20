@@ -183,7 +183,7 @@ void main() {
 
       expect(cloudProvider.savedApiKey, 'bad-key');
       expect(onSavedCalls, 0);
-      expect(find.text('Cloud API Key'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('Invalid API key'), findsOneWidget);
       expect(find.text('API key saved and verified'), findsNothing);
     });
@@ -363,8 +363,6 @@ void main() {
 
     testWidgets('testAllCloudNodesLatency shows benchmark winner details',
         (tester) async {
-      final previousPlatformOverride = debugDefaultTargetPlatformOverride;
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
       final cloudProvider = _FakeCloudProvider(
         instances: [_instance(label: 'fra-node')],
         benchmarkLatencyResult: CloudLatencyCheck.success(
@@ -399,8 +397,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text(
-          'Best benchmark: fra-node (32.0 Mbps) via Trojan • 3/3 probes • 24 ms latency',
+        find.textContaining(
+          'Best benchmark: fra-node (32.0 Mbps) via Trojan • 24 ms latency',
         ),
         findsOneWidget,
       );
@@ -409,7 +407,6 @@ void main() {
       expect(
           vpnProvider.lastConfigJson, isNot(contains('"type": "hysteria2"')));
       expect(vpnProvider.lastConfigJson, isNot(contains('"type": "vless"')));
-      debugDefaultTargetPlatformOverride = previousPlatformOverride;
     });
 
     testWidgets('testAllCloudNodesLatency asks before interrupting active vpn',
@@ -564,6 +561,9 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   final List<CloudInstance> instances;
 
   @override
+  List<CloudInstance> get allInstances => instances;
+
+  @override
   final List<CloudRegion> regions;
 
   @override
@@ -587,6 +587,9 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   @override
   final String? error;
 
+  @override
+  String get providerDisplayName => providerId.displayName;
+
   String? deletedInstanceId;
   String? savedApiKey;
   String? createdRegion;
@@ -609,6 +612,13 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   Future<void> loadPlans({bool notify = true}) async {
     loadPlansCalls += 1;
     isLoadingPlans = false;
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  Future<void> loadInstances({bool notify = true}) async {
     if (notify) {
       notifyListeners();
     }

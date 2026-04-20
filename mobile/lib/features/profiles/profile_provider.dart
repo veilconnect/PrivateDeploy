@@ -364,6 +364,7 @@ class ProfileProvider with ChangeNotifier {
       await _box.put(id, jsonEncode(updated.toJson()));
       await _box.flush();
       await loadProfiles();
+      await loadActiveProfile();
       return true;
     } catch (e) {
       _error = 'Failed to save profile content: ${e.toString()}';

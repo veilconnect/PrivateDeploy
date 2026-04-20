@@ -164,12 +164,42 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
       expect(inbounds.any((i) => i['type'] == 'tun'), true);
       final tunInbound = inbounds.firstWhere((i) => i['type'] == 'tun')
           as Map<String, dynamic>;
-      expect(tunInbound['stack'], 'gvisor');
+      expect(tunInbound['stack'], 'system');
 
       // Has selector and urltest
       final outbounds = json['outbounds'] as List;
       expect(outbounds.any((o) => o['type'] == 'selector'), true);
       expect(outbounds.any((o) => o['type'] == 'urltest'), true);
+      final selector = outbounds.firstWhere((o) => o['type'] == 'selector');
+      expect(selector['default'], 'Test');
+
+      final dns = json['dns'] as Map<String, dynamic>;
+      final rules = List<Map<String, dynamic>>.from(
+        (dns['rules'] as List<dynamic>).cast<Map<String, dynamic>>(),
+      );
+      final cloudApiRule = rules.firstWhere(
+        (rule) => (rule['domain_suffix'] as List<dynamic>?)
+            ?.contains('api.vultr.com') == true,
+      );
+      final defaultRule = rules.firstWhere(
+        (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
+      );
+
+      final dnsServers = List<Map<String, dynamic>>.from(
+        (dns['servers'] as List<dynamic>).cast<Map<String, dynamic>>(),
+      );
+      final localServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-local',
+      );
+      final remoteServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-remote',
+      );
+
+      expect(cloudApiRule['server'], 'dns-direct');
+      expect(defaultRule['server'], 'dns-remote');
+      expect(localServer['detour'], 'direct');
+      expect(remoteServer['address'], 'https://1.1.1.1/dns-query');
+      expect(remoteServer.containsKey('address_resolver'), isFalse);
     });
   });
 

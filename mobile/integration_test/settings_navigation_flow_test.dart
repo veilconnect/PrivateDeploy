@@ -7,7 +7,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/settings_screen.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/settings_vpn_diagnostics_screen.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../test/support/nodes_test_support.dart';
@@ -102,7 +104,11 @@ void main() {
                 value: TestAppSettingsProvider(),
               ),
             ],
-            child: const MaterialApp(home: _SettingsNavigationHarness()),
+            child: const MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: _SettingsNavigationHarness(),
+            ),
           );
         },
       ),
@@ -115,26 +121,29 @@ void main() {
     await tester.tap(find.text('Open Settings'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.byType(SettingsScreen), findsOneWidget);
 
-    await tester.ensureVisible(find.text('VPN Diagnostics'));
-    await tester.tap(find.text('VPN Diagnostics'));
+    final diagnosticsEntry = find.byIcon(Icons.monitor_heart_outlined);
+    await tester.scrollUntilVisible(
+      diagnosticsEntry,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(diagnosticsEntry);
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(find.text('VPN Diagnostics'), findsWidgets);
-    expect(find.text('Current Egress IP'), findsOneWidget);
-    expect(find.text('203.0.113.42'), findsOneWidget);
+    expect(find.byType(SettingsVpnDiagnosticsScreen), findsOneWidget);
     expect(vpnProvider.activateDiagnosticsSessionCalls, 1);
     expect(vpnProvider.refreshDiagnosticsCalls, 1);
 
-    await tester.pageBack();
+    await tester.tap(find.byIcon(Icons.arrow_back).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.byType(SettingsScreen), findsOneWidget);
     expect(vpnProvider.deactivateDiagnosticsSessionCalls, 1);
 
-    await tester.pageBack();
+    await tester.tap(find.byIcon(Icons.arrow_back).first);
     await tester.pumpAndSettle();
 
     expect(find.text('Open Settings'), findsOneWidget);

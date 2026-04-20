@@ -312,8 +312,38 @@ Future<void> connectSelectedProfile({
 
   final activeProfile = profileProvider.activeProfile;
   final readyCloudNodes = connectableCloudInstances(cloudProvider);
+  final activeCloudInstance = activeProfile != null &&
+          isCloudManagedProfile(activeProfile)
+      ? readyCloudNodes
+          .where((inst) => cloudProfileName(inst) == activeProfile.name)
+          .firstOrNull
+      : null;
+
+  if (activeCloudInstance != null) {
+    final refreshedConfig = cloudProvider.generateNodeConfig(activeCloudInstance);
+    if (refreshedConfig != null) {
+      final refreshed = await profileProvider.saveProfileContent(
+        activeProfile!.id,
+        refreshedConfig,
+      );
+      if (!refreshed) {
+        if (!context.mounted) {
+          return;
+        }
+        showNodesActionSnackBar(
+          context,
+          message: profileProvider.error ??
+              AppLocalizations.of(context)!.failedToActivateNode,
+          backgroundColor: Colors.red,
+        );
+        return;
+      }
+    }
+  }
+
   if (autoSelectFastestCloudNode &&
-      (activeProfile == null || isCloudManagedProfile(activeProfile))) {
+      (activeProfile == null ||
+          (isCloudManagedProfile(activeProfile) && activeCloudInstance == null))) {
     final usedFastestNode = await _useFastestReadyCloudNode(
       context: context,
       cloudProvider: cloudProvider,
@@ -322,21 +352,6 @@ Future<void> connectSelectedProfile({
     );
     if (usedFastestNode) {
       return;
-    }
-    // Cold-start fallback: auto-fastest may have failed because the quick
-    // latency probe returned nothing yet (first launch, no cached results),
-    // but we still have an active cloud profile. Regenerate that node's
-    // config from current nodeInfo instead of reusing a potentially stale
-    // configJson — stale configs have been observed to bring the VPN up
-    // without actually forwarding traffic.
-    if (activeProfile != null && isCloudManagedProfile(activeProfile)) {
-      final matching = readyCloudNodes
-          .where((inst) => cloudProfileName(inst) == activeProfile.name)
-          .firstOrNull;
-      if (matching != null) {
-        await onUseCloudNode(matching);
-        return;
-      }
     }
   }
 

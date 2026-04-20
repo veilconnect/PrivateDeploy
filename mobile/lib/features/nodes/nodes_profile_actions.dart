@@ -128,6 +128,16 @@ Future<void> showImportProfileFlow({
       name: profileName,
       content: config,
     );
+    if (success) {
+      final created = profileProvider.getProfileByName(profileName);
+      if (created != null) {
+        await profileProvider.activateProfile(created.id);
+      } else {
+        AppLogger.warning(
+          '[Nodes] Imported proxy profile "$profileName" but could not resolve it for activation',
+        );
+      }
+    }
 
     if (!context.mounted) return;
     final l10nImport = AppLocalizations.of(context)!;
@@ -178,6 +188,16 @@ Future<void> showImportProfileFlow({
       subscriptionUrl: request.url,
       content: config,
     );
+    if (success) {
+      final created = profileProvider.getProfileByName(profileName);
+      if (created != null) {
+        await profileProvider.activateProfile(created.id);
+      } else {
+        AppLogger.warning(
+          '[Nodes] Imported subscription profile "$profileName" but could not resolve it for activation',
+        );
+      }
+    }
 
     if (success) {
       AppLogger.info(

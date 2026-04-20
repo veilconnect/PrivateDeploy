@@ -14,6 +14,7 @@
 | `local_gui_vultr_smoke.sh` | Linux | 在隔离 Xvfb 会话里通过桌面 GUI 真实创建 1 台 Vultr 节点、验端口并销毁 | `output/gui-smoke/<run-id>/` |
 | `local_gui_container_smoke.sh` | Linux | 在 Docker 容器里用隔离 Xvfb 会话做本机非破坏性 GUI smoke，并按不同缩放留图 | `output/gui-smoke/<run-id>/` |
 | `run_mobile_dead_node_integration.sh` | Linux | 在 Android 模拟器上导入一个不可达订阅、自动接受 VPN 授权并断言应用回到失败态 | 失败时保留 `/tmp/pd-dead-node-it.*` |
+| `windows_remote_vpn_browser_smoke.py` | Linux + Windows 远端 | 通过 WinRM + RDP 在远端 Windows 主机上连接 PrivateDeploy、打开 Chrome 并顺序浏览站点 | `output/windows-vpn-browser-smoke/<run-id>/` |
 
 ## 快速使用
 
@@ -55,6 +56,21 @@ python3 scripts/protocol_speed_compare.py --rounds 3
 
 # Android 模拟器死节点回归（默认使用 test_pixel 和 emulator-5554）
 ./scripts/run_mobile_dead_node_integration.sh
+
+# 远端 Windows VPN 浏览 smoke（依赖 xfreerdp / xdotool / WinRM）
+PD_WIN_HOST=192.168.10.11 \
+PD_WIN_USER=Administrator \
+PD_WIN_PASS='secret' \
+python3 scripts/windows_remote_vpn_browser_smoke.py
+
+# 远端 Windows 30 分钟真实用户 soak（浏览 + 周期性切回应用检查）
+PD_WIN_HOST=192.168.10.11 \
+PD_WIN_USER=Administrator \
+PD_WIN_PASS='secret' \
+python3 scripts/windows_remote_vpn_browser_smoke.py \
+  --duration-minutes 30 \
+  --switch-back-to-app \
+  --app-check-every 1
 ```
 
 ## 前置要求
@@ -82,6 +98,10 @@ sudo apt-get install xvfb xdotool imagemagick jq curl
 
 # 容器化 GUI smoke 额外依赖
 sudo apt-get install docker.io
+
+# 远端 Windows VPN 浏览 smoke 额外依赖
+sudo apt-get install freerdp2-x11 xdotool imagemagick smbclient python3
+python3 -m pip install pywinrm
 
 # Android 模拟器死节点回归额外依赖
 sudo apt-get install curl python3

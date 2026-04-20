@@ -129,7 +129,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context),
           child: Text(l10n.cancel),
         ),
         FilledButton(
@@ -149,16 +149,13 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     });
 
     final success = await widget.cloud.setApiKey(_controller.text.trim());
-    if (!mounted) {
-      return;
-    }
-
     if (success) {
-      _savedSuccessfully = true;
       await widget.cloud.loadInstances();
-      if (mounted) {
-        Navigator.pop(context, true);
+      if (!mounted) {
+        return;
       }
+      _savedSuccessfully = true;
+      Navigator.pop(context, true);
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(
           SnackBar(
@@ -170,6 +167,9 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       return;
     }
 
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _saving = false;
       _dialogError = widget.cloud.error ?? AppLocalizations.of(context)!.failedToSaveApiKey;
