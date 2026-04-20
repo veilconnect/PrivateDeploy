@@ -18,6 +18,9 @@ mobile/.dart_tool/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/build/
+mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
 mobile/android/.gradle/
 mobile/android/local.properties
 mobile/android/key.properties
