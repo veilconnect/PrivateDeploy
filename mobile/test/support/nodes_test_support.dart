@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
@@ -159,7 +161,7 @@ class TestCloudProvider extends ChangeNotifier
     this.isLoadingRegions = false,
     this.isLoadingPlans = false,
     this.apiKey,
-    this.providerName = 'vultr',
+    CloudProviderId providerId = CloudProviderId.vultr,
     this.setApiKeyResult = true,
     this.exportBackupPayload = '{"provider":"vultr"}',
     Map<String, CloudLatencyCheck>? latencyChecks,
@@ -167,6 +169,7 @@ class TestCloudProvider extends ChangeNotifier
     bool? hasApiKeyAfterRefresh,
     List<CloudInstance>? loadedInstances,
   })  : _hasApiKey = hasApiKey,
+        _providerId = providerId,
         _latencyChecks = latencyChecks ?? const {},
         _fastestSelection = fastestSelection,
         hasApiKeyAfterRefresh = hasApiKeyAfterRefresh ?? hasApiKey,
@@ -178,6 +181,7 @@ class TestCloudProvider extends ChangeNotifier
   final String exportBackupPayload;
 
   bool _hasApiKey;
+  CloudProviderId _providerId;
   Map<String, CloudLatencyCheck> _latencyChecks;
   final CloudFastestNodeSelection? _fastestSelection;
 
@@ -197,10 +201,10 @@ class TestCloudProvider extends ChangeNotifier
   String? apiKey;
 
   @override
-  final String providerName;
+  String get providerName => _providerId.id;
 
   @override
-  CloudProviderId get providerId => CloudProviderId.vultr;
+  CloudProviderId get providerId => _providerId;
 
   @override
   bool get isBenchmarkingAll => false;
@@ -211,18 +215,25 @@ class TestCloudProvider extends ChangeNotifier
   @override
   List<CloudInstance> instances;
 
+  @override
+  List<CloudInstance> get allInstances => instances;
+
   int refreshCalls = 0;
   int loadInstancesCalls = 0;
   int loadRegionsCalls = 0;
   int loadPlansCalls = 0;
   int clearLocalCloudDataCalls = 0;
   int testInstanceLatencyCalls = 0;
+  int setActiveProviderCalls = 0;
   String? savedApiKey;
   String? importedBackupPayload;
   String? importBackupError;
 
   @override
   bool get hasApiKey => _hasApiKey;
+
+  @override
+  bool get hasStoredApiKey => apiKey?.trim().isNotEmpty == true;
 
   @override
   Future<void> refreshCloudConfig({bool notify = true}) async {
@@ -277,6 +288,14 @@ class TestCloudProvider extends ChangeNotifier
     apiKey = savedApiKey;
     _hasApiKey = true;
     error = null;
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  Future<bool> setActiveProvider(CloudProviderId target) async {
+    setActiveProviderCalls++;
+    _providerId = target;
     notifyListeners();
     return true;
   }
@@ -354,6 +373,14 @@ class TestCloudProvider extends ChangeNotifier
         const CloudFastestNodeSelection(
           error: 'No ready cloud node is available for testing',
         );
+  }
+
+  @override
+  String? generateNodeConfig(CloudInstance instance) {
+    return buildCloudNodeConfig(
+      instance,
+      targetPlatform: defaultTargetPlatform,
+    );
   }
 }
 

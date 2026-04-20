@@ -8,6 +8,7 @@ import '../../shared/utils/logger.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
 import '../cloud/node_detail_screen.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_profile_actions.dart';
@@ -344,6 +345,16 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _switchManagedCloudProvider(
+    CloudProvider cloudProvider,
+    CloudProviderId providerId,
+  ) async {
+    if (cloudProvider.providerId == providerId) {
+      return;
+    }
+    await cloudProvider.setActiveProvider(providerId);
+  }
+
   Widget? _buildWorkspaceGuide({
     required AppLocalizations l10n,
     required CloudProvider cloudProvider,
@@ -532,6 +543,8 @@ class _NodesScreenState extends State<NodesScreen> {
                     profileProvider,
                     vpnProvider,
                   ),
+                  onManageProviderChanged: (providerId) =>
+                      _switchManagedCloudProvider(cloudProvider, providerId),
                 ),
                 if (localProfiles.isNotEmpty) ...[
                   SizedBox(height: 20.h),

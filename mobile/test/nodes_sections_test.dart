@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_cloud_actions.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_config_validation.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_sections.dart';
@@ -135,9 +136,9 @@ void main() {
         ),
       );
 
-      expect(find.text('Disconnected'), findsOneWidget);
+      expect(find.text('Disconnected'), findsWidgets);
       expect(
-        find.text('Tap Connect to use your ready cloud node automatically.'),
+        find.text('Tap Connect to use the fastest node.'),
         findsOneWidget,
       );
       expect(find.text('Connect'), findsOneWidget);
@@ -176,8 +177,8 @@ void main() {
         ),
       );
 
-      expect(find.text('Connected'), findsOneWidget);
-      expect(find.text('Selected node: Cloud: ready-node'), findsOneWidget);
+      expect(find.text('Connected'), findsWidgets);
+      expect(find.text('Cloud: ready-node'), findsWidgets);
       expect(find.textContaining('Up '), findsOneWidget);
       expect(find.textContaining('Down '), findsOneWidget);
       expect(find.textContaining('Speed '), findsOneWidget);
@@ -215,10 +216,11 @@ void main() {
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
           onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
         ),
       );
 
-      expect(find.text('Failed to load cloud nodes'), findsOneWidget);
+      expect(find.text('Failed to load'), findsOneWidget);
       expect(find.text('boom'), findsOneWidget);
 
       await tester.tap(find.text('Retry'));
@@ -245,6 +247,7 @@ void main() {
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
           onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
         ),
       );
 
@@ -291,14 +294,15 @@ void main() {
           onUseCloudNode: (instance) => usedNode = instance,
           onTestCloudNodeLatency: (instance) => testedNode = instance,
           onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
         ),
       );
 
       expect(find.text('fra-node'), findsOneWidget);
-      expect(find.text('Active Node'), findsOneWidget);
-      expect(find.text('IN USE'), findsOneWidget);
+      expect(find.text('Selected'), findsOneWidget);
+      expect(find.text('Ready'), findsOneWidget);
       expect(find.text('Speed Test'), findsOneWidget);
-      expect(find.text('Fastest endpoint: Trojan'), findsOneWidget);
+      expect(find.text('Trojan'), findsOneWidget);
 
       await tester.tap(find.text('Speed Test'));
       await tester.pump();
@@ -339,11 +343,12 @@ void main() {
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
           onTestAllCloudNodesLatency: () => testedAll = true,
+          onManageProviderChanged: (_) async {},
         ),
       );
 
-      expect(find.text('Benchmark All Nodes'), findsOneWidget);
-      await tester.tap(find.text('Benchmark All Nodes'));
+      expect(find.text('Benchmark All'), findsOneWidget);
+      await tester.tap(find.text('Benchmark All'));
       await tester.pump();
 
       expect(testedAll, isTrue);
@@ -382,16 +387,54 @@ void main() {
           onUseCloudNode: (_) {},
           onTestCloudNodeLatency: (_) {},
           onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
         ),
       );
 
       expect(find.text('32.0 Mbps'), findsOneWidget);
       expect(
         find.text(
-          'Benchmark leader: Shadowsocks • 3/3 probes • 32.0 Mbps • 24 ms latency',
+          'Shadowsocks • 3/3 probes • 32.0 Mbps • 24 ms latency',
         ),
         findsOneWidget,
       );
+    });
+
+    testWidgets('switches managed cloud provider from section chips',
+        (tester) async {
+      CloudProviderId? selectedProvider;
+
+      await pumpNodesTestApp(
+        tester,
+        settle: true,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            providerId: CloudProviderId.vultr,
+          ),
+          profileProvider: TestProfileProvider(),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (providerId) async {
+            selectedProvider = providerId;
+          },
+        ),
+      );
+
+      expect(find.text('Vultr'), findsWidgets);
+      expect(find.text('DigitalOcean'), findsOneWidget);
+
+      await tester.tap(find.text('DigitalOcean').last);
+      await tester.pump();
+
+      expect(selectedProvider, CloudProviderId.digitalocean);
     });
   });
 
@@ -419,11 +462,9 @@ void main() {
       expect(find.text('Manual Profiles'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
       expect(find.text('Manual B'), findsOneWidget);
-      expect(find.text('ACTIVE'), findsOneWidget);
+      expect(find.text('Ready'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.more_vert).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Use & Connect'));
+      await tester.tap(find.text('Use & Connect').first);
       await tester.pumpAndSettle();
 
       expect(activated?.name, 'Manual A');

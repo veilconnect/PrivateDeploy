@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
 import 'nodes_cloud_actions.dart';
@@ -21,6 +24,8 @@ class NodesCloudSection extends StatelessWidget {
   final ValueChanged<CloudInstance> onUseCloudNode;
   final ValueChanged<CloudInstance> onTestCloudNodeLatency;
   final VoidCallback onTestAllCloudNodesLatency;
+  final Future<void> Function(CloudProviderId providerId)
+      onManageProviderChanged;
 
   const NodesCloudSection({
     Key? key,
@@ -35,6 +40,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.onUseCloudNode,
     required this.onTestCloudNodeLatency,
     required this.onTestAllCloudNodesLatency,
+    required this.onManageProviderChanged,
   }) : super(key: key);
 
   @override
@@ -53,6 +59,13 @@ class NodesCloudSection extends StatelessWidget {
             title: l10n.cloudNodes,
             subtitle: headerSubtitle,
             count: cloudProvider.allInstances.length,
+          ),
+          SizedBox(height: 10.h),
+          _ProviderSwitchRow(
+            selected: cloudProvider.providerId,
+            onSelected: (providerId) {
+              unawaited(onManageProviderChanged(providerId));
+            },
           ),
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
@@ -86,6 +99,13 @@ class NodesCloudSection extends StatelessWidget {
             subtitle: headerSubtitle,
             count: 0,
           ),
+          SizedBox(height: 10.h),
+          _ProviderSwitchRow(
+            selected: cloudProvider.providerId,
+            onSelected: (providerId) {
+              unawaited(onManageProviderChanged(providerId));
+            },
+          ),
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
             icon: Icons.cloud_off,
@@ -107,6 +127,13 @@ class NodesCloudSection extends StatelessWidget {
           title: l10n.cloudNodes,
           subtitle: headerSubtitle,
           count: cloudProvider.allInstances.length,
+        ),
+        SizedBox(height: 10.h),
+        _ProviderSwitchRow(
+          selected: cloudProvider.providerId,
+          onSelected: (providerId) {
+            unawaited(onManageProviderChanged(providerId));
+          },
         ),
         SizedBox(height: 10.h),
         _SectionActionsRow(
@@ -190,6 +217,43 @@ class _SectionActionsRow extends StatelessWidget {
             icon: const Icon(Icons.speed),
             label: Text(l10n.benchmarkAll),
           ),
+      ],
+    );
+  }
+}
+
+class _ProviderSwitchRow extends StatelessWidget {
+  const _ProviderSwitchRow({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final CloudProviderId selected;
+  final ValueChanged<CloudProviderId> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Wrap(
+      spacing: 8.w,
+      runSpacing: 8.h,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          l10n.cloudProvider,
+          style: TextStyle(
+            fontSize: 12.sp,
+            color: Colors.grey[700],
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        ...CloudProviderId.values.map(
+          (providerId) => ChoiceChip(
+            label: Text(providerId.displayName),
+            selected: providerId == selected,
+            onSelected: (_) => onSelected(providerId),
+          ),
+        ),
       ],
     );
   }
