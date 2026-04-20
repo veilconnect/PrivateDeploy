@@ -106,6 +106,12 @@
   "workspaceGuideChooseMessage": "直接点“连接”会自动选择最快节点；如果你想手动挑选，也可以先在下方选节点。",
   "workspaceGuideSyncTitle": "等待节点同步完成",
   "workspaceGuideSyncMessage": "节点已经显示出来，但这台设备还在等待连接信息。可以先刷新，或者等节点就绪后从这台设备激活。",
+  "workspaceStepAccess": "添加访问方式",
+  "workspaceStepRoute": "准备可用线路",
+  "workspaceStepConnect": "连接",
+  "workspaceStepDone": "已完成",
+  "workspaceStepCurrent": "当前",
+  "workspaceStepUpcoming": "后续",
   "latencyTestUnavailable": "延迟测试不可用。",
   "usingNodeInstead": "{error} 改用 {label}。",
 

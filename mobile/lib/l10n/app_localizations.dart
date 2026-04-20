@@ -674,6 +674,42 @@ abstract class AppLocalizations {
   /// **'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.'**
   String get workspaceGuideSyncMessage;
 
+  /// No description provided for @workspaceStepAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Add access'**
+  String get workspaceStepAccess;
+
+  /// No description provided for @workspaceStepRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Prepare route'**
+  String get workspaceStepRoute;
+
+  /// No description provided for @workspaceStepConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get workspaceStepConnect;
+
+  /// No description provided for @workspaceStepDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get workspaceStepDone;
+
+  /// No description provided for @workspaceStepCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Now'**
+  String get workspaceStepCurrent;
+
+  /// No description provided for @workspaceStepUpcoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get workspaceStepUpcoming;
+
   /// No description provided for @latencyTestUnavailable.
   ///
   /// In en, this message translates to:

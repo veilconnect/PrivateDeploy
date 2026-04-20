@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../l10n/app_localizations.dart';
+
 class NodesSectionHeader extends StatelessWidget {
   final String title;
   final String? subtitle;
@@ -244,6 +246,7 @@ class NodesJourneyCard extends StatelessWidget {
     this.onPrimary,
     this.secondaryLabel,
     this.onSecondary,
+    this.steps = const [],
   }) : super(key: key);
 
   final String eyebrow;
@@ -255,6 +258,7 @@ class NodesJourneyCard extends StatelessWidget {
   final VoidCallback? onPrimary;
   final String? secondaryLabel;
   final VoidCallback? onSecondary;
+  final List<NodesJourneyStep> steps;
 
   @override
   Widget build(BuildContext context) {
@@ -334,6 +338,20 @@ class NodesJourneyCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (steps.isNotEmpty) ...[
+                SizedBox(height: 16.h),
+                Column(
+                  children: [
+                    for (var index = 0; index < steps.length; index++) ...[
+                      _NodesJourneyStepRow(
+                        index: index,
+                        step: steps[index],
+                      ),
+                      if (index != steps.length - 1) SizedBox(height: 10.h),
+                    ],
+                  ],
+                ),
+              ],
               if (primaryLabel != null && onPrimary != null) ...[
                 SizedBox(height: 16.h),
                 Wrap(
@@ -356,6 +374,106 @@ class NodesJourneyCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+enum NodesJourneyStepState {
+  complete,
+  current,
+  upcoming,
+}
+
+class NodesJourneyStep {
+  const NodesJourneyStep({
+    required this.label,
+    required this.state,
+  });
+
+  final String label;
+  final NodesJourneyStepState state;
+}
+
+class _NodesJourneyStepRow extends StatelessWidget {
+  const _NodesJourneyStepRow({
+    required this.index,
+    required this.step,
+  });
+
+  final int index;
+  final NodesJourneyStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final statusLabel = switch (step.state) {
+      NodesJourneyStepState.complete => l10n.workspaceStepDone,
+      NodesJourneyStepState.current => l10n.workspaceStepCurrent,
+      NodesJourneyStepState.upcoming => l10n.workspaceStepUpcoming,
+    };
+    final color = switch (step.state) {
+      NodesJourneyStepState.complete => const Color(0xFF0E9F6E),
+      NodesJourneyStepState.current => const Color(0xFF1452CC),
+      NodesJourneyStepState.upcoming => const Color(0xFF98A2B3),
+    };
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: color.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28.w,
+            height: 28.w,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999.r),
+            ),
+            child: Center(
+              child: step.state == NodesJourneyStepState.complete
+                  ? Icon(Icons.check, size: 16.sp, color: color)
+                  : Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 12.sp,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+            ),
+          ),
+          SizedBox(width: 10.w),
+          Expanded(
+            child: Text(
+              step.label,
+              style: TextStyle(
+                fontSize: 13.sp,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[900],
+              ),
+            ),
+          ),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999.r),
+            ),
+            child: Text(
+              statusLabel,
+              style: TextStyle(
+                fontSize: 10.sp,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -324,6 +324,24 @@ class AppLocalizationsZh extends AppLocalizations {
       '节点已经显示出来，但这台设备还在等待连接信息。可以先刷新，或者等节点就绪后从这台设备激活。';
 
   @override
+  String get workspaceStepAccess => '添加访问方式';
+
+  @override
+  String get workspaceStepRoute => '准备可用线路';
+
+  @override
+  String get workspaceStepConnect => '连接';
+
+  @override
+  String get workspaceStepDone => '已完成';
+
+  @override
+  String get workspaceStepCurrent => '当前';
+
+  @override
+  String get workspaceStepUpcoming => '后续';
+
+  @override
   String get latencyTestUnavailable => '延迟测试不可用。';
 
   @override

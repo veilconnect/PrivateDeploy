@@ -331,6 +331,24 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.';
 
   @override
+  String get workspaceStepAccess => 'Add access';
+
+  @override
+  String get workspaceStepRoute => 'Prepare route';
+
+  @override
+  String get workspaceStepConnect => 'Connect';
+
+  @override
+  String get workspaceStepDone => 'Done';
+
+  @override
+  String get workspaceStepCurrent => 'Now';
+
+  @override
+  String get workspaceStepUpcoming => 'Next';
+
+  @override
   String get latencyTestUnavailable => 'Latency test was unavailable.';
 
   @override

@@ -11,7 +11,7 @@ void main() {
     testWidgets('bootstraps workspace state and renders loaded sections',
         (tester) async {
       final cloudProvider = TestCloudProvider(
-        hasApiKey: false,
+        hasApiKey: true,
         hasApiKeyAfterRefresh: true,
         loadedInstances: [readyCloudTestInstance(label: 'fra-node')],
         isLoading: true,
@@ -45,7 +45,7 @@ void main() {
       expect(profileProvider.pruneCalls, 1);
 
       expect(find.text('Workspace'), findsOneWidget);
-      expect(find.text('Cloud Nodes'), findsOneWidget);
+      expect(find.text('Cloud Nodes'), findsWidgets);
       expect(find.text('Manual Profiles'), findsOneWidget);
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
@@ -128,7 +128,7 @@ void main() {
       );
       expect(profileProvider.activeProfile, isNull);
       expect(find.text('fresh-node'), findsOneWidget);
-      expect(find.text('Disconnected'), findsOneWidget);
+      expect(find.text('Disconnected'), findsWidgets);
     });
 
     testWidgets('opens settings and returns to workspace via system back',
@@ -164,6 +164,36 @@ void main() {
 
       expect(find.text('Workspace'), findsOneWidget);
       expect(find.text('Settings'), findsNothing);
+    });
+
+    testWidgets('shows journey progress for first-time cloud setup',
+        (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: false,
+      );
+      final profileProvider = TestProfileProvider();
+      final vpnProvider = TestVpnProvider(
+        status: VpnStatus.disconnected,
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const NodesScreen(),
+        cloudProvider: cloudProvider,
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+      );
+
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Add cloud access'), findsOneWidget);
+      expect(find.text('Add access'), findsOneWidget);
+      expect(find.text('Prepare route'), findsOneWidget);
+      expect(find.text('Connect'), findsWidgets);
+      expect(find.text('Now'), findsOneWidget);
+      expect(find.text('Next'), findsNWidgets(2));
     });
   });
 }

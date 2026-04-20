@@ -369,6 +369,11 @@ class _NodesScreenState extends State<NodesScreen> {
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
     final hasAnyProfiles = profileProvider.profiles.isNotEmpty;
     final hasActiveProfile = profileProvider.activeProfile != null;
+    final journeySteps = _buildWorkspaceJourneySteps(
+      l10n: l10n,
+      hasAccess: cloudProvider.hasApiKey || localProfiles.isNotEmpty,
+      hasReadyRoute: readyCloudNodes.isNotEmpty || localProfiles.isNotEmpty,
+    );
 
     if (!cloudProvider.hasApiKey && localProfiles.isEmpty) {
       return NodesJourneyCard(
@@ -382,6 +387,7 @@ class _NodesScreenState extends State<NodesScreen> {
         onPrimary: () => _showCloudApiKeyDialog(cloudProvider),
         secondaryLabel: l10n.importProfile,
         onSecondary: _showImportProfileDialog,
+        steps: journeySteps,
       );
     }
 
@@ -398,6 +404,7 @@ class _NodesScreenState extends State<NodesScreen> {
         onPrimary: () => _showCreateCloudNodeDialog(cloudProvider),
         secondaryLabel: l10n.importProfile,
         onSecondary: _showImportProfileDialog,
+        steps: journeySteps,
       );
     }
 
@@ -412,6 +419,7 @@ class _NodesScreenState extends State<NodesScreen> {
         color: const Color(0xFFF59E0B),
         primaryLabel: l10n.refresh,
         onPrimary: _refreshAll,
+        steps: journeySteps,
       );
     }
 
@@ -428,10 +436,40 @@ class _NodesScreenState extends State<NodesScreen> {
           profileProvider,
           vpnProvider,
         ),
+        steps: journeySteps,
       );
     }
 
     return null;
+  }
+
+  List<NodesJourneyStep> _buildWorkspaceJourneySteps({
+    required AppLocalizations l10n,
+    required bool hasAccess,
+    required bool hasReadyRoute,
+  }) {
+    final currentStepIndex = !hasAccess
+        ? 0
+        : !hasReadyRoute
+            ? 1
+            : 2;
+    final labels = [
+      l10n.workspaceStepAccess,
+      l10n.workspaceStepRoute,
+      l10n.workspaceStepConnect,
+    ];
+
+    return List<NodesJourneyStep>.generate(labels.length, (index) {
+      final state = index < currentStepIndex
+          ? NodesJourneyStepState.complete
+          : index == currentStepIndex
+              ? NodesJourneyStepState.current
+              : NodesJourneyStepState.upcoming;
+      return NodesJourneyStep(
+        label: labels[index],
+        state: state,
+      );
+    });
   }
 
   @override
