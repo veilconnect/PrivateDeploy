@@ -10,10 +10,14 @@ import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.privatedeploy.mobile.vpncore.gomobile.Gomobile
@@ -51,6 +55,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val INTERFACE_TYPE_ETHERNET = 2
         private const val INTERFACE_TYPE_OTHER = 3
         private const val MAX_RECENT_LOGS = 250
+        private const val UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS = 300L
+        private const val MIN_UNDERLYING_NETWORK_RESTART_INTERVAL_MS = 4000L
+        private const val RESTART_MAX_ATTEMPTS = 3
+        private const val RESTART_RETRY_BASE_DELAY_MS = 1500L
+        private const val VALIDATED_NETWORK_WAIT_MS = 4000L
         private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
 
         @Volatile
@@ -111,6 +120,56 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
         }
 
+        private fun runtimeLogPriority(message: String): Int? {
+            val plain = stripAnsi(message)
+            return when {
+                plain.contains("ERROR[", ignoreCase = true) -> Log.ERROR
+                plain.contains("WARN[", ignoreCase = true) -> Log.WARN
+                plain.contains("INFO[", ignoreCase = true) -> Log.INFO
+                plain.contains("DEBUG[", ignoreCase = true) -> Log.DEBUG
+                else -> null
+            }
+        }
+
+        private fun shouldMirrorRuntimeLogToLogcat(message: String): Boolean {
+            val plain = stripAnsi(message)
+            val priority = runtimeLogPriority(plain)
+            if (priority == null || priority >= Log.WARN) {
+                if (isBenignAndroidPrivateDnsProbeLog(plain) ||
+                    isBenignAndroidProcessLookupLog(plain)
+                ) {
+                    return false
+                }
+                return true
+            }
+
+            // Per-connection INFO/DEBUG chatter should stay available to the
+            // in-app diagnostics parser, but does not need to flood logcat.
+            return !isBenignAndroidPrivateDnsProbeLog(plain) &&
+                !isBenignAndroidProcessLookupLog(plain) &&
+                !plain.contains("outbound/", ignoreCase = true) &&
+                !plain.contains("inbound/", ignoreCase = true) &&
+                !plain.contains("dns: exchanged", ignoreCase = true)
+        }
+
+        private fun isBenignAndroidPrivateDnsProbeLog(message: String): Boolean {
+            return message.contains(
+                "connection: open outbound connection: operation not permitted",
+                ignoreCase = true,
+            )
+        }
+
+        private fun isBenignAndroidProcessLookupLog(message: String): Boolean {
+            return message.contains(
+                "router: failed to search process: invalid argument",
+                ignoreCase = true,
+            )
+        }
+
+        private fun stripAnsi(message: String): String {
+            return message.replace(Regex("\\u001B\\[[;\\d]*m"), "")
+        }
+
         internal fun currentVersion(): String {
             return try {
                 Gomobile.newVPNService().getVersion()
@@ -123,11 +182,20 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var vpnCore: VPNService? = null
     private var activeConfig: String? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var underlyingNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var pendingUnderlyingNetworkRestart: Runnable? = null
+    private var lastObservedUnderlyingNetworkHandle: Long? = null
+    private var lastObservedUnderlyingNetworkType: Int? = null
+    @Volatile
+    private var restartInProgress = false
+    private var lastUnderlyingRestartAtMs = 0L
 
     override fun onCreate() {
         super.onCreate()
         serviceInstance = this
         createNotificationChannel()
+        registerUnderlyingNetworkMonitor()
         Log.d(TAG, "VPN Service created")
     }
 
@@ -179,6 +247,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 val core = ensureVpnCore()
                 core.start(config)
                 isRunning = true
+                captureCurrentUnderlyingNetworkSnapshot()
                 broadcastStatus("connected", null)
                 Log.i(TAG, "VPN started successfully")
             } catch (e: Throwable) {
@@ -216,23 +285,115 @@ class PrivateDeployVpnService : VpnService(), Platform {
             broadcastError("No VPN config available for restart")
             return
         }
+        if (restartInProgress) {
+            Log.i(TAG, "Ignoring restart request because a restart is already in progress")
+            return
+        }
+        restartInProgress = true
 
         thread(name = "PrivateDeploy-VPN-Restart") {
-            try {
-                startForeground(NOTIFICATION_ID, createNotification("VPN is reconnecting"))
-                broadcastStatus("connecting", null)
-                val core = ensureVpnCore()
-                core.restart()
-                isRunning = true
-                broadcastStatus("connected", null)
-                Log.i(TAG, "VPN restarted successfully")
-            } catch (e: Throwable) {
-                Log.e(TAG, "Failed to restart VPN", e)
-                cleanupTunnel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
+            val handleAtStart = lastObservedUnderlyingNetworkHandle
+            val typeAtStart = lastObservedUnderlyingNetworkType
+            var lastError: Throwable? = null
+            var succeeded = false
+
+            // Wait briefly for a VALIDATED underlying network. Android often
+            // fires onAvailable() before the new transport has finished
+            // validation, and core.restart() issued into that half-open window
+            // tends to fail — which historically stopped the service and left
+            // users stuck disconnected across Wi-Fi ↔ cellular switches.
+            waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
+
+            for (attempt in 1..RESTART_MAX_ATTEMPTS) {
+                try {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        createNotification(
+                            if (attempt == 1) "VPN is reconnecting"
+                            else "VPN is reconnecting (retry $attempt)"
+                        )
+                    )
+                    broadcastStatus("connecting", null)
+                    val core = ensureVpnCore()
+                    core.restart()
+                    isRunning = true
+                    captureCurrentUnderlyingNetworkSnapshot()
+                    broadcastStatus("connected", null)
+                    Log.i(TAG, "VPN restarted successfully on attempt $attempt")
+                    succeeded = true
+                    break
+                } catch (e: Throwable) {
+                    lastError = e
+                    Log.w(
+                        TAG,
+                        "VPN restart attempt $attempt/$RESTART_MAX_ATTEMPTS failed: ${e.message}",
+                        e,
+                    )
+                    if (attempt < RESTART_MAX_ATTEMPTS) {
+                        val backoff = RESTART_RETRY_BASE_DELAY_MS shl (attempt - 1)
+                        try {
+                            Thread.sleep(backoff)
+                        } catch (ignored: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
+                        waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
+                    }
+                }
+            }
+
+            restartInProgress = false
+
+            if (!succeeded) {
+                Log.e(TAG, "Failed to restart VPN after $RESTART_MAX_ATTEMPTS attempts", lastError)
                 isRunning = false
-                broadcastError(e.message ?: "Failed to restart VPN")
-                stopSelf()
+                // Keep the service alive (don't stopSelf). The NetworkCallback
+                // will fire again on the next transport change and can attempt
+                // another restart once the network settles. If the user taps
+                // connect manually, startVpn() will re-initialize the core.
+                broadcastError(lastError?.message ?: "Failed to restart VPN")
+                return@thread
+            }
+
+            // Flap detection: the underlying network might have changed again
+            // while this restart was running. Compare the snapshot captured at
+            // restart start against the one observed now; if they differ,
+            // force another restart so we don't end up bound to whichever
+            // network happened to be active mid-retry. Call restartVpn()
+            // directly rather than scheduleUnderlyingNetworkRestartIfNeeded —
+            // the latter compares against lastObserved* which was already
+            // updated by the callback that ran during this restart, so it
+            // would see "no change" and drop the request.
+            val currentHandle = lastObservedUnderlyingNetworkHandle
+            val currentType = lastObservedUnderlyingNetworkType
+            if (currentHandle != handleAtStart || currentType != typeAtStart) {
+                Log.i(
+                    TAG,
+                    "Underlying network changed during restart " +
+                        "(${formatInterfaceType(typeAtStart)}@$handleAtStart -> " +
+                        "${formatInterfaceType(currentType)}@$currentHandle); forcing follow-up restart",
+                )
+                mainHandler.postDelayed({ restartVpn() }, UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS)
+            }
+        }
+    }
+
+    private fun waitForValidatedUnderlyingNetwork(timeoutMs: Long) {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val network = findPreferredUnderlyingNetwork(connectivityManager)
+            val capabilities = network?.let(connectivityManager::getNetworkCapabilities)
+            if (capabilities != null &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            ) {
+                return
+            }
+            try {
+                Thread.sleep(200)
+            } catch (ignored: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
             }
         }
     }
@@ -446,6 +607,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     override fun onDestroy() {
+        pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
+        pendingUnderlyingNetworkRestart = null
+        unregisterUnderlyingNetworkMonitor()
         if (serviceInstance === this) {
             serviceInstance = null
         }
@@ -469,6 +633,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
             .setSession("PrivateDeploy")
             .setMtu(options.getMTU())
 
+        builder.allowBypass()
+
         applyAddressList(builder, options.getInet4AddressList())
         applyAddressList(builder, options.getInet6AddressList())
         applyDns(builder, options.getDNSServerAddress())
@@ -476,6 +642,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
         applyExcludedRouteList(builder, options.getRouteExcludeAddressList())
         applyPackages(builder, options.getIncludePackageList(), options.getExcludePackageList())
         applyHttpProxy(builder, options)
+        // Let Android manage the VPN's underlying network automatically.
+        // setUnderlyingNetworks() is only appropriate when the VPN explicitly
+        // binds its own upstream sockets to specific Network instances.
 
         if (options.getAutoRoute() && options.getRouteAddressList().isBlank()) {
             builder.addRoute("0.0.0.0", 0)
@@ -492,16 +661,26 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     override fun autoDetectInterfaceControl(fd: Int) {
+        Log.d(TAG, "Protecting outbound socket fd=$fd")
         if (!protect(fd)) {
+            Log.e(TAG, "Failed to protect outbound socket fd=$fd")
             throw IllegalStateException("Failed to protect socket fd=$fd")
         }
+        Log.d(TAG, "Protected outbound socket fd=$fd")
     }
 
     override fun writeLog(message: String?) {
         if (message.isNullOrBlank()) {
             return
         }
-        Log.d(TAG, "[vpncore] $message")
+        if (shouldMirrorRuntimeLogToLogcat(message)) {
+            when (runtimeLogPriority(message)) {
+                Log.ERROR -> Log.e(TAG, "[vpncore] $message")
+                Log.WARN -> Log.w(TAG, "[vpncore] $message")
+                Log.INFO -> Log.i(TAG, "[vpncore] $message")
+                else -> Log.d(TAG, "[vpncore] $message")
+            }
+        }
         broadcastLog(message, System.currentTimeMillis())
     }
 
@@ -584,6 +763,156 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
 
         return bestNetwork
+    }
+
+    private fun registerUnderlyingNetworkMonitor() {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return
+        if (underlyingNetworkCallback != null) {
+            return
+        }
+        readCurrentUnderlyingNetworkSnapshot(connectivityManager)?.also { snapshot ->
+            lastObservedUnderlyingNetworkHandle = snapshot.handle
+            lastObservedUnderlyingNetworkType = snapshot.type
+        }
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scheduleUnderlyingNetworkRestartIfNeeded("available")
+            }
+
+            override fun onLost(network: Network) {
+                scheduleUnderlyingNetworkRestartIfNeeded("lost")
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                scheduleUnderlyingNetworkRestartIfNeeded("capabilities")
+            }
+        }
+        try {
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.registerNetworkCallback(request, callback)
+            underlyingNetworkCallback = callback
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register underlying network monitor", e)
+        }
+    }
+
+    private fun unregisterUnderlyingNetworkMonitor() {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = underlyingNetworkCallback ?: return
+        try {
+            connectivityManager.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister underlying network monitor", e)
+        } finally {
+            underlyingNetworkCallback = null
+        }
+    }
+
+    private fun scheduleUnderlyingNetworkRestartIfNeeded(reason: String) {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return
+        val previousHandle = lastObservedUnderlyingNetworkHandle
+        val previousType = lastObservedUnderlyingNetworkType
+        val snapshot = readCurrentUnderlyingNetworkSnapshot(connectivityManager)
+        if (snapshot == null) {
+            // No underlying network currently available (typical mid-transition
+            // between Wi-Fi and cellular). Mark the observed handle as absent so
+            // the next onAvailable/capabilities callback is treated as a
+            // change and triggers a restart. Do NOT early-return without this
+            // flip, or a fast onLost→onAvailable sequence on the same Network
+            // object can be silently ignored.
+            if (lastObservedUnderlyingNetworkHandle != null) {
+                Log.i(TAG, "Underlying network unavailable ($reason); waiting for next available network")
+            }
+            lastObservedUnderlyingNetworkHandle = null
+            lastObservedUnderlyingNetworkType = null
+            return
+        }
+        if (previousHandle == snapshot.handle && previousType == snapshot.type) {
+            return
+        }
+
+        lastObservedUnderlyingNetworkHandle = snapshot.handle
+        lastObservedUnderlyingNetworkType = snapshot.type
+
+        if (!isRunning || activeConfig.isNullOrBlank()) {
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val earliestRestartAt = lastUnderlyingRestartAtMs + MIN_UNDERLYING_NETWORK_RESTART_INTERVAL_MS
+        val delay = maxOf(
+            UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS,
+            earliestRestartAt - now,
+            0L,
+        )
+
+        pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
+        pendingUnderlyingNetworkRestart = Runnable {
+            pendingUnderlyingNetworkRestart = null
+            if (!isRunning || activeConfig.isNullOrBlank() || restartInProgress) {
+                return@Runnable
+            }
+            lastUnderlyingRestartAtMs = SystemClock.elapsedRealtime()
+            Log.i(
+                TAG,
+                "Underlying network changed ($reason): ${formatInterfaceType(previousType)}@$previousHandle -> ${formatInterfaceType(snapshot.type)}@${snapshot.handle}; restarting VPN to flush stale upstream sockets",
+            )
+            restartVpn()
+        }
+        mainHandler.postDelayed(pendingUnderlyingNetworkRestart!!, delay)
+    }
+
+    private fun captureCurrentUnderlyingNetworkSnapshot(
+        connectivityManager: ConnectivityManager? = getSystemService(ConnectivityManager::class.java)
+    ): UnderlyingNetworkSnapshot? {
+        connectivityManager ?: return null
+        val snapshot = readCurrentUnderlyingNetworkSnapshot(connectivityManager) ?: return null
+        lastObservedUnderlyingNetworkHandle = snapshot.handle
+        lastObservedUnderlyingNetworkType = snapshot.type
+        return snapshot
+    }
+
+    private fun readCurrentUnderlyingNetworkSnapshot(
+        connectivityManager: ConnectivityManager,
+    ): UnderlyingNetworkSnapshot? {
+        val network = findPreferredUnderlyingNetwork(connectivityManager) ?: return null
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return null
+        val linkProperties = connectivityManager.getLinkProperties(network) ?: return null
+        val interfaceName = linkProperties.interfaceName?.trim().orEmpty()
+        if (interfaceName.isEmpty()) {
+            return null
+        }
+        return UnderlyingNetworkSnapshot(
+            handle = network.networkHandle,
+            type = determineNetworkType(capabilities),
+            interfaceName = interfaceName,
+            interfaceIndex = runCatching { NetworkInterface.getByName(interfaceName)?.index ?: 0 }
+                .getOrDefault(0),
+            expensive = !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+            constrained = Build.VERSION.SDK_INT >= 36 &&
+                !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED),
+        )
+    }
+
+    private fun determineNetworkType(capabilities: NetworkCapabilities): Int {
+        return when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> INTERFACE_TYPE_WIFI
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> INTERFACE_TYPE_CELLULAR
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> INTERFACE_TYPE_ETHERNET
+            else -> INTERFACE_TYPE_OTHER
+        }
+    }
+
+    private fun formatInterfaceType(type: Int?): String {
+        return when (type) {
+            INTERFACE_TYPE_WIFI -> "wifi"
+            INTERFACE_TYPE_CELLULAR -> "cellular"
+            INTERFACE_TYPE_ETHERNET -> "ethernet"
+            INTERFACE_TYPE_OTHER -> "other"
+            else -> "unknown"
+        }
     }
 
     private fun buildInterfaceSnapshot(
@@ -746,6 +1075,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
         }
     }
+
+    private data class UnderlyingNetworkSnapshot(
+        val handle: Long,
+        val type: Int,
+        val interfaceName: String,
+        val interfaceIndex: Int,
+        val expensive: Boolean,
+        val constrained: Boolean,
+    )
 
     private data class RuntimeLogRecord(
         val timestamp: Long,

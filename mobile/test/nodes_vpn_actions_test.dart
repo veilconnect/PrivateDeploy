@@ -245,6 +245,84 @@ void main() {
       expect(find.text('VPN connected successfully'), findsOneWidget);
     });
 
+    testWidgets(
+        'keeps cloud connection even when startup egress probe is inconclusive',
+        (tester) async {
+      // Wi-Fi ↔ cellular transitions frequently make the egress probe take
+      // longer than its initial window. The app must not self-disconnect in
+      // that case: the VPN tunnel is up and Android will stabilize upstream
+      // sockets on its own.
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        diagnosticsError: VpnProvider.startupProbeInconclusiveMessage,
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: _FakeProfileProvider(
+            activeProfile: _profile(name: 'Cloud: ${primary.label}'),
+            activeConfigJson: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+          ),
+          cloudProvider: _FakeCloudProvider(
+            instances: [primary, backup],
+          ),
+          onUseCloudNode: (_) async {},
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 1);
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(find.text('VPN connected successfully'), findsOneWidget);
+    });
+
+    testWidgets(
+        'keeps cloud connection when startup egress is confirmed quickly',
+        (tester) async {
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        diagnosticsEgressIp: '192.0.2.20',
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: _FakeProfileProvider(
+            activeProfile: _profile(name: 'Cloud: ${primary.label}'),
+            activeConfigJson: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+          ),
+          cloudProvider: _FakeCloudProvider(
+            instances: [primary, backup],
+          ),
+          onUseCloudNode: (_) async {},
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 1);
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(find.text('VPN connected successfully'), findsOneWidget);
+    });
+
     testWidgets('reads routing settings from app settings provider',
         (tester) async {
       final profileProvider = _FakeProfileProvider(
@@ -450,6 +528,11 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
     lastRoutingSettings = routingSettings;
     return activeConfigJson;
   }
+
+  @override
+  Future<bool> saveProfileContent(String profileId, String content) async {
+    return true;
+  }
 }
 
 class _FakeVpnProvider extends Fake implements VpnProvider {
@@ -458,6 +541,8 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     this.isLoading = false,
     this.connectResult = true,
     this.disconnectResult = true,
+    this.diagnosticsEgressIp,
+    this.diagnosticsError,
   }) : _status = status;
 
   VpnStatus _status;
@@ -472,10 +557,10 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   String? get error => null;
 
   @override
-  String? get diagnosticsEgressIp => null;
+  final String? diagnosticsEgressIp;
 
   @override
-  String? get diagnosticsError => null;
+  final String? diagnosticsError;
 
   @override
   bool get isRefreshingDiagnostics => false;

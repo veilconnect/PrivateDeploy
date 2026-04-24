@@ -54,6 +54,7 @@ echo "✓ Android NDK: $ANDROID_NDK_HOME"
 
 # 进入 gomobile 目录
 cd "$(dirname "$0")"
+SCRIPT_DIR=$(pwd)
 echo ""
 echo -e "${YELLOW}[2/5] 准备依赖...${NC}"
 
@@ -61,6 +62,36 @@ echo -e "${YELLOW}[2/5] 准备依赖...${NC}"
 echo "正在下载 Go 模块依赖..."
 go mod download
 go mod tidy
+
+SING_BOX_VERSION=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
+SING_BOX_DIR="$(go env GOMODCACHE)/github.com/sagernet/sing-box@${SING_BOX_VERSION}"
+SING_BOX_PATCH="patches/sing-box-${SING_BOX_VERSION}-android-protect-no-default-network-strategy.patch"
+SING_BOX_PATCH_PATH="${SCRIPT_DIR}/${SING_BOX_PATCH}"
+
+if [ -f "$SING_BOX_PATCH_PATH" ]; then
+    echo "应用 Android sing-box 兼容补丁..."
+    if grep -q "if !(networkStrategy == nil" "$SING_BOX_DIR/common/dialer/default.go"; then
+        echo "✓ Android sing-box 兼容补丁已存在"
+    else
+        chmod -R u+w "$SING_BOX_DIR"
+        if ! (cd "$SING_BOX_DIR" && patch --forward -p1 < "$SING_BOX_PATCH_PATH"); then
+            echo -e "${RED}✗ Android sing-box 兼容补丁应用失败${NC}" >&2
+            echo -e "${RED}  补丁路径: $SING_BOX_PATCH_PATH${NC}" >&2
+            echo -e "${RED}  sing-box 版本: $SING_BOX_VERSION${NC}" >&2
+            echo -e "${RED}  未打补丁的 vpncore 在 Wi-Fi ↔ 蜂窝切换时会连不上 VPN。构建中止。${NC}" >&2
+            exit 1
+        fi
+        if ! grep -q "if !(networkStrategy == nil" "$SING_BOX_DIR/common/dialer/default.go"; then
+            echo -e "${RED}✗ 补丁声称已应用，但验证标记缺失。构建中止。${NC}" >&2
+            exit 1
+        fi
+        echo "✓ Android sing-box 兼容补丁已应用"
+    fi
+else
+    echo -e "${RED}✗ 未找到 Android sing-box 兼容补丁 (需要: $SING_BOX_PATCH_PATH)${NC}" >&2
+    echo -e "${RED}  请为当前 sing-box 版本 ($SING_BOX_VERSION) 提供补丁文件，否则 Wi-Fi ↔ 蜂窝切换会连不上 VPN。${NC}" >&2
+    exit 1
+fi
 
 echo "✓ 依赖准备完成"
 echo ""
@@ -72,7 +103,7 @@ PACKAGE_NAME="com.privatedeploy.mobile.vpncore"
 TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm,android/amd64}"
 LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w}"
 TRIMPATH="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TRIMPATH:-true}"
-TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
+TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_quic,with_utls}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"
@@ -157,7 +188,7 @@ else
 fi
 
 # 可选：自动触发 Gradle 同步
-if command -v gradle &> /dev/null; then
+if [ -t 0 ] && command -v gradle &> /dev/null; then
     echo -e "${YELLOW}是否运行 Gradle 同步？(y/n)${NC}"
     read -r response
     if [[ "$response" =~ ^[Yy]$ ]]; then
