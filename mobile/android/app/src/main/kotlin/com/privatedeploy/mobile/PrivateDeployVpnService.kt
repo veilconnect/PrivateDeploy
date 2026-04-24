@@ -243,6 +243,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
         broadcastStatus("connecting", null)
 
         thread(name = "PrivateDeploy-VPN-Start") {
+            // Users tend to tap Connect right after a Wi-Fi ↔ cellular hand-off
+            // (e.g. stepping out of range), which historically produced an
+            // immediate failure because the default network wasn't yet
+            // VALIDATED. Wait briefly for a usable transport to avoid making
+            // them retry manually. The timeout is short so a truly offline
+            // device still fails fast.
+            waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
             try {
                 val core = ensureVpnCore()
                 core.start(config)
