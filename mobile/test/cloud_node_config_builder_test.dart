@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
@@ -51,15 +52,23 @@ void main() {
       expect(raw, isNotNull);
 
       final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final log = decoded['log'] as Map<String, dynamic>;
       final outbounds = decoded['outbounds'] as List<dynamic>;
       final selector = outbounds.firstWhere(
         (item) => item is Map<String, dynamic> && item['tag'] == 'select',
       ) as Map<String, dynamic>;
+      final urltest = outbounds.firstWhere(
+        (item) => item is Map<String, dynamic> && item['tag'] == 'auto',
+      ) as Map<String, dynamic>;
       final tags = List<String>.from(selector['outbounds'] as List);
 
+      expect(log['level'], 'info');
       expect(tags, containsAll(['auto', 'tokyo-1-SS', 'tokyo-1-Hy2']));
       expect(tags, containsAll(['tokyo-1-VLESS', 'tokyo-1-Trojan']));
-      expect(selector['default'], 'tokyo-1-SS');
+      expect(selector['default'], 'auto');
+      expect(selector['interrupt_exist_connections'], isTrue);
+      expect(urltest['interrupt_exist_connections'], isTrue);
+      expect(urltest.containsKey('idle_timeout'), isFalse);
 
       final vless = outbounds.firstWhere(
         (item) =>
@@ -72,7 +81,7 @@ void main() {
       expect(reality['short_id'], 'shortid');
     });
 
-    test('prefers the measured fastest endpoint first in auto outbounds', () {
+    test('manual fastest endpoint preference becomes the active selector', () {
       final instance = CloudInstance(
         id: 'node-1',
         provider: 'vultr',
@@ -105,19 +114,121 @@ void main() {
         preferredEndpointLabel: 'Trojan',
       );
       final decoded = jsonDecode(raw!) as Map<String, dynamic>;
-      final outbounds = decoded['outbounds'] as List<dynamic>;
-      final auto = outbounds.firstWhere(
-        (item) => item is Map<String, dynamic> && item['tag'] == 'auto',
-      ) as Map<String, dynamic>;
-      final selector = outbounds.firstWhere(
-        (item) => item is Map<String, dynamic> && item['tag'] == 'select',
-      ) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final selector = outbounds.firstWhere((item) => item['tag'] == 'select');
 
-      expect(
-        List<String>.from(auto['outbounds'] as List).first,
-        'tokyo-1-Trojan',
-      );
+      expect(selector['outbounds'], ['tokyo-1-Trojan']);
       expect(selector['default'], 'tokyo-1-Trojan');
+      expect(outbounds.where((item) => item['tag'] == 'auto'), isEmpty);
+    });
+
+    test('defaults to auto selector when no manual endpoint is chosen', () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: const NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 8443,
+          hyPassword: 'hy-pass',
+          hyServerName: 'example.com',
+          hyInsecure: false,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-123',
+          vlessPublicKey: 'abc+/==',
+          vlessShortId: 'shortid',
+          vlessServerName: 'example.com',
+          trojanPort: 10443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: 'example.com',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(instance);
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final selector = outbounds.firstWhere((item) => item['tag'] == 'select');
+
+      expect(selector['outbounds'], [
+        'auto',
+        'tokyo-1-SS',
+        'tokyo-1-Hy2',
+        'tokyo-1-VLESS',
+        'tokyo-1-Trojan',
+      ]);
+      expect(selector['default'], 'auto');
+    });
+
+    test('manual endpoint selection omits auto urltest and unused protocols',
+        () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 8443,
+          hyPassword: 'hy-pass',
+          hyServerName: '',
+          hyInsecure: false,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-123',
+          vlessPublicKey: 'abc+/==',
+          vlessShortId: 'shortid',
+          vlessServerName: 'example.com',
+          trojanPort: 10443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: '',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(
+        instance,
+        preferredEndpointLabel: 'VLESS',
+      );
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final selector = outbounds.firstWhere(
+        (item) => item['tag'] == 'select',
+      );
+
+      expect(selector['outbounds'], ['tokyo-1-VLESS']);
+      expect(selector['default'], 'tokyo-1-VLESS');
+      expect(
+        outbounds.where((item) => item['tag'] == 'auto'),
+        isEmpty,
+      );
+      expect(
+        outbounds.where((item) => item['tag'] == 'tokyo-1-VLESS'),
+        hasLength(1),
+      );
+      expect(
+        outbounds.where((item) => item['tag'] == 'tokyo-1-SS'),
+        isEmpty,
+      );
+      expect(
+        outbounds.where((item) => item['tag'] == 'tokyo-1-Hy2'),
+        isEmpty,
+      );
+      expect(
+        outbounds.where((item) => item['tag'] == 'tokyo-1-Trojan'),
+        isEmpty,
+      );
     });
 
     test('uses remote TLS DNS by default while keeping cloud APIs direct', () {
@@ -156,8 +267,10 @@ void main() {
       );
 
       final cloudApiRule = rules.firstWhere(
-        (rule) => (rule['domain_suffix'] as List<dynamic>?)
-            ?.contains('api.vultr.com') == true,
+        (rule) =>
+            (rule['domain_suffix'] as List<dynamic>?)
+                ?.contains('api.vultr.com') ==
+            true,
       );
       final defaultRule = rules.firstWhere(
         (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
@@ -169,15 +282,165 @@ void main() {
       final localServer = dnsServers.firstWhere(
         (server) => server['tag'] == 'dns-local',
       );
+      final bootstrapServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-direct',
+      );
+      final cnServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-cn',
+      );
       final remoteServer = dnsServers.firstWhere(
         (server) => server['tag'] == 'dns-remote',
+      );
+      final remoteFallbackServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-remote-google',
       );
 
       expect(cloudApiRule['server'], 'dns-direct');
       expect(defaultRule['server'], 'dns-remote');
+      expect(bootstrapServer['address'], 'https://1.12.12.12/dns-query');
+      expect(cnServer['address'], 'https://223.5.5.5/dns-query');
       expect(localServer['detour'], 'direct');
       expect(remoteServer['address'], 'https://1.1.1.1/dns-query');
+      expect(remoteFallbackServer['address'], 'https://8.8.8.8/dns-query');
       expect(remoteServer.containsKey('address_resolver'), isFalse);
+      expect((dns['cache_capacity'] as int?) ?? 0, 4096);
+      expect(dns['reverse_mapping'], isTrue);
+      expect(
+        rules.any(
+          (rule) =>
+              rule['server'] == 'dns-remote-google' &&
+              (rule['domain_suffix'] as List<dynamic>?)?.contains('youtube.com') ==
+                  true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('uses system stack and preserves all cloud outbounds on Android', () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 8443,
+          hyPassword: 'hy-pass',
+          hyServerName: '',
+          hyInsecure: false,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-123',
+          vlessPublicKey: 'abc+/==',
+          vlessShortId: 'shortid',
+          vlessServerName: 'example.com',
+          trojanPort: 10443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: '',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(
+        instance,
+        targetPlatform: TargetPlatform.android,
+      );
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final inbounds =
+          (decoded['inbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final route = decoded['route'] as Map<String, dynamic>;
+
+      expect(inbounds.single['stack'], 'system');
+      expect(route['auto_detect_interface'], isTrue);
+      expect(route['default_network_strategy'], 'default');
+      expect(
+        outbounds.where((outbound) => outbound['type'] == 'hysteria2'),
+        isNotEmpty,
+      );
+      expect(
+        outbounds.where((outbound) => outbound['type'] == 'vless'),
+        isNotEmpty,
+      );
+      expect(
+        outbounds.where((outbound) => outbound['type'] == 'shadowsocks'),
+        isNotEmpty,
+      );
+      expect(
+        outbounds.where((outbound) => outbound['type'] == 'trojan'),
+        isNotEmpty,
+      );
+    });
+
+    test('honors preferred endpoint on Android when it is supported', () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: const NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: false,
+          vlessPort: 0,
+          vlessUuid: '',
+          vlessPublicKey: '',
+          vlessShortId: '',
+          vlessServerName: '',
+          trojanPort: 10443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: '',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(
+        instance,
+        preferredEndpointLabel: 'Trojan',
+        targetPlatform: TargetPlatform.android,
+      );
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final selector = outbounds.firstWhere((item) => item['tag'] == 'select');
+
+      expect(selector['outbounds'], ['tokyo-1-Trojan']);
+      expect(selector['default'], 'tokyo-1-Trojan');
+      expect(outbounds.where((item) => item['tag'] == 'auto'), isEmpty);
+    });
+
+    test('extracts the active cloud endpoint label from selector default', () {
+      const raw = '''
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["auto", "fra-node-SS", "fra-node-Trojan"],
+      "default": "fra-node-SS"
+    }
+  ]
+}
+''';
+
+      expect(activeCloudNodeEndpointLabel(raw), 'Shadowsocks');
+      expect(activeCloudNodeEndpointLabel('{"outbounds": []}'), isNull);
+      expect(
+        activeCloudNodeEndpointLabel(
+          '{"outbounds":[{"type":"selector","tag":"select","default":"auto"}]}',
+        ),
+        isNull,
+      );
     });
   });
 }

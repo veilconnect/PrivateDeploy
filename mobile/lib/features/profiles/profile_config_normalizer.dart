@@ -1,13 +1,26 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/network/managed_dns_defaults.dart';
 import '../settings/app_settings_provider.dart';
 import 'bundled_rule_set_registry.dart';
 
 const _managedGeositeCnTag = 'pd-geosite-cn';
 const _managedGeoipCnTag = 'pd-geoip-cn';
 const _androidTunDnsTlsPort = 853;
+const _androidPrivateDnsProbeLoopbackCidrs = ['127.0.0.0/8', '::1/128'];
+const _dnsRemoteTag = managedDnsRemoteTag;
+const _dnsRemoteFallbackTag = managedDnsRemoteFallbackTag;
+const _dnsBootstrapTag = managedDnsBootstrapTag;
+const _dnsLocalTag = managedDnsLocalTag;
+const _dnsCnTag = managedDnsCnTag;
+const _dnsRemoteAddress = managedDnsRemoteAddress;
+const _dnsRemoteFallbackAddress = managedDnsRemoteFallbackAddress;
+const _dnsBootstrapAddress = managedDnsBootstrapAddress;
+const _dnsCnAddress = managedDnsCnAddress;
+const _cloudProviderApiDomains = ['api.vultr.com', 'api.digitalocean.com'];
 
 String normalizeProfileConfigForCurrentPlatform(
   String content, {
@@ -46,6 +59,41 @@ String normalizeProfileConfigForCurrentPlatform(
 
 bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
   var changed = false;
+  final shouldForceGvisorForProxyImport =
+      _looksLikeAndroidProxyImportConfig(decoded);
+  final shouldForceSystemForCloudProfile =
+      _looksLikeAndroidCloudProfileConfig(decoded);
+
+  final route = _ensureMap(decoded, 'route');
+  if (route.containsKey('override_android_vpn')) {
+    route.remove('override_android_vpn');
+    changed = true;
+  }
+  if (shouldForceSystemForCloudProfile &&
+      route['default_network_strategy']?.toString().trim() != 'default') {
+    // Older Android cloud profiles relied on protect(fd) alone. That keeps
+    // Wi-Fi sessions working, but after the device leaves Wi-Fi, upstream
+    // sockets can stay on the stale path and fail over cellular. For cloud
+    // profiles, always follow Android's current default underlying network.
+    route['default_network_strategy'] = 'default';
+    changed = true;
+  }
+
+  if (shouldForceGvisorForProxyImport) {
+    final log = _ensureMap(decoded, 'log');
+    if (log['level']?.toString().trim().toLowerCase() != 'info') {
+      log['level'] = 'info';
+      changed = true;
+    }
+    final selector = _findTaggedOutbound(decoded, tag: 'select');
+    final selectorOutbounds = selector?['outbounds'];
+    if (selectorOutbounds is List &&
+        selectorOutbounds.any((value) => value?.toString() == 'auto') &&
+        selector?['default']?.toString().trim() != 'auto') {
+      selector?['default'] = 'auto';
+      changed = true;
+    }
+  }
 
   final inbounds = decoded['inbounds'];
   if (inbounds is List) {
@@ -58,7 +106,28 @@ bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
       }
 
       final stack = inbound['stack']?.toString().trim();
-      if (stack == null || stack.isEmpty || stack == 'system') {
+      if (shouldForceSystemForCloudProfile && stack == 'gvisor') {
+        // Older Android cloud profiles were generated with gVisor. That keeps
+        // some Wi-Fi-only sessions alive, but it breaks more important cases
+        // when the device leaves Wi-Fi and has to keep the VPN running over
+        // mobile data using Android's native 464XLAT/NAT64 path.
+        inbound['stack'] = 'system';
+        changed = true;
+        continue;
+      }
+      if (shouldForceGvisorForProxyImport && stack == 'system') {
+        // Older proxy-link imports were generated with the system stack.
+        // On some Samsung devices that leaves the VPN connected while
+        // proxied DNS loops back into dns-remote and all browsing stalls.
+        inbound['stack'] = 'gvisor';
+        changed = true;
+        continue;
+      }
+      // Preserve an explicit `system` stack. Android mobile networks may rely
+      // on platform features such as 464XLAT/NAT64 to reach IPv4-only proxy
+      // nodes, and overriding that choice to gVisor can break cellular-only
+      // connectivity on some devices/carriers.
+      if (stack == null || stack.isEmpty) {
         inbound['stack'] = 'gvisor';
         changed = true;
       }
@@ -132,7 +201,288 @@ bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
     }
   }
 
+  final selector = _findTaggedOutbound(decoded, tag: 'select');
+  final selectorOutbounds = selector?['outbounds'];
+  if (selectorOutbounds is List &&
+      selectorOutbounds.any((value) => value?.toString() == 'auto') &&
+      selector?['interrupt_exist_connections'] != true) {
+    selector?['interrupt_exist_connections'] = true;
+    changed = true;
+  }
+
+  final autoGroup = _findTaggedOutbound(decoded, tag: 'auto');
+  if (autoGroup != null && autoGroup['type']?.toString() == 'urltest') {
+    if (autoGroup['interrupt_exist_connections'] != true) {
+      autoGroup['interrupt_exist_connections'] = true;
+      changed = true;
+    }
+    if (autoGroup.containsKey('idle_timeout')) {
+      autoGroup.remove('idle_timeout');
+      changed = true;
+    }
+  }
+
   return changed;
+}
+
+bool _looksLikeAndroidCloudProfileConfig(Map<String, dynamic> decoded) {
+  final dns = decoded['dns'];
+  final route = decoded['route'];
+  final outbounds = decoded['outbounds'];
+  if (dns is! Map<String, dynamic> ||
+      route is! Map<String, dynamic> ||
+      outbounds is! List<dynamic>) {
+    return false;
+  }
+
+  final dnsRules = _coerceMapList(dns['rules']);
+  final routeRules = _coerceMapList(route['rules']);
+  final hasCloudDnsBypass = dnsRules.any(
+    (rule) =>
+        rule['server']?.toString() == _dnsBootstrapTag &&
+        _isCloudProviderApiDnsBypassRule(rule),
+  );
+  final hasCloudRouteBypass = routeRules.any(
+    (rule) =>
+        rule['outbound']?.toString() == 'direct' &&
+        _isCloudProviderApiBypassRule(rule),
+  );
+  if (!hasCloudDnsBypass || !hasCloudRouteBypass) {
+    return false;
+  }
+
+  final selector = outbounds.whereType<Map>().cast<Map<String, dynamic>>()
+      .where(
+        (outbound) =>
+            outbound['type']?.toString() == 'selector' &&
+            outbound['tag']?.toString() == 'select',
+      )
+      .cast<Map<String, dynamic>>()
+      .firstWhere(
+        (_) => true,
+        orElse: () => const <String, dynamic>{},
+      );
+  final selectorOutbounds = selector['outbounds'];
+  if (selectorOutbounds is! List<dynamic>) {
+    return false;
+  }
+  return selectorOutbounds.any((value) {
+    final tag = value?.toString() ?? '';
+    return tag.endsWith('-SS') ||
+        tag.endsWith('-Hy2') ||
+        tag.endsWith('-VLESS') ||
+        tag.endsWith('-Trojan');
+  });
+}
+
+bool _looksLikeAndroidProxyImportConfig(Map<String, dynamic> decoded) {
+  final dns = decoded['dns'];
+  final outbounds = decoded['outbounds'];
+  final route = decoded['route'];
+  if (dns is! Map<String, dynamic> ||
+      outbounds is! List<dynamic> ||
+      route is! Map<String, dynamic>) {
+    return false;
+  }
+
+  final dnsServers = dns['servers'];
+  if (dnsServers is! List<dynamic>) {
+    return false;
+  }
+
+  Map<String, dynamic>? dnsRemote;
+  final dnsTags = <String>{};
+  for (final server in dnsServers) {
+    if (server is! Map<String, dynamic>) {
+      continue;
+    }
+    final tag = server['tag']?.toString();
+    if (tag == null || tag.isEmpty) {
+      continue;
+    }
+    dnsTags.add(tag);
+    if (tag == 'dns-remote') {
+      dnsRemote = server;
+    }
+  }
+
+  if (!dnsTags.containsAll({'dns-remote', 'dns-direct', 'dns-local'})) {
+    return false;
+  }
+  if (dnsRemote == null ||
+      dnsRemote['address']?.toString() != 'https://1.1.1.1/dns-query' ||
+      dnsRemote['detour']?.toString() != 'select') {
+    return false;
+  }
+
+  Map<String, dynamic>? selector;
+  Map<String, dynamic>? urltest;
+  final outboundTags = <String>{};
+  for (final outbound in outbounds) {
+    if (outbound is! Map<String, dynamic>) {
+      continue;
+    }
+    final tag = outbound['tag']?.toString();
+    if (tag != null && tag.isNotEmpty) {
+      outboundTags.add(tag);
+    }
+    if (outbound['type']?.toString() == 'selector' &&
+        outbound['tag']?.toString() == 'select') {
+      selector = outbound;
+    }
+    if (outbound['type']?.toString() == 'urltest' &&
+        outbound['tag']?.toString() == 'auto') {
+      urltest = outbound;
+    }
+  }
+
+  if (selector == null ||
+      urltest == null ||
+      !outboundTags.containsAll({'direct', 'dns-out', 'block'})) {
+    return false;
+  }
+
+  final selectorOutbounds = selector['outbounds'];
+  if (selectorOutbounds is! List<dynamic> ||
+      !selectorOutbounds.any((value) => value?.toString() == 'auto')) {
+    return false;
+  }
+
+  if (route['auto_detect_interface'] != true) {
+    return false;
+  }
+
+  final routeRules = route['rules'];
+  if (routeRules is! List<dynamic>) {
+    return false;
+  }
+  return routeRules.any(
+    (rule) =>
+        rule is Map<String, dynamic> &&
+        rule['protocol']?.toString() == 'dns' &&
+        rule['outbound']?.toString() == 'dns-out',
+  );
+}
+
+Map<String, dynamic>? _findTaggedOutbound(
+  Map<String, dynamic> decoded, {
+  required String tag,
+}) {
+  final outbounds = decoded['outbounds'];
+  if (outbounds is! List<dynamic>) {
+    return null;
+  }
+  for (final outbound in outbounds) {
+    if (outbound is Map<String, dynamic> &&
+        outbound['tag']?.toString() == tag) {
+      return outbound;
+    }
+  }
+  return null;
+}
+
+bool _ensureProxyServerDomainsResolveDirect(Map<String, dynamic> decoded) {
+  final outbounds = decoded['outbounds'];
+  final dns = decoded['dns'];
+  final route = decoded['route'];
+  if (outbounds is! List<dynamic> ||
+      dns is! Map<String, dynamic> ||
+      route is! Map<String, dynamic>) {
+    return false;
+  }
+
+  final proxyServerDomains = <String>{};
+  for (final outbound in outbounds) {
+    if (outbound is! Map<String, dynamic>) {
+      continue;
+    }
+    final server = outbound['server']?.toString().trim();
+    if (server == null ||
+        server.isEmpty ||
+        server == 'localhost' ||
+        InternetAddress.tryParse(server) != null) {
+      continue;
+    }
+    proxyServerDomains.add(server);
+  }
+
+  if (proxyServerDomains.isEmpty) {
+    return false;
+  }
+
+  final dnsServers = dns['servers'];
+  if (dnsServers is! List<dynamic> ||
+      !dnsServers.any(
+        (server) =>
+            server is Map<String, dynamic> &&
+            server['tag']?.toString() == 'dns-direct',
+      )) {
+    return false;
+  }
+
+  var changed = false;
+
+  final dnsRules = _ensureList<Map<String, dynamic>>(dns, 'rules');
+  final directDnsRuleIndex = dnsRules.indexWhere(
+    (rule) =>
+        _sameStringSet(rule['domain'], proxyServerDomains) &&
+        rule['server']?.toString() == 'dns-direct',
+  );
+  if (directDnsRuleIndex == -1) {
+    dnsRules.insert(
+      _firstCatchAllDnsRuleIndex(dnsRules),
+      {
+        'domain': proxyServerDomains.toList()..sort(),
+        'server': 'dns-direct',
+      },
+    );
+    changed = true;
+  }
+
+  final routeRules = _ensureList<Map<String, dynamic>>(route, 'rules');
+  final directRouteRuleIndex = routeRules.indexWhere(
+    (rule) =>
+        _sameStringSet(rule['domain'], proxyServerDomains) &&
+        rule['outbound']?.toString() == 'direct',
+  );
+  if (directRouteRuleIndex == -1) {
+    routeRules.insert(
+      _firstDnsProtocolRouteRuleIndex(routeRules) + 1,
+      {
+        'domain': proxyServerDomains.toList()..sort(),
+        'outbound': 'direct',
+      },
+    );
+    changed = true;
+  }
+
+  return changed;
+}
+
+int _firstCatchAllDnsRuleIndex(List<Map<String, dynamic>> rules) {
+  final index = rules.indexWhere(
+    (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
+  );
+  return index == -1 ? rules.length : index;
+}
+
+int _firstDnsProtocolRouteRuleIndex(List<Map<String, dynamic>> rules) {
+  return rules.indexWhere(
+    (rule) =>
+        rule['protocol']?.toString() == 'dns' &&
+        rule['outbound']?.toString() == 'dns-out',
+  );
+}
+
+bool _sameStringSet(dynamic value, Set<String> expected) {
+  if (value is! List<dynamic>) {
+    return false;
+  }
+  final actual = value
+      .map((item) => item?.toString())
+      .whereType<String>()
+      .toSet();
+  return actual.length == expected.length && actual.containsAll(expected);
 }
 
 bool _applyRoutingSettings(Map<String, dynamic> decoded,
@@ -145,7 +495,13 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
   }
   final tunSubnetCidrs =
       isAndroid ? _extractTunSubnetCidrs(decoded) : const <String>[];
-  if (tunSubnetCidrs.isNotEmpty) {
+  final privateDnsProbeCidrs = isAndroid
+      ? _dedupeStrings([
+          ..._androidPrivateDnsProbeLoopbackCidrs,
+          ...tunSubnetCidrs,
+        ])
+      : const <String>[];
+  if (privateDnsProbeCidrs.isNotEmpty) {
     _ensureBlockOutbound(outbounds);
   }
 
@@ -157,6 +513,9 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
       .whereType<String>()
       .where((tag) => tag.isNotEmpty)
       .toSet();
+  final proxyServerDomains = _extractProxyServerDomains(
+    outboundMaps.toList(growable: false),
+  );
 
   final hasDirectOutbound = outboundTags.contains('direct');
   final hasDnsOutbound = outboundTags.contains('dns-out');
@@ -166,6 +525,14 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     outbounds: outboundMaps.toList(growable: false),
     outboundTags: outboundTags,
   );
+  _ensureManagedDnsServers(
+    decoded,
+    routingSettings: routingSettings,
+    hasDirectOutbound: hasDirectOutbound,
+    proxyOutboundTag: proxyOutboundTag,
+  );
+  _ensureManagedDnsDefaults(decoded);
+  _ensureProxyServerDomainsResolveDirect(decoded);
 
   final existingRules = _coerceMapList(route['rules']);
   final preservedRules = existingRules
@@ -173,13 +540,14 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
       .toList(growable: false);
   final managedRules = <Map<String, dynamic>>[];
 
-  if (tunSubnetCidrs.isNotEmpty &&
+  if (privateDnsProbeCidrs.isNotEmpty &&
       outboundTags.contains('block') &&
-      !_containsAndroidTunDnsCompatRule(existingRules, tunSubnetCidrs)) {
+      !_containsAndroidPrivateDnsCompatRule(
+          existingRules, privateDnsProbeCidrs)) {
     managedRules.add({
       'network': 'tcp',
       'port': _androidTunDnsTlsPort,
-      'ip_cidr': tunSubnetCidrs,
+      'ip_cidr': privateDnsProbeCidrs,
       'outbound': 'block',
     });
   }
@@ -202,7 +570,7 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
   if (isAndroid && hasDirectOutbound) {
     _appendPackageRule(
       managedRules,
-      routingSettings.customDirectPackages,
+      effectiveAndroidDirectPackages(routingSettings),
       'direct',
     );
   }
@@ -312,6 +680,64 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     cacheFile['enabled'] = true;
   }
 
+  final dns = _ensureMap(decoded, 'dns');
+  final existingDnsRules = _coerceMapList(dns['rules']);
+  final preservedDnsRules = existingDnsRules
+      .where((rule) => !_isManagedDnsRule(rule))
+      .toList(growable: false);
+  final managedDnsRules = <Map<String, dynamic>>[];
+  if (hasDirectOutbound) {
+    managedDnsRules.add({
+      'domain_suffix': _cloudProviderApiDomains,
+      'server': _dnsBootstrapTag,
+    });
+  }
+  if (hasDirectOutbound) {
+    _appendDnsDomainRule(
+      managedDnsRules,
+      proxyServerDomains.toList()..sort(),
+      _dnsBootstrapTag,
+    );
+  }
+  if (hasDirectOutbound &&
+      routingSettings.dnsMode == VpnDnsMode.regionalOptimized) {
+    final directDnsServerTag = _resolveDirectDnsServerTag(routingSettings);
+    _appendDnsDomainSuffixRule(
+      managedDnsRules,
+      routingSettings.customDirectDomains,
+      directDnsServerTag,
+    );
+    if (routingSettings.isSplitMode && routingSettings.directCnDomains) {
+      final geositeCnPath = bundledRuleSetPaths.geositeCnPath;
+      if (geositeCnPath != null && geositeCnPath.isNotEmpty) {
+        managedDnsRules.add({
+          'rule_set': _managedGeositeCnTag,
+          'server': directDnsServerTag,
+        });
+      }
+    }
+  }
+  if (proxyOutboundTag != null &&
+      routingSettings.dnsMode != VpnDnsMode.systemResolver) {
+    _appendDnsDomainSuffixRule(
+      managedDnsRules,
+      managedDnsRemoteFallbackDomainSuffixes,
+      _dnsRemoteFallbackTag,
+    );
+  }
+  managedDnsRules.add({
+    'outbound': ['any'],
+    'server': _resolveDefaultDnsServerTag(
+      routingSettings,
+      hasDirectOutbound: hasDirectOutbound,
+      proxyOutboundTag: proxyOutboundTag,
+    ),
+  });
+  dns['rules'] = [
+    ...managedDnsRules,
+    ...preservedDnsRules,
+  ];
+
   // On Android, apply per-app package filtering at the TUN inbound level.
   // This uses VpnService.Builder.addDisallowedApplication() so that direct
   // apps' traffic never enters the TUN interface at all — a reliable bypass
@@ -333,7 +759,7 @@ void _applyTunPackageFiltering(
   }
 
   final directPackages = _dedupeStrings(
-    routingSettings.customDirectPackages.map((p) => p.trim()),
+    effectiveAndroidDirectPackages(routingSettings),
   );
 
   for (final inbound in inbounds) {
@@ -382,6 +808,105 @@ Map<String, dynamic> _ensureMap(Map<String, dynamic> source, String key) {
   return created;
 }
 
+void _ensureManagedDnsServers(
+  Map<String, dynamic> decoded, {
+  required VpnRoutingSettings routingSettings,
+  required bool hasDirectOutbound,
+  required String? proxyOutboundTag,
+}) {
+  final dns = _ensureMap(decoded, 'dns');
+  final servers = _ensureList<Map<String, dynamic>>(dns, 'servers');
+  if (proxyOutboundTag != null) {
+    _upsertDnsServer(
+      servers,
+      tag: _dnsRemoteTag,
+      address: _dnsRemoteAddress,
+      detour: proxyOutboundTag,
+    );
+    _upsertDnsServer(
+      servers,
+      tag: _dnsRemoteFallbackTag,
+      address: _dnsRemoteFallbackAddress,
+      detour: proxyOutboundTag,
+    );
+  }
+  if (!hasDirectOutbound) {
+    return;
+  }
+
+  _upsertDnsServer(
+    servers,
+    tag: _dnsBootstrapTag,
+    address: _dnsBootstrapAddress,
+    detour: 'direct',
+  );
+  _upsertDnsServer(
+    servers,
+    tag: _dnsLocalTag,
+    address: 'local',
+    detour: 'direct',
+  );
+  if (routingSettings.dnsMode == VpnDnsMode.regionalOptimized) {
+    _upsertDnsServer(
+      servers,
+      tag: _dnsCnTag,
+      address: _dnsCnAddress,
+      detour: 'direct',
+    );
+  }
+}
+
+void _ensureManagedDnsDefaults(Map<String, dynamic> decoded) {
+  final dns = _ensureMap(decoded, 'dns');
+  if (dns['strategy']?.toString().trim() != 'prefer_ipv4') {
+    dns['strategy'] = 'prefer_ipv4';
+  }
+  if (dns['cache_capacity'] != managedDnsCacheCapacity) {
+    dns['cache_capacity'] = managedDnsCacheCapacity;
+  }
+  if (dns['reverse_mapping'] != true) {
+    dns['reverse_mapping'] = true;
+  }
+}
+
+void _upsertDnsServer(
+  List<Map<String, dynamic>> servers, {
+  required String tag,
+  required String address,
+  required String detour,
+}) {
+  final index = servers.indexWhere((server) => server['tag']?.toString() == tag);
+  final next = <String, dynamic>{
+    'tag': tag,
+    'address': address,
+    'detour': detour,
+  };
+  if (index == -1) {
+    servers.add(next);
+    return;
+  }
+  servers[index]
+    ..['tag'] = tag
+    ..['address'] = address
+    ..['detour'] = detour;
+}
+
+List<T> _ensureList<T>(Map<String, dynamic> source, String key) {
+  final existing = source[key];
+  if (existing is List<T>) {
+    return existing;
+  }
+  if (existing is List) {
+    final converted = existing.cast<T>();
+    source[key] = converted;
+    return converted;
+  }
+
+  final created = <T>[];
+  source[key] = created;
+  return created;
+}
+
 List<Map<String, dynamic>> _coerceMapList(dynamic value) {
   if (value is! List) {
     return const [];
@@ -391,6 +916,43 @@ List<Map<String, dynamic>> _coerceMapList(dynamic value) {
       .whereType<Map>()
       .map((item) => Map<String, dynamic>.from(item))
       .toList(growable: false);
+}
+
+Set<String> _extractProxyServerDomains(List<Map<String, dynamic>> outbounds) {
+  final domains = <String>{};
+  for (final outbound in outbounds) {
+    final server = outbound['server']?.toString().trim();
+    if (server == null ||
+        server.isEmpty ||
+        server == 'localhost' ||
+        InternetAddress.tryParse(server) != null) {
+      continue;
+    }
+    domains.add(server);
+  }
+  return domains;
+}
+
+String _resolveDirectDnsServerTag(VpnRoutingSettings routingSettings) {
+  return switch (routingSettings.dnsMode) {
+    VpnDnsMode.regionalOptimized => _dnsCnTag,
+    VpnDnsMode.systemResolver => _dnsLocalTag,
+    VpnDnsMode.strictProxy => _dnsBootstrapTag,
+  };
+}
+
+String _resolveDefaultDnsServerTag(
+  VpnRoutingSettings routingSettings, {
+  required bool hasDirectOutbound,
+  required String? proxyOutboundTag,
+}) {
+  switch (routingSettings.dnsMode) {
+    case VpnDnsMode.regionalOptimized:
+    case VpnDnsMode.strictProxy:
+      return proxyOutboundTag != null ? _dnsRemoteTag : _dnsLocalTag;
+    case VpnDnsMode.systemResolver:
+      return hasDirectOutbound ? _dnsLocalTag : _dnsRemoteTag;
+  }
 }
 
 void _ensureBlockOutbound(List outbounds) {
@@ -483,11 +1045,11 @@ String? _normalizeTunSubnetCidr(String cidr) {
       '${networkValue & 0xff}/$prefixLength';
 }
 
-bool _containsAndroidTunDnsCompatRule(
+bool _containsAndroidPrivateDnsCompatRule(
   List<Map<String, dynamic>> rules,
-  List<String> tunSubnetCidrs,
+  List<String> probeCidrs,
 ) {
-  final expectedCidrs = tunSubnetCidrs.toSet();
+  final expectedCidrs = probeCidrs.toSet();
   for (final rule in rules) {
     if (rule['outbound']?.toString().trim() != 'block') {
       continue;
@@ -498,7 +1060,6 @@ bool _containsAndroidTunDnsCompatRule(
     if (!_matchesPort(rule['port'], _androidTunDnsTlsPort)) {
       continue;
     }
-
     final cidrs = _coerceStringList(rule['ip_cidr']).toSet();
     if (expectedCidrs.every(cidrs.contains)) {
       return true;
@@ -602,15 +1163,48 @@ bool _isManagedOrLegacyRule(Map<String, dynamic> rule) {
   return false;
 }
 
+bool _isManagedDnsRule(Map<String, dynamic> rule) {
+  final server = rule['server']?.toString().trim();
+  final ruleSet = rule['rule_set']?.toString().trim();
+  if (_isCatchAllDnsRule(rule)) {
+    return true;
+  }
+  if (server == _dnsBootstrapTag && _isCloudProviderApiDnsBypassRule(rule)) {
+    return true;
+  }
+  if (ruleSet == _managedGeositeCnTag &&
+      (server == _dnsCnTag || server == _dnsLocalTag)) {
+    return true;
+  }
+  return false;
+}
+
+bool _isCatchAllDnsRule(Map<String, dynamic> rule) {
+  final outbounds = rule['outbound'];
+  if (outbounds is! List) {
+    return false;
+  }
+  return outbounds.any((value) => value?.toString() == 'any');
+}
+
 bool _isCloudProviderApiBypassRule(Map<String, dynamic> rule) {
   final suffixes = rule['domain_suffix'];
   if (suffixes is! List) {
     return false;
   }
   final set = suffixes.map((e) => e?.toString()).toSet();
-  return set.contains('api.vultr.com') &&
-      set.contains('api.digitalocean.com') &&
-      set.length == 2;
+  return set.containsAll(_cloudProviderApiDomains) &&
+      set.length == _cloudProviderApiDomains.length;
+}
+
+bool _isCloudProviderApiDnsBypassRule(Map<String, dynamic> rule) {
+  final suffixes = rule['domain_suffix'];
+  if (suffixes is! List) {
+    return false;
+  }
+  final set = suffixes.map((e) => e?.toString()).toSet();
+  return set.containsAll(_cloudProviderApiDomains) &&
+      set.length == _cloudProviderApiDomains.length;
 }
 
 bool _isManagedRuleSet(Map<String, dynamic> ruleSet) {
@@ -632,6 +1226,40 @@ void _appendDomainSuffixRule(
   rules.add({
     'domain_suffix': normalizedDomains,
     'outbound': outboundTag,
+  });
+}
+
+void _appendDnsDomainSuffixRule(
+  List<Map<String, dynamic>> rules,
+  List<String> domains,
+  String serverTag,
+) {
+  final normalizedDomains = _dedupeStrings(
+    domains.map((domain) => domain.trim().toLowerCase()),
+  );
+  if (normalizedDomains.isEmpty) {
+    return;
+  }
+  rules.add({
+    'domain_suffix': normalizedDomains,
+    'server': serverTag,
+  });
+}
+
+void _appendDnsDomainRule(
+  List<Map<String, dynamic>> rules,
+  List<String> domains,
+  String serverTag,
+) {
+  final normalizedDomains = _dedupeStrings(
+    domains.map((domain) => domain.trim().toLowerCase()),
+  );
+  if (normalizedDomains.isEmpty) {
+    return;
+  }
+  rules.add({
+    'domain': normalizedDomains,
+    'server': serverTag,
   });
 }
 
@@ -683,29 +1311,8 @@ List<String> _dedupeStrings(Iterable<String> values) {
 }
 
 bool isUnsupportedAndroidOutbound(Map<String, dynamic> outbound) {
-  final type = outbound['type']?.toString();
-  if (type == 'hysteria2') {
-    return true;
-  }
-  if (type != 'vless') {
-    return false;
-  }
-
-  final tls = outbound['tls'];
-  if (tls is! Map) {
-    return false;
-  }
-
-  return isFeatureEnabled(tls['utls']) || isFeatureEnabled(tls['reality']);
-}
-
-bool isFeatureEnabled(dynamic value) {
-  if (value is Map) {
-    final enabled = value['enabled'];
-    if (enabled is bool) {
-      return enabled;
-    }
-    return enabled?.toString().toLowerCase() == 'true';
-  }
+  // Let the Android runtime decide whether an outbound is usable instead of
+  // pre-stripping protocols from the profile. This keeps cloud-generated and
+  // imported configs intact, even when they contain newer protocol features.
   return false;
 }

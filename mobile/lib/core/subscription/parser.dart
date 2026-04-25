@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../network/managed_dns_defaults.dart';
+
 /// Subscription URL parser
 /// Fetches subscription URL, detects format, parses proxy nodes,
 /// and generates sing-box JSON configuration.
@@ -345,30 +347,34 @@ class SubscriptionParser {
 
     // Add selector and urltest
     final config = {
-      // sing-box client log level. 'warn' silences per-connection
-      // outbound/inbound INFO chatter (which produced ~4 logcat lines per TCP
-      // connection, dominating logcat for any normal browsing session) while
-      // still surfacing real failures.
-      'log': {'level': 'warn'},
+      // Keep per-connection INFO logs available so the diagnostics screen can
+      // reconstruct recent DIRECT/PROXY and DNS decisions from runtime
+      // traffic. Android filters these out of logcat at the service layer.
+      'log': {'level': 'info'},
       'dns': {
         'servers': [
           {
-            'tag': 'dns-remote',
-            'address': 'https://1.1.1.1/dns-query',
+            'tag': managedDnsRemoteTag,
+            'address': managedDnsRemoteAddress,
             'detour': 'select',
           },
           {
-            'tag': 'dns-remote-doh',
-            'address': 'https://1.1.1.1/dns-query',
+            'tag': managedDnsRemoteFallbackTag,
+            'address': managedDnsRemoteFallbackAddress,
             'detour': 'select',
           },
           {
-            'tag': 'dns-direct',
-            'address': '8.8.8.8',
+            'tag': managedDnsBootstrapTag,
+            'address': managedDnsBootstrapAddress,
             'detour': 'direct',
           },
           {
-            'tag': 'dns-local',
+            'tag': managedDnsCnTag,
+            'address': managedDnsCnAddress,
+            'detour': 'direct',
+          },
+          {
+            'tag': managedDnsLocalTag,
             'address': 'local',
             'detour': 'direct',
           },
@@ -376,14 +382,20 @@ class SubscriptionParser {
         'rules': [
           {
             'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
-            'server': 'dns-direct',
+            'server': managedDnsBootstrapTag,
+          },
+          {
+            'domain_suffix': managedDnsRemoteFallbackDomainSuffixes,
+            'server': managedDnsRemoteFallbackTag,
           },
           {
             'outbound': ['any'],
-            'server': 'dns-remote',
+            'server': managedDnsRemoteTag,
           },
         ],
         'strategy': 'prefer_ipv4',
+        'reverse_mapping': true,
+        'cache_capacity': managedDnsCacheCapacity,
         'independent_cache': true,
       },
       'inbounds': [
@@ -394,7 +406,10 @@ class SubscriptionParser {
           'inet4_address': '172.19.0.1/30',
           'auto_route': true,
           'strict_route': true,
-          'stack': 'system',
+          // Android proxy-link imports are more stable on gVisor. Using the
+          // system stack here can leave VPN connected while proxied DNS loops
+          // back into the tunnel on some Samsung devices.
+          'stack': 'gvisor',
           'sniff': true,
         },
       ],
@@ -402,27 +417,28 @@ class SubscriptionParser {
         {
           'type': 'selector',
           'tag': 'select',
+          'interrupt_exist_connections': true,
           'outbounds': ['auto', ...tags],
-          'default': tags.first,
+          'default': 'auto',
         },
         {
           'type': 'urltest',
           'tag': 'auto',
+          'interrupt_exist_connections': true,
           'outbounds': tags,
           'url': 'http://www.gstatic.com/generate_204',
           'interval': '5m',
           'tolerance': 200,
-          'idle_timeout': '30m',
         },
         ...outbounds,
         {'type': 'direct', 'tag': 'direct'},
         {'type': 'dns', 'tag': 'dns-out'},
         {'type': 'block', 'tag': 'block'},
       ],
-      'route': {
-        'rules': [
-          {'protocol': 'dns', 'outbound': 'dns-out'},
-          {
+        'route': {
+          'rules': [
+            {'protocol': 'dns', 'outbound': 'dns-out'},
+            {
             'geoip': ['private'],
             'outbound': 'direct'
           },

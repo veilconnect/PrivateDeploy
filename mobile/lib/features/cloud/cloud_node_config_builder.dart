@@ -2,7 +2,81 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/network/managed_dns_defaults.dart';
 import 'cloud_models.dart';
+
+const Map<String, String> _cloudEndpointLabelByTagSuffix = {
+  '-SS': 'Shadowsocks',
+  '-Trojan': 'Trojan',
+  '-VLESS': 'VLESS',
+  '-Hy2': 'Hysteria2',
+};
+
+List<String> availableCloudEndpointLabels(NodeInfo? info) {
+  if (info == null) {
+    return const [];
+  }
+
+  final labels = <String>[];
+  if (info.ssPort > 0 && info.ssPassword.isNotEmpty) {
+    labels.add('Shadowsocks');
+  }
+  if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
+    labels.add('Hysteria2');
+  }
+  if (info.vlessPort > 0 &&
+      info.vlessUuid.isNotEmpty &&
+      info.vlessPublicKey.isNotEmpty &&
+      info.vlessShortId.isNotEmpty) {
+    labels.add('VLESS');
+  }
+  if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
+    labels.add('Trojan');
+  }
+  return labels;
+}
+
+String? activeCloudNodeEndpointLabel(String? rawConfig) {
+  if (rawConfig == null || rawConfig.trim().isEmpty) {
+    return null;
+  }
+
+  try {
+    final decoded = jsonDecode(rawConfig);
+    if (decoded is! Map<String, dynamic>) {
+      return null;
+    }
+    final outbounds = decoded['outbounds'];
+    if (outbounds is! List) {
+      return null;
+    }
+
+    final selector =
+        outbounds.whereType<Map>().cast<Map<String, dynamic>>().firstWhere(
+              (item) => item['type'] == 'selector' && item['tag'] == 'select',
+              orElse: () => const <String, dynamic>{},
+            );
+    final defaultTag = selector['default']?.toString().trim();
+    return _cloudEndpointLabelFromTag(defaultTag);
+  } catch (_) {
+    return null;
+  }
+}
+
+String? _cloudEndpointLabelFromTag(String? tag) {
+  if (tag == null || tag.isEmpty || tag == 'auto') {
+    return null;
+  }
+  for (final entry in _cloudEndpointLabelByTagSuffix.entries) {
+    if (tag.endsWith(entry.key)) {
+      return entry.value;
+    }
+  }
+  return switch (tag) {
+    'Shadowsocks' || 'Trojan' || 'VLESS' || 'Hysteria2' => tag,
+    _ => null,
+  };
+}
 
 String? buildCloudNodeConfig(
   CloudInstance instance, {
@@ -16,7 +90,6 @@ String? buildCloudNodeConfig(
   final ip = instance.ipv4!;
   final info = instance.nodeInfo!;
   final label = instance.label;
-  final isAndroid = targetPlatform == TargetPlatform.android;
   final outbounds = <Map<String, dynamic>>[];
   final tags = <String>[];
   final endpointTagByLabel = <String, String>{};
@@ -35,7 +108,7 @@ String? buildCloudNodeConfig(
     endpointTagByLabel['Shadowsocks'] = tag;
   }
 
-  if (!isAndroid && info.hyPort > 0 && info.hyPassword.isNotEmpty) {
+  if (info.hyPort > 0 && info.hyPassword.isNotEmpty) {
     final tag = '$label-Hy2';
     outbounds.add({
       'type': 'hysteria2',
@@ -55,8 +128,7 @@ String? buildCloudNodeConfig(
     endpointTagByLabel['Hysteria2'] = tag;
   }
 
-  if (!isAndroid &&
-      info.vlessPort > 0 &&
+  if (info.vlessPort > 0 &&
       info.vlessUuid.isNotEmpty &&
       info.vlessPublicKey.isNotEmpty &&
       info.vlessShortId.isNotEmpty) {
@@ -117,50 +189,53 @@ String? buildCloudNodeConfig(
   }
 
   final preferredTag = endpointTagByLabel[preferredEndpointLabel?.trim() ?? ''];
-  final shouldIgnorePreferredEndpoint =
-      isAndroid &&
-      info.ssPort > 0 &&
-      info.ssPassword.isNotEmpty &&
-      preferredEndpointLabel?.trim().isNotEmpty == true &&
-      preferredEndpointLabel?.trim() != 'Shadowsocks';
-  final effectivePreferredTag =
-      shouldIgnorePreferredEndpoint ? null : preferredTag;
-  if (effectivePreferredTag != null) {
+  if (preferredTag != null) {
     outbounds.sort((a, b) {
       final aTag = a['tag']?.toString();
       final bTag = b['tag']?.toString();
-      if (aTag == effectivePreferredTag && bTag != effectivePreferredTag) {
+      if (aTag == preferredTag && bTag != preferredTag) {
         return -1;
       }
-      if (aTag != effectivePreferredTag && bTag == effectivePreferredTag) {
+      if (aTag != preferredTag && bTag == preferredTag) {
         return 1;
       }
       return 0;
     });
     tags
-      ..remove(effectivePreferredTag)
-      ..insert(0, effectivePreferredTag);
+      ..remove(preferredTag)
+      ..insert(0, preferredTag);
   }
+  final manualProtocolSelection = preferredTag != null;
+  final protocolOutbounds = manualProtocolSelection
+      ? outbounds
+          .where((outbound) => outbound['tag']?.toString() == preferredTag)
+          .toList(growable: false)
+      : List<Map<String, dynamic>>.from(outbounds);
+  final selectorOutbounds = manualProtocolSelection
+      ? List<String>.from(tags.take(1))
+      : ['auto', ...tags];
+  final includeUrlTest = !manualProtocolSelection;
 
   final config = {
-    // sing-box client log level. 'warn' silences per-connection
-    // outbound/inbound INFO chatter (which dominated logcat for any normal
-    // browsing session) while still surfacing real failures.
-    'log': {'level': 'warn'},
+    // Keep per-connection INFO logs available so the diagnostics screen can
+    // reconstruct recent DIRECT/PROXY decisions from runtime traffic.
+    // Android filters these out of logcat at the service layer to avoid
+    // restoring the old log spam problem.
+    'log': {'level': 'info'},
     'dns': {
       'servers': [
         {
-          'tag': 'dns-remote',
+          'tag': managedDnsRemoteTag,
           // libbox/sing-box v1.11 still uses the legacy DNS server syntax, so
           // we can't set a separate TLS server_name here. Use Cloudflare's
           // IP-literal DoH endpoint to avoid recursively bootstrapping the DNS
           // server hostname through another resolver on Android.
-          'address': 'https://1.1.1.1/dns-query',
+          'address': managedDnsRemoteAddress,
           'detour': 'select',
         },
         {
-          'tag': 'dns-remote-doh',
-          'address': 'https://1.1.1.1/dns-query',
+          'tag': managedDnsRemoteFallbackTag,
+          'address': managedDnsRemoteFallbackAddress,
           'detour': 'select',
         },
         // Cloud-provider API lookups must resolve via the underlying network
@@ -168,12 +243,17 @@ String? buildCloudNodeConfig(
         // the Go runtime which on Android re-enters the TUN (auto_route),
         // producing "context canceled" for these specific queries.
         {
-          'tag': 'dns-direct',
-          'address': '8.8.8.8',
+          'tag': managedDnsBootstrapTag,
+          'address': managedDnsBootstrapAddress,
           'detour': 'direct',
         },
         {
-          'tag': 'dns-local',
+          'tag': managedDnsCnTag,
+          'address': managedDnsCnAddress,
+          'detour': 'direct',
+        },
+        {
+          'tag': managedDnsLocalTag,
           'address': 'local',
           'detour': 'direct',
         },
@@ -181,14 +261,20 @@ String? buildCloudNodeConfig(
       'rules': [
         {
           'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
-          'server': 'dns-direct',
+          'server': managedDnsBootstrapTag,
+        },
+        {
+          'domain_suffix': managedDnsRemoteFallbackDomainSuffixes,
+          'server': managedDnsRemoteFallbackTag,
         },
         {
           'outbound': ['any'],
-          'server': 'dns-remote',
+          'server': managedDnsRemoteTag,
         },
       ],
       'strategy': 'prefer_ipv4',
+      'reverse_mapping': true,
+      'cache_capacity': managedDnsCacheCapacity,
       'independent_cache': true,
     },
     'inbounds': [
@@ -199,6 +285,9 @@ String? buildCloudNodeConfig(
         'inet4_address': '172.19.0.1/30',
         'auto_route': true,
         'strict_route': true,
+        // Cloud profiles should keep Android's system TUN stack so mobile
+        // networks can continue using platform features such as 464XLAT/NAT64
+        // when the device leaves Wi-Fi and falls back to cellular.
         'stack': 'system',
         'sniff': true,
       },
@@ -207,19 +296,21 @@ String? buildCloudNodeConfig(
       {
         'type': 'selector',
         'tag': 'select',
-        'outbounds': ['auto', ...tags],
-        'default': tags.first,
+        'interrupt_exist_connections': true,
+        'outbounds': selectorOutbounds,
+        'default': manualProtocolSelection ? tags.first : 'auto',
       },
-      {
-        'type': 'urltest',
-        'tag': 'auto',
-        'outbounds': tags,
-        'url': 'http://www.gstatic.com/generate_204',
-        'interval': '5m',
-        'tolerance': 200,
-        'idle_timeout': '30m',
-      },
-      ...outbounds,
+      if (includeUrlTest)
+        {
+          'type': 'urltest',
+          'tag': 'auto',
+          'interrupt_exist_connections': true,
+          'outbounds': tags,
+          'url': 'http://www.gstatic.com/generate_204',
+          'interval': '5m',
+          'tolerance': 200,
+        },
+      ...protocolOutbounds,
       {'type': 'direct', 'tag': 'direct'},
       {'type': 'dns', 'tag': 'dns-out'},
       {'type': 'block', 'tag': 'block'},
@@ -240,7 +331,16 @@ String? buildCloudNodeConfig(
           'outbound': 'direct',
         },
       ],
+      // Android relies on libbox's platform socket protection to keep proxy
+      // outbounds off the VPN TUN. The mobile core now avoids the old
+      // extra bind-to-interface path while preserving that protection, so
+      // keep auto-detect enabled here.
       'auto_detect_interface': true,
+      // When Wi-Fi drops and Android promotes cellular to the default
+      // network, sing-box must follow that new default explicitly for its
+      // upstream proxy sockets. Otherwise the VPN can stay "connected" while
+      // outbound dials still fail on the stale path.
+      'default_network_strategy': 'default',
     },
   };
 

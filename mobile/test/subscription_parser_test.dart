@@ -154,6 +154,7 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
 
       final json = jsonDecode(config!) as Map<String, dynamic>;
       expect(json.containsKey('log'), true);
+      expect((json['log'] as Map<String, dynamic>)['level'], 'info');
       expect(json.containsKey('dns'), true);
       expect(json.containsKey('inbounds'), true);
       expect(json.containsKey('outbounds'), true);
@@ -164,16 +165,21 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
       expect(inbounds.any((i) => i['type'] == 'tun'), true);
       final tunInbound = inbounds.firstWhere((i) => i['type'] == 'tun')
           as Map<String, dynamic>;
-      expect(tunInbound['stack'], 'system');
+      expect(tunInbound['stack'], 'gvisor');
 
       // Has selector and urltest
       final outbounds = json['outbounds'] as List;
       expect(outbounds.any((o) => o['type'] == 'selector'), true);
       expect(outbounds.any((o) => o['type'] == 'urltest'), true);
       final selector = outbounds.firstWhere((o) => o['type'] == 'selector');
-      expect(selector['default'], 'Test');
+      final urltest = outbounds.firstWhere((o) => o['type'] == 'urltest');
+      expect(selector['default'], 'auto');
+      expect(selector['interrupt_exist_connections'], isTrue);
+      expect(urltest['interrupt_exist_connections'], isTrue);
+      expect(urltest.containsKey('idle_timeout'), isFalse);
 
       final dns = json['dns'] as Map<String, dynamic>;
+      final route = json['route'] as Map<String, dynamic>;
       final rules = List<Map<String, dynamic>>.from(
         (dns['rules'] as List<dynamic>).cast<Map<String, dynamic>>(),
       );
@@ -191,15 +197,39 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
       final localServer = dnsServers.firstWhere(
         (server) => server['tag'] == 'dns-local',
       );
+      final bootstrapServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-direct',
+      );
+      final cnServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-cn',
+      );
       final remoteServer = dnsServers.firstWhere(
         (server) => server['tag'] == 'dns-remote',
+      );
+      final remoteFallbackServer = dnsServers.firstWhere(
+        (server) => server['tag'] == 'dns-remote-google',
       );
 
       expect(cloudApiRule['server'], 'dns-direct');
       expect(defaultRule['server'], 'dns-remote');
+      expect(bootstrapServer['address'], 'https://1.12.12.12/dns-query');
+      expect(cnServer['address'], 'https://223.5.5.5/dns-query');
       expect(localServer['detour'], 'direct');
       expect(remoteServer['address'], 'https://1.1.1.1/dns-query');
+      expect(remoteFallbackServer['address'], 'https://8.8.8.8/dns-query');
       expect(remoteServer.containsKey('address_resolver'), isFalse);
+      expect((dns['cache_capacity'] as int?) ?? 0, 4096);
+      expect(dns['reverse_mapping'], isTrue);
+      expect(route['auto_detect_interface'], isTrue);
+      expect(
+        rules.any(
+          (rule) =>
+              rule['server'] == 'dns-remote-google' &&
+              (rule['domain_suffix'] as List<dynamic>?)?.contains('youtube.com') ==
+                  true,
+        ),
+        isTrue,
+      );
     });
   });
 
