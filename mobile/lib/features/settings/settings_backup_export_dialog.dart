@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
+import '../../shared/widgets/share_passphrase_dialog.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_backup_preview_card.dart';
@@ -18,14 +20,21 @@ Future<void> showSettingsBackupExportDialog({
 
   await showDialog(
     context: context,
-    builder: (_) => _SettingsBackupExportDialog(payload: payload),
+    builder: (_) => _SettingsBackupExportDialog(
+      payload: payload,
+      expectedProvider: cloud.providerName,
+    ),
   );
 }
 
 class _SettingsBackupExportDialog extends StatefulWidget {
-  const _SettingsBackupExportDialog({required this.payload});
+  const _SettingsBackupExportDialog({
+    required this.payload,
+    required this.expectedProvider,
+  });
 
   final String payload;
+  final String expectedProvider;
 
   @override
   State<_SettingsBackupExportDialog> createState() =>
@@ -37,13 +46,14 @@ class _SettingsBackupExportDialogState
   late final CloudBackupPreview _preview;
   bool _revealed = false;
   bool _copied = false;
+  String? _revealedPayload;
 
   @override
   void initState() {
     super.initState();
     _preview = inspectCloudBackupJson(
       widget.payload,
-      expectedProvider: vultrCloudBackupProvider,
+      expectedProvider: widget.expectedProvider,
     );
   }
 
@@ -78,7 +88,7 @@ class _SettingsBackupExportDialogState
                   borderRadius: BorderRadius.circular(8.r),
                 ),
                 child: SingleChildScrollView(
-                  child: SelectableText(widget.payload),
+                  child: SelectableText(_revealedPayload ?? ''),
                 ),
               ),
             ],
@@ -103,33 +113,23 @@ class _SettingsBackupExportDialogState
   }
 
   Future<void> _copySensitiveBackup() async {
-    final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) {
-            final dl10n = AppLocalizations.of(dialogContext)!;
-            return AlertDialog(
-              title: Text(dl10n.copySensitiveBackupTitle),
-              content: Text(dl10n.copySensitiveBackupConfirm),
-              actions: [
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: Text(dl10n.cancel),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: Text(dl10n.copy),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!confirmed || !mounted) {
+    final l10n = AppLocalizations.of(context)!;
+    final passphrase = await showSharePassphraseDialog(
+      context: context,
+      title: l10n.copySensitiveBackupTitle,
+      message: l10n.copySensitiveBackupConfirm,
+    );
+    if (passphrase == null || !mounted) {
       return;
     }
 
-    await Clipboard.setData(ClipboardData(text: widget.payload));
+    final armored = await EncryptedShareCodec.encrypt(
+      kind: EncryptedShareKind.cloudBackup,
+      content: widget.payload,
+      passphrase: passphrase,
+      label: widget.expectedProvider,
+    );
+    await Clipboard.setData(ClipboardData(text: armored));
     if (!mounted) {
       return;
     }
@@ -138,7 +138,8 @@ class _SettingsBackupExportDialogState
       _copied = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(AppLocalizations.of(context)!.sensitiveBackupCopied)),
+      SnackBar(
+          content: Text(AppLocalizations.of(context)!.sensitiveBackupCopied)),
     );
   }
 
@@ -146,38 +147,30 @@ class _SettingsBackupExportDialogState
     if (_revealed) {
       setState(() {
         _revealed = false;
+        _revealedPayload = null;
       });
       return;
     }
 
-    final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) {
-            final dl10n = AppLocalizations.of(dialogContext)!;
-            return AlertDialog(
-              title: Text(dl10n.revealSensitiveBackupTitle),
-              content: Text(dl10n.revealSensitiveBackupConfirm),
-              actions: [
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: Text(dl10n.cancel),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: Text(dl10n.reveal),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!confirmed || !mounted) {
+    final l10n = AppLocalizations.of(context)!;
+    final passphrase = await showSharePassphraseDialog(
+      context: context,
+      title: l10n.revealSensitiveBackupTitle,
+      message: l10n.revealSensitiveBackupConfirm,
+    );
+    if (passphrase == null || !mounted) {
       return;
     }
 
+    final armored = await EncryptedShareCodec.encrypt(
+      kind: EncryptedShareKind.cloudBackup,
+      content: widget.payload,
+      passphrase: passphrase,
+      label: widget.expectedProvider,
+    );
     setState(() {
       _revealed = true;
+      _revealedPayload = armored;
     });
   }
 }

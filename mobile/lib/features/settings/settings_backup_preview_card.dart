@@ -7,11 +7,11 @@ class SettingsBackupPreviewCard extends StatelessWidget {
   const SettingsBackupPreviewCard({
     super.key,
     required this.preview,
-    this.title = 'Backup Summary',
+    this.title,
   });
 
   final CloudBackupPreview preview;
-  final String title;
+  final String? title;
 
   @override
   Widget build(BuildContext context) {
@@ -37,8 +37,10 @@ class SettingsBackupPreviewCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(title, style: Theme.of(context).textTheme.titleSmall),
-          SizedBox(height: 8.h),
+          if (title != null && title!.trim().isNotEmpty) ...[
+            Text(title!, style: Theme.of(context).textTheme.titleSmall),
+            SizedBox(height: 8.h),
+          ],
           for (final row in rows)
             Padding(
               padding: EdgeInsets.only(bottom: 6.h),

@@ -35,6 +35,29 @@ void main() {
       expect(preview.nodeLabels, ['fra-node']);
     });
 
+    test('preserves provider-specific extra config in backup payloads', () {
+      final raw = createCloudBackupJson(
+        provider: 'ssh',
+        apiKey: null,
+        extra: const {
+          'host': '203.0.113.10',
+          'port': '22',
+          'username': 'root',
+        },
+        exportedAt: DateTime.utc(2026, 3, 26, 12),
+        nodeRecords: const {},
+      );
+
+      final parsed = parseCloudBackupJson(raw, expectedProvider: 'ssh');
+
+      expect(parsed.provider, 'ssh');
+      expect(parsed.apiKey, isNull);
+      expect(parsed.extra, isNotNull);
+      expect(parsed.extra!['host'], '203.0.113.10');
+      expect(parsed.extra!['port'], '22');
+      expect(parsed.extra!['username'], 'root');
+    });
+
     test('rejects backup payloads from another provider', () {
       final raw = createCloudBackupJson(
         provider: 'digitalocean',

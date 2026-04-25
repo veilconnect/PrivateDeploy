@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
@@ -45,59 +46,91 @@ class _SettingsBackupImportDialog extends StatefulWidget {
 class _SettingsBackupImportDialogState
     extends State<_SettingsBackupImportDialog> {
   late final TextEditingController _controller;
+  late final TextEditingController _passphraseController;
   String? _dialogError;
   CloudBackupPreview? _preview;
   bool _restoring = false;
+  bool _obscurePassphrase = true;
+  int _previewSequence = 0;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue);
+    _passphraseController = TextEditingController();
     _controller.addListener(_syncPreview);
-    _preview = _tryBuildPreview(widget.initialValue.trim());
-    _dialogError = _preview == null && widget.initialValue.trim().isNotEmpty
-        ? _validationMessageFor(widget.initialValue.trim())
-        : null;
+    _passphraseController.addListener(_syncPreview);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncPreview();
+    });
   }
 
   @override
   void dispose() {
     _controller.removeListener(_syncPreview);
+    _passphraseController.removeListener(_syncPreview);
     _controller.dispose();
+    _passphraseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final dialogMaxHeight = MediaQuery.of(context).size.height * 0.68;
     return AlertDialog(
       title: Text(l10n.restoreCloudBackupTitle),
       content: SizedBox(
         width: 520.w,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.restoreCloudBackupDesc2),
-            SizedBox(height: 12.h),
-            TextField(
-              controller: _controller,
-              minLines: 10,
-              maxLines: 14,
-              decoration: InputDecoration(
-                border: const OutlineInputBorder(),
-                hintText: l10n.pasteCloudBackupHint,
-                errorText: _dialogError,
-              ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: dialogMaxHeight),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.restoreCloudBackupDesc2),
+                SizedBox(height: 12.h),
+                TextField(
+                  controller: _controller,
+                  minLines: 8,
+                  maxLines: 12,
+                  decoration: InputDecoration(
+                    border: const OutlineInputBorder(),
+                    hintText: l10n.pasteCloudBackupHint,
+                    errorText: _dialogError,
+                  ),
+                ),
+                SizedBox(height: 12.h),
+                TextField(
+                  controller: _passphraseController,
+                  obscureText: _obscurePassphrase,
+                  decoration: InputDecoration(
+                    border: const OutlineInputBorder(),
+                    labelText: l10n.sharePassphrase,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassphrase
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassphrase = !_obscurePassphrase;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+                if (_preview != null) ...[
+                  SizedBox(height: 12.h),
+                  SettingsBackupPreviewCard(
+                    preview: _preview!,
+                  ),
+                ],
+              ],
             ),
-            if (_preview != null) ...[
-              SizedBox(height: 12.h),
-              SettingsBackupPreviewCard(
-                preview: _preview!,
-                title: 'Restore Preview',
-              ),
-            ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -131,8 +164,10 @@ class _SettingsBackupImportDialogState
     _controller.text = latest?.text ?? '';
   }
 
-  void _syncPreview() {
+  Future<void> _syncPreview() async {
+    final sequence = ++_previewSequence;
     final raw = _controller.text.trim();
+    final passphrase = _passphraseController.text.trim();
     if (raw.isEmpty) {
       if (!mounted) {
         return;
@@ -144,9 +179,32 @@ class _SettingsBackupImportDialogState
       return;
     }
 
-    final preview = _tryBuildPreview(raw);
-    final validationMessage =
-        preview == null ? _validationMessageFor(raw) : null;
+    if (passphrase.isEmpty) {
+      if (!mounted || sequence != _previewSequence) {
+        return;
+      }
+      setState(() {
+        _preview = null;
+        _dialogError = null;
+      });
+      return;
+    }
+
+    CloudBackupPreview? preview;
+    String? validationMessage;
+    try {
+      final decrypted = await _decryptBackupPayload(raw);
+      preview = inspectCloudBackupJson(
+        decrypted,
+        expectedProvider: widget.cloud.providerName,
+      );
+    } catch (e) {
+      validationMessage = e.toString().replaceFirst('FormatException: ', '');
+    }
+
+    if (!mounted || sequence != _previewSequence) {
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -156,35 +214,18 @@ class _SettingsBackupImportDialogState
     });
   }
 
-  CloudBackupPreview? _tryBuildPreview(String raw) {
-    try {
-      return inspectCloudBackupJson(
-        raw,
-        expectedProvider: widget.cloud.providerName,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String? _validationMessageFor(String raw) {
-    try {
-      inspectCloudBackupJson(
-        raw,
-        expectedProvider: widget.cloud.providerName,
-      );
-      return null;
-    } catch (e) {
-      return e.toString().replaceFirst('FormatException: ', '');
-    }
-  }
-
   Future<void> _restoreBackup() async {
     final raw = _controller.text.trim();
     final l10n = AppLocalizations.of(context)!;
     if (raw.isEmpty) {
       setState(() {
         _dialogError = l10n.backupJsonEmpty;
+      });
+      return;
+    }
+    if (_passphraseController.text.trim().isEmpty) {
+      setState(() {
+        _dialogError = l10n.passphraseRequired;
       });
       return;
     }
@@ -213,7 +254,6 @@ class _SettingsBackupImportDialogState
                     SizedBox(height: 12.h),
                     SettingsBackupPreviewCard(
                       preview: preview,
-                      title: 'Backup To Restore',
                     ),
                   ],
                 ),
@@ -243,13 +283,16 @@ class _SettingsBackupImportDialogState
     });
 
     try {
-      await widget.cloud.importBackupJson(raw);
+      final decrypted = await _decryptBackupPayload(raw);
+      await widget.cloud.importBackupJson(decrypted);
       if (mounted) {
         Navigator.pop(context);
       }
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(widget.rootContext)!.cloudBackupRestored)),
+          SnackBar(
+              content: Text(AppLocalizations.of(widget.rootContext)!
+                  .cloudBackupRestored)),
         );
       }
     } catch (e) {
@@ -261,5 +304,18 @@ class _SettingsBackupImportDialogState
         _restoring = false;
       });
     }
+  }
+
+  Future<String> _decryptBackupPayload(String raw) async {
+    final passphrase = _passphraseController.text.trim();
+    if (passphrase.isEmpty) {
+      throw const FormatException('Passphrase is required');
+    }
+    final payload = await EncryptedShareCodec.decrypt(
+      armored: raw,
+      passphrase: passphrase,
+      expectedKind: EncryptedShareKind.cloudBackup,
+    );
+    return payload.content;
   }
 }

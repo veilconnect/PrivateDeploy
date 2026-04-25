@@ -33,7 +33,7 @@ void main() {
       _profileName,
     );
     await tester.enterText(
-      find.byKey(NodesTestKeys.importProfileUrlField),
+      find.byKey(NodesTestKeys.importProfilePayloadField),
       _subscriptionUrl,
     );
     await tester.tap(find.byKey(NodesTestKeys.importProfileSubmitButton));

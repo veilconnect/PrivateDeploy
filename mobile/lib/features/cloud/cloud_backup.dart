@@ -8,6 +8,7 @@ class CloudBackupPayload {
   final String provider;
   final String exportedAt;
   final String? apiKey;
+  final Map<String, String>? extra;
   final Map<String, Map<String, dynamic>> nodeRecords;
 
   const CloudBackupPayload({
@@ -15,6 +16,7 @@ class CloudBackupPayload {
     required this.provider,
     required this.exportedAt,
     required this.apiKey,
+    required this.extra,
     required this.nodeRecords,
   });
 }
@@ -43,6 +45,7 @@ String createCloudBackupJson({
   required String provider,
   required Map<String, dynamic> nodeRecords,
   String? apiKey,
+  Map<String, String>? extra,
   DateTime? exportedAt,
 }) {
   return const JsonEncoder.withIndent('  ').convert({
@@ -50,6 +53,7 @@ String createCloudBackupJson({
     'provider': provider,
     'exportedAt': (exportedAt ?? DateTime.now().toUtc()).toIso8601String(),
     'apiKey': apiKey,
+    'extra': extra,
     'nodeRecords': nodeRecords,
   });
 }
@@ -98,6 +102,18 @@ CloudBackupPayload parseCloudBackupJson(
   }
   final normalizedApiKey = (apiKeyRaw ?? '').toString().trim();
 
+  final extraRaw = data['extra'];
+  if (extraRaw != null && extraRaw is! Map) {
+    throw const FormatException('Backup extra must be an object');
+  }
+  Map<String, String>? extra;
+  if (extraRaw != null) {
+    extra = <String, String>{};
+    for (final entry in (extraRaw as Map).entries) {
+      extra[entry.key.toString()] = entry.value?.toString() ?? '';
+    }
+  }
+
   final nodeRecordsRaw = data['nodeRecords'];
   if (nodeRecordsRaw != null && nodeRecordsRaw is! Map) {
     throw const FormatException('Backup nodeRecords must be an object');
@@ -122,6 +138,7 @@ CloudBackupPayload parseCloudBackupJson(
     provider: provider,
     exportedAt: exportedAt,
     apiKey: normalizedApiKey.isEmpty ? null : normalizedApiKey,
+    extra: extra,
     nodeRecords: nodeRecords,
   );
 }

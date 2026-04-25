@@ -24,14 +24,16 @@ void main() {
       final vultrRecord = VultrNodeRecord.fromJson('a', {'provider': 'vultr'});
       final doRecord =
           VultrNodeRecord.fromJson('b', {'provider': 'digitalocean'});
+      final sshRecord = VultrNodeRecord.fromJson('c', {'provider': 'ssh'});
 
       expect(vultrRecord.provider, CloudProviderId.vultr);
       expect(doRecord.provider, CloudProviderId.digitalocean);
+      expect(sshRecord.provider, CloudProviderId.ssh);
     });
 
     test('unknown provider string falls back to vultr', () {
       final record =
-          VultrNodeRecord.fromJson('c', {'provider': 'not-a-provider'});
+          VultrNodeRecord.fromJson('d', {'provider': 'not-a-provider'});
 
       expect(record.provider, CloudProviderId.vultr);
     });
