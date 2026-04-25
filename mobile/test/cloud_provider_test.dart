@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
@@ -133,6 +134,101 @@ void main() {
         ),
         isNull,
       );
+    });
+  });
+
+  group('CloudProvider preferred endpoint selection', () {
+    final instance = CloudInstance(
+      id: 'fra-node',
+      provider: 'vultr',
+      label: 'fra-node',
+      status: 'active',
+      region: 'fra',
+      plan: 'vc2-1c-1gb',
+      ipv4: '1.2.3.4',
+      nodeInfo: const NodeInfo(
+        ssPort: 443,
+        ssPassword: 'ss',
+        hyPort: 8443,
+        hyPassword: 'hy',
+        hyServerName: 'example.com',
+        hyInsecure: false,
+        vlessPort: 9443,
+        vlessUuid: 'uuid',
+        vlessPublicKey: 'pub',
+        vlessShortId: 'short',
+        vlessServerName: 'example.com',
+        trojanPort: 10443,
+        trojanPassword: 'trojan',
+        trojanServerName: 'example.com',
+        trojanInsecure: false,
+      ),
+    );
+
+    test('persists and returns manual endpoint preference', () async {
+      final provider = CloudProvider(autoInitialize: false);
+
+      await provider.setPreferredEndpointLabel(instance, 'VLESS');
+
+      expect(provider.preferredEndpointLabelFor(instance), 'VLESS');
+      expect(
+        provider.availableEndpointLabelsFor(instance),
+        ['Shadowsocks', 'Hysteria2', 'VLESS', 'Trojan'],
+      );
+    });
+
+    test('generateNodeConfig prefers manual endpoint over latency result',
+        () async {
+      final provider = CloudProvider(autoInitialize: false);
+      provider
+        ..instances.clear()
+        ..instances.add(instance)
+        ..saveLatencyCheck(
+          instance.id,
+          CloudLatencyCheck.success(
+            latencyMs: 22,
+            endpointLabel: 'Trojan',
+            updatedAt: DateTime.now(),
+          ),
+          notify: false,
+        );
+      await provider.setPreferredEndpointLabel(instance, 'VLESS');
+
+      final raw = provider.generateNodeConfig(instance);
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds = decoded['outbounds'] as List<dynamic>;
+      final selector = outbounds.firstWhere(
+        (item) => item is Map<String, dynamic> && item['tag'] == 'select',
+      ) as Map<String, dynamic>;
+
+      expect(selector['default'], 'fra-node-VLESS');
+    });
+
+    test(
+        'generateNodeConfig does not lock auto mode to the last latency endpoint',
+        () {
+      final provider = CloudProvider(autoInitialize: false);
+      provider
+        ..instances.clear()
+        ..instances.add(instance)
+        ..saveLatencyCheck(
+          instance.id,
+          CloudLatencyCheck.success(
+            latencyMs: 22,
+            endpointLabel: 'Trojan',
+            updatedAt: DateTime.now(),
+          ),
+          notify: false,
+        );
+
+      final raw = provider.generateNodeConfig(instance);
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds = decoded['outbounds'] as List<dynamic>;
+      final selector = outbounds.firstWhere(
+        (item) => item is Map<String, dynamic> && item['tag'] == 'select',
+      ) as Map<String, dynamic>;
+
+      expect(selector['default'], 'auto');
     });
   });
 
@@ -764,7 +860,7 @@ void main() {
   });
 
   group('supportedCloudProbeEndpointsForCurrentPlatform', () {
-    test('filters Android-incompatible VLESS endpoints from probing', () {
+    test('keeps VLESS probing on Android for cloud TCP ranking', () {
       const nodeInfo = NodeInfo(
         ssPort: 443,
         ssPassword: 'ss',
@@ -788,7 +884,7 @@ void main() {
           nodeInfo: nodeInfo,
           targetPlatform: TargetPlatform.android,
         ),
-        ['Trojan', 'Shadowsocks'],
+        ['Trojan', 'VLESS', 'Shadowsocks'],
       );
     });
 

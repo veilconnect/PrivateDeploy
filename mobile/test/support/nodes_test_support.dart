@@ -158,6 +158,7 @@ const NodeInfo defaultTestNodeInfo = NodeInfo(
 Profile testProfile({
   String id = 'profile-1',
   required String name,
+  String? content,
   DateTime? createdAt,
   DateTime? updatedAt,
   DateTime? lastUpdated,
@@ -166,6 +167,7 @@ Profile testProfile({
   return Profile(
     id: id,
     name: name,
+    content: content,
     isActive: false,
     createdAt: created,
     updatedAt: updatedAt ?? created,
@@ -184,16 +186,24 @@ class TestCloudProvider extends ChangeNotifier
     this.isLoadingRegions = false,
     this.isLoadingPlans = false,
     this.apiKey,
+    Map<String, String>? providerExtra,
     CloudProviderId providerId = CloudProviderId.vultr,
+    this.hasPersistedActiveProviderSelection = false,
     this.setApiKeyResult = true,
+    this.setSshAccessResult = true,
     this.exportBackupPayload = '{"provider":"vultr"}',
     Map<String, CloudLatencyCheck>? latencyChecks,
+    Map<String, String>? preferredEndpointLabels,
     CloudFastestNodeSelection? fastestSelection,
     bool? hasApiKeyAfterRefresh,
     List<CloudInstance>? loadedInstances,
   })  : _hasApiKey = hasApiKey,
         _providerId = providerId,
+        _providerExtra = Map<String, String>.from(providerExtra ?? const {}),
         _latencyChecks = latencyChecks ?? const {},
+        _preferredEndpointLabels = Map<String, String>.from(
+          preferredEndpointLabels ?? const {},
+        ),
         _fastestSelection = fastestSelection,
         hasApiKeyAfterRefresh = hasApiKeyAfterRefresh ?? hasApiKey,
         loadedInstances = loadedInstances ?? instances;
@@ -201,11 +211,15 @@ class TestCloudProvider extends ChangeNotifier
   final bool hasApiKeyAfterRefresh;
   final List<CloudInstance> loadedInstances;
   final bool setApiKeyResult;
+  final bool setSshAccessResult;
   final String exportBackupPayload;
+  bool hasPersistedActiveProviderSelection;
 
   bool _hasApiKey;
   CloudProviderId _providerId;
+  Map<String, String> _providerExtra;
   Map<String, CloudLatencyCheck> _latencyChecks;
+  Map<String, String> _preferredEndpointLabels;
   final CloudFastestNodeSelection? _fastestSelection;
 
   @override
@@ -256,7 +270,17 @@ class TestCloudProvider extends ChangeNotifier
   bool get hasApiKey => _hasApiKey;
 
   @override
-  bool get hasStoredApiKey => apiKey?.trim().isNotEmpty == true;
+  bool get hasStoredApiKey => _providerId == CloudProviderId.ssh
+      ? _providerExtra['host']?.trim().isNotEmpty == true &&
+          _providerExtra['username']?.trim().isNotEmpty == true &&
+          _providerExtra['password']?.trim().isNotEmpty == true
+      : apiKey?.trim().isNotEmpty == true;
+
+  @override
+  Map<String, String> get providerExtra => Map.unmodifiable(_providerExtra);
+
+  @override
+  bool get isSshProvider => _providerId == CloudProviderId.ssh;
 
   @override
   Future<void> refreshCloudConfig({bool notify = true}) async {
@@ -266,7 +290,9 @@ class TestCloudProvider extends ChangeNotifier
       notifyListeners();
     }
 
-    _hasApiKey = hasApiKeyAfterRefresh;
+    _hasApiKey = _providerId == CloudProviderId.ssh
+        ? hasStoredApiKey
+        : hasApiKeyAfterRefresh;
     error = null;
     isLoading = false;
     notifyListeners();
@@ -316,9 +342,35 @@ class TestCloudProvider extends ChangeNotifier
   }
 
   @override
+  Future<bool> setSshAccessConfig({
+    required String host,
+    required String port,
+    required String username,
+    required String password,
+  }) async {
+    if (!setSshAccessResult) {
+      error ??= 'Failed to save SSH access';
+      notifyListeners();
+      return false;
+    }
+    _providerExtra = <String, String>{
+      'host': host,
+      'port': port,
+      'username': username,
+      'password': password,
+      'authMethod': 'password',
+    };
+    _hasApiKey = true;
+    error = null;
+    notifyListeners();
+    return true;
+  }
+
+  @override
   Future<bool> setActiveProvider(CloudProviderId target) async {
     setActiveProviderCalls++;
     _providerId = target;
+    hasPersistedActiveProviderSelection = true;
     notifyListeners();
     return true;
   }
@@ -349,6 +401,31 @@ class TestCloudProvider extends ChangeNotifier
   @override
   CloudLatencyCheck? latencyCheckFor(String instanceId) =>
       _latencyChecks[instanceId];
+
+  @override
+  List<String> availableEndpointLabelsFor(CloudInstance instance) {
+    return availableCloudEndpointLabels(instance.nodeInfo);
+  }
+
+  @override
+  String? preferredEndpointLabelFor(CloudInstance instance) {
+    final label = _preferredEndpointLabels[instance.id];
+    return availableEndpointLabelsFor(instance).contains(label) ? label : null;
+  }
+
+  @override
+  Future<void> setPreferredEndpointLabel(
+    CloudInstance instance,
+    String? endpointLabel,
+  ) async {
+    final normalizedLabel = endpointLabel?.trim();
+    if (normalizedLabel == null || normalizedLabel.isEmpty) {
+      _preferredEndpointLabels.remove(instance.id);
+    } else {
+      _preferredEndpointLabels[instance.id] = normalizedLabel;
+    }
+    notifyListeners();
+  }
 
   @override
   Future<CloudLatencyCheck> testInstanceLatency(
@@ -402,6 +479,7 @@ class TestCloudProvider extends ChangeNotifier
   String? generateNodeConfig(CloudInstance instance) {
     return buildCloudNodeConfig(
       instance,
+      preferredEndpointLabel: preferredEndpointLabelFor(instance),
       targetPlatform: defaultTargetPlatform,
     );
   }
@@ -508,6 +586,8 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
     this.diagnosticsError,
     this.isRefreshingDiagnostics = false,
     this.diagnosticsUpdatedAt,
+    this.lastKnownEgressIp,
+    this.lastKnownEgressIpAt,
     List<VpnRouteDecision>? recentRouteDecisions,
   })  : _status = status,
         statusAfterInitialize = statusAfterInitialize ?? status,
@@ -541,6 +621,12 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   final DateTime? diagnosticsUpdatedAt;
+
+  @override
+  final String? lastKnownEgressIp;
+
+  @override
+  final DateTime? lastKnownEgressIpAt;
 
   VpnStatus _status;
   final List<VpnRouteDecision> _recentRouteDecisions;

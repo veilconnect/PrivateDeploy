@@ -1,6 +1,7 @@
 enum CloudProviderId {
   vultr('vultr', 'Vultr'),
-  digitalocean('digitalocean', 'DigitalOcean');
+  digitalocean('digitalocean', 'DigitalOcean'),
+  ssh('ssh', 'SSH');
 
   final String id;
   final String displayName;
@@ -8,6 +9,8 @@ enum CloudProviderId {
   const CloudProviderId(this.id, this.displayName);
 
   String get apiKeyStorageKey => 'mobile_cloud_${id}_api_key';
+
+  String get configStorageKey => 'mobile_cloud_${id}_config';
 
   String get nodeRecordsStorageKey => 'mobile_cloud_${id}_nodes';
 

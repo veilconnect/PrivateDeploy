@@ -16,6 +16,7 @@ import 'cloud_provider_id.dart';
 import 'cloud_provider_utils.dart';
 import 'cloud_provider_validation.dart';
 import 'digitalocean_client.dart';
+import 'ssh_deployer.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
 import 'vultr_user_data_recovery.dart';
@@ -25,12 +26,18 @@ typedef CloudLatencyProbe = Future<CloudLatencyCheck> Function(
 
 class CloudProvider extends CloudProviderBase {
   CloudProviderId _providerId = CloudProviderId.vultr;
+  bool _hasPersistedActiveProviderSelection = false;
 
   @override
   CloudProviderId get providerId => _providerId;
 
+  bool get hasPersistedActiveProviderSelection =>
+      _hasPersistedActiveProviderSelection;
+
   static const String _activeProviderStorageKey =
       'mobile_cloud_active_provider';
+  static const String _preferredEndpointStorageKey =
+      'mobile_cloud_endpoint_preferences';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
   static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
@@ -47,9 +54,11 @@ class CloudProvider extends CloudProviderBase {
   bool _isLoadingPlans = false;
   String? _error;
   String? _apiKey;
+  Map<String, String> _providerExtra = {};
   final String _selectedProfile = PortProfileAllocator.randomProfile;
   Map<String, VultrNodeRecord> _nodeRecords = {};
   final Map<String, CloudLatencyCheck> _latencyChecks = {};
+  final Map<String, String> _preferredEndpointLabels = {};
   Future<void>? _regionsLoadFuture;
   Future<void>? _plansLoadFuture;
   final CloudLatencyProbe _latencyProbe;
@@ -91,6 +100,8 @@ class CloudProvider extends CloudProviderBase {
   bool get isBenchmarkingAll => _benchmarkAllRunning;
   bool get benchmarkAbortRequested => _benchmarkAbortRequested;
   String? get error => _error;
+  Map<String, String> get providerExtra => Map.unmodifiable(_providerExtra);
+  bool get isSshProvider => _providerId == CloudProviderId.ssh;
 
   void markBenchmarkAllStart() {
     _benchmarkAllRunning = true;
@@ -112,10 +123,54 @@ class CloudProvider extends CloudProviderBase {
 
   bool get hasApiKey => _hasApiKey;
   String? get apiKey => _apiKey;
-  bool get hasStoredApiKey => _apiKey?.trim().isNotEmpty == true;
+  bool get hasStoredApiKey => isSshProvider
+      ? hasValidSshAccessConfig(_providerExtra)
+      : _apiKey?.trim().isNotEmpty == true;
   bool get isConfigured => _hasApiKey && _configLoaded;
   CloudLatencyCheck? latencyCheckFor(String instanceId) =>
       _latencyChecks[instanceId];
+
+  List<String> availableEndpointLabelsFor(CloudInstance instance) {
+    return availableCloudEndpointLabels(instance.nodeInfo);
+  }
+
+  String? preferredEndpointLabelFor(CloudInstance instance) {
+    final preferenceKey = _endpointPreferenceKeyForInstance(instance);
+    final preferredLabel = _preferredEndpointLabels[preferenceKey]?.trim();
+    if (preferredLabel == null || preferredLabel.isEmpty) {
+      return null;
+    }
+
+    return availableEndpointLabelsFor(instance).contains(preferredLabel)
+        ? preferredLabel
+        : null;
+  }
+
+  Future<void> setPreferredEndpointLabel(
+    CloudInstance instance,
+    String? endpointLabel,
+  ) async {
+    await _initializeStorage();
+
+    final preferenceKey = _endpointPreferenceKeyForInstance(instance);
+    final normalizedLabel = endpointLabel?.trim();
+    if (normalizedLabel == null || normalizedLabel.isEmpty) {
+      _preferredEndpointLabels.remove(preferenceKey);
+    } else {
+      final availableLabels = availableEndpointLabelsFor(instance);
+      if (!availableLabels.contains(normalizedLabel)) {
+        throw ArgumentError.value(
+          endpointLabel,
+          'endpointLabel',
+          'Endpoint is not available for this node',
+        );
+      }
+      _preferredEndpointLabels[preferenceKey] = normalizedLabel;
+    }
+
+    await _persistPreferredEndpointLabels();
+    notifyListeners();
+  }
 
   String? resolveEgressIpForProfileName(String? profileName) {
     final label = _cloudInstanceLabelFromProfileName(profileName);
@@ -245,6 +300,7 @@ class CloudProvider extends CloudProviderBase {
 
   Future<void> _init() async {
     await _initializeStorage();
+    await _restorePreferredEndpointLabels();
     // Restore the previously selected provider before loading any per-provider
     // data, otherwise node records and api key would be read from the wrong
     // storage namespace on app restart.
@@ -260,7 +316,8 @@ class CloudProvider extends CloudProviderBase {
     // workspace sync triggered by NodesScreen, avoiding a blocking network
     // call during provider construction.
     _apiKey = await _getStoredApiKey();
-    _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
+    _providerExtra = await _getStoredProviderExtra();
+    _hasApiKey = _hasStoredAccessFor(_providerId, _apiKey, _providerExtra);
     _configLoaded = true;
     notifyListeners();
   }
@@ -270,7 +327,54 @@ class CloudProvider extends CloudProviderBase {
     final parsed = CloudProviderId.tryParse(stored);
     if (parsed != null) {
       _providerId = parsed;
+      _hasPersistedActiveProviderSelection = true;
     }
+  }
+
+  Future<void> _restorePreferredEndpointLabels() async {
+    _preferredEndpointLabels.clear();
+    final raw = StorageService.getString(_preferredEndpointStorageKey);
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return;
+      }
+
+      for (final entry in decoded.entries) {
+        final key = entry.key.toString().trim();
+        final value = entry.value?.toString().trim() ?? '';
+        if (key.isEmpty || value.isEmpty) {
+          continue;
+        }
+        _preferredEndpointLabels[key] = value;
+      }
+    } catch (e) {
+      AppLogger.error(
+        '[CloudProvider] Failed to parse preferred endpoint labels',
+        e,
+      );
+      await StorageService.remove(_preferredEndpointStorageKey);
+    }
+  }
+
+  Future<void> _persistPreferredEndpointLabels() async {
+    if (_preferredEndpointLabels.isEmpty) {
+      await StorageService.remove(_preferredEndpointStorageKey);
+      return;
+    }
+    await StorageService.saveString(
+      _preferredEndpointStorageKey,
+      jsonEncode(_preferredEndpointLabels),
+    );
+  }
+
+  String _endpointPreferenceKeyForInstance(CloudInstance instance) {
+    final owner = CloudProviderId.tryParse(instance.provider) ?? _providerId;
+    return '${owner.id}:${instance.id}';
   }
 
   /// Switch the active cloud provider. Keeps both providers' persisted data
@@ -284,6 +388,7 @@ class CloudProvider extends CloudProviderBase {
     await _initializeStorage();
     _providerRequestEpoch += 1;
     _providerId = target;
+    _hasPersistedActiveProviderSelection = true;
     await StorageService.saveString(_activeProviderStorageKey, target.id);
 
     // Reset in-memory state tied to the previous provider. Disk records
@@ -300,6 +405,7 @@ class CloudProvider extends CloudProviderBase {
     _regionsLoadFuture = null;
     _plansLoadFuture = null;
     _apiKey = null;
+    _providerExtra = {};
     _hasApiKey = false;
     _configLoaded = false;
     _error = null;
@@ -308,7 +414,8 @@ class CloudProvider extends CloudProviderBase {
     _restoreInstancesFromCache();
     await _loadOtherProviderInstancesFromCache();
     _apiKey = await _getStoredApiKey();
-    _hasApiKey = _apiKey != null && _apiKey!.isNotEmpty;
+    _providerExtra = await _getStoredProviderExtra();
+    _hasApiKey = _hasStoredAccessFor(_providerId, _apiKey, _providerExtra);
     notifyListeners();
     return true;
   }
@@ -337,6 +444,9 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<CloudApiClient> _cloudClient() async {
+    if (isSshProvider) {
+      throw StateError('SSH provider does not use a cloud API client');
+    }
     final key = await _getStoredApiKey();
     if (key == null || key.isEmpty) {
       throw StateError('${providerDisplayName} API key is not configured');
@@ -353,6 +463,9 @@ class CloudProvider extends CloudProviderBase {
         return DigitalOceanCloudClient(key);
       case CloudProviderId.vultr:
         return VultrCloudClient(key);
+      case CloudProviderId.ssh:
+        throw UnsupportedError(
+            'SSH provider does not build a cloud API client');
     }
   }
 
@@ -365,6 +478,10 @@ class CloudProvider extends CloudProviderBase {
 
   Future<String?> _getStoredApiKey() async {
     return _getStoredApiKeyFor(_providerId);
+  }
+
+  Future<Map<String, String>> _getStoredProviderExtra() async {
+    return _getStoredProviderExtraFor(_providerId);
   }
 
   Future<String?> _getStoredApiKeyFor(CloudProviderId providerId) async {
@@ -388,6 +505,50 @@ class CloudProvider extends CloudProviderBase {
     return (normalized == null || normalized.isEmpty) ? null : normalized;
   }
 
+  Future<Map<String, String>> _getStoredProviderExtraFor(
+    CloudProviderId providerId,
+  ) async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    var raw = await StorageService.getSecureString(providerId.configStorageKey);
+    if (raw == null || raw.isEmpty) {
+      final legacy = StorageService.getString(providerId.configStorageKey);
+      if (legacy != null && legacy.trim().isNotEmpty) {
+        raw = legacy.trim();
+        await StorageService.saveSecureString(providerId.configStorageKey, raw);
+        await StorageService.remove(providerId.configStorageKey);
+      }
+    }
+    if (raw == null || raw.isEmpty) {
+      if (_providerId == providerId) {
+        _providerExtra = {};
+      }
+      return {};
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final parsed = decoded.map<String, String>(
+          (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+        );
+        if (_providerId == providerId) {
+          _providerExtra = parsed;
+        }
+        return parsed;
+      }
+    } catch (error) {
+      AppLogger.error(
+        '[CloudProvider] Failed to parse stored provider config for ${providerId.id}',
+        error,
+      );
+    }
+    if (_providerId == providerId) {
+      _providerExtra = {};
+    }
+    return {};
+  }
+
   // Persist a new key and mark cloud access as available. Keep these flags
   // in sync inside the helper so callers (importBackupJson, setApiKey, etc.)
   // cannot drift — historically importBackupJson called _saveApiKey but
@@ -403,6 +564,18 @@ class CloudProvider extends CloudProviderBase {
     await StorageService.remove(apiKeyStorageKey);
   }
 
+  Future<void> _saveProviderExtra(Map<String, String> extra) async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    _providerExtra = Map<String, String>.from(extra);
+    await StorageService.saveSecureString(
+      providerId.configStorageKey,
+      jsonEncode(_providerExtra),
+    );
+    await StorageService.remove(providerId.configStorageKey);
+  }
+
   Future<void> _clearApiKey() async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
@@ -411,6 +584,29 @@ class CloudProvider extends CloudProviderBase {
     _hasApiKey = false;
     await StorageService.removeSecure(apiKeyStorageKey);
     await StorageService.remove(apiKeyStorageKey);
+  }
+
+  Future<void> _clearProviderExtra() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+    _providerExtra = {};
+    await StorageService.removeSecure(providerId.configStorageKey);
+    await StorageService.remove(providerId.configStorageKey);
+  }
+
+  bool _hasStoredAccessFor(
+    CloudProviderId providerId,
+    String? apiKey,
+    Map<String, String> extra,
+  ) {
+    switch (providerId) {
+      case CloudProviderId.ssh:
+        return hasValidSshAccessConfig(extra);
+      case CloudProviderId.vultr:
+      case CloudProviderId.digitalocean:
+        return apiKey != null && apiKey.trim().isNotEmpty;
+    }
   }
 
   Future<Map<String, VultrNodeRecord>> _loadNodeRecords() async {
@@ -494,6 +690,20 @@ class CloudProvider extends CloudProviderBase {
   Future<void> refreshCloudConfig({bool notify = true}) async {
     final providerId = _providerId;
     final requestEpoch = _providerRequestEpoch;
+    if (providerId == CloudProviderId.ssh) {
+      _providerExtra = await _getStoredProviderExtraFor(providerId);
+      if (_isStaleProviderRequest(providerId, requestEpoch)) {
+        return;
+      }
+      _apiKey = null;
+      _hasApiKey = hasValidSshAccessConfig(_providerExtra);
+      _error = null;
+      _configLoaded = true;
+      if (notify && !_isStaleProviderRequest(providerId, requestEpoch)) {
+        notifyListeners();
+      }
+      return;
+    }
     try {
       final key = await _getStoredApiKeyFor(providerId);
       if (_isStaleProviderRequest(providerId, requestEpoch)) {
@@ -577,6 +787,46 @@ class CloudProvider extends CloudProviderBase {
     }
   }
 
+  Future<bool> setSshAccessConfig({
+    required String host,
+    required String port,
+    required String username,
+    required String password,
+  }) async {
+    final normalized = normalizeSshAccessConfig(
+      host: host,
+      port: port,
+      username: username,
+      password: password,
+    );
+    if (!hasValidSshAccessConfig(normalized)) {
+      _error = 'SSH host, username, and password are required';
+      notifyListeners();
+      return false;
+    }
+
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await testSshConnection(normalized);
+      await _saveProviderExtra(normalized);
+      _apiKey = null;
+      _hasApiKey = true;
+      _configLoaded = true;
+      _error = null;
+      return true;
+    } catch (e) {
+      _error = 'Failed to save SSH access: ${cloudProviderMessageFromError(e)}';
+      AppLogger.error('[CloudProvider] Save SSH access error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> loadInstances({bool notify = true}) async {
     final providerId = _providerId;
     final requestEpoch = _providerRequestEpoch;
@@ -598,6 +848,25 @@ class CloudProvider extends CloudProviderBase {
     }
 
     try {
+      if (providerId == CloudProviderId.ssh) {
+        final records = await _loadNodeRecordsFor(providerId);
+        if (_isStaleProviderRequest(providerId, requestEpoch)) {
+          return;
+        }
+        _nodeRecords = records;
+        _instances = records.values
+            .where((record) => record.instanceId.isNotEmpty)
+            .map((record) => record.toCloudInstance())
+            .toList()
+          ..sort(
+            (a, b) => (b.createdAt ?? DateTime(0))
+                .compareTo(a.createdAt ?? DateTime(0)),
+          );
+        _error = null;
+        AppLogger.info('[CloudProvider] Loaded ${_instances.length} SSH nodes');
+        return;
+      }
+
       final key = await _getStoredApiKeyFor(providerId);
       if (_isStaleProviderRequest(providerId, requestEpoch)) {
         return;
@@ -930,6 +1199,14 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<void> loadRegions({bool notify = true}) async {
+    if (_providerId == CloudProviderId.ssh) {
+      _regions = const [];
+      _error = null;
+      if (notify) {
+        notifyListeners();
+      }
+      return;
+    }
     if (_regionsLoadFuture != null) {
       return _regionsLoadFuture!;
     }
@@ -973,6 +1250,14 @@ class CloudProvider extends CloudProviderBase {
   }
 
   Future<void> loadPlans({bool notify = true}) async {
+    if (_providerId == CloudProviderId.ssh) {
+      _plans = const [];
+      _error = null;
+      if (notify) {
+        notifyListeners();
+      }
+      return;
+    }
     if (_plansLoadFuture != null) {
       return _plansLoadFuture!;
     }
@@ -1240,6 +1525,21 @@ class CloudProvider extends CloudProviderBase {
     notifyListeners();
 
     try {
+      if (_providerId == CloudProviderId.ssh) {
+        final resolvedLabel = normalizeInstanceLabel(label);
+        final deployment = await deployNodeViaSsh(
+          extra: _providerExtra,
+          label: resolvedLabel,
+        );
+        await _updateNodeRecord(
+          deployment.record.instanceId,
+          deployment.record.toJson(),
+        );
+        await _loadNodeRecords();
+        await loadInstances(notify: false);
+        return true;
+      }
+
       final resolvedLabel = normalizeInstanceLabel(label);
       final selectionError = validateDeploymentSelection(
         region: region,
@@ -1336,6 +1636,45 @@ class CloudProvider extends CloudProviderBase {
     // provider. Falls back to the active provider's client for unknown ids.
     final owner = _findInstanceOwner(id);
 
+    if (owner == CloudProviderId.ssh) {
+      _isLoading = true;
+      _error = null;
+      notifyListeners();
+      try {
+        final records = await _loadNodeRecordsFor(CloudProviderId.ssh);
+        records.remove(id);
+        await _saveNodeRecordsFor(CloudProviderId.ssh, records);
+        if (_providerId == CloudProviderId.ssh) {
+          _nodeRecords = records;
+          _instances = records.values
+              .where((record) => record.instanceId.isNotEmpty)
+              .map((record) => record.toCloudInstance())
+              .toList()
+            ..sort(
+              (a, b) => (b.createdAt ?? DateTime(0))
+                  .compareTo(a.createdAt ?? DateTime(0)),
+            );
+        } else {
+          final list = _otherProviderInstances[CloudProviderId.ssh];
+          if (list != null) {
+            _otherProviderInstances[CloudProviderId.ssh] =
+                list.where((instance) => instance.id != id).toList();
+          }
+        }
+        _latencyChecks.remove(id);
+        await _removePreferredEndpointLabelForInstance(CloudProviderId.ssh, id);
+        return true;
+      } catch (e) {
+        _error =
+            'Failed to delete instance: ${cloudProviderMessageFromError(e)}';
+        AppLogger.error('[CloudProvider] Delete SSH node error', e);
+        return false;
+      } finally {
+        _isLoading = false;
+        notifyListeners();
+      }
+    }
+
     if (owner == null || owner == _providerId) {
       if (!await _ensureAuthorizedCloudAccess()) {
         return false;
@@ -1359,6 +1698,7 @@ class CloudProvider extends CloudProviderBase {
       if (owner == null || owner == _providerId) {
         _nodeRecords.remove(id);
         _latencyChecks.remove(id);
+        await _removePreferredEndpointLabelForInstance(_providerId, id);
         await _saveNodeRecords();
         _instances = _instances.where((instance) => instance.id != id).toList();
       } else {
@@ -1371,6 +1711,7 @@ class CloudProvider extends CloudProviderBase {
         }
         await _removeNodeRecordFor(owner, id);
         _latencyChecks.remove(id);
+        await _removePreferredEndpointLabelForInstance(owner, id);
       }
       return true;
     } catch (e) {
@@ -1389,6 +1730,26 @@ class CloudProvider extends CloudProviderBase {
       if (entry.value.any((i) => i.id == id)) return entry.key;
     }
     return null;
+  }
+
+  Future<void> _removePreferredEndpointLabelForInstance(
+    CloudProviderId providerId,
+    String instanceId,
+  ) async {
+    final removed =
+        _preferredEndpointLabels.remove('${providerId.id}:$instanceId');
+    if (removed != null) {
+      await _persistPreferredEndpointLabels();
+    }
+  }
+
+  Future<void> _clearPreferredEndpointLabelsForProvider(
+    CloudProviderId providerId,
+  ) async {
+    _preferredEndpointLabels.removeWhere(
+      (key, _) => key.startsWith('${providerId.id}:'),
+    );
+    await _persistPreferredEndpointLabels();
   }
 
   Future<void> _removeNodeRecordFor(
@@ -1411,6 +1772,7 @@ class CloudProvider extends CloudProviderBase {
     _hasApiKey = false;
     _configLoaded = false;
     _apiKey = null;
+    _providerExtra = {};
     _error = null;
     _nodeRecords = {};
     notifyListeners();
@@ -1418,7 +1780,9 @@ class CloudProvider extends CloudProviderBase {
 
   Future<void> clearLocalCloudData() async {
     await _clearApiKey();
+    await _clearProviderExtra();
     _nodeRecords = {};
+    await _clearPreferredEndpointLabelsForProvider(_providerId);
     await StorageService.removeSecure(nodeRecordsStorageKey);
     await StorageService.remove(nodeRecordsStorageKey);
     reset();
@@ -1426,6 +1790,7 @@ class CloudProvider extends CloudProviderBase {
 
   Future<String> exportBackupJson() async {
     final key = await _getStoredApiKey();
+    final extra = await _getStoredProviderExtra();
     final records = await _loadNodeRecords();
     final payload = <String, dynamic>{};
     for (final entry in records.entries) {
@@ -1434,6 +1799,7 @@ class CloudProvider extends CloudProviderBase {
     return createCloudBackupJson(
       provider: providerName,
       apiKey: key,
+      extra: extra.isEmpty ? null : extra,
       nodeRecords: payload,
     );
   }
@@ -1446,6 +1812,14 @@ class CloudProvider extends CloudProviderBase {
 
     if (backup.apiKey != null && backup.apiKey!.isNotEmpty) {
       await _saveApiKey(backup.apiKey!);
+    } else {
+      await _clearApiKey();
+    }
+
+    if (backup.extra != null && backup.extra!.isNotEmpty) {
+      await _saveProviderExtra(backup.extra!);
+    } else {
+      await _clearProviderExtra();
     }
 
     final importedRecords = <String, VultrNodeRecord>{};
@@ -1469,6 +1843,7 @@ class CloudProvider extends CloudProviderBase {
     _plans = [];
     _error = null;
     _configLoaded = false;
+    _hasApiKey = _hasStoredAccessFor(_providerId, _apiKey, _providerExtra);
     notifyListeners();
 
     unawaited(
@@ -1479,7 +1854,7 @@ class CloudProvider extends CloudProviderBase {
   String? generateNodeConfig(CloudInstance instance) {
     return buildCloudNodeConfig(
       instance,
-      preferredEndpointLabel: _latencyChecks[instance.id]?.endpointLabel,
+      preferredEndpointLabel: preferredEndpointLabelFor(instance),
       targetPlatform: defaultTargetPlatform,
     );
   }
@@ -1754,7 +2129,7 @@ List<String> supportedCloudProbeEndpointsForCurrentPlatform({
   required NodeInfo nodeInfo,
   TargetPlatform? targetPlatform,
 }) {
-  final platform = targetPlatform ?? defaultTargetPlatform;
+  final _ = targetPlatform ?? defaultTargetPlatform;
   final labels = <String>[];
   // Intentionally do NOT require passwords/UUIDs here: the latency probe
   // below is a plain TCP Socket.connect measurement, not a protocol
@@ -1767,9 +2142,10 @@ List<String> supportedCloudProbeEndpointsForCurrentPlatform({
   if (nodeInfo.trojanPort > 0) {
     labels.add('Trojan');
   }
-  final supportsVless =
-      platform != TargetPlatform.android || !_androidBuildStripsVless();
-  if (supportsVless && nodeInfo.vlessPort > 0) {
+  // Keep the quick/benchmark selector on TCP-capable protocols only. Hy2 is
+  // now allowed on Android, but this helper still measures reachability via
+  // TCP Socket.connect, so it cannot rank a UDP-only protocol correctly.
+  if (nodeInfo.vlessPort > 0) {
     labels.add('VLESS');
   }
   if (nodeInfo.ssPort > 0) {
@@ -1777,8 +2153,6 @@ List<String> supportedCloudProbeEndpointsForCurrentPlatform({
   }
   return labels;
 }
-
-bool _androidBuildStripsVless() => true;
 
 Future<_CloudEndpointProbeResult> _runQuickEndpointProbe({
   required String host,

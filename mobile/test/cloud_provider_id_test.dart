@@ -24,12 +24,14 @@ void main() {
     test('display names', () {
       expect(CloudProviderId.vultr.displayName, 'Vultr');
       expect(CloudProviderId.digitalocean.displayName, 'DigitalOcean');
+      expect(CloudProviderId.ssh.displayName, 'SSH');
     });
 
     test('tryParse returns matching enum or null', () {
       expect(CloudProviderId.tryParse('vultr'), CloudProviderId.vultr);
       expect(CloudProviderId.tryParse('digitalocean'),
           CloudProviderId.digitalocean);
+      expect(CloudProviderId.tryParse('ssh'), CloudProviderId.ssh);
       expect(CloudProviderId.tryParse('aws'), isNull);
       expect(CloudProviderId.tryParse(''), isNull);
       expect(CloudProviderId.tryParse(null), isNull);
@@ -41,6 +43,7 @@ void main() {
       expect(CloudProviderId.parseOrVultr('aws'), CloudProviderId.vultr);
       expect(CloudProviderId.parseOrVultr('digitalocean'),
           CloudProviderId.digitalocean);
+      expect(CloudProviderId.parseOrVultr('ssh'), CloudProviderId.ssh);
     });
 
     test('storage keys never collide between providers', () {
@@ -48,6 +51,8 @@ void main() {
       for (final provider in CloudProviderId.values) {
         expect(keys.add(provider.apiKeyStorageKey), isTrue,
             reason: 'duplicate apiKeyStorageKey for ${provider.id}');
+        expect(keys.add(provider.configStorageKey), isTrue,
+            reason: 'duplicate configStorageKey for ${provider.id}');
         expect(keys.add(provider.nodeRecordsStorageKey), isTrue,
             reason: 'duplicate nodeRecordsStorageKey for ${provider.id}');
       }

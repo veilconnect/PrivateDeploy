@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
+import '../cloud/ssh_deployer.dart';
 import 'settings_cloud_dialogs.dart';
 
 class SettingsServerSection extends StatelessWidget {
@@ -12,11 +14,13 @@ class SettingsServerSection extends StatelessWidget {
     required this.onEditApiKey,
     required this.onExportBackup,
     required this.onImportBackup,
+    required this.onClearLocalCloudData,
   }) : super(key: key);
 
   final Future<void> Function(CloudProvider cloud) onEditApiKey;
   final Future<void> Function(CloudProvider cloud) onExportBackup;
   final Future<void> Function(CloudProvider cloud) onImportBackup;
+  final Future<void> Function() onClearLocalCloudData;
 
   @override
   Widget build(BuildContext context) {
@@ -32,44 +36,46 @@ class SettingsServerSection extends StatelessWidget {
           ),
           Consumer<CloudProvider>(
             builder: (context, cloud, _) {
+              final isSsh = cloud.providerId == CloudProviderId.ssh;
               return Column(
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.link),
-                    title: Text(l10n.standaloneCloudAccess),
-                    subtitle: Text(l10n.standaloneCloudAccessDesc),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.vpn_key),
-                    title: Text(l10n.apiKey),
-                    subtitle: Text(maskedSettingsApiKey(cloud.apiKey, notSetLabel: l10n.notSet)),
+                    leading: Icon(
+                      isSsh ? Icons.terminal_outlined : Icons.vpn_key,
+                    ),
+                    title: Text(isSsh ? l10n.sshAccess : l10n.apiKey),
+                    subtitle: Text(
+                      isSsh
+                          ? (cloud.providerExtra.isEmpty
+                              ? l10n.notSet
+                              : sshAccessSummary(cloud.providerExtra))
+                          : maskedSettingsApiKey(
+                              cloud.apiKey,
+                              notSetLabel: l10n.notSet,
+                            ),
+                    ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onEditApiKey(cloud),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.cloud_outlined),
-                    title: Text(l10n.cloudProvider),
-                    subtitle: Text(l10n.cloudProviderDirect(cloud.providerName)),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.shield_outlined),
-                    title: Text(l10n.sensitiveData),
-                    subtitle: Text(l10n.sensitiveDataDesc),
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.copy_all_outlined),
                     title: Text(l10n.copyCloudBackup),
-                    subtitle: Text(l10n.copyCloudBackupDesc),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onExportBackup(cloud),
                   ),
                   ListTile(
                     leading: const Icon(Icons.restore_outlined),
                     title: Text(l10n.restoreCloudBackup),
-                    subtitle: Text(l10n.restoreCloudBackupDesc),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => onImportBackup(cloud),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: Text(l10n.clearLocalCloudData),
+                    subtitle: Text(l10n.clearLocalCloudDataDesc),
+                    onTap: onClearLocalCloudData,
                   ),
                 ],
               );

@@ -3,7 +3,6 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/foundation.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_throughput_probe.dart';
@@ -130,6 +129,7 @@ void main() {
         (tester) async {
       final cloudProvider = _FakeCloudProvider(
         apiKey: 'old-key',
+        hasPersistedActiveProviderSelection: true,
         setApiKeyResult: true,
       );
       var onSavedCalls = 0;
@@ -153,7 +153,7 @@ void main() {
 
       expect(cloudProvider.savedApiKey, 'new-key');
       expect(onSavedCalls, 1);
-      expect(find.text('API key saved and verified'), findsOneWidget);
+      expect(find.text('Cloud access saved and verified'), findsOneWidget);
     });
 
     testWidgets('showCloudApiKeyFlow keeps dialog open on save failure',
@@ -161,6 +161,7 @@ void main() {
       final cloudProvider = _FakeCloudProvider(
         setApiKeyResult: false,
         error: 'Invalid API key',
+        hasPersistedActiveProviderSelection: true,
       );
       var onSavedCalls = 0;
 
@@ -185,7 +186,51 @@ void main() {
       expect(onSavedCalls, 0);
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('Invalid API key'), findsOneWidget);
-      expect(find.text('API key saved and verified'), findsNothing);
+      expect(find.text('Cloud access saved and verified'), findsNothing);
+    });
+
+    testWidgets('showCloudApiKeyFlow saves SSH access and refreshes callback',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(
+        providerId: CloudProviderId.ssh,
+        hasPersistedActiveProviderSelection: false,
+        setSshAccessResult: true,
+      );
+      var onSavedCalls = 0;
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        onRun: (context) => showCloudApiKeyFlow(
+          context: context,
+          cloudProvider: cloudProvider,
+          onSaved: () async => onSavedCalls += 1,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(DropdownButtonFormField<CloudProviderId>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SSH').last);
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.at(0), '203.0.113.10');
+      await tester.enterText(fields.at(1), '22');
+      await tester.enterText(fields.at(2), 'root');
+      await tester.enterText(fields.at(3), 'secret');
+      await tester.tap(find.text('Verify & Save'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.providerExtra['host'], '203.0.113.10');
+      expect(cloudProvider.providerExtra['port'], '22');
+      expect(cloudProvider.providerExtra['username'], 'root');
+      expect(cloudProvider.providerExtra['password'], 'secret');
+      expect(onSavedCalls, 1);
+      expect(find.text('Cloud access saved and verified'), findsOneWidget);
     });
 
     testWidgets(
@@ -207,7 +252,7 @@ void main() {
 
       await tester.tap(find.text('Run'));
       await tester.pump();
-      expect(find.text('Deploy Node'), findsOneWidget);
+      expect(find.text('Create Route'), findsOneWidget);
       expect(find.text('Loading regions and plans...'), findsOneWidget);
       expect(cloudProvider.loadRegionsCalls, 0);
       expect(cloudProvider.loadPlansCalls, 0);
@@ -230,7 +275,7 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(find.text('Deploy Node'), findsOneWidget);
+      expect(find.text('Create Route'), findsOneWidget);
       expect(
         find.text('Deployment options are unavailable right now.'),
         findsOneWidget,
@@ -431,7 +476,7 @@ void main() {
       await tester.tap(find.text('Run'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Benchmark All Nodes'), findsOneWidget);
+      expect(find.text('Measure All Routes'), findsOneWidget);
       expect(find.text('Start Benchmark'), findsOneWidget);
 
       await tester.tap(find.text('Cancel'));
@@ -538,9 +583,13 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     this.isLoadingPlans = false,
     this.deleteResult = true,
     this.setApiKeyResult = true,
+    this.setSshAccessResult = true,
     this.createInstanceResult = true,
     this.apiKey,
     this.error,
+    this.hasPersistedActiveProviderSelection = true,
+    Map<String, String>? providerExtra,
+    CloudProviderId providerId = CloudProviderId.vultr,
     CloudLatencyCheck? benchmarkLatencyResult,
     CloudFastestNodeSelection? benchmarkSelection,
   })  : benchmarkLatencyResult = benchmarkLatencyResult ??
@@ -555,7 +604,9 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
         benchmarkSelection = benchmarkSelection ??
             const CloudFastestNodeSelection(
               error: 'No ready cloud node is available for testing',
-            );
+            ),
+        _providerId = providerId,
+        _providerExtra = Map<String, String>.from(providerExtra ?? const {});
 
   @override
   final List<CloudInstance> instances;
@@ -577,9 +628,16 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   final bool deleteResult;
   final bool setApiKeyResult;
+  final bool setSshAccessResult;
   final bool createInstanceResult;
   final CloudLatencyCheck benchmarkLatencyResult;
   final CloudFastestNodeSelection benchmarkSelection;
+  CloudProviderId _providerId;
+  final Map<String, String> _providerExtra;
+  @override
+  CloudProviderId get providerId => _providerId;
+  @override
+  bool hasPersistedActiveProviderSelection;
 
   @override
   final String? apiKey;
@@ -589,6 +647,24 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   @override
   String get providerDisplayName => providerId.displayName;
+
+  @override
+  bool get hasApiKey => providerId == CloudProviderId.ssh
+      ? hasStoredApiKey
+      : apiKey?.trim().isNotEmpty == true;
+
+  @override
+  bool get hasStoredApiKey => providerId == CloudProviderId.ssh
+      ? _providerExtra['host']?.trim().isNotEmpty == true &&
+          _providerExtra['username']?.trim().isNotEmpty == true &&
+          _providerExtra['password']?.trim().isNotEmpty == true
+      : apiKey?.trim().isNotEmpty == true;
+
+  @override
+  Map<String, String> get providerExtra => Map.unmodifiable(_providerExtra);
+
+  @override
+  bool get isSshProvider => providerId == CloudProviderId.ssh;
 
   String? deletedInstanceId;
   String? savedApiKey;
@@ -634,6 +710,34 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   Future<bool> setApiKey(String key) async {
     savedApiKey = key;
     return setApiKeyResult;
+  }
+
+  @override
+  Future<bool> setSshAccessConfig({
+    required String host,
+    required String port,
+    required String username,
+    required String password,
+  }) async {
+    if (!setSshAccessResult) {
+      return false;
+    }
+    _providerExtra
+      ..clear()
+      ..addAll(<String, String>{
+        'host': host,
+        'port': port,
+        'username': username,
+        'password': password,
+      });
+    return true;
+  }
+
+  @override
+  Future<bool> setActiveProvider(CloudProviderId target) async {
+    _providerId = target;
+    hasPersistedActiveProviderSelection = true;
+    return true;
   }
 
   @override
@@ -705,9 +809,6 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   String? generateNodeConfig(CloudInstance instance) {
     return '{"outbounds":[{"type":"direct","tag":"test"}]}';
   }
-
-  @override
-  CloudProviderId get providerId => CloudProviderId.vultr;
 
   bool _benchmarkAll = false;
   bool _benchmarkAbort = false;

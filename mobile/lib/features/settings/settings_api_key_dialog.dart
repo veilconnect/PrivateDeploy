@@ -41,19 +41,38 @@ class _SettingsApiKeyDialog extends StatefulWidget {
 }
 
 class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
-  late final TextEditingController _controller;
+  late final TextEditingController _apiKeyController;
+  late final TextEditingController _hostController;
+  late final TextEditingController _portController;
+  late final TextEditingController _usernameController;
+  late final TextEditingController _passwordController;
   bool _saving = false;
   bool _savedSuccessfully = false;
   String? _dialogError;
-  late CloudProviderId _selectedProvider;
+  CloudProviderId? _selectedProvider;
   late final CloudProviderId _originalProvider;
 
   @override
   void initState() {
     super.initState();
     _originalProvider = widget.cloud.providerId;
-    _selectedProvider = _originalProvider;
-    _controller = TextEditingController(text: widget.cloud.apiKey ?? '');
+    _selectedProvider = widget.cloud.hasPersistedActiveProviderSelection ||
+            widget.cloud.hasStoredApiKey
+        ? _originalProvider
+        : null;
+    _apiKeyController = TextEditingController(text: widget.cloud.apiKey ?? '');
+    _hostController = TextEditingController(
+      text: widget.cloud.providerExtra['host'] ?? '',
+    );
+    _portController = TextEditingController(
+      text: widget.cloud.providerExtra['port'] ?? '22',
+    );
+    _usernameController = TextEditingController(
+      text: widget.cloud.providerExtra['username'] ?? 'root',
+    );
+    _passwordController = TextEditingController(
+      text: widget.cloud.providerExtra['password'] ?? '',
+    );
   }
 
   @override
@@ -66,7 +85,11 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
         widget.cloud.providerId != _originalProvider) {
       unawaited(widget.cloud.setActiveProvider(_originalProvider));
     }
-    _controller.dispose();
+    _apiKeyController.dispose();
+    _hostController.dispose();
+    _portController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -80,7 +103,12 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     if (!mounted) return;
     setState(() {
       _selectedProvider = next;
-      _controller.text = widget.cloud.apiKey ?? '';
+      _apiKeyController.text = widget.cloud.apiKey ?? '';
+      _hostController.text = widget.cloud.providerExtra['host'] ?? '';
+      _portController.text = widget.cloud.providerExtra['port'] ?? '22';
+      _usernameController.text =
+          widget.cloud.providerExtra['username'] ?? 'root';
+      _passwordController.text = widget.cloud.providerExtra['password'] ?? '';
       _dialogError = null;
     });
   }
@@ -88,8 +116,9 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final isSsh = _selectedProvider == CloudProviderId.ssh;
     return AlertDialog(
-      title: Text(l10n.apiKey),
+      title: Text(l10n.cloudAccess),
       content: SizedBox(
         width: 520.w,
         child: Column(
@@ -98,6 +127,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
           children: [
             DropdownButtonFormField<CloudProviderId>(
               initialValue: _selectedProvider,
+              hint: Text(l10n.cloudProvider),
               decoration: InputDecoration(
                 labelText: l10n.cloudProvider,
                 border: const OutlineInputBorder(),
@@ -113,17 +143,68 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
               onChanged: _saving ? null : _onProviderChanged,
             ),
             SizedBox(height: 12.h),
-            TextField(
-              controller: _controller,
-              obscureText: true,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                hintText: l10n.pasteCloudProviderApiKey(
-                    _selectedProvider.displayName),
-                labelText: l10n.apiKey,
-                errorText: _dialogError,
+            if (isSsh) ...[
+              TextField(
+                controller: _hostController,
+                enabled: !_saving && _selectedProvider != null,
+                decoration: InputDecoration(
+                  hintText: '203.0.113.10',
+                  labelText: l10n.sshHost,
+                  errorText: _dialogError,
+                ),
               ),
-            ),
+              SizedBox(height: 12.h),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _portController,
+                      enabled: !_saving && _selectedProvider != null,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        hintText: '22',
+                        labelText: l10n.port,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 12.w),
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _usernameController,
+                      enabled: !_saving && _selectedProvider != null,
+                      decoration: InputDecoration(
+                        hintText: 'root',
+                        labelText: l10n.username,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 12.h),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                enabled: !_saving && _selectedProvider != null,
+                decoration: InputDecoration(
+                  labelText: l10n.sshPassword,
+                ),
+              ),
+            ] else
+              TextField(
+                controller: _apiKeyController,
+                obscureText: true,
+                enabled: !_saving && _selectedProvider != null,
+                decoration: InputDecoration(
+                  hintText: _selectedProvider == null
+                      ? null
+                      : l10n.pasteCloudProviderApiKey(
+                          _selectedProvider!.displayName,
+                        ),
+                  labelText: l10n.apiKey,
+                  errorText: _dialogError,
+                ),
+              ),
           ],
         ),
       ),
@@ -133,7 +214,8 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
           child: Text(l10n.cancel),
         ),
         FilledButton(
-          onPressed: _saving ? null : _verifyAndSave,
+          onPressed:
+              _saving || _selectedProvider == null ? null : _verifyAndSave,
           child: _saving
               ? Text(l10n.verifying)
               : Text(l10n.verifyAndSave),
@@ -148,7 +230,14 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       _dialogError = null;
     });
 
-    final success = await widget.cloud.setApiKey(_controller.text.trim());
+    final success = _selectedProvider == CloudProviderId.ssh
+        ? await widget.cloud.setSshAccessConfig(
+            host: _hostController.text.trim(),
+            port: _portController.text.trim(),
+            username: _usernameController.text.trim(),
+            password: _passwordController.text,
+          )
+        : await widget.cloud.setApiKey(_apiKeyController.text.trim());
     if (success) {
       await widget.cloud.loadInstances();
       if (!mounted) {
@@ -159,7 +248,9 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       if (widget.rootContext.mounted) {
         ScaffoldMessenger.of(widget.rootContext).showSnackBar(
           SnackBar(
-            content: Text(AppLocalizations.of(widget.rootContext)!.apiKeySavedAndVerified),
+            content: Text(
+              AppLocalizations.of(widget.rootContext)!.cloudAccessSavedAndVerified,
+            ),
             backgroundColor: Colors.green,
           ),
         );
@@ -172,7 +263,9 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     }
     setState(() {
       _saving = false;
-      _dialogError = widget.cloud.error ?? AppLocalizations.of(context)!.failedToSaveApiKey;
+      _dialogError =
+          widget.cloud.error ??
+          AppLocalizations.of(context)!.failedToSaveCloudAccess;
     });
   }
 }
