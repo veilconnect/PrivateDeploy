@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     libxrandr2 \
     libxtst6 \
+    openbox \
     procps \
     x11-utils \
     xauth \

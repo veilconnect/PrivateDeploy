@@ -9,7 +9,7 @@ require (
 	github.com/gen2brain/beeep v0.11.1
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
-	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.41.0
 	golang.org/x/net v0.43.0
@@ -21,6 +21,7 @@ require (
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/esiqveland/notify v0.13.3 // indirect

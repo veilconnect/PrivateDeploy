@@ -6,7 +6,7 @@ import { ExportCloudBackup, TestAllCloudRegions } from '@/bridge'
 import { useCloudStore, useKernelApiStore } from '@/stores'
 import { NODE_HISTORY_RETENTION_MS } from '@/stores/cloud/constants'
 import { formatDate, formatRelativeTime, message } from '@/utils'
-import { logError } from '@/utils/logger'
+import { logError, logInfo } from '@/utils/logger'
 import { isOnline } from '@/utils/offline'
 
 import ConnectivityChart from '@/components/ConnectivityChart.vue'
@@ -291,26 +291,47 @@ const {
 })
 
 const handleDeploy = async () => {
+  logInfo('[CloudView] handleDeploy invoked', {
+    provider: cloudStore.currentProvider,
+    hasApiKey: hasApiKey.value,
+    label: form.label,
+    region: form.region,
+    plan: form.plan,
+    disabled: disableDeploy.value,
+  })
   if (disableDeploy.value) {
+    logInfo('[CloudView] handleDeploy blocked: form incomplete')
     message.error(t('cloud.errors.formIncomplete'))
     return
   }
   try {
     message.info(t('cloud.create.deployingHint'))
+    logInfo('[CloudView] handleDeploy ensuring region availability', { region: form.region })
     await cloudStore.ensureRegionAvailability(form.region)
     const ids = availablePlanIds.value
     if (ids.length && !ids.includes(form.plan)) {
       ensurePlanForRegion(form.region)
       if (!ids.includes(form.plan)) {
+        logInfo('[CloudView] handleDeploy blocked: selected plan unavailable after refresh', {
+          region: form.region,
+          plan: form.plan,
+          availablePlanIds: ids,
+        })
         message.error(t('cloud.errors.planUnavailable'))
         return
       }
     }
+    logInfo('[CloudView] handleDeploy calling createInstance', {
+      label: form.label.trim(),
+      region: form.region,
+      plan: form.plan,
+    })
     await cloudStore.createInstance({
       label: form.label.trim(),
       region: form.region,
       plan: form.plan,
     })
+    logInfo('[CloudView] handleDeploy createInstance completed')
     message.success('common.success')
     form.label = defaultCloudLabel(cloudStore.currentProvider)
     await cloudStore.refreshInstances(true)

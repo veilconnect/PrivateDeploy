@@ -4,6 +4,8 @@ set -euo pipefail
 APP_BASE="${APP_BASE:?APP_BASE is required}"
 OUTPUT_DIR="${OUTPUT_DIR:?OUTPUT_DIR is required}"
 APP_BIN="${APP_BIN:-${APP_BASE}/PrivateDeploy}"
+APP_TITLE="${APP_TITLE:-$(basename "${APP_BIN}")}"
+SMOKE_SIGNAL_TITLE="${SMOKE_SIGNAL_TITLE:-${APP_TITLE}-dom-ready}"
 SCALES="${SCALES:-100 125 150}"
 SCREEN_WIDTH="${SCREEN_WIDTH:-1600}"
 SCREEN_HEIGHT="${SCREEN_HEIGHT:-1000}"
@@ -16,9 +18,29 @@ require_cmd() {
   fi
 }
 
-for cmd in Xvfb dbus-run-session xdotool xwininfo import convert timeout grep awk; do
+for cmd in Xvfb dbus-run-session xdotool xwininfo import convert timeout grep awk openbox; do
   require_cmd "${cmd}"
 done
+
+capture_window_crop() {
+  local root_image="$1"
+  local window_id="$2"
+  local crop_image="$3"
+  local geometry
+  geometry="$(xwininfo -id "${window_id}" | awk '
+    /Absolute upper-left X:/ { x = $4 }
+    /Absolute upper-left Y:/ { y = $4 }
+    /Width:/ { w = $2 }
+    /Height:/ { h = $2 }
+    END { print x, y, w, h }
+  ')"
+  local x y w h
+  read -r x y w h <<<"${geometry}"
+  if [[ -z "${x:-}" || -z "${y:-}" || -z "${w:-}" || -z "${h:-}" ]]; then
+    return 1
+  fi
+  convert "${root_image}" -crop "${w}x${h}+${x}+${y}" +repage "${crop_image}"
+}
 
 if [[ ! -x "${APP_BIN}" ]]; then
   echo "App binary not found or not executable: ${APP_BIN}" >&2
@@ -44,12 +66,27 @@ scale_to_env() {
   printf '%s %s\n' "${gdk_scale}" "${dpi_scale}"
 }
 
+find_window_id() {
+  local pattern
+  for pattern in "^${APP_TITLE}$" "^PrivateDeploy$" "${APP_TITLE}" "PrivateDeploy"; do
+    local found
+    found="$(xdotool search --onlyvisible --name "${pattern}" 2>/dev/null | head -n1 || true)"
+    if [[ -n "${found}" ]]; then
+      printf '%s\n' "${found}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_scale() {
   local scale="$1"
   local scale_dir="${OUTPUT_DIR}/scale${scale}"
   local xvfb_pid=""
+  local openbox_pid=""
   local app_pid=""
   local window_id=""
+  local use_host_display="${GUI_SMOKE_USE_HOST_DISPLAY:-0}"
   mkdir -p "${scale_dir}"
 
   read -r gdk_scale dpi_scale < <(scale_to_env "${scale}")
@@ -59,6 +96,10 @@ run_scale() {
       kill "${app_pid}" >/dev/null 2>&1 || true
       wait "${app_pid}" 2>/dev/null || true
     fi
+    if [[ -n "${openbox_pid}" ]]; then
+      kill "${openbox_pid}" >/dev/null 2>&1 || true
+      wait "${openbox_pid}" 2>/dev/null || true
+    fi
     if [[ -n "${xvfb_pid}" ]]; then
       kill "${xvfb_pid}" >/dev/null 2>&1 || true
       wait "${xvfb_pid}" 2>/dev/null || true
@@ -66,10 +107,15 @@ run_scale() {
   }
   trap cleanup RETURN
 
-  Xvfb ":99" -screen 0 "${SCREEN_WIDTH}x${SCREEN_HEIGHT}x24" > "${scale_dir}/xvfb.log" 2>&1 &
-  xvfb_pid="$!"
-  export DISPLAY=":99"
-  sleep 1
+  if [[ "${use_host_display}" == "1" ]]; then
+    export DISPLAY="${HOST_DISPLAY:?HOST_DISPLAY is required when GUI_SMOKE_USE_HOST_DISPLAY=1}"
+    export XAUTHORITY="${HOST_XAUTHORITY:?HOST_XAUTHORITY is required when GUI_SMOKE_USE_HOST_DISPLAY=1}"
+  else
+    Xvfb ":99" -screen 0 "${SCREEN_WIDTH}x${SCREEN_HEIGHT}x24" > "${scale_dir}/xvfb.log" 2>&1 &
+    xvfb_pid="$!"
+    export DISPLAY=":99"
+    sleep 1
+  fi
 
   export HOME="${APP_BASE}/home"
   export XDG_CONFIG_HOME="${APP_BASE}/xdg/config"
@@ -78,7 +124,6 @@ run_scale() {
   export XDG_RUNTIME_DIR="${APP_BASE}/xdg/runtime"
   export PRIVATEDEPLOY_SECRET_STORE_DIR="${APP_BASE}/secrets"
   export PRIVATEDEPLOY_DISABLE_TRAY="1"
-  export PRIVATEDEPLOY_LINUX_MINIMAL_SHELL="1"
   export GDK_BACKEND="x11"
   export LIBGL_ALWAYS_SOFTWARE="1"
   export GDK_SCALE="${gdk_scale}"
@@ -87,15 +132,22 @@ run_scale() {
   export LOGNAME="${HOST_USER:-user}"
   export NO_AT_BRIDGE="1"
   export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-1}"
+  export PRIVATEDEPLOY_DEBUG_SIGNAL_TITLE="${SMOKE_SIGNAL_TITLE}"
 
   mkdir -p "${HOME}" "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_RUNTIME_DIR}" "${PRIVATEDEPLOY_SECRET_STORE_DIR}"
   chmod 700 "${XDG_RUNTIME_DIR}"
+
+  if [[ "${use_host_display}" != "1" ]]; then
+    openbox > "${scale_dir}/openbox.log" 2>&1 &
+    openbox_pid="$!"
+    sleep 1
+  fi
 
   dbus-run-session -- "${APP_BIN}" > "${scale_dir}/app.out" 2> "${scale_dir}/app.err" &
   app_pid="$!"
 
   for _ in $(seq 1 "${WINDOW_WAIT_SEC}"); do
-    window_id="$(xdotool search --onlyvisible --name "PrivateDeploy" 2>/dev/null | head -n1 || true)"
+    window_id="$(find_window_id || true)"
     if [[ -n "${window_id}" ]]; then
       break
     fi
@@ -110,23 +162,34 @@ run_scale() {
     return 1
   fi
 
+  xdotool windowactivate --sync "${window_id}" >/dev/null 2>&1 || true
   sleep 6
   import -window root "${scale_dir}/root.png"
   import -window "${window_id}" "${scale_dir}/window.png"
+  capture_window_crop "${scale_dir}/root.png" "${window_id}" "${scale_dir}/window-crop.png"
 
   local color_count
-  color_count="$(convert "${scale_dir}/window.png" -format "%k" info: 2>/dev/null || echo 0)"
+  color_count="$(convert "${scale_dir}/window-crop.png" -format "%k" info: 2>/dev/null || echo 0)"
   local cloud_loaded="0"
   if grep -Eq 'ListCloud(Instances|Regions|Plans)Typed' "${scale_dir}/app.err"; then
     cloud_loaded="1"
   fi
+  local dom_ready="0"
+  if xdotool search --onlyvisible --name "^${SMOKE_SIGNAL_TITLE}$" >/dev/null 2>&1; then
+    dom_ready="1"
+  fi
 
-  if [[ "${color_count}" =~ ^[0-9]+$ ]] && (( color_count > 1 )); then
-    echo "scale=${scale} status=PASS colors=${color_count} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
+  if [[ "${color_count}" =~ ^[0-9]+$ ]] && (( color_count > 16 )); then
+    echo "scale=${scale} status=PASS colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
     return 0
   fi
 
-  echo "scale=${scale} status=FAIL reason=blank-window colors=${color_count} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
+  if [[ "${dom_ready}" == "1" ]]; then
+    echo "scale=${scale} status=PASS colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
+    return 0
+  fi
+
+  echo "scale=${scale} status=FAIL reason=blank-window colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
   return 1
 }
 

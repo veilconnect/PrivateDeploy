@@ -5,7 +5,10 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"io"
+	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,12 +38,19 @@ var icon []byte
 var linuxTrayIcon []byte
 
 func main() {
+	configureOptionalFileLogging()
+
 	if err := validateLinuxDisplay(); err != nil {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
 		os.Exit(1)
 	}
 
 	linuxMinimalShell := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_LINUX_MINIMAL_SHELL") == "1"
+	linuxStaticShell := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_LINUX_STATIC_SHELL") == "1"
+	linuxBareShell := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_LINUX_BARE_SHELL") == "1"
+	linuxSkipCreateApp := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_SKIP_CREATE_APP") == "1"
+	openInspectorOnStartup := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_OPEN_INSPECTOR_ON_STARTUP") == "1"
+	skipRollingRelease := os.Getenv("PRIVATEDEPLOY_SKIP_ROLLING_RELEASE") == "1"
 
 	appIcon := icon
 	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
@@ -54,7 +64,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := bridge.CreateApp(assets)
+	app := func() *bridge.App {
+		if !linuxSkipCreateApp {
+			return bridge.CreateApp(assets)
+		}
+
+		configureDiagnosticShellEnv()
+		log.Printf("[Startup] PRIVATEDEPLOY_SKIP_CREATE_APP=1: bypassing bridge.CreateApp() for Linux shell isolation")
+		return bridge.NewApp()
+	}()
 	trayStart := func() {}
 	if !linuxMinimalShell && os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
 		trayStart, _ = bridge.CreateTray(app, appIcon)
@@ -78,13 +96,31 @@ func main() {
 		},
 	}
 
-	if linuxMinimalShell {
+	if linuxMinimalShell || linuxStaticShell || linuxBareShell {
 		appMenu = nil
 		windowWidth = 1280
 		windowHeight = 840
 		startHidden = false
 		windowStartState = options.Normal
 		singleInstanceLock = nil
+	}
+
+	var bindTargets []any
+	if !linuxStaticShell && !linuxBareShell {
+		bindTargets = []any{app}
+	}
+
+	backgroundColour := &options.RGBA{R: 255, G: 255, B: 255, A: 255}
+	var linuxOptions *linux.Options
+	if !linuxBareShell {
+		linuxOptions = &linux.Options{
+			Icon:                appIcon,
+			WindowIsTranslucent: false,
+			ProgramName:         bridge.Env.AppName,
+			WebviewGpuPolicy:    linux.WebviewGpuPolicy(bridge.Config.WebviewGpuPolicy),
+		}
+	} else {
+		backgroundColour = nil
 	}
 
 	// Create application with options
@@ -101,7 +137,7 @@ func main() {
 		Height:           windowHeight,
 		StartHidden:      startHidden,
 		WindowStartState: windowStartState,
-		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 255},
+		BackgroundColour: backgroundColour,
 		Windows: &windows.Options{
 			// Keep the Windows shell fully opaque. Transparent WebView2 + acrylic
 			// looks appealing on local desktops but renders as black/ghosted UI
@@ -121,26 +157,78 @@ func main() {
 				Icon:    icon,
 			},
 		},
-		Linux: &linux.Options{
-			Icon:                appIcon,
-			WindowIsTranslucent: false,
-			ProgramName:         bridge.Env.AppName,
-			WebviewGpuPolicy:    linux.WebviewGpuPolicy(bridge.Config.WebviewGpuPolicy),
-		},
+		Linux: linuxOptions,
 		AssetServer: &assetserver.Options{
-			Assets:     frontendAssets,
-			Middleware: bridge.RollingRelease,
+			Assets: frontendAssets,
+			Middleware: func() func(http.Handler) http.Handler {
+				if skipRollingRelease {
+					return nil
+				}
+				return bridge.RollingRelease
+			}(),
 		},
 		SingleInstanceLock: singleInstanceLock,
 		OnStartup: func(ctx context.Context) {
 			app.Ctx = ctx
+			if linuxStaticShell || linuxBareShell {
+				return
+			}
 			if !linuxMinimalShell {
 				trayStart()
 			}
 			app.SetupSSHEventEmitter()
 		},
 		OnDomReady: func(ctx context.Context) {
-			if bridge.Env.OS != "linux" || linuxMinimalShell {
+			if signalTitle := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_DEBUG_SIGNAL_TITLE")); signalTitle != "" {
+				go func() {
+					time.Sleep(1200 * time.Millisecond)
+					runtime.WindowSetTitle(ctx, signalTitle)
+					runtime.WindowExecJS(ctx, fmt.Sprintf(`(function () {
+  document.title = %q;
+  if (document.body) {
+    document.body.setAttribute('data-pd-smoke', 'dom-ready');
+  }
+})();`, signalTitle))
+				}()
+			}
+
+			if os.Getenv("PRIVATEDEPLOY_DEBUG_DUMP_DOM") == "1" {
+				go func() {
+					time.Sleep(1800 * time.Millisecond)
+					runtime.WindowExecJS(ctx, `(function () {
+  const app = document.getElementById('app');
+  const fatal = document.getElementById('startup-fatal');
+  const route = window.location ? window.location.hash || window.location.href : '';
+  const payload = {
+    route,
+    bodyText: (document.body && document.body.innerText || '').slice(0, 400),
+    appText: (app && app.innerText || '').slice(0, 400),
+    fatalText: (fatal && fatal.innerText || '').slice(0, 400),
+    bodyBg: document.body ? getComputedStyle(document.body).backgroundColor : '',
+    appBg: app ? getComputedStyle(app).backgroundColor : '',
+    bodyChildren: document.body ? document.body.childElementCount : -1,
+    appChildren: app ? app.childElementCount : -1,
+    readyState: document.readyState
+  };
+  console.info('[PrivateDeploy] [DOMDump]', JSON.stringify(payload));
+})();`)
+				}()
+			}
+
+			if os.Getenv("PRIVATEDEPLOY_DEBUG_FORCE_PAINT") == "1" {
+				go func() {
+					time.Sleep(3200 * time.Millisecond)
+					runtime.WindowExecJS(ctx, `(function () {
+  document.documentElement.style.background = 'rgb(0, 255, 0)';
+  document.body.style.background = 'rgb(0, 255, 0)';
+  document.body.style.color = 'rgb(0, 0, 0)';
+  document.body.innerHTML = '<pre id="pd-force-paint" style="padding:24px;font:24px monospace;background:rgb(0,255,0);color:black">PD FORCE PAINT</pre>';
+  console.info('[PrivateDeploy] [ForcePaint] injected');
+})();`)
+				}()
+			}
+
+			if bridge.Env.OS != "linux" || linuxMinimalShell || linuxStaticShell || linuxBareShell {
 				return
 			}
 
@@ -159,18 +247,60 @@ func main() {
 			runtime.EventsEmit(ctx, "onBeforeExitApp")
 			return true
 		},
-		Bind: []any{
-			app,
-		},
+		Bind:     bindTargets,
 		LogLevel: logger.INFO,
 		Debug: options.Debug{
-			OpenInspectorOnStartup: false,
+			OpenInspectorOnStartup: openInspectorOnStartup,
 		},
 	})
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
 		os.Exit(1)
+	}
+}
+
+func configureOptionalFileLogging() {
+	logPath := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_LOG_FILE"))
+	if logPath == "" {
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create log directory %s: %v\n", logPath, err)
+		return
+	}
+
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open log file %s: %v\n", logPath, err)
+		return
+	}
+
+	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	log.Printf("[Startup] File logging enabled: %s", logPath)
+}
+
+func configureDiagnosticShellEnv() {
+	exePath, err := os.Executable()
+	if err == nil {
+		bridge.Env.ExecPath = exePath
+		if bridge.Env.AppName == "" {
+			bridge.Env.AppName = filepath.Base(exePath)
+		}
+		if bridge.Env.BasePath == "" {
+			bridge.Env.BasePath = filepath.Dir(exePath)
+		}
+		return
+	}
+
+	if bridge.Env.AppName == "" {
+		bridge.Env.AppName = "PrivateDeploy"
+	}
+	if bridge.Env.BasePath == "" {
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil && cwd != "" {
+			bridge.Env.BasePath = cwd
+		}
 	}
 }
 
@@ -329,7 +459,7 @@ func formatStartupError(err error) string {
 	}
 
 	message := err.Error()
-	if strings.Contains(message, "failed to init GTK") || strings.Contains(message, "X11 display") || strings.Contains(message, "X11 socket") || strings.Contains(message, "desktop runtime panic") || strings.Contains(message, "no GUI display detected") || strings.Contains(message, "WAYLAND_DISPLAY") {
+	if strings.Contains(message, "failed to init GTK") || strings.Contains(message, "X11 display") || strings.Contains(message, "X11 socket") || strings.Contains(message, "desktop runtime panic") || strings.Contains(message, "no GUI display detected") || strings.Contains(message, "WAYLAND_DISPLAY") || strings.Contains(message, "renders blank windows") {
 		return fmt.Sprintf(
 			"Error: %s\nLinux GUI startup check failed. Current DISPLAY=%q WAYLAND_DISPLAY=%q.\nPlease launch from a desktop terminal with a valid display session.",
 			err.Error(),

@@ -7,7 +7,43 @@
     <title>%VITE_APP_TITLE%</title>
   </head>
   <body>
+    <div id="startup-fatal" style="display:none;padding:16px;font:13px/1.5 monospace;white-space:pre-wrap;background:#fff7f7;color:#8b0000;border:1px solid #f3b3b3;margin:12px;border-radius:8px"></div>
     <div id="app"></div>
+    <script>
+      (function () {
+        const fatal = document.getElementById('startup-fatal')
+        const app = document.getElementById('app')
+        const renderFatal = (title, detail) => {
+          if (!fatal) return
+          fatal.style.display = 'block'
+          fatal.textContent = title + '\n\n' + detail
+          if (app) {
+            app.style.display = 'none'
+          }
+        }
+
+        window.addEventListener('error', function (event) {
+          const message = event && event.message ? event.message : 'Unknown startup error'
+          const source = event && event.filename ? event.filename : ''
+          const line = event && typeof event.lineno === 'number' ? event.lineno : 0
+          const column = event && typeof event.colno === 'number' ? event.colno : 0
+          const stack = event && event.error && event.error.stack ? event.error.stack : ''
+          renderFatal(
+            'PrivateDeploy frontend startup error',
+            [message, source ? source + ':' + line + ':' + column : '', stack].filter(Boolean).join('\n'),
+          )
+        })
+
+        window.addEventListener('unhandledrejection', function (event) {
+          const reason = event && 'reason' in event ? event.reason : 'Unknown rejection'
+          const message =
+            reason && typeof reason === 'object' && 'stack' in reason
+              ? String(reason.stack || reason)
+              : String(reason)
+          renderFatal('PrivateDeploy frontend startup rejection', message)
+        })
+      })()
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
