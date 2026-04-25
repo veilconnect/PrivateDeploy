@@ -41,5 +41,8 @@ mobile/android/app/.cxx/
 **/__pycache__/
 *.pyc
 
-# Claude worktrees
-.claude/worktrees/
+# Claude Code runtime state (worktrees, memory, lockfiles, local settings)
+.claude/
+
+# Flutter golden-test failure artifacts (regenerated on each failing run)
+mobile/test/failures/
