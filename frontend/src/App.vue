@@ -7,6 +7,7 @@ import { TitleBar, WorkspaceHeader } from '@/components'
 import * as Stores from '@/stores'
 import { exitApp, sampleID, sleep, message } from '@/utils'
 import { ensureBuiltinPresets } from '@/utils/builtinPresets'
+import { setupCoreHealthMonitor } from '@/utils/coreHealthMonitor'
 import AboutView from '@/views/AboutView.vue'
 import CommandView from '@/views/CommandView.vue'
 import SplashView from '@/views/SplashView.vue'
@@ -134,6 +135,8 @@ const bootstrapApp = async () => {
     await kernelApiStore.updateCoreState().catch((error) => {
       console.error('[App] Failed to update core state:', error)
     })
+
+    setupCoreHealthMonitor()
 
     try {
       if (!kernelApiStore.running && autoApplyPromise) {

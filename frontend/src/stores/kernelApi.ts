@@ -309,6 +309,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
   }
 
   const updateCoreState = lifecycleManager.updateCoreState
+  const checkCoreHealth = lifecycleManager.checkCoreHealth
 
   const watchSources = computed(() => {
     const source = [config.value.mode, config.value.tun.enable]
@@ -355,6 +356,7 @@ export const useKernelApiStore = defineStore('kernelApi', () => {
     stopCore,
     restartCore,
     updateCoreState,
+    checkCoreHealth,
     pid: corePid,
     running,
     starting,

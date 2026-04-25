@@ -83,6 +83,58 @@ export const createKernelApiLifecycleManager = ({
     await updateSystemProxyStatus().catch(() => undefined)
   }
 
+  let healthCheckInFlight: Promise<void> | null = null
+
+  // Detect state drift between our in-memory view and the actual OS process.
+  // Unlike updateCoreState (which is used at boot and always re-inits websockets),
+  // this only fires side effects when the observed state has actually changed.
+  // Fires from periodic polling and OS events (online, visibility, focus).
+  const checkCoreHealth = async () => {
+    if (healthCheckInFlight) return healthCheckInFlight
+
+    const task = (async () => {
+      if (coreStateLoading.value) return
+      if (stopping.value || restarting.value) return
+
+      const diskPid = Number(await ReadFile(CorePidFilePath).catch(() => -1))
+      const processName = diskPid === -1 ? '' : await ProcessInfo(diskPid).catch(() => '')
+      const observedRunning = processName.startsWith('sing-box')
+
+      const wasRunning = running.value
+      const wasPid = corePid.value
+
+      if (wasRunning === observedRunning && wasPid === diskPid) return
+
+      if (wasRunning && !observedRunning) {
+        // Core exited without our knowledge (crash, OOM kill, PID reuse).
+        await onCoreStopped()
+        if (isAutoStartKernelEnabled()) {
+          await startCore(undefined, { promptSystemProxy: false }).catch((error) => {
+            console.error('[CoreHealth] auto-restart failed:', error)
+          })
+        }
+      } else if (!wasRunning && observedRunning) {
+        // Core running but we didn't start it (e.g. external CLI). Sync state.
+        corePid.value = diskPid
+        running.value = true
+        startCoreWebsockets()
+        await Promise.all([refreshConfig(), refreshProviderProxies()])
+      } else if (wasRunning && observedRunning && wasPid !== diskPid) {
+        // PID changed — core was restarted externally while we were asleep.
+        corePid.value = diskPid
+        startCoreWebsockets()
+        await Promise.all([refreshConfig(), refreshProviderProxies()])
+      }
+    })()
+
+    healthCheckInFlight = task
+    try {
+      await task
+    } finally {
+      if (healthCheckInFlight === task) healthCheckInFlight = null
+    }
+  }
+
   const onCoreStarted = async (pid: number) => {
     await WriteFile(CorePidFilePath, String(pid))
 
@@ -161,5 +213,6 @@ export const createKernelApiLifecycleManager = ({
     restartCore,
     stopCore,
     updateCoreState,
+    checkCoreHealth,
   }
 }
