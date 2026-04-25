@@ -10,10 +10,94 @@ enum VpnRoutingMode {
   global,
 }
 
+enum VpnDnsMode {
+  regionalOptimized,
+  strictProxy,
+  systemResolver,
+}
+
+const defaultAndroidChinaDirectPackages = [
+  'com.tencent.mm',
+  'com.tencent.mobileqq',
+  'com.tencent.wework',
+  'com.tencent.qqmusic',
+  'com.tencent.qqlive',
+  'com.tencent.news',
+  'com.eg.android.AlipayGphone',
+  'com.alibaba.android.rimet',
+  'com.taobao.taobao',
+  'com.tmall.wireless',
+  'com.jingdong.app.mall',
+  'com.xunmeng.pinduoduo',
+  'com.sankuai.meituan',
+  'com.sankuai.meituan.takeoutnew',
+  'com.dianping.v1',
+  'me.ele',
+  'com.autonavi.minimap',
+  'com.baidu.BaiduMap',
+  'com.didi.passenger',
+  'ctrip.android.view',
+  'com.MobileTicket',
+  'com.ss.android.ugc.aweme',
+  'com.ss.android.ugc.live',
+  'com.kuaishou.nebula',
+  'tv.danmaku.bili',
+  'com.xingin.xhs',
+  'com.sina.weibo',
+  'com.zhihu.android',
+  'com.netease.cloudmusic',
+  'com.unionpay',
+];
+
+const defaultAndroidChinaDirectPackageLabels = {
+  'com.tencent.mm': 'WeChat',
+  'com.tencent.mobileqq': 'QQ',
+  'com.tencent.wework': 'WeCom',
+  'com.tencent.qqmusic': 'QQ Music',
+  'com.tencent.qqlive': 'Tencent Video',
+  'com.tencent.news': 'Tencent News',
+  'com.eg.android.AlipayGphone': 'Alipay',
+  'com.alibaba.android.rimet': 'DingTalk',
+  'com.taobao.taobao': 'Taobao',
+  'com.tmall.wireless': 'Tmall',
+  'com.jingdong.app.mall': 'JD',
+  'com.xunmeng.pinduoduo': 'Pinduoduo',
+  'com.sankuai.meituan': 'Meituan',
+  'com.sankuai.meituan.takeoutnew': 'Meituan Waimai',
+  'com.dianping.v1': 'Dianping',
+  'me.ele': 'Ele.me',
+  'com.autonavi.minimap': 'AMap',
+  'com.baidu.BaiduMap': 'Baidu Maps',
+  'com.didi.passenger': 'DiDi',
+  'ctrip.android.view': 'Trip.com',
+  'com.MobileTicket': '12306',
+  'com.ss.android.ugc.aweme': 'Douyin',
+  'com.ss.android.ugc.live': 'Douyin Live',
+  'com.kuaishou.nebula': 'Kuaishou',
+  'tv.danmaku.bili': 'Bilibili',
+  'com.xingin.xhs': 'RED',
+  'com.sina.weibo': 'Weibo',
+  'com.zhihu.android': 'Zhihu',
+  'com.netease.cloudmusic': 'NetEase Music',
+  'com.unionpay': 'UnionPay',
+};
+
+const vpnDiagnosticsPinnedBypassPackages = [
+  'com.tencent.mm',
+  'com.eg.android.AlipayGphone',
+  'com.autonavi.minimap',
+  'com.taobao.taobao',
+  'com.jingdong.app.mall',
+  'com.ss.android.ugc.aweme',
+  'tv.danmaku.bili',
+  'com.sina.weibo',
+];
+
 @immutable
 class VpnRoutingSettings {
   const VpnRoutingSettings({
     this.mode = VpnRoutingMode.split,
+    this.dnsMode = VpnDnsMode.regionalOptimized,
     this.directPrivateNetworks = true,
     this.directCnDomains = true,
     this.directCnIpRanges = true,
@@ -26,6 +110,7 @@ class VpnRoutingSettings {
   });
 
   final VpnRoutingMode mode;
+  final VpnDnsMode dnsMode;
   final bool directPrivateNetworks;
   final bool directCnDomains;
   final bool directCnIpRanges;
@@ -42,6 +127,14 @@ class VpnRoutingSettings {
 
   String get modeLabel => isSplitMode ? 'Split' : 'Global';
 
+  String get dnsModeLabel {
+    return switch (dnsMode) {
+      VpnDnsMode.regionalOptimized => 'regional optimized DNS',
+      VpnDnsMode.strictProxy => 'Strict proxy DNS',
+      VpnDnsMode.systemResolver => 'System DNS',
+    };
+  }
+
   String get summary {
     if (mode == VpnRoutingMode.global) {
       final customCount = customDirectDomains.length +
@@ -51,15 +144,17 @@ class VpnRoutingSettings {
           customDirectCidrs.length +
           customProxyCidrs.length;
       if (customCount == 0) {
-        return 'All traffic via VPN, LAN bypassed';
+        return 'All traffic via VPN, LAN bypassed · $dnsModeLabel';
       }
-      return 'All traffic via VPN, LAN bypassed, $customCount custom rule(s)';
+      return 'All traffic via VPN, LAN bypassed, $customCount custom rule(s) · $dnsModeLabel';
     }
 
     final enabledBuiltins = <String>[
       if (directPrivateNetworks) 'LAN direct',
+      'regional apps direct',
       if (directCnDomains) 'CN domains direct',
       if (directCnIpRanges) 'CN IPs direct',
+      dnsModeLabel,
     ];
     final customCount = customDirectDomains.length +
         customDirectPackages.length +
@@ -78,6 +173,7 @@ class VpnRoutingSettings {
 
   VpnRoutingSettings copyWith({
     VpnRoutingMode? mode,
+    VpnDnsMode? dnsMode,
     bool? directPrivateNetworks,
     bool? directCnDomains,
     bool? directCnIpRanges,
@@ -90,6 +186,7 @@ class VpnRoutingSettings {
   }) {
     return VpnRoutingSettings(
       mode: mode ?? this.mode,
+      dnsMode: dnsMode ?? this.dnsMode,
       directPrivateNetworks:
           directPrivateNetworks ?? this.directPrivateNetworks,
       directCnDomains: directCnDomains ?? this.directCnDomains,
@@ -106,6 +203,7 @@ class VpnRoutingSettings {
   Map<String, dynamic> toJson() {
     return {
       'mode': mode.name,
+      'dnsMode': dnsMode.name,
       'directPrivateNetworks': directPrivateNetworks,
       'directCnDomains': directCnDomains,
       'directCnIpRanges': directCnIpRanges,
@@ -127,6 +225,14 @@ class VpnRoutingSettings {
           VpnRoutingMode.split;
     }
 
+    VpnDnsMode parseDnsMode(dynamic value) {
+      final raw = value?.toString();
+      return VpnDnsMode.values
+              .where((item) => item.name == raw)
+              .firstOrNull ??
+          VpnDnsMode.regionalOptimized;
+    }
+
     List<String> parseList(dynamic value) {
       if (value is List) {
         return value
@@ -139,6 +245,7 @@ class VpnRoutingSettings {
 
     return VpnRoutingSettings(
       mode: parseMode(json['mode']),
+      dnsMode: parseDnsMode(json['dnsMode']),
       directPrivateNetworks: json['directPrivateNetworks'] != false,
       directCnDomains: json['directCnDomains'] != false,
       directCnIpRanges: json['directCnIpRanges'] != false,
@@ -206,6 +313,87 @@ String? validateVpnRoutingPackageName(String value) {
     return 'Invalid app package: $value';
   }
   return null;
+}
+
+List<String> effectiveAndroidDirectPackages(VpnRoutingSettings settings) {
+  final customDirectPackages = settings.customDirectPackages
+      .map((packageName) => packageName.trim())
+      .toList(growable: false);
+  if (settings.mode != VpnRoutingMode.split) {
+    return _subtractPackages(
+      _dedupeStrings(customDirectPackages),
+      settings.customProxyPackages,
+    );
+  }
+
+  return _subtractPackages(
+    _dedupeStrings([
+      ...defaultAndroidChinaDirectPackages,
+      ...customDirectPackages,
+    ]),
+    settings.customProxyPackages,
+  );
+}
+
+List<String> previewAndroidDirectPackages(
+  VpnRoutingSettings settings, {
+  int maxItems = 8,
+}) {
+  final packages = effectiveAndroidDirectPackages(settings);
+  if (packages.length <= maxItems) {
+    return packages;
+  }
+
+  final packageSet = packages.toSet();
+  final ordered = <String>[
+    ...vpnDiagnosticsPinnedBypassPackages.where(packageSet.contains),
+    ...packages.where(
+      (packageName) => !vpnDiagnosticsPinnedBypassPackages.contains(packageName),
+    ),
+  ];
+  return ordered.take(maxItems).toList(growable: false);
+}
+
+String displayNameForVpnRoutingPackage(String packageName) {
+  final normalized = packageName.trim();
+  if (normalized.isEmpty) {
+    return normalized;
+  }
+  return defaultAndroidChinaDirectPackageLabels[normalized] ?? normalized;
+}
+
+List<String> _dedupeStrings(Iterable<String> values) {
+  final seen = <String>{};
+  final result = <String>[];
+  for (final value in values) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || !seen.add(normalized)) {
+      continue;
+    }
+    result.add(normalized);
+  }
+  return result;
+}
+
+List<String> _subtractPackages(
+  List<String> packages,
+  List<String> excludedPackages,
+) {
+  if (packages.isEmpty || excludedPackages.isEmpty) {
+    return packages;
+  }
+
+  final excluded = excludedPackages
+      .map((packageName) => packageName.trim())
+      .where((packageName) => packageName.isNotEmpty)
+      .toSet();
+  if (excluded.isEmpty) {
+    return packages;
+  }
+
+  return packages
+      .where((packageName) => !excluded.contains(packageName))
+      .toList(growable: false);
 }
 
 class AppSettingsProvider with ChangeNotifier {

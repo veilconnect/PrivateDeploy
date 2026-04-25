@@ -32,6 +32,22 @@ class TrafficStats {
 
   int get totalBytes => uploadBytes + downloadBytes;
 
+  TrafficStats copyWith({
+    int? uploadBytes,
+    int? downloadBytes,
+    double? uploadSpeed,
+    double? downloadSpeed,
+    Duration? connectionTime,
+  }) {
+    return TrafficStats(
+      uploadBytes: uploadBytes ?? this.uploadBytes,
+      downloadBytes: downloadBytes ?? this.downloadBytes,
+      uploadSpeed: uploadSpeed ?? this.uploadSpeed,
+      downloadSpeed: downloadSpeed ?? this.downloadSpeed,
+      connectionTime: connectionTime ?? this.connectionTime,
+    );
+  }
+
   String get uploadFormatted => _formatBytes(uploadBytes);
   String get downloadFormatted => _formatBytes(downloadBytes);
   String get totalFormatted => _formatBytes(totalBytes);

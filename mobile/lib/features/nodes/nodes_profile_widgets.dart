@@ -57,7 +57,7 @@ class NodesProfileCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final canUseNode = !isActive || !isConnected;
     final primaryLabel = isActive
-        ? (isConnected ? l10n.activeNode : l10n.connect)
+        ? (isConnected ? l10n.inUse : l10n.connect)
         : (isConnected ? l10n.useAndSwitch : l10n.useAndConnect);
     final primaryIcon = isActive
         ? (isConnected ? Icons.check_circle : Icons.shield)
@@ -77,6 +77,7 @@ class NodesProfileCard extends StatelessWidget {
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
       clipBehavior: Clip.antiAlias,
+      color: const Color(0xFFFCFCFD),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20.r),
         side: BorderSide(
@@ -96,9 +97,9 @@ class NodesProfileCard extends StatelessWidget {
                 CircleAvatar(
                   backgroundColor: isActive
                       ? const Color(0xFF1452CC).withValues(alpha: 0.12)
-                      : Colors.grey.withValues(alpha: 0.16),
+                      : const Color(0xFF667085).withValues(alpha: 0.12),
                   child: Icon(
-                    isActive ? Icons.check : Icons.description,
+                    isActive ? Icons.check : Icons.description_outlined,
                     color:
                         isActive ? const Color(0xFF1452CC) : Colors.grey[700],
                   ),
@@ -183,13 +184,8 @@ class NodesProfileCard extends StatelessWidget {
               children: [
                 if (isActive)
                   NodesStatusChip(
-                    text: l10n.active,
+                    text: isConnected ? l10n.inUse : l10n.selectedRoute,
                     color: const Color(0xFF1452CC),
-                  ),
-                if (isActive && isConnected)
-                  NodesStatusChip(
-                    text: l10n.inUse,
-                    color: const Color(0xFF0E9F6E),
                   ),
               ],
             ),

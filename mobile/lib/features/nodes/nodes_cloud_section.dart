@@ -5,10 +5,12 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
+import '../cloud/cloud_node_config_builder.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
+import 'nodes_action_feedback.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_widgets.dart';
 
@@ -16,6 +18,7 @@ class NodesCloudSection extends StatelessWidget {
   final CloudProvider cloudProvider;
   final ProfileProvider profileProvider;
   final VpnProvider vpnProvider;
+  final bool suppressSetupActions;
   final VoidCallback onConfigureApiKey;
   final VoidCallback onImportProfile;
   final VoidCallback onRetryLoad;
@@ -33,6 +36,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.cloudProvider,
     required this.profileProvider,
     required this.vpnProvider,
+    this.suppressSetupActions = false,
     required this.onConfigureApiKey,
     required this.onImportProfile,
     required this.onRetryLoad,
@@ -48,9 +52,15 @@ class NodesCloudSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final readyCloudNodes = connectableCloudInstances(cloudProvider);
+    final visibleCloudInstances = cloudProvider.allInstances
+        .where(
+            (instance) => _matchesProvider(instance, cloudProvider.providerId))
+        .toList();
+    final readyCloudNodes = visibleCloudInstances
+        .where((instance) => cloudProvider.generateNodeConfig(instance) != null)
+        .toList();
     final orderedCloudInstances = List<CloudInstance>.from(
-      cloudProvider.allInstances,
+      visibleCloudInstances,
     )..sort(
         (a, b) => _compareCloudInstances(
           a: a,
@@ -61,13 +71,18 @@ class NodesCloudSection extends StatelessWidget {
         ),
       );
     final pendingCloudNodes =
-        cloudProvider.allInstances.length - readyCloudNodes.length;
-    final selectedCloudProfile = profileProvider.activeProfile;
-    final selectedCloudProfileName = selectedCloudProfile != null &&
-            isCloudManagedProfile(selectedCloudProfile)
-        ? selectedCloudProfile.name
-        : l10n.noNodeSelected;
-    final headerSubtitle = cloudProvider.providerId.displayName;
+        visibleCloudInstances.length - readyCloudNodes.length;
+    final accessHint = cloudProvider.providerId == CloudProviderId.ssh
+        ? l10n.setSshAccessHint
+        : l10n.setCloudProviderApiKeyHint;
+    final headerSubtitle =
+        cloudProvider.hasApiKey || cloudProvider.hasStoredApiKey
+            ? [
+                cloudProvider.providerId.displayName,
+                if (visibleCloudInstances.isNotEmpty)
+                  '${readyCloudNodes.length} ${l10n.active} · $pendingCloudNodes ${l10n.provisioning}',
+              ].join(' · ')
+            : null;
     if (!cloudProvider.hasApiKey &&
         cloudProvider.hasStoredApiKey &&
         cloudProvider.error != null) {
@@ -77,7 +92,7 @@ class NodesCloudSection extends StatelessWidget {
           NodesSectionHeader(
             title: l10n.cloudNodes,
             subtitle: headerSubtitle,
-            count: cloudProvider.allInstances.length,
+            count: visibleCloudInstances.length,
           ),
           SizedBox(height: 10.h),
           _CloudToolbar(
@@ -85,26 +100,9 @@ class NodesCloudSection extends StatelessWidget {
             onSelected: (providerId) {
               unawaited(onManageProviderChanged(providerId));
             },
-            onCreateCloudNode: onCreateCloudNode,
             onTestAllCloudNodesLatency: onTestAllCloudNodesLatency,
-            showCreateCloudNodeAction: cloudProvider.allInstances.isNotEmpty,
             showBenchmarkAction: readyCloudNodes.length > 1,
           ),
-          if (cloudProvider.allInstances.isNotEmpty) ...[
-            SizedBox(height: 10.h),
-            _CloudOverviewMetrics(
-              readyCount: readyCloudNodes.length,
-              pendingCount: pendingCloudNodes,
-              selectedNodeLabel: selectedCloudProfileName,
-              selectedNodeHint: _selectedNodeHint(
-                l10n: l10n,
-                selectedNodeLabel: selectedCloudProfileName,
-                readyCount: readyCloudNodes.length,
-                pendingCount: pendingCloudNodes,
-                providerName: cloudProvider.providerId.displayName,
-              ),
-            ),
-          ],
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
             icon: Icons.error_outline,
@@ -112,13 +110,13 @@ class NodesCloudSection extends StatelessWidget {
             message: cloudProvider.error!,
             actionLabel: l10n.retry,
             onAction: onRetryLoad,
-            secondaryActionLabel: l10n.setApiKey,
-            onSecondaryAction: onConfigureApiKey,
             accentColor: Colors.orange,
           ),
-          if (cloudProvider.allInstances.isNotEmpty) ...[
+          if (visibleCloudInstances.isNotEmpty) ...[
             SizedBox(height: 10.h),
-            ...orderedCloudInstances.map(_buildCloudInstanceCard),
+            ...orderedCloudInstances.map(
+              (instance) => _buildCloudInstanceCard(context, instance),
+            ),
           ],
         ],
       );
@@ -139,21 +137,14 @@ class NodesCloudSection extends StatelessWidget {
             onSelected: (providerId) {
               unawaited(onManageProviderChanged(providerId));
             },
-            onCreateCloudNode: onCreateCloudNode,
             onTestAllCloudNodesLatency: onTestAllCloudNodesLatency,
-            showCreateCloudNodeAction: false,
             showBenchmarkAction: false,
           ),
           SizedBox(height: 8.h),
           NodesInlineInfoCard(
             icon: Icons.cloud_off,
             title: l10n.cloudAccessNotConfigured,
-            message: l10n.setCloudProviderApiKeyHint(
-                cloudProvider.providerId.displayName),
-            actionLabel: l10n.setApiKey,
-            onAction: onConfigureApiKey,
-            secondaryActionLabel: l10n.importProfile,
-            onSecondaryAction: onImportProfile,
+            message: accessHint,
             accentColor: const Color(0xFF1452CC),
           ),
         ],
@@ -166,7 +157,7 @@ class NodesCloudSection extends StatelessWidget {
         NodesSectionHeader(
           title: l10n.cloudNodes,
           subtitle: headerSubtitle,
-          count: cloudProvider.allInstances.length,
+          count: visibleCloudInstances.length,
         ),
         SizedBox(height: 10.h),
         _CloudToolbar(
@@ -174,65 +165,53 @@ class NodesCloudSection extends StatelessWidget {
           onSelected: (providerId) {
             unawaited(onManageProviderChanged(providerId));
           },
-          onCreateCloudNode: onCreateCloudNode,
           onTestAllCloudNodesLatency: onTestAllCloudNodesLatency,
-          showCreateCloudNodeAction: cloudProvider.allInstances.isNotEmpty,
           showBenchmarkAction: readyCloudNodes.length > 1,
         ),
-        if (cloudProvider.allInstances.isNotEmpty) ...[
-          SizedBox(height: 10.h),
-          _CloudOverviewMetrics(
-            readyCount: readyCloudNodes.length,
-            pendingCount: pendingCloudNodes,
-            selectedNodeLabel: selectedCloudProfileName,
-            selectedNodeHint: _selectedNodeHint(
-              l10n: l10n,
-              selectedNodeLabel: selectedCloudProfileName,
-              readyCount: readyCloudNodes.length,
-              pendingCount: pendingCloudNodes,
-              providerName: cloudProvider.providerId.displayName,
-            ),
-          ),
-        ],
         SizedBox(height: 10.h),
-        if (cloudProvider.error != null && cloudProvider.allInstances.isEmpty)
+        if (cloudProvider.error != null && visibleCloudInstances.isEmpty)
           NodesInlineInfoCard(
             icon: Icons.error_outline,
             title: l10n.failedToLoad,
             message: cloudProvider.error!,
             actionLabel: l10n.retry,
             onAction: onRetryLoad,
-            secondaryActionLabel: l10n.setApiKey,
-            onSecondaryAction: onConfigureApiKey,
             accentColor: Colors.orange,
           )
-        else if (cloudProvider.allInstances.isEmpty)
+        else if (visibleCloudInstances.isEmpty)
           NodesInlineInfoCard(
             icon: Icons.cloud_queue,
             title: l10n.noCloudNodesYet,
             message: l10n.deployFirstNodeHint,
-            actionLabel: l10n.deployNode,
-            onAction: onCreateCloudNode,
-            secondaryActionLabel: l10n.importProfile,
-            onSecondaryAction: onImportProfile,
             accentColor: const Color(0xFF1452CC),
           )
         else
-          ...orderedCloudInstances.map(_buildCloudInstanceCard),
+          ...orderedCloudInstances.map(
+            (instance) => _buildCloudInstanceCard(context, instance),
+          ),
       ],
     );
   }
 
-  Widget _buildCloudInstanceCard(CloudInstance instance) {
+  Widget _buildCloudInstanceCard(BuildContext context, CloudInstance instance) {
     final profileName = cloudProfileName(instance);
     final linkedProfile = profileProvider.profiles
         .where((profile) => profile.name == profileName)
         .firstOrNull;
     final isSelected = profileProvider.activeProfile?.name == profileName;
+    final preferredEndpointLabel =
+        cloudProvider.preferredEndpointLabelFor(instance);
 
     return NodesCloudInstanceCard(
       instance: instance,
       latencyCheck: cloudProvider.latencyCheckFor(instance.id),
+      activeEndpointLabel: isSelected
+          ? activeCloudNodeEndpointLabel(profileProvider.activeProfile?.content)
+          : null,
+      preferredEndpointLabel: preferredEndpointLabel,
+      availableEndpointLabels: cloudProvider.availableEndpointLabelsFor(
+        instance,
+      ),
       isLinked: linkedProfile != null,
       isSelected: isSelected,
       isConnected: vpnProvider.status == VpnStatus.connected,
@@ -240,8 +219,99 @@ class NodesCloudSection extends StatelessWidget {
       onDelete: () => onDeleteCloudNode(instance),
       onUseNode: () => onUseCloudNode(instance),
       onTestLatency: () => onTestCloudNodeLatency(instance),
+      onChooseEndpoint: () => _chooseEndpointForInstance(
+        context,
+        instance,
+        isSelected: isSelected,
+        isConnected: vpnProvider.status == VpnStatus.connected,
+      ),
     );
   }
+
+  Future<void> _chooseEndpointForInstance(
+    BuildContext context,
+    CloudInstance instance, {
+    required bool isSelected,
+    required bool isConnected,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final availableLabels = cloudProvider.availableEndpointLabelsFor(instance);
+    if (availableLabels.isEmpty) {
+      return;
+    }
+
+    final currentPreference = cloudProvider.preferredEndpointLabelFor(instance);
+    final selectedValue = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final sheetL10n = AppLocalizations.of(sheetContext)!;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(24.w, 8.h, 24.w, 8.h),
+                child: Text(
+                  sheetL10n.chooseProtocolForNode(instance.label),
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+              ),
+              ListTile(
+                title: Text(sheetL10n.automatic),
+                subtitle: Text(sheetL10n.protocolAutomaticHint),
+                trailing: currentPreference == null
+                    ? const Icon(Icons.check, color: Color(0xFF1452CC))
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(''),
+              ),
+              ...availableLabels.map(
+                (label) => ListTile(
+                  title: Text(label),
+                  trailing: currentPreference == label
+                      ? const Icon(Icons.check, color: Color(0xFF1452CC))
+                      : null,
+                  onTap: () => Navigator.of(sheetContext).pop(label),
+                ),
+              ),
+              SizedBox(height: 8.h),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selectedValue == null) {
+      return;
+    }
+
+    final nextPreference = selectedValue.trim().isEmpty ? null : selectedValue;
+    if (nextPreference == currentPreference) {
+      return;
+    }
+
+    await cloudProvider.setPreferredEndpointLabel(instance, nextPreference);
+    if (!context.mounted) {
+      return;
+    }
+
+    if (isSelected && isConnected) {
+      onUseCloudNode(instance);
+      return;
+    }
+
+    final targetLabel = nextPreference ?? l10n.automatic;
+    showNodesActionSnackBar(
+      context,
+      message: l10n.protocolSaved(instance.label, targetLabel),
+      backgroundColor: Colors.green,
+    );
+  }
+}
+
+bool _matchesProvider(CloudInstance instance, CloudProviderId providerId) {
+  return CloudProviderId.tryParse(instance.provider) == providerId;
 }
 
 int _compareCloudInstances({
@@ -326,246 +396,71 @@ bool _hasUsableLatencyResult(CloudLatencyCheck? check) {
   return check.latencyMs != null || check.hasThroughput;
 }
 
-String _selectedNodeHint({
-  required AppLocalizations l10n,
-  required String selectedNodeLabel,
-  required int readyCount,
-  required int pendingCount,
-  required String providerName,
-}) {
-  if (selectedNodeLabel != l10n.noNodeSelected) {
-    return providerName;
-  }
-  if (readyCount > 0) {
-    return l10n.tapConnectHint;
-  }
-  if (pendingCount > 0) {
-    return l10n.waitingForCredentials;
-  }
-  return l10n.noNodeSelectedHint;
-}
-
-class _CloudOverviewMetrics extends StatelessWidget {
-  const _CloudOverviewMetrics({
-    required this.readyCount,
-    required this.pendingCount,
-    required this.selectedNodeLabel,
-    required this.selectedNodeHint,
-  });
-
-  final int readyCount;
-  final int pendingCount;
-  final String selectedNodeLabel;
-  final String selectedNodeHint;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8.w,
-          runSpacing: 8.h,
-          children: [
-            _OverviewStatPill(
-              icon: Icons.check_circle_outline,
-              label: l10n.active,
-              value: '$readyCount',
-              color: const Color(0xFF0E9F6E),
-            ),
-            _OverviewStatPill(
-              icon: Icons.hourglass_bottom,
-              label: l10n.provisioning,
-              value: '$pendingCount',
-              color: const Color(0xFFF59E0B),
-            ),
-          ],
-        ),
-        SizedBox(height: 8.h),
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1452CC).withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(18.r),
-            border: Border.all(
-              color: const Color(0xFF1452CC).withValues(alpha: 0.12),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34.w,
-                height: 34.w,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1452CC).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12.r),
-                ),
-                child: const Icon(
-                  Icons.route_outlined,
-                  size: 18,
-                  color: Color(0xFF1452CC),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.activeNode,
-                      style: TextStyle(
-                        fontSize: 11.sp,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      selectedNodeLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 2.h),
-                    Text(
-                      selectedNodeHint,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.sp,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _CloudToolbar extends StatelessWidget {
   const _CloudToolbar({
     required this.selected,
     required this.onSelected,
-    required this.onCreateCloudNode,
     required this.onTestAllCloudNodesLatency,
-    required this.showCreateCloudNodeAction,
     required this.showBenchmarkAction,
   });
 
   final CloudProviderId selected;
   final ValueChanged<CloudProviderId> onSelected;
-  final VoidCallback onCreateCloudNode;
   final VoidCallback onTestAllCloudNodesLatency;
-  final bool showCreateCloudNodeAction;
   final bool showBenchmarkAction;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.02),
-        borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.05)),
-      ),
-      child: Wrap(
-        spacing: 8.w,
-        runSpacing: 8.h,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            l10n.cloudProvider,
-            style: TextStyle(
-              fontSize: 12.sp,
-              color: Colors.grey[700],
-              fontWeight: FontWeight.w600,
+    return Row(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final providerId in CloudProviderId.values) ...[
+                  ChoiceChip(
+                    label: Text(providerId.displayName),
+                    selected: providerId == selected,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    labelPadding: EdgeInsets.symmetric(horizontal: 6.w),
+                    onSelected: (_) => onSelected(providerId),
+                  ),
+                  SizedBox(width: 8.w),
+                ],
+              ],
             ),
           ),
-          ...CloudProviderId.values.map(
-            (providerId) => ChoiceChip(
-              label: Text(providerId.displayName),
-              selected: providerId == selected,
-              onSelected: (_) => onSelected(providerId),
+        ),
+        if (showBenchmarkAction)
+          PopupMenuButton<String>(
+            tooltip: l10n.more,
+            icon: const Icon(Icons.more_horiz),
+            style: IconButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            onSelected: (value) {
+              if (value == 'benchmark') {
+                onTestAllCloudNodesLatency();
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'benchmark',
+                child: Row(
+                  children: [
+                    const Icon(Icons.speed, size: 18),
+                    const SizedBox(width: 10),
+                    Text(l10n.benchmarkAll),
+                  ],
+                ),
+              ),
+            ],
           ),
-          if (showCreateCloudNodeAction)
-            FilledButton.icon(
-              onPressed: onCreateCloudNode,
-              icon: const Icon(Icons.add_circle_outline),
-              label: Text(l10n.deployNode),
-            ),
-          if (showBenchmarkAction)
-            OutlinedButton.icon(
-              onPressed: onTestAllCloudNodesLatency,
-              icon: const Icon(Icons.speed),
-              label: Text(l10n.benchmarkAll),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OverviewStatPill extends StatelessWidget {
-  const _OverviewStatPill({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: color.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16.sp, color: color),
-          SizedBox(width: 8.w),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[900],
-            ),
-          ),
-          SizedBox(width: 6.w),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.sp,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-        ],
-      ),
+      ],
     );
   }
 }

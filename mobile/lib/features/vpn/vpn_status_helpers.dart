@@ -14,13 +14,16 @@ bool isVpnConflictMessage(String? message) {
       normalizedMessage.contains('took over this connection');
 }
 
-TrafficStats trafficStatsFromNative(VpnNativeStats nativeStats) {
+TrafficStats trafficStatsFromNative(
+  VpnNativeStats nativeStats, {
+  Duration connectionTime = Duration.zero,
+}) {
   return TrafficStats(
     uploadBytes: nativeStats.uploadBytes,
     downloadBytes: nativeStats.downloadBytes,
     uploadSpeed: nativeStats.uploadSpeed.toDouble(),
     downloadSpeed: nativeStats.downloadSpeed.toDouble(),
-    connectionTime: Duration.zero,
+    connectionTime: connectionTime,
   );
 }
 

@@ -15,12 +15,19 @@ export 'vpn_diagnostics.dart';
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
       'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.';
+  static const String vpnPermissionDeniedMessage =
+      'VPN permission was not granted. Allow VPN access and try again.';
   static const String egressProbeFailureMessage =
       'Could not reach public IP probe endpoints through the current VPN route. Recent routing decisions below may still be valid.';
   static const String startupConnectivityFailureMessage =
       'VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.';
+  static const String startupProbeInconclusiveMessage =
+      'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.';
   static const Duration nativeEgressProbeTimeout = Duration(seconds: 3);
   static const Duration startupEgressProbeTimeout = Duration(seconds: 5);
+  static const Duration androidStartupRetryDelay = Duration(seconds: 3);
+  static const Duration androidStartupFallbackProbeDelay =
+      Duration(milliseconds: 1500);
 
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
@@ -36,18 +43,33 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   StreamSubscription? _statsSub;
   StreamSubscription? _logSub;
   Timer? _logNotifyTimer;
+  Timer? _deferredStartupDiagnosticsTimer;
   int _startupVerificationGeneration = 0;
   Future<void>? _initializeTask;
   bool _initialized = false;
   bool _disposed = false;
+  Duration _connectionTimeBase = Duration.zero;
+  DateTime? _connectionTimeBaseAt;
   bool _diagnosticsSessionActive = false;
   final VpnRuntimeLogParser _runtimeLogParser = VpnRuntimeLogParser();
   final Future<String?> Function() _fetchEgressIp;
+  final bool _softFailStartupConnectivityProbe;
+  final Duration _androidStartupRetryDelay;
+  final Duration _androidStartupFallbackProbeDelay;
   String? Function(String? activeProfile)? _resolveFallbackEgressIp;
   String? _diagnosticsEgressIp;
   String? _diagnosticsError;
   bool _isRefreshingDiagnostics = false;
   DateTime? _diagnosticsUpdatedAt;
+  // Last egress IP that we successfully observed during the current tunnel
+  // session. We keep it around across intermittent probe failures so the
+  // diagnostics panel can still show a meaningful value while the VPN is
+  // actually forwarding traffic — otherwise a flaky probe during a Wi-Fi ↔
+  // cellular hand-off would wipe the displayed IP and mislead the user into
+  // thinking the VPN is broken. Cleared only on explicit disconnect, not on
+  // per-probe failure.
+  String? _lastKnownEgressIp;
+  DateTime? _lastKnownEgressIpAt;
 
   VpnStatus get status => _status;
   String? get activeProfile => _activeProfile;
@@ -61,12 +83,23 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   String? get diagnosticsError => _diagnosticsError;
   bool get isRefreshingDiagnostics => _isRefreshingDiagnostics;
   DateTime? get diagnosticsUpdatedAt => _diagnosticsUpdatedAt;
+  String? get lastKnownEgressIp => _lastKnownEgressIp;
+  DateTime? get lastKnownEgressIpAt => _lastKnownEgressIpAt;
   List<VpnRouteDecision> get recentRouteDecisions =>
       _runtimeLogParser.recentDecisions;
 
   VpnProvider({
     Future<String?> Function()? fetchEgressIp,
-  }) : _fetchEgressIp = fetchEgressIp ?? fetchVpnEgressIp {
+    bool? softFailStartupConnectivityProbe,
+    Duration? androidStartupRetryDelay,
+    Duration? androidStartupFallbackProbeDelay,
+  })  : _fetchEgressIp = fetchEgressIp ?? fetchVpnEgressIp,
+        _softFailStartupConnectivityProbe =
+            softFailStartupConnectivityProbe ?? Platform.isAndroid,
+        _androidStartupRetryDelay =
+            androidStartupRetryDelay ?? VpnProvider.androidStartupRetryDelay,
+        _androidStartupFallbackProbeDelay = androidStartupFallbackProbeDelay ??
+            VpnProvider.androidStartupFallbackProbeDelay {
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -115,7 +148,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       });
 
       _statsSub = _nativeService.statsStream.listen((nativeStats) {
-        _stats = trafficStatsFromNative(nativeStats);
+        _stats = trafficStatsFromNative(
+          nativeStats,
+          connectionTime: _currentConnectionTime(),
+        );
         _safeNotifyListeners();
       });
       if (_diagnosticsSessionActive) {
@@ -173,19 +209,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   }) async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
-      _safeNotifyListeners();
-      return false;
-    }
-
-    // On Android, pre-request VPN permission via VpnService.prepare().
-    // If another VPN app is active, this shows the system consent dialog
-    // which revokes the other VPN and grants permission to this app.
-    // Doing this before startVpn() avoids a permission prompt mid-connect.
-    final permissionGranted = await _ensureVpnPermission();
-    if (!permissionGranted) {
-      _error =
-          'VPN permission was not granted. Allow VPN access and try again.';
-      _status = VpnStatus.disconnected;
       _safeNotifyListeners();
       return false;
     }
@@ -269,6 +292,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _lastKnownEgressIp = null;
+        _lastKnownEgressIpAt = null;
         _stopStatsPolling();
       } else {
         _status = VpnStatus.connected;
@@ -301,6 +326,15 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       if (success) {
         await loadStatus();
         if (_status == VpnStatus.connected) {
+          final generation = ++_startupVerificationGeneration;
+          final verified = await _runStartupVerification(
+            generation: generation,
+            stabilityCheckDuration: Duration.zero,
+            statusPollInterval: const Duration(milliseconds: 250),
+          );
+          if (!verified) {
+            return false;
+          }
           return true;
         }
         _error = _nativeService.lastError ??
@@ -328,7 +362,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     try {
       final nativeStats = await _nativeService.getStats();
       if (nativeStats != null) {
-        _stats = trafficStatsFromNative(nativeStats);
+        _stats = trafficStatsFromNative(
+          nativeStats,
+          connectionTime: _currentConnectionTime(),
+        );
         _safeNotifyListeners();
       }
     } catch (e) {
@@ -411,8 +448,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           ),
         );
     if (nativeProbe?.hasIp == true) {
-      _diagnosticsEgressIp = nativeProbe!.ip;
-      _diagnosticsError = null;
+      _recordEgressIpSuccess(nativeProbe!.ip);
       return;
     }
 
@@ -422,19 +458,33 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         : egressProbeFailureMessage;
     final fallbackEgressIp = _resolveFallbackEgressIp?.call(_activeProfile);
     if (fallbackEgressIp != null && fallbackEgressIp.trim().isNotEmpty) {
-      _diagnosticsEgressIp = fallbackEgressIp.trim();
-      _diagnosticsError = null;
+      _recordEgressIpSuccess(fallbackEgressIp);
       return;
     }
 
     try {
-      _diagnosticsEgressIp = await _fetchEgressIp();
-      _diagnosticsError = null;
-      return;
+      final fetched = await _fetchEgressIp();
+      if (fetched != null && fetched.trim().isNotEmpty) {
+        _recordEgressIpSuccess(fetched);
+        return;
+      }
+      _diagnosticsEgressIp = null;
+      _diagnosticsError = normalizedProbeError;
     } catch (_) {
       _diagnosticsEgressIp = null;
       _diagnosticsError = normalizedProbeError;
     }
+  }
+
+  void _recordEgressIpSuccess(String? rawIp) {
+    final normalized = rawIp?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return;
+    }
+    _diagnosticsEgressIp = normalized;
+    _diagnosticsError = null;
+    _lastKnownEgressIp = normalized;
+    _lastKnownEgressIpAt = DateTime.now();
   }
 
   void _startStatsPolling() {
@@ -447,6 +497,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   }
 
   void _cancelStartupVerification() {
+    _deferredStartupDiagnosticsTimer?.cancel();
+    _deferredStartupDiagnosticsTimer = null;
     _startupVerificationGeneration += 1;
   }
 
@@ -469,14 +521,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         fallbackMessage: 'VPN connection was interrupted during startup',
       );
       return false;
-    }
-
-    if (Platform.isAndroid) {
-      AppLogger.info(
-        '[VpnProvider] Skipping startup egress probe on Android; '
-        'native probe sockets cannot bind to the VPN network on physical devices',
-      );
-      return true;
     }
 
     final egressReachable = await _verifyStartupEgressConnectivity(
@@ -544,6 +588,32 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   Future<bool> _verifyStartupEgressConnectivity({
     required int generation,
   }) async {
+    if (_softFailStartupConnectivityProbe) {
+      final egressReachable = await _attemptStartupEgressConfirmation(
+        generation: generation,
+      );
+      if (!_isActiveStartupVerification(generation)) {
+        return false;
+      }
+      if (egressReachable) {
+        return true;
+      }
+
+      // Android startup probes are advisory only. We have observed false
+      // negatives here even when the node is healthy and browsing works, so
+      // keep the tunnel up and retry once shortly after connection before we
+      // surface any warning through diagnostics.
+      _diagnosticsEgressIp = null;
+      _diagnosticsError = null;
+      _diagnosticsUpdatedAt = null;
+      _error = null;
+      _scheduleDeferredStartupEgressConfirmation(generation: generation);
+      AppLogger.info(
+        '[VpnProvider] Android startup probe was inconclusive; deferring diagnostics retry while keeping VPN connected',
+      );
+      return true;
+    }
+
     VpnNativeEgressProbeResult? nativeProbe;
     try {
       nativeProbe = await _nativeService.getEgressIp().timeout(
@@ -556,8 +626,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         return false;
       }
       if (nativeProbe?.hasIp == true) {
-        _diagnosticsEgressIp = nativeProbe!.ip!.trim();
-        _diagnosticsError = null;
+        _recordEgressIpSuccess(nativeProbe!.ip);
         _diagnosticsUpdatedAt = DateTime.now();
         return true;
       }
@@ -571,8 +640,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         return false;
       }
       if (fallbackEgressIp != null && fallbackEgressIp.trim().isNotEmpty) {
-        _diagnosticsEgressIp = fallbackEgressIp.trim();
-        _diagnosticsError = null;
+        _recordEgressIpSuccess(fallbackEgressIp);
         _diagnosticsUpdatedAt = DateTime.now();
         return true;
       }
@@ -583,6 +651,180 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _diagnosticsUpdatedAt = DateTime.now();
     _error = _diagnosticsError;
     return false;
+  }
+
+  Future<VpnNativeEgressProbeResult?> _runNativeStartupEgressProbe({
+    required int generation,
+  }) async {
+    try {
+      final nativeProbe = await _nativeService.getEgressIp().timeout(
+            startupEgressProbeTimeout,
+            onTimeout: () => const VpnNativeEgressProbeResult(
+              error: startupConnectivityFailureMessage,
+            ),
+          );
+      if (!_isActiveStartupVerification(generation)) {
+        return null;
+      }
+      return nativeProbe;
+    } catch (error) {
+      AppLogger.warning(
+        '[VpnProvider] Native startup egress probe failed: $error',
+      );
+      return const VpnNativeEgressProbeResult(
+        error: startupConnectivityFailureMessage,
+      );
+    }
+  }
+
+  Future<bool> _attemptStartupEgressConfirmation({
+    required int generation,
+  }) async {
+    var resolutionChosen = false;
+    final nativeProbeFuture = _runNativeStartupEgressProbe(
+      generation: generation,
+    );
+    final earlyNativeProbe = await nativeProbeFuture.timeout(
+      _androidStartupFallbackProbeDelay,
+      onTimeout: () => null,
+    );
+    if (!_isActiveStartupVerification(generation)) {
+      return false;
+    }
+    if (_recordSuccessfulStartupProbe(
+      ip: earlyNativeProbe?.ip,
+      sourceLabel: 'native HTTP',
+    )) {
+      return true;
+    }
+
+    final pendingAttempts =
+        <Object, Future<({Object token, String? ip, String source})>>{};
+    if (earlyNativeProbe == null) {
+      final token = Object();
+      pendingAttempts[token] = nativeProbeFuture.then(
+        (probe) => (
+          token: token,
+          ip: probe?.ip?.trim(),
+          source: 'native HTTP',
+        ),
+      );
+    }
+
+    final dartToken = Object();
+    pendingAttempts[dartToken] = _runDartStartupEgressProbe(
+      generation: generation,
+      shouldSuppressFailureLog: () =>
+          resolutionChosen || !_isActiveStartupVerification(generation),
+    ).then(
+      (ip) => (
+        token: dartToken,
+        ip: ip,
+        source: 'Dart sockets',
+      ),
+    );
+
+    while (pendingAttempts.isNotEmpty) {
+      final result = await Future.any(pendingAttempts.values);
+      pendingAttempts.remove(result.token);
+      if (!_isActiveStartupVerification(generation)) {
+        resolutionChosen = true;
+        return false;
+      }
+      if (_recordSuccessfulStartupProbe(
+        ip: result.ip,
+        sourceLabel: result.source,
+      )) {
+        resolutionChosen = true;
+        return true;
+      }
+    }
+
+    resolutionChosen = true;
+    return false;
+  }
+
+  Future<String?> _runDartStartupEgressProbe({
+    required int generation,
+    bool Function()? shouldSuppressFailureLog,
+  }) async {
+    try {
+      final fallbackEgressIp = await _fetchEgressIp().timeout(
+        startupEgressProbeTimeout,
+      );
+      if (!_isActiveStartupVerification(generation)) {
+        return null;
+      }
+      final normalizedIp = fallbackEgressIp?.trim();
+      if (normalizedIp == null || normalizedIp.isEmpty) {
+        return null;
+      }
+      return normalizedIp;
+    } catch (error) {
+      if (!(shouldSuppressFailureLog?.call() ?? false)) {
+        AppLogger.warning(
+          '[VpnProvider] Android startup egress probe failed via Dart sockets: $error',
+        );
+      }
+      return null;
+    }
+  }
+
+  bool _recordSuccessfulStartupProbe({
+    required String? ip,
+    required String sourceLabel,
+  }) {
+    final normalizedIp = ip?.trim();
+    if (normalizedIp == null || normalizedIp.isEmpty) {
+      return false;
+    }
+    _recordEgressIpSuccess(normalizedIp);
+    _diagnosticsUpdatedAt = DateTime.now();
+    AppLogger.info(
+      '[VpnProvider] Android startup egress probe succeeded via $sourceLabel',
+    );
+    return true;
+  }
+
+  void _scheduleDeferredStartupEgressConfirmation({
+    required int generation,
+  }) {
+    _deferredStartupDiagnosticsTimer?.cancel();
+    _deferredStartupDiagnosticsTimer = Timer(
+      _androidStartupRetryDelay,
+      () async {
+        _deferredStartupDiagnosticsTimer = null;
+        if (!_isActiveStartupVerification(generation) ||
+            _status != VpnStatus.connected) {
+          return;
+        }
+
+        final egressReachable = await _attemptStartupEgressConfirmation(
+          generation: generation,
+        );
+        if (!_isActiveStartupVerification(generation) ||
+            _status != VpnStatus.connected) {
+          return;
+        }
+
+        if (egressReachable) {
+          _safeNotifyListeners();
+          AppLogger.info(
+            '[VpnProvider] Android startup egress probe succeeded during deferred retry',
+          );
+          return;
+        }
+
+        _diagnosticsEgressIp = null;
+        _diagnosticsError = startupProbeInconclusiveMessage;
+        _diagnosticsUpdatedAt = DateTime.now();
+        _error = null;
+        _safeNotifyListeners();
+        AppLogger.warning(
+          '[VpnProvider] Android startup probe could not confirm egress after deferred retry; keeping VPN connected',
+        );
+      },
+    );
   }
 
   bool _isActiveStartupVerification(int generation) {
@@ -648,14 +890,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
-  Future<bool> _ensureVpnPermission() async {
-    if (!Platform.isAndroid) return true;
-    return await _nativeService.requestPermission();
-  }
-
   String? _normalizeVpnError(String? message) {
     if (isVpnConflictMessage(message)) {
       return vpnConflictMessage;
+    }
+    final normalizedMessage = message?.trim().toLowerCase();
+    if (normalizedMessage == null || normalizedMessage.isEmpty) {
+      return message;
+    }
+    if (normalizedMessage.contains('permission denied') ||
+        normalizedMessage.contains('permission was not granted') ||
+        normalizedMessage.contains('permission request was rejected')) {
+      return vpnPermissionDeniedMessage;
     }
     return message;
   }
@@ -669,6 +915,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     final lower = normalized.toLowerCase();
     if (lower.contains('timeout') ||
         lower.contains('timed out') ||
+        _isBenignAndroidPrivateDnsProbeError(lower) ||
         lower.contains('could not reach public ip probe endpoints') ||
         lower.contains('unable to determine current egress ip')) {
       return egressProbeFailureMessage;
@@ -689,6 +936,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     final lower = normalized.toLowerCase();
     if (lower.contains('timeout') ||
         lower.contains('timed out') ||
+        _isBenignAndroidPrivateDnsProbeError(lower) ||
         lower.contains('could not reach public ip probe endpoints') ||
         lower.contains('unable to determine current egress ip')) {
       return startupConnectivityFailureMessage;
@@ -696,9 +944,50 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     return normalized;
   }
 
+  bool _isBenignAndroidPrivateDnsProbeError(String message) {
+    return message.contains('operation not permitted') &&
+        message.contains('open outbound connection');
+  }
+
+  Duration _currentConnectionTime() {
+    if (_status != VpnStatus.connected) {
+      return Duration.zero;
+    }
+    if (_connectionTimeBaseAt == null) {
+      return _connectionTimeBase;
+    }
+    final elapsed = DateTime.now().difference(_connectionTimeBaseAt!);
+    final total = _connectionTimeBase + elapsed;
+    return total.isNegative ? Duration.zero : total;
+  }
+
+  void _updateConnectionClock(
+    VpnNativeStatus nativeStatus, {
+    required VpnStatus previousStatus,
+  }) {
+    if (_status != VpnStatus.connected) {
+      _connectionTimeBase = Duration.zero;
+      _connectionTimeBaseAt = null;
+      _stats = _stats.copyWith(connectionTime: Duration.zero);
+      return;
+    }
+
+    if (nativeStatus.uptime > 0) {
+      _connectionTimeBase = Duration(seconds: nativeStatus.uptime);
+      _connectionTimeBaseAt = DateTime.now();
+    } else if (previousStatus != VpnStatus.connected ||
+        _connectionTimeBaseAt == null) {
+      _connectionTimeBase = Duration.zero;
+      _connectionTimeBaseAt = DateTime.now();
+    }
+
+    _stats = _stats.copyWith(connectionTime: _currentConnectionTime());
+  }
+
   void _applyNativeStatus(VpnNativeStatus nativeStatus, {bool notify = true}) {
     final previousStatus = _status;
     _status = vpnStatusFromNative(nativeStatus);
+    _updateConnectionClock(nativeStatus, previousStatus: previousStatus);
 
     final message = nativeStatus.message?.trim();
     final normalizedStatus = nativeStatus.status.trim().toLowerCase();
@@ -730,6 +1019,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _startStatsPolling();
     } else {
       _stopStatsPolling();
+      _deferredStartupDiagnosticsTimer?.cancel();
+      _deferredStartupDiagnosticsTimer = null;
       _diagnosticsEgressIp = null;
     }
 
@@ -777,6 +1068,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopStatsPolling();
     _logNotifyTimer?.cancel();
+    _deferredStartupDiagnosticsTimer?.cancel();
     _statusSub?.cancel();
     _statsSub?.cancel();
     _logSub?.cancel();

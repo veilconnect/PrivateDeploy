@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialog_models.dart';
@@ -55,20 +56,24 @@ class _NodesImportProfileDialog extends StatefulWidget {
 
 class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _urlController;
+  late final TextEditingController _payloadController;
   late final TextEditingController _nameController;
+  late final TextEditingController _passphraseController;
+  bool _obscurePassphrase = true;
 
   @override
   void initState() {
     super.initState();
-    _urlController = TextEditingController();
+    _payloadController = TextEditingController();
     _nameController = TextEditingController();
+    _passphraseController = TextEditingController();
   }
 
   @override
   void dispose() {
-    _urlController.dispose();
+    _payloadController.dispose();
     _nameController.dispose();
+    _passphraseController.dispose();
     super.dispose();
   }
 
@@ -76,7 +81,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: Text(l10n.importFromUrl),
+      title: Text(l10n.importEncryptedProfile),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -88,7 +93,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                 controller: _nameController,
                 decoration: InputDecoration(
                   labelText: l10n.profileName,
-                  hintText: l10n.egMySubscription,
+                  hintText: l10n.optionalProfileNameHint,
                 ),
                 validator: (value) {
                   final name = value?.trim() ?? '';
@@ -100,11 +105,11 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
               ),
               SizedBox(height: 16.h),
               TextFormField(
-                key: NodesTestKeys.importProfileUrlField,
-                controller: _urlController,
+                key: NodesTestKeys.importProfilePayloadField,
+                controller: _payloadController,
                 decoration: InputDecoration(
-                  labelText: l10n.urlOrProxyLinks,
-                  hintText: l10n.urlOrProxyLinksHint,
+                  labelText: l10n.encryptedConfig,
+                  hintText: l10n.pasteEncryptedConfigHint,
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.paste),
@@ -112,27 +117,51 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                     onPressed: () async {
                       final data = await Clipboard.getData('text/plain');
                       if (data?.text != null && data!.text!.isNotEmpty) {
-                        _urlController.text = data.text!;
+                        _payloadController.text = data.text!;
                       }
                     },
                   ),
                 ),
-                maxLines: 3,
+                minLines: 4,
+                maxLines: 6,
                 validator: (value) {
                   final input = value?.trim() ?? '';
                   if (input.isEmpty) {
-                    return l10n.pleaseEnterUrlOrLinks;
+                    return l10n.pleasePasteEncryptedConfig;
                   }
-                  // Accept http(s) subscription URL
-                  final uri = Uri.tryParse(input);
-                  final isValidHttpUri = uri != null &&
-                      uri.hasAuthority &&
-                      (uri.scheme == 'http' || uri.scheme == 'https');
-                  if (isValidHttpUri) return null;
-                  // Accept proxy URI links
-                  final configError = validateNodeConfig(input);
-                  if (configError == null) return null;
-                  return l10n.enterHttpUrlOrLinks;
+                  if (!EncryptedShareCodec.looksEncrypted(input)) {
+                    return l10n.enterEncryptedConfig;
+                  }
+                  return null;
+                },
+              ),
+              SizedBox(height: 16.h),
+              TextFormField(
+                key: NodesTestKeys.importProfilePassphraseField,
+                controller: _passphraseController,
+                obscureText: _obscurePassphrase,
+                decoration: InputDecoration(
+                  labelText: l10n.sharePassphrase,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassphrase
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                    tooltip: l10n.sharePassphrase,
+                    onPressed: () {
+                      setState(() {
+                        _obscurePassphrase = !_obscurePassphrase;
+                      });
+                    },
+                  ),
+                ),
+                validator: (value) {
+                  if ((value ?? '').trim().isEmpty) {
+                    return l10n.passphraseRequired;
+                  }
+                  return null;
                 },
               ),
             ],
@@ -154,7 +183,8 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
               context,
               NodesImportProfileRequest(
                 name: _nameController.text.trim(),
-                url: _urlController.text.trim(),
+                payload: _payloadController.text.trim(),
+                passphrase: _passphraseController.text.trim(),
               ),
             );
           },
@@ -230,7 +260,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                 controller: _configController,
                 decoration: InputDecoration(
                   labelText: l10n.config,
-                  hintText: l10n.pasteProxyLinksOrJson,
+                  hintText: l10n.pasteSingboxJsonHint,
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.paste),
@@ -253,7 +283,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                   if (config.isEmpty) {
                     return l10n.pleasePasteConfig;
                   }
-                  return validateNodeConfig(config);
+                  return validateSingboxConfig(config);
                 },
               ),
             ],

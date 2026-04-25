@@ -45,55 +45,59 @@ class SettingsScreen extends StatelessWidget {
           padding: EdgeInsets.all(16.w),
           children: [
             SettingsServerSection(
-              onEditApiKey: (cloud) =>
-                  showSettingsApiKeyDialog(context: context, cloud: cloud),
-              onExportBackup: (cloud) => showSettingsBackupExportDialog(
-                context: context,
-                cloud: cloud,
-              ),
-              onImportBackup: (cloud) => showSettingsBackupImportDialog(
-                context: context,
-                cloud: cloud,
-              ),
-            ),
+                onEditApiKey: (cloud) =>
+                    showSettingsApiKeyDialog(context: context, cloud: cloud),
+                onExportBackup: (cloud) => showSettingsBackupExportDialog(
+                      context: context,
+                      cloud: cloud,
+                    ),
+                onImportBackup: (cloud) => showSettingsBackupImportDialog(
+                      context: context,
+                      cloud: cloud,
+                    ),
+                onClearLocalCloudData: () async {
+                  final cloud = context.read<CloudProvider>();
+                  final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dialogContext) {
+                          final dl10n = AppLocalizations.of(dialogContext)!;
+                          return AlertDialog(
+                            title: Text(dl10n.clearLocalCloudDataTitle),
+                            content: Text(
+                              dl10n.clearLocalCloudDataConfirm(
+                                cloud.providerId.displayName,
+                              ),
+                            ),
+                            actions: [
+                              OutlinedButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, false),
+                                child: Text(dl10n.cancel),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, true),
+                                child: Text(dl10n.clear),
+                              ),
+                            ],
+                          );
+                        },
+                      ) ??
+                      false;
+                  if (!confirmed || !context.mounted) {
+                    return;
+                  }
+                  await cloud.clearLocalCloudData();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                          content: Text(AppLocalizations.of(context)!
+                              .localCloudDataCleared)),
+                    );
+                  }
+                }),
             SizedBox(height: 16.h),
-            SettingsAppSection(onClearLocalCloudData: () async {
-              final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (dialogContext) {
-                      final dl10n = AppLocalizations.of(dialogContext)!;
-                      return AlertDialog(
-                        title: Text(dl10n.clearLocalCloudDataTitle),
-                        content: Text(dl10n.clearLocalCloudDataConfirm),
-                        actions: [
-                          OutlinedButton(
-                            onPressed: () =>
-                                Navigator.pop(dialogContext, false),
-                            child: Text(dl10n.cancel),
-                          ),
-                          FilledButton(
-                            onPressed: () =>
-                                Navigator.pop(dialogContext, true),
-                            child: Text(dl10n.clear),
-                          ),
-                        ],
-                      );
-                    },
-                  ) ??
-                  false;
-              if (!confirmed || !context.mounted) {
-                return;
-              }
-              final cloud = context.read<CloudProvider>();
-              await cloud.clearLocalCloudData();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                      content: Text(AppLocalizations.of(context)!
-                          .localCloudDataCleared)),
-                );
-              }
-            }),
+            const SettingsAppSection(),
             SizedBox(height: 16.h),
             const SettingsAboutSection(),
           ],

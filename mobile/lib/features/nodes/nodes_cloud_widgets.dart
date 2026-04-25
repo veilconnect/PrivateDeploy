@@ -8,6 +8,9 @@ import 'nodes_common_widgets.dart';
 class NodesCloudInstanceCard extends StatelessWidget {
   final CloudInstance instance;
   final CloudLatencyCheck? latencyCheck;
+  final String? activeEndpointLabel;
+  final String? preferredEndpointLabel;
+  final List<String> availableEndpointLabels;
   final bool isLinked;
   final bool isSelected;
   final bool isConnected;
@@ -15,11 +18,15 @@ class NodesCloudInstanceCard extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback? onUseNode;
   final VoidCallback? onTestLatency;
+  final VoidCallback? onChooseEndpoint;
 
   const NodesCloudInstanceCard({
     Key? key,
     required this.instance,
     this.latencyCheck,
+    this.activeEndpointLabel,
+    this.preferredEndpointLabel,
+    this.availableEndpointLabels = const [],
     required this.isLinked,
     required this.isSelected,
     required this.isConnected,
@@ -27,6 +34,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     required this.onDelete,
     this.onUseNode,
     this.onTestLatency,
+    this.onChooseEndpoint,
   }) : super(key: key);
 
   @override
@@ -38,7 +46,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final canUseNode = !isSelected || !isConnected;
     final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
-        ? (isConnected ? l10n.activeNode : l10n.connect)
+        ? (isConnected ? l10n.inUse : l10n.connect)
         : (isConnected ? l10n.useAndSwitch : l10n.useAndConnect);
     final primaryIcon = isSelected
         ? (isConnected ? Icons.check_circle : Icons.shield)
@@ -54,7 +62,18 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final latencyDetail = _latencyDetailText(latencyCheck, l10n);
     final planLabel = _normalizedPlanLabel(instance.plan);
     final metadataLine = _metadataLine(instance, planLabel);
+    final regionLabel = instance.region.toUpperCase();
     final quickPerformanceChips = _quickPerformanceChips(l10n);
+    final normalizedActiveEndpointLabel = activeEndpointLabel?.trim();
+    final normalizedPreferredEndpointLabel = preferredEndpointLabel?.trim();
+    final protocolLabel =
+        (isConnected && normalizedActiveEndpointLabel?.isNotEmpty == true)
+            ? normalizedActiveEndpointLabel!
+            : (normalizedPreferredEndpointLabel?.isNotEmpty == true)
+                ? normalizedPreferredEndpointLabel!
+                : (normalizedActiveEndpointLabel?.isNotEmpty == true)
+                    ? normalizedActiveEndpointLabel!
+                    : l10n.automatic;
     final accentColor = isSelected
         ? const Color(0xFF1452CC)
         : isReady
@@ -62,10 +81,10 @@ class NodesCloudInstanceCard extends StatelessWidget {
             : const Color(0xFFF59E0B);
 
     return Card(
-      margin: EdgeInsets.only(bottom: 12.h),
+      margin: EdgeInsets.only(bottom: 6.h),
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20.r),
+        borderRadius: BorderRadius.circular(16.r),
         side: BorderSide(
           color: isSelected
               ? accentColor.withValues(alpha: 0.34)
@@ -73,54 +92,56 @@ class NodesCloudInstanceCard extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: EdgeInsets.all(16.w),
+        padding: EdgeInsets.all(10.w),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: accentColor.withValues(alpha: 0.16),
+                Container(
+                  width: 34.w,
+                  height: 34.w,
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
                   child: Icon(
                     isReady ? Icons.cloud_done : Icons.hourglass_empty,
                     color: accentColor,
+                    size: 18.sp,
                   ),
                 ),
-                SizedBox(width: 12.w),
+                SizedBox(width: 8.w),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              instance.label,
-                              style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isLinked) ...[
-                            SizedBox(width: 8.w),
-                            NodesStatusChip(
-                              text: l10n.saved,
-                              color: const Color(0xFF475467),
-                            ),
-                          ],
-                        ],
+                      Text(
+                        instance.label,
+                        style: TextStyle(
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.w800,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      SizedBox(height: 4.h),
+                      SizedBox(height: 2.h),
+                      Text(
+                        regionLabel,
+                        style: TextStyle(
+                          fontSize: 10.sp,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      SizedBox(height: 2.h),
                       Text(
                         metadataLine,
                         style: TextStyle(
-                          fontSize: 12.sp,
+                          fontSize: 10.sp,
                           color: Colors.grey[600],
                         ),
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
@@ -128,13 +149,34 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 ),
                 PopupMenuButton<String>(
                   onSelected: (value) {
-                    if (value == 'delete') {
-                      onDelete();
+                    switch (value) {
+                      case 'details':
+                        onViewDetails();
+                        break;
+                      case 'delete':
+                        onDelete();
+                        break;
                     }
                   },
                   itemBuilder: (context) {
                     final menuL10n = AppLocalizations.of(context)!;
                     return [
+                      PopupMenuItem(
+                        value: 'details',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                menuL10n.nodeDetails,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'delete',
                         child: Row(
@@ -156,87 +198,118 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 ),
               ],
             ),
-            SizedBox(height: 12.h),
+            SizedBox(height: 8.h),
             Wrap(
-              spacing: 8.w,
-              runSpacing: 8.h,
+              spacing: 6.w,
+              runSpacing: 6.h,
               children: [
+                if (isSelected)
+                  NodesStatusChip(
+                    text: isConnected ? l10n.inUse : l10n.selectedRoute,
+                    color: const Color(0xFF1452CC),
+                  ),
                 NodesStatusChip(
                   text: isReady ? l10n.active : l10n.provisioning,
                   color: isReady
                       ? const Color(0xFF0E9F6E)
                       : const Color(0xFFF59E0B),
                 ),
-                if (isSelected)
+                if (isLinked)
                   NodesStatusChip(
-                    text: l10n.inUse,
-                    color: const Color(0xFF1452CC),
+                    text: l10n.saved,
+                    color: const Color(0xFF475467),
                   ),
                 if (planLabel != null)
                   NodesStatusChip(
                     text: planLabel,
                     color: const Color(0xFF475467),
                   ),
+                if (availableEndpointLabels.isNotEmpty)
+                  ActionChip(
+                    avatar: Icon(
+                      Icons.tune,
+                      size: 14.sp,
+                      color: const Color(0xFF1452CC),
+                    ),
+                    label: Text(
+                      protocolLabel,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onPressed: onChooseEndpoint,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    labelStyle: TextStyle(
+                      fontSize: 11.sp,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1452CC),
+                    ),
+                    side: BorderSide(
+                      color: const Color(0xFF1452CC).withValues(alpha: 0.18),
+                    ),
+                    backgroundColor:
+                        const Color(0xFF1452CC).withValues(alpha: 0.08),
+                    padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 0),
+                  ),
                 ...quickPerformanceChips,
               ],
             ),
             if (readinessMessage != null) ...[
-              SizedBox(height: 10.h),
+              SizedBox(height: 8.h),
               Container(
                 width: double.infinity,
-                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF59E0B).withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(14.r),
+                  borderRadius: BorderRadius.circular(12.r),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Wrap(
+                  spacing: 8.w,
+                  runSpacing: 6.h,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Icon(
                       Icons.info_outline,
-                      size: 18.sp,
+                      size: 16.sp,
                       color: Colors.orange[900],
                     ),
-                    SizedBox(width: 8.w),
-                    Expanded(
-                      child: Text(
-                        readinessMessage,
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          color: Colors.orange[900],
-                        ),
+                    Text(
+                      readinessMessage,
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: Colors.orange[900],
                       ),
                     ),
                   ],
                 ),
               ),
-              SizedBox(height: 8.h),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: onViewDetails,
-                  icon: const Icon(Icons.info_outline),
-                  label: Text(l10n.nodeDetails),
-                ),
-              ),
             ],
             if (isReady) ...[
-              SizedBox(height: 14.h),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: canUseNode ? onUseNode : null,
-                  icon: Icon(primaryIcon),
-                  label: Text(primaryLabel),
-                ),
-              ),
               SizedBox(height: 8.h),
               Wrap(
                 spacing: 8.w,
                 runSpacing: 8.h,
                 children: [
-                  OutlinedButton.icon(
+                  FilledButton.icon(
+                    onPressed: canUseNode ? onUseNode : null,
+                    icon: Icon(primaryIcon, size: 18.sp),
+                    label: Text(primaryLabel),
+                    style: FilledButton.styleFrom(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10.w,
+                        vertical: 8.h,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  TextButton.icon(
                     onPressed: isLatencyTesting ? null : onTestLatency,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10.w,
+                        vertical: 8.h,
+                      ),
+                    ),
                     icon: isLatencyTesting
                         ? SizedBox(
                             width: 16.w,
@@ -248,30 +321,25 @@ class NodesCloudInstanceCard extends StatelessWidget {
                         : const Icon(Icons.speed),
                     label: Text(latencyLabel),
                   ),
-                  TextButton.icon(
-                    onPressed: onViewDetails,
-                    icon: const Icon(Icons.info_outline),
-                    label: Text(l10n.nodeDetails),
-                  ),
                 ],
               ),
               if (latencyDetail != null) ...[
-                SizedBox(height: 10.h),
+                SizedBox(height: 8.h),
                 Container(
                   width: double.infinity,
                   padding:
-                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                      EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
                   decoration: BoxDecoration(
                     color: (latencyCheck?.error == null
                             ? const Color(0xFF1452CC)
                             : const Color(0xFFF59E0B))
                         .withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(14.r),
+                    borderRadius: BorderRadius.circular(12.r),
                   ),
                   child: Text(
                     latencyDetail,
                     style: TextStyle(
-                      fontSize: 12.sp,
+                      fontSize: 11.sp,
                       color: latencyCheck?.error == null
                           ? Colors.grey[800]
                           : Colors.orange[900],
@@ -288,13 +356,19 @@ class NodesCloudInstanceCard extends StatelessWidget {
 
   String? _latencyDetailText(
       CloudLatencyCheck? latencyCheck, AppLocalizations l10n) {
+    final currentEndpointLabel = activeEndpointLabel?.trim();
     if (latencyCheck == null) {
-      return null;
+      return currentEndpointLabel?.isNotEmpty == true
+          ? currentEndpointLabel
+          : null;
     }
     if (latencyCheck.error != null) {
       return latencyCheck.error;
     }
-    final endpointLabel = latencyCheck.endpointLabel;
+    final endpointLabel =
+        (!latencyCheck.isBenchmark && currentEndpointLabel?.isNotEmpty == true)
+            ? currentEndpointLabel
+            : latencyCheck.endpointLabel;
     if (endpointLabel == null || endpointLabel.isEmpty) {
       return null;
     }
@@ -367,7 +441,6 @@ class NodesCloudInstanceCard extends StatelessWidget {
   String _metadataLine(CloudInstance instance, String? planLabel) {
     final segments = <String>[
       _providerLabel(instance.provider),
-      instance.region.toUpperCase(),
       if (instance.hasIp) instance.ipv4!,
       if (planLabel != null) planLabel,
     ];

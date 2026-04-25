@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import '../../core/network/managed_dns_defaults.dart';
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
 
@@ -21,6 +22,7 @@ class VpnRouteDecision {
     required this.outboundTag,
     required this.target,
     this.domain,
+    this.dnsServerTag,
   });
 
   final DateTime timestamp;
@@ -29,12 +31,32 @@ class VpnRouteDecision {
   final String outboundTag;
   final String target;
   final String? domain;
+  final String? dnsServerTag;
 
   bool get isDirect => type == VpnRouteDecisionType.direct;
 
-  String get typeLabel => isDirect ? 'DIRECT' : 'PROXY';
+  bool get isDnsDecision => dnsServerTag != null;
 
-  String get routeLabel => isDirect ? '直连规则' : '代理规则 (${outboundTag.trim()})';
+  String get typeLabel => isDnsDecision ? 'DNS' : (isDirect ? 'DIRECT' : 'PROXY');
+
+  String get routeLabel {
+    if (isDnsDecision) {
+      return dnsDisplayLabel;
+    }
+    return isDirect ? '直连规则' : '代理规则 (${outboundTag.trim()})';
+  }
+
+  String get dnsDisplayLabel {
+    return switch (dnsServerTag) {
+      'dns-cn' => 'dns-cn',
+      'dns-remote' => 'dns-remote',
+      'dns-remote-google' => 'dns-remote-alt',
+      'dns-direct' => 'dns-bootstrap',
+      'dns-local' => 'dns-system',
+      String tag => tag,
+      null => '',
+    };
+  }
 
   String get displayTarget {
     if (domain == null || domain == targetHost) {
@@ -109,9 +131,14 @@ class VpnRuntimeLogParser {
     final outboundTag = outboundMatch.group(2)!.trim();
     final target = outboundMatch.group(3)!.trim();
     final targetHost = _extractTargetHost(target);
+    final targetPort = _extractTargetPort(target);
     final domain = InternetAddress.tryParse(targetHost) == null
         ? targetHost
         : _domainByIp[targetHost];
+    final dnsServerTag = _classifyDnsServerTag(
+      targetHost: targetHost,
+      targetPort: targetPort,
+    );
     final type = outboundType == 'direct' || outboundTag == 'direct'
         ? VpnRouteDecisionType.direct
         : VpnRouteDecisionType.proxy;
@@ -123,6 +150,7 @@ class VpnRuntimeLogParser {
       outboundTag: outboundTag,
       target: target,
       domain: domain,
+      dnsServerTag: dnsServerTag,
     );
 
     if (_shouldSkipDecision(decision)) {
@@ -137,6 +165,12 @@ class VpnRuntimeLogParser {
   }
 
   bool _shouldSkipDecision(VpnRouteDecision next) {
+    if (_isLoopbackPrivateDnsProbe(next.target)) {
+      return true;
+    }
+    if (_isUrlTestProbe(next)) {
+      return true;
+    }
     if (_recentDecisions.isEmpty) {
       return false;
     }
@@ -179,6 +213,72 @@ class VpnRuntimeLogParser {
       return parts.first;
     }
     return target;
+  }
+
+  static bool _isLoopbackPrivateDnsProbe(String target) {
+    return _extractTargetPort(target) == 853 &&
+        _isLoopbackHost(_extractTargetHost(target));
+  }
+
+  static int? _extractTargetPort(String target) {
+    final targetValue = target.trim();
+    if (targetValue.startsWith('[')) {
+      final closingIndex = targetValue.indexOf(']');
+      if (closingIndex <= 0 || closingIndex + 2 > targetValue.length) {
+        return null;
+      }
+      return int.tryParse(targetValue.substring(closingIndex + 2));
+    }
+
+    final separatorIndex = targetValue.lastIndexOf(':');
+    if (separatorIndex <= 0 || separatorIndex >= targetValue.length - 1) {
+      return null;
+    }
+    return int.tryParse(targetValue.substring(separatorIndex + 1));
+  }
+
+  static bool _isLoopbackHost(String host) {
+    final normalized = host.trim().toLowerCase();
+    if (normalized == '::1') {
+      return true;
+    }
+
+    final address = InternetAddress.tryParse(host);
+    return address?.isLoopback ?? false;
+  }
+
+  static bool _isUrlTestProbe(VpnRouteDecision decision) {
+    final domain = decision.domain?.trim().toLowerCase();
+    final host = decision.targetHost.trim().toLowerCase();
+    final port = _extractTargetPort(decision.target);
+    return (domain == 'www.gstatic.com' || host == 'www.gstatic.com') &&
+        port == 80;
+  }
+
+  static String? _classifyDnsServerTag({
+    required String targetHost,
+    required int? targetPort,
+  }) {
+    final normalizedHost = targetHost.trim().toLowerCase();
+    if (managedDnsRemoteHosts.contains(normalizedHost) && targetPort == 443) {
+      return managedDnsRemoteTag;
+    }
+    if (managedDnsRemoteFallbackHosts.contains(normalizedHost) &&
+        targetPort == 443) {
+      return managedDnsRemoteFallbackTag;
+    }
+    if (managedDnsBootstrapHosts.contains(normalizedHost) &&
+        (targetPort == 53 || targetPort == 853 || targetPort == 443)) {
+      return managedDnsBootstrapTag;
+    }
+    if (managedDnsCnHosts.contains(normalizedHost) &&
+        (targetPort == 53 || targetPort == 853 || targetPort == 443)) {
+      return managedDnsCnTag;
+    }
+    if (targetPort == 53 || targetPort == 853) {
+      return managedDnsLocalTag;
+    }
+    return null;
   }
 }
 

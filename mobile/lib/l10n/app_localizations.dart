@@ -170,6 +170,18 @@ abstract class AppLocalizations {
   /// **'Copy'**
   String get copy;
 
+  /// No description provided for @confirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get confirm;
+
+  /// No description provided for @copyProtocolLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Encrypted {protocol} Config'**
+  String copyProtocolLink(Object protocol);
+
   /// No description provided for @ok.
   ///
   /// In en, this message translates to:
@@ -182,11 +194,29 @@ abstract class AppLocalizations {
   /// **'Back'**
   String get back;
 
+  /// No description provided for @more.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get more;
+
+  /// No description provided for @automatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get automatic;
+
   /// No description provided for @cloudApiKey.
   ///
   /// In en, this message translates to:
   /// **'Cloud API Key'**
   String get cloudApiKey;
+
+  /// No description provided for @cloudAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud Access'**
+  String get cloudAccess;
 
   /// No description provided for @apiKey.
   ///
@@ -212,11 +242,23 @@ abstract class AppLocalizations {
   /// **'Failed to save API key'**
   String get failedToSaveApiKey;
 
+  /// No description provided for @failedToSaveCloudAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to save cloud access'**
+  String get failedToSaveCloudAccess;
+
   /// No description provided for @apiKeySavedAndVerified.
   ///
   /// In en, this message translates to:
   /// **'API key saved and verified'**
   String get apiKeySavedAndVerified;
+
+  /// No description provided for @cloudAccessSavedAndVerified.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud access saved and verified'**
+  String get cloudAccessSavedAndVerified;
 
   /// No description provided for @notSet.
   ///
@@ -235,6 +277,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Deploy to {provider}'**
   String deployToCloudProvider(Object provider);
+
+  /// No description provided for @deployToSshServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Deploy to {target}'**
+  String deployToSshServer(Object target);
 
   /// No description provided for @loadingNodes.
   ///
@@ -257,7 +305,7 @@ abstract class AppLocalizations {
   /// No description provided for @connection.
   ///
   /// In en, this message translates to:
-  /// **'Connection'**
+  /// **'Connect'**
   String get connection;
 
   /// No description provided for @connected.
@@ -293,7 +341,7 @@ abstract class AppLocalizations {
   /// No description provided for @waitingForCredentials.
   ///
   /// In en, this message translates to:
-  /// **'Waiting for node credentials…'**
+  /// **'Node is still preparing connection details'**
   String get waitingForCredentials;
 
   /// No description provided for @noNodeSelected.
@@ -307,6 +355,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Connect'**
   String get connect;
+
+  /// No description provided for @retryConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry connect'**
+  String get retryConnect;
 
   /// No description provided for @disconnect.
   ///
@@ -356,10 +410,16 @@ abstract class AppLocalizations {
   /// **'Speed {value}'**
   String speedStats(Object value);
 
+  /// No description provided for @connectionDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection details'**
+  String get connectionDetails;
+
   /// No description provided for @cloudNodes.
   ///
   /// In en, this message translates to:
-  /// **'Cloud Nodes'**
+  /// **'Cloud Routes'**
   String get cloudNodes;
 
   /// No description provided for @availableRoutes.
@@ -371,14 +431,14 @@ abstract class AppLocalizations {
   /// No description provided for @cloudAccessNotConfigured.
   ///
   /// In en, this message translates to:
-  /// **'Cloud access not configured'**
+  /// **'Cloud access has not been added yet'**
   String get cloudAccessNotConfigured;
 
   /// No description provided for @setCloudProviderApiKeyHint.
   ///
   /// In en, this message translates to:
-  /// **'Set your {provider} API key to get started.'**
-  String setCloudProviderApiKeyHint(Object provider);
+  /// **'Add cloud API access to list routes and create new ones on this device.'**
+  String get setCloudProviderApiKeyHint;
 
   /// No description provided for @setApiKey.
   ///
@@ -386,10 +446,34 @@ abstract class AppLocalizations {
   /// **'Set API Key'**
   String get setApiKey;
 
+  /// No description provided for @setCloudAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Set Cloud Access'**
+  String get setCloudAccess;
+
+  /// No description provided for @setSshAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Set SSH Access'**
+  String get setSshAccess;
+
+  /// No description provided for @setSshAccessHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Save the SSH server host, username, and password so this device can deploy directly.'**
+  String get setSshAccessHint;
+
+  /// No description provided for @sshDeployUsesSavedAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'This route will deploy through the saved SSH access: {target}'**
+  String sshDeployUsesSavedAccess(Object target);
+
   /// No description provided for @benchmarkAll.
   ///
   /// In en, this message translates to:
-  /// **'Benchmark All'**
+  /// **'Measure All'**
   String get benchmarkAll;
 
   /// No description provided for @failedToLoad.
@@ -407,19 +491,19 @@ abstract class AppLocalizations {
   /// No description provided for @deployFirstNodeHint.
   ///
   /// In en, this message translates to:
-  /// **'Create one cloud node to start routing traffic from this device.'**
+  /// **'Create one cloud route, then connect from this device.'**
   String get deployFirstNodeHint;
 
   /// No description provided for @deployNode.
   ///
   /// In en, this message translates to:
-  /// **'Deploy Node'**
+  /// **'Create Route'**
   String get deployNode;
 
   /// No description provided for @manualProfilesDesc.
   ///
   /// In en, this message translates to:
-  /// **'Profiles stored only on this device'**
+  /// **'Routes saved only on this device'**
   String get manualProfilesDesc;
 
   /// No description provided for @activeNode.
@@ -431,13 +515,13 @@ abstract class AppLocalizations {
   /// No description provided for @useAndConnect.
   ///
   /// In en, this message translates to:
-  /// **'Use & Connect'**
+  /// **'Connect'**
   String get useAndConnect;
 
   /// No description provided for @useAndSwitch.
   ///
   /// In en, this message translates to:
-  /// **'Use & Switch'**
+  /// **'Switch Here'**
   String get useAndSwitch;
 
   /// No description provided for @speedTest.
@@ -458,6 +542,30 @@ abstract class AppLocalizations {
   /// **'Testing...'**
   String get testing;
 
+  /// No description provided for @protocol.
+  ///
+  /// In en, this message translates to:
+  /// **'Protocol'**
+  String get protocol;
+
+  /// No description provided for @chooseProtocolForNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose protocol for {label}'**
+  String chooseProtocolForNode(Object label);
+
+  /// No description provided for @protocolAutomaticHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow the latest benchmark or fastest available endpoint automatically.'**
+  String get protocolAutomaticHint;
+
+  /// No description provided for @protocolSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'{label} will use {protocol} next time it connects.'**
+  String protocolSaved(Object label, Object protocol);
+
   /// No description provided for @active.
   ///
   /// In en, this message translates to:
@@ -475,6 +583,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'In Use'**
   String get inUse;
+
+  /// No description provided for @selectedRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected'**
+  String get selectedRoute;
 
   /// No description provided for @saved.
   ///
@@ -647,19 +761,19 @@ abstract class AppLocalizations {
   /// No description provided for @workspaceGuideSetupMessage.
   ///
   /// In en, this message translates to:
-  /// **'Save your {provider} API key so this device can list nodes, deploy new ones, and reconnect later.'**
-  String workspaceGuideSetupMessage(Object provider);
+  /// **'Add cloud API access or SSH access so this device can list routes, deploy new ones, and reconnect later.'**
+  String get workspaceGuideSetupMessage;
 
   /// No description provided for @workspaceGuideDeployTitle.
   ///
   /// In en, this message translates to:
-  /// **'Create your first route'**
+  /// **'Prepare your first route'**
   String get workspaceGuideDeployTitle;
 
   /// No description provided for @workspaceGuideDeployMessage.
   ///
   /// In en, this message translates to:
-  /// **'Start with one cloud node, or import an existing profile if you already have one.'**
+  /// **'Start with one cloud route, or import an existing profile if you already have one.'**
   String get workspaceGuideDeployMessage;
 
   /// No description provided for @workspaceGuideChooseTitle.
@@ -671,19 +785,19 @@ abstract class AppLocalizations {
   /// No description provided for @workspaceGuideChooseMessage.
   ///
   /// In en, this message translates to:
-  /// **'Tap Connect to pick the fastest ready node automatically, or choose one below first.'**
+  /// **'Tap Connect to pick the fastest ready route automatically, or choose one below first.'**
   String get workspaceGuideChooseMessage;
 
   /// No description provided for @workspaceGuideSyncTitle.
   ///
   /// In en, this message translates to:
-  /// **'Finish node setup'**
+  /// **'Routes are still getting ready'**
   String get workspaceGuideSyncTitle;
 
   /// No description provided for @workspaceGuideSyncMessage.
   ///
   /// In en, this message translates to:
-  /// **'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.'**
+  /// **'These routes are visible, but this device is still waiting for connection details. Refresh, or connect after they finish preparing.'**
   String get workspaceGuideSyncMessage;
 
   /// No description provided for @workspaceStepAccess.
@@ -785,13 +899,13 @@ abstract class AppLocalizations {
   /// No description provided for @benchmarkAllNodesTitle.
   ///
   /// In en, this message translates to:
-  /// **'Benchmark All Nodes'**
+  /// **'Measure All Routes'**
   String get benchmarkAllNodesTitle;
 
   /// No description provided for @benchmarkAllNodesConfirm.
   ///
   /// In en, this message translates to:
-  /// **'This benchmark will temporarily disconnect your current VPN connection, test each ready cloud node with a real download sample, and then restore your previous connection.\n\nContinue?'**
+  /// **'This check will temporarily disconnect your current VPN connection, test each ready cloud route with a real download sample, and then restore your previous connection.\n\nContinue?'**
   String get benchmarkAllNodesConfirm;
 
   /// No description provided for @startBenchmark.
@@ -839,7 +953,7 @@ abstract class AppLocalizations {
   /// No description provided for @deployNodeTitle.
   ///
   /// In en, this message translates to:
-  /// **'Deploy Node'**
+  /// **'Create Route'**
   String get deployNodeTitle;
 
   /// No description provided for @loadingRegionsPlans.
@@ -917,7 +1031,7 @@ abstract class AppLocalizations {
   /// No description provided for @importFromUrl.
   ///
   /// In en, this message translates to:
-  /// **'Import from URL'**
+  /// **'Import Encrypted Config'**
   String get importFromUrl;
 
   /// No description provided for @profileName.
@@ -925,6 +1039,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Profile Name'**
   String get profileName;
+
+  /// No description provided for @optionalProfileNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional shared profile name'**
+  String get optionalProfileNameHint;
 
   /// No description provided for @egMySubscription.
   ///
@@ -935,7 +1055,7 @@ abstract class AppLocalizations {
   /// No description provided for @urlOrProxyLinks.
   ///
   /// In en, this message translates to:
-  /// **'URL or Proxy Links'**
+  /// **'Subscription URL or Proxy Links'**
   String get urlOrProxyLinks;
 
   /// No description provided for @urlOrProxyLinksHint.
@@ -953,37 +1073,67 @@ abstract class AppLocalizations {
   /// No description provided for @pleaseEnterUrlOrLinks.
   ///
   /// In en, this message translates to:
-  /// **'Please enter a URL or proxy links'**
+  /// **'Please enter a subscription URL or proxy links'**
   String get pleaseEnterUrlOrLinks;
 
   /// No description provided for @enterHttpUrlOrLinks.
   ///
   /// In en, this message translates to:
-  /// **'Enter an http(s) URL or proxy links (ss://, vless://, etc.)'**
+  /// **'Enter a subscription URL or proxy links (https://, ss://, vless://, etc.)'**
   String get enterHttpUrlOrLinks;
+
+  /// No description provided for @importEncryptedProfile.
+  ///
+  /// In en, this message translates to:
+  /// **'Import Encrypted Config'**
+  String get importEncryptedProfile;
+
+  /// No description provided for @encryptedConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted Config'**
+  String get encryptedConfig;
+
+  /// No description provided for @pasteEncryptedConfigHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste encrypted content copied from PrivateDeploy...'**
+  String get pasteEncryptedConfigHint;
+
+  /// No description provided for @pleasePasteEncryptedConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Please paste encrypted config content'**
+  String get pleasePasteEncryptedConfig;
+
+  /// No description provided for @enterEncryptedConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste encrypted content copied from PrivateDeploy'**
+  String get enterEncryptedConfig;
 
   /// No description provided for @createProfile.
   ///
   /// In en, this message translates to:
-  /// **'Create Profile'**
+  /// **'Create Local Config'**
   String get createProfile;
 
   /// No description provided for @egMyVpnConfig.
   ///
   /// In en, this message translates to:
-  /// **'e.g. My VPN Config'**
+  /// **'e.g. My JSON Config'**
   String get egMyVpnConfig;
 
   /// No description provided for @config.
   ///
   /// In en, this message translates to:
-  /// **'Config'**
+  /// **'sing-box JSON'**
   String get config;
 
   /// No description provided for @pasteProxyLinksOrJson.
   ///
   /// In en, this message translates to:
-  /// **'Paste proxy links or sing-box JSON...'**
+  /// **'Paste sing-box JSON...'**
   String get pasteProxyLinksOrJson;
 
   /// No description provided for @pleaseEnterProfileName.
@@ -995,7 +1145,7 @@ abstract class AppLocalizations {
   /// No description provided for @pleasePasteConfig.
   ///
   /// In en, this message translates to:
-  /// **'Please paste config or proxy links'**
+  /// **'Please paste sing-box JSON'**
   String get pleasePasteConfig;
 
   /// No description provided for @renameProfile.
@@ -1031,25 +1181,25 @@ abstract class AppLocalizations {
   /// No description provided for @deployCloudNode.
   ///
   /// In en, this message translates to:
-  /// **'Deploy cloud node'**
+  /// **'Create cloud route'**
   String get deployCloudNode;
 
   /// No description provided for @importProfile.
   ///
   /// In en, this message translates to:
-  /// **'Import profile'**
+  /// **'Import Encrypted Config'**
   String get importProfile;
 
   /// No description provided for @createProfileTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Create profile'**
+  /// **'Create Local Config'**
   String get createProfileTooltip;
 
   /// No description provided for @copyAllLinks.
   ///
   /// In en, this message translates to:
-  /// **'Copy All Links'**
+  /// **'Copy Encrypted Node'**
   String get copyAllLinks;
 
   /// No description provided for @nodeInfo.
@@ -1244,6 +1394,12 @@ abstract class AppLocalizations {
   /// **'Failed to parse proxy links'**
   String get failedToParseProxyLinks;
 
+  /// No description provided for @encryptedImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to import encrypted config: {error}'**
+  String encryptedImportFailed(Object error);
+
   /// No description provided for @networkError.
   ///
   /// In en, this message translates to:
@@ -1277,67 +1433,103 @@ abstract class AppLocalizations {
   /// No description provided for @server.
   ///
   /// In en, this message translates to:
-  /// **'Server'**
+  /// **'Cloud'**
   String get server;
 
   /// No description provided for @standaloneCloudAccess.
   ///
   /// In en, this message translates to:
-  /// **'Standalone Cloud Access'**
+  /// **'Cloud Access'**
   String get standaloneCloudAccess;
 
   /// No description provided for @standaloneCloudAccessDesc.
   ///
   /// In en, this message translates to:
-  /// **'This device directly calls the Vultr API'**
-  String get standaloneCloudAccessDesc;
+  /// **'This device directly calls the {provider} API'**
+  String standaloneCloudAccessDesc(Object provider);
+
+  /// No description provided for @standaloneSshAccessDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'This device deploys directly over SSH'**
+  String get standaloneSshAccessDesc;
 
   /// No description provided for @cloudProvider.
   ///
   /// In en, this message translates to:
-  /// **'Cloud Provider'**
+  /// **'Cloud Service'**
   String get cloudProvider;
 
   /// No description provided for @cloudProviderDirect.
   ///
   /// In en, this message translates to:
-  /// **'{name} (direct)'**
+  /// **'{name} · direct access'**
   String cloudProviderDirect(Object name);
+
+  /// No description provided for @chooseCloudProviderHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a cloud service or SSH when you add access.'**
+  String get chooseCloudProviderHint;
+
+  /// No description provided for @sshAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'SSH Access'**
+  String get sshAccess;
+
+  /// No description provided for @sshHost.
+  ///
+  /// In en, this message translates to:
+  /// **'SSH Host'**
+  String get sshHost;
+
+  /// No description provided for @username.
+  ///
+  /// In en, this message translates to:
+  /// **'Username'**
+  String get username;
+
+  /// No description provided for @sshPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'SSH Password'**
+  String get sshPassword;
 
   /// No description provided for @sensitiveData.
   ///
   /// In en, this message translates to:
-  /// **'Sensitive Data'**
+  /// **'Security & Backup'**
   String get sensitiveData;
 
   /// No description provided for @sensitiveDataDesc.
   ///
   /// In en, this message translates to:
-  /// **'API keys stay in device secure storage. Backup export and restore can expose secrets, so rotate keys if a backup is shared.'**
+  /// **'Saved cloud access stays in device secure storage. Backup export and restore can expose secrets, so rotate or replace credentials if a backup is shared.'**
   String get sensitiveDataDesc;
 
   /// No description provided for @copyCloudBackup.
   ///
   /// In en, this message translates to:
-  /// **'Copy Cloud Backup'**
+  /// **'Export Encrypted Cloud Backup'**
   String get copyCloudBackup;
 
   /// No description provided for @copyCloudBackupDesc.
   ///
   /// In en, this message translates to:
-  /// **'Review the summary first, then copy sensitive backup JSON with API key and local node records'**
+  /// **'Review the summary first, then encrypt and copy a cloud backup with your saved access and cloud route records.'**
   String get copyCloudBackupDesc;
 
   /// No description provided for @restoreCloudBackup.
   ///
   /// In en, this message translates to:
-  /// **'Restore Cloud Backup'**
+  /// **'Import Encrypted Cloud Backup'**
   String get restoreCloudBackup;
 
   /// No description provided for @restoreCloudBackupDesc.
   ///
   /// In en, this message translates to:
-  /// **'Paste a backup JSON, validate it, then confirm restoring the API key and local nodes'**
+  /// **'Paste encrypted cloud backup content from PrivateDeploy to restore saved access and cloud route records.'**
   String get restoreCloudBackupDesc;
 
   /// No description provided for @app.
@@ -1397,7 +1589,7 @@ abstract class AppLocalizations {
   /// No description provided for @routingModeDesc.
   ///
   /// In en, this message translates to:
-  /// **'LAN direct · CN domains direct · CN IPs direct'**
+  /// **'LAN direct · regional apps direct · CN domains direct · CN IPs direct'**
   String get routingModeDesc;
 
   /// No description provided for @vpnDiagnostics.
@@ -1445,7 +1637,7 @@ abstract class AppLocalizations {
   /// No description provided for @clearLocalCloudDataDesc.
   ///
   /// In en, this message translates to:
-  /// **'Removes saved API key and local node cache'**
+  /// **'Removes saved access and local node cache'**
   String get clearLocalCloudDataDesc;
 
   /// No description provided for @clearLocalCloudDataTitle.
@@ -1457,8 +1649,8 @@ abstract class AppLocalizations {
   /// No description provided for @clearLocalCloudDataConfirm.
   ///
   /// In en, this message translates to:
-  /// **'This removes the saved Vultr API key and cached cloud node records from this device only. It does not delete any cloud instances.'**
-  String get clearLocalCloudDataConfirm;
+  /// **'This removes the saved {provider} access and cached cloud node records from this device only. It does not delete any cloud instances.'**
+  String clearLocalCloudDataConfirm(Object provider);
 
   /// No description provided for @clear.
   ///
@@ -1505,25 +1697,25 @@ abstract class AppLocalizations {
   /// No description provided for @backupSensitiveWarning.
   ///
   /// In en, this message translates to:
-  /// **'Sensitive backup JSON is visible below. Store it safely because it includes your Vultr API key and node credentials.'**
+  /// **'Encrypted cloud backup text is visible below. Only someone with the same share passphrase can import it.'**
   String get backupSensitiveWarning;
 
   /// No description provided for @backupClipboardWarning.
   ///
   /// In en, this message translates to:
-  /// **'Sensitive backup copied to your clipboard. Clipboard contents may be accessible to other apps until you replace them.'**
+  /// **'Encrypted cloud backup copied to your clipboard. Even if you share it through chat apps, the recipient still needs the share passphrase.'**
   String get backupClipboardWarning;
 
   /// No description provided for @backupReviewWarning.
   ///
   /// In en, this message translates to:
-  /// **'Review the backup summary below before copying. The backup includes sensitive data such as your Vultr API key and node credentials.'**
+  /// **'Review the backup summary below first. Copying will require a share passphrase and the clipboard will never contain raw backup JSON.'**
   String get backupReviewWarning;
 
   /// No description provided for @copySensitiveBackup.
   ///
   /// In en, this message translates to:
-  /// **'Copy Sensitive Backup'**
+  /// **'Copy Encrypted Backup'**
   String get copySensitiveBackup;
 
   /// No description provided for @copyAgain.
@@ -1535,43 +1727,43 @@ abstract class AppLocalizations {
   /// No description provided for @revealJson.
   ///
   /// In en, this message translates to:
-  /// **'Reveal JSON'**
+  /// **'Reveal Encrypted Text'**
   String get revealJson;
 
   /// No description provided for @hideJson.
   ///
   /// In en, this message translates to:
-  /// **'Hide JSON'**
+  /// **'Hide Encrypted Text'**
   String get hideJson;
 
   /// No description provided for @copySensitiveBackupTitle.
   ///
   /// In en, this message translates to:
-  /// **'Copy Sensitive Backup?'**
+  /// **'Copy Encrypted Backup?'**
   String get copySensitiveBackupTitle;
 
   /// No description provided for @copySensitiveBackupConfirm.
   ///
   /// In en, this message translates to:
-  /// **'This will place the full backup JSON on the system clipboard, including the saved API key and node credentials.'**
+  /// **'Enter a share passphrase first. The clipboard will receive encrypted backup text instead of raw JSON.'**
   String get copySensitiveBackupConfirm;
 
   /// No description provided for @sensitiveBackupCopied.
   ///
   /// In en, this message translates to:
-  /// **'Sensitive backup copied to clipboard'**
+  /// **'Encrypted backup copied to clipboard'**
   String get sensitiveBackupCopied;
 
   /// No description provided for @revealSensitiveBackupTitle.
   ///
   /// In en, this message translates to:
-  /// **'Reveal Sensitive Backup?'**
+  /// **'Reveal Encrypted Backup?'**
   String get revealSensitiveBackupTitle;
 
   /// No description provided for @revealSensitiveBackupConfirm.
   ///
   /// In en, this message translates to:
-  /// **'This will display the full backup JSON on screen, including the saved API key and node credentials.'**
+  /// **'Enter a share passphrase first. The screen will show encrypted backup text instead of raw JSON.'**
   String get revealSensitiveBackupConfirm;
 
   /// No description provided for @reveal.
@@ -1583,19 +1775,19 @@ abstract class AppLocalizations {
   /// No description provided for @restoreCloudBackupTitle.
   ///
   /// In en, this message translates to:
-  /// **'Restore Cloud Backup'**
+  /// **'Import Encrypted Cloud Backup'**
   String get restoreCloudBackupTitle;
 
   /// No description provided for @restoreCloudBackupDesc2.
   ///
   /// In en, this message translates to:
-  /// **'Paste a backup JSON exported from this app. Restoring can replace the saved API key and overwrite the local cloud node cache on this device.'**
+  /// **'Paste encrypted cloud backup content exported from this app, then enter the same share passphrase. Importing can replace your saved access and overwrite this device\'s local cloud route cache.'**
   String get restoreCloudBackupDesc2;
 
   /// No description provided for @pasteCloudBackupHint.
   ///
   /// In en, this message translates to:
-  /// **'Paste cloud backup JSON here'**
+  /// **'Paste encrypted cloud backup text here'**
   String get pasteCloudBackupHint;
 
   /// No description provided for @pasteClipboard.
@@ -1619,19 +1811,19 @@ abstract class AppLocalizations {
   /// No description provided for @restoreThisBackupConfirm.
   ///
   /// In en, this message translates to:
-  /// **'This will overwrite the local cloud node cache on this device. If the backup contains an API key, it will replace the currently saved key.'**
+  /// **'This will overwrite the local cloud node cache on this device. If the backup contains saved access, it will replace the currently saved credentials.'**
   String get restoreThisBackupConfirm;
 
   /// No description provided for @backupJsonEmpty.
   ///
   /// In en, this message translates to:
-  /// **'Backup JSON cannot be empty'**
+  /// **'Encrypted backup cannot be empty'**
   String get backupJsonEmpty;
 
   /// No description provided for @backupJsonInvalid.
   ///
   /// In en, this message translates to:
-  /// **'Backup JSON is not valid yet'**
+  /// **'Encrypted backup is not valid yet'**
   String get backupJsonInvalid;
 
   /// No description provided for @cloudBackupRestored.
@@ -1639,6 +1831,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Cloud backup restored'**
   String get cloudBackupRestored;
+
+  /// No description provided for @sharePassphrase.
+  ///
+  /// In en, this message translates to:
+  /// **'Share Passphrase'**
+  String get sharePassphrase;
+
+  /// No description provided for @confirmSharePassphrase.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Passphrase'**
+  String get confirmSharePassphrase;
+
+  /// No description provided for @passphraseRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Please enter the share passphrase'**
+  String get passphraseRequired;
+
+  /// No description provided for @passphraseMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrases do not match'**
+  String get passphraseMismatch;
+
+  /// No description provided for @encryptBeforeCopyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypt Before Copying'**
+  String get encryptBeforeCopyTitle;
+
+  /// No description provided for @encryptBeforeCopyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Set a share passphrase first. Only someone with the same passphrase can import this content.'**
+  String get encryptBeforeCopyMessage;
+
+  /// No description provided for @encryptedProtocolCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted {protocol} config copied'**
+  String encryptedProtocolCopied(Object protocol);
+
+  /// No description provided for @encryptedNodeCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted node copied'**
+  String get encryptedNodeCopied;
+
+  /// No description provided for @encryptedCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to copy encrypted content: {error}'**
+  String encryptedCopyFailed(Object error);
 
   /// No description provided for @vpnDiagnosticsTitle.
   ///
@@ -1688,6 +1934,24 @@ abstract class AppLocalizations {
   /// **'Exit IP'**
   String get currentEgressIp;
 
+  /// No description provided for @vpnExcludedAppsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Apps bypassing VPN'**
+  String get vpnExcludedAppsTitle;
+
+  /// No description provided for @vpnExcludedAppsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No apps are currently excluded from Android VPN coverage.} one{1 app is currently excluded from Android VPN coverage and uses the local network directly.} other{{count} apps are currently excluded from Android VPN coverage and use the local network directly.}}'**
+  String vpnExcludedAppsDescription(int count);
+
+  /// No description provided for @vpnExcludedAppsMore.
+  ///
+  /// In en, this message translates to:
+  /// **'+{count} more'**
+  String vpnExcludedAppsMore(int count);
+
   /// No description provided for @connectVpnToMeasure.
   ///
   /// In en, this message translates to:
@@ -1711,6 +1975,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Trying a short native probe first, then falling back only if needed.'**
   String get egressProbeHelp;
+
+  /// No description provided for @egressProbeBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking egress...'**
+  String get egressProbeBusy;
+
+  /// No description provided for @egressLastSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'{ip} (last seen)'**
+  String egressLastSeen(Object ip);
+
+  /// No description provided for @egressProbeStillRoutingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN is still forwarding traffic; the egress probe just hasn\'t reconfirmed yet.'**
+  String get egressProbeStillRoutingHint;
 
   /// No description provided for @latestRoute.
   ///
@@ -1751,8 +2033,32 @@ abstract class AppLocalizations {
   /// No description provided for @routingRulesHelp.
   ///
   /// In en, this message translates to:
-  /// **'Built-in defaults follow common split patterns: LAN direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.'**
+  /// **'Built-in defaults follow common split patterns: LAN direct, regional apps direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.'**
   String get routingRulesHelp;
+
+  /// No description provided for @dnsMode.
+  ///
+  /// In en, this message translates to:
+  /// **'DNS Mode'**
+  String get dnsMode;
+
+  /// No description provided for @cnOptimizedDns.
+  ///
+  /// In en, this message translates to:
+  /// **'regional optimized DNS'**
+  String get cnOptimizedDns;
+
+  /// No description provided for @strictProxyDns.
+  ///
+  /// In en, this message translates to:
+  /// **'Strict proxy DNS'**
+  String get strictProxyDns;
+
+  /// No description provided for @systemDns.
+  ///
+  /// In en, this message translates to:
+  /// **'System DNS'**
+  String get systemDns;
 
   /// No description provided for @lanDirectRule.
   ///

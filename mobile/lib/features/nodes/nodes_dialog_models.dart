@@ -2,11 +2,13 @@ typedef NodesProfileNameValidator = String? Function(String name);
 
 class NodesImportProfileRequest {
   final String name;
-  final String url;
+  final String payload;
+  final String passphrase;
 
   const NodesImportProfileRequest({
     required this.name,
-    required this.url,
+    required this.payload,
+    required this.passphrase,
   });
 }
 
@@ -24,10 +26,12 @@ class NodesCreateCloudRequest {
   final String label;
   final String region;
   final String plan;
+  final bool usesSavedSshAccess;
 
   const NodesCreateCloudRequest({
     required this.label,
     required this.region,
     required this.plan,
+    this.usesSavedSshAccess = false,
   });
 }

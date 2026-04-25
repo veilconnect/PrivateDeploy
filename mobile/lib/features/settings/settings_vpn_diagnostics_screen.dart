@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import 'app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 
 class SettingsVpnDiagnosticsScreen extends StatefulWidget {
@@ -57,8 +59,8 @@ class _SettingsVpnDiagnosticsScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<VpnProvider>(
-      builder: (context, vpn, _) {
+    return Consumer2<VpnProvider, AppSettingsProvider>(
+      builder: (context, vpn, appSettings, _) {
         return PopScope(
           canPop: false,
           onPopInvokedWithResult: (didPop, _) {
@@ -67,13 +69,21 @@ class _SettingsVpnDiagnosticsScreenState
             }
             _popRootRoute();
           },
-          child: _buildScaffold(context, vpn),
+          child: _buildScaffold(
+            context,
+            vpn,
+            appSettings.vpnRoutingSettings,
+          ),
         );
       },
     );
   }
 
-  Widget _buildScaffold(BuildContext context, VpnProvider vpn) {
+  Widget _buildScaffold(
+    BuildContext context,
+    VpnProvider vpn,
+    VpnRoutingSettings routingSettings,
+  ) {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
@@ -102,6 +112,10 @@ class _SettingsVpnDiagnosticsScreenState
             _DiagnosticsStatusCard(vpn: vpn),
             SizedBox(height: 16.h),
             _DiagnosticsEgressCard(vpn: vpn),
+            if (defaultTargetPlatform == TargetPlatform.android) ...[
+              SizedBox(height: 16.h),
+              _DiagnosticsExcludedAppsCard(routingSettings: routingSettings),
+            ],
             SizedBox(height: 16.h),
             _DiagnosticsDecisionCard(vpn: vpn),
           ],
@@ -177,28 +191,8 @@ class _DiagnosticsEgressCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    final value = switch ((
-      vpn.isConnected,
-      vpn.isRefreshingDiagnostics,
-      vpn.diagnosticsEgressIp,
-      vpn.diagnosticsError
-    )) {
-      (false, _, _, _) => l10n.connectVpnToMeasure,
-      (true, true, null, _) => l10n.refreshing,
-      (true, _, String ip, _) => ip,
-      (true, _, null, String _) => l10n.probeUnavailable,
-      _ => l10n.unavailable,
-    };
-    final helpText = switch ((
-      vpn.isConnected,
-      vpn.isRefreshingDiagnostics,
-      vpn.diagnosticsEgressIp,
-      vpn.diagnosticsError
-    )) {
-      (true, false, null, String error) => error,
-      (true, true, null, _) => l10n.egressProbeHelp,
-      _ => null,
-    };
+    final value = _diagnosticsEgressValue(vpn, l10n);
+    final helpText = _diagnosticsEgressHint(vpn, l10n);
 
     return Card(
       child: Padding(
@@ -242,6 +236,66 @@ class _DiagnosticsEgressCard extends StatelessWidget {
   }
 }
 
+class _DiagnosticsExcludedAppsCard extends StatelessWidget {
+  const _DiagnosticsExcludedAppsCard({required this.routingSettings});
+
+  final VpnRoutingSettings routingSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final effectivePackages = effectiveAndroidDirectPackages(routingSettings);
+    final previewPackages = previewAndroidDirectPackages(routingSettings);
+    final remainingCount = effectivePackages.length - previewPackages.length;
+
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(16.w),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l10n.vpnExcludedAppsTitle,
+              style: theme.textTheme.titleMedium,
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              l10n.vpnExcludedAppsDescription(effectivePackages.length),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (previewPackages.isNotEmpty) ...[
+              SizedBox(height: 12.h),
+              Wrap(
+                spacing: 8.w,
+                runSpacing: 8.h,
+                children: [
+                  ...previewPackages.map(
+                    (packageName) => Tooltip(
+                      message: packageName,
+                      child: Chip(
+                        label: Text(
+                          displayNameForVpnRoutingPackage(packageName),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (remainingCount > 0)
+                    Chip(
+                      label: Text(l10n.vpnExcludedAppsMore(remainingCount)),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DiagnosticsDecisionCard extends StatelessWidget {
   const _DiagnosticsDecisionCard({required this.vpn});
 
@@ -274,40 +328,85 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
               )
             else
               ...decisions.map(
-                (decision) => ListTile(
-                  dense: true,
-                  leading: Icon(
-                    decision.isDirect
-                        ? Icons.subdirectory_arrow_left
-                        : Icons.cloud_outlined,
-                    color: decision.isDirect ? Colors.teal : Colors.indigo,
-                  ),
-                  title: Text(decision.displayTarget),
-                  subtitle: Text(
-                    '${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}',
-                  ),
-                  trailing: Container(
-                    padding:
-                        EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
-                    decoration: BoxDecoration(
-                      color: decision.isDirect
-                          ? Colors.teal.withValues(alpha: 0.12)
-                          : Colors.indigo.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      decision.typeLabel,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: decision.isDirect ? Colors.teal : Colors.indigo,
-                        fontWeight: FontWeight.w700,
+                (decision) {
+                  final accentColor = switch (decision.dnsServerTag) {
+                    'dns-remote' => Colors.indigo,
+                    'dns-cn' => Colors.teal,
+                    'dns-direct' => Colors.blueGrey,
+                    'dns-local' => Colors.orange,
+                    _ => decision.isDirect ? Colors.teal : Colors.indigo,
+                  };
+                  final icon = decision.isDnsDecision
+                      ? Icons.dns_outlined
+                      : (decision.isDirect
+                          ? Icons.subdirectory_arrow_left
+                          : Icons.cloud_outlined);
+                  final subtitle = decision.isDnsDecision
+                      ? 'DNS · ${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}'
+                      : '${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}';
+
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(icon, color: accentColor),
+                    title: Text(decision.displayTarget),
+                    subtitle: Text(subtitle),
+                    trailing: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10.w,
+                        vertical: 6.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accentColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        decision.typeLabel,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: accentColor,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
           ],
         ),
       ),
     );
   }
+}
+
+String _diagnosticsEgressValue(VpnProvider vpn, AppLocalizations l10n) {
+  if (!vpn.isConnected) {
+    return l10n.connectVpnToMeasure;
+  }
+  final currentIp = vpn.diagnosticsEgressIp;
+  if (currentIp != null) {
+    return currentIp;
+  }
+  final lastSeen = vpn.lastKnownEgressIp;
+  if (lastSeen != null) {
+    return l10n.egressLastSeen(lastSeen);
+  }
+  if (vpn.isRefreshingDiagnostics) {
+    return l10n.refreshing;
+  }
+  return l10n.egressProbeBusy;
+}
+
+String? _diagnosticsEgressHint(VpnProvider vpn, AppLocalizations l10n) {
+  if (!vpn.isConnected) {
+    return null;
+  }
+  if (vpn.diagnosticsEgressIp != null) {
+    return null;
+  }
+  if (vpn.lastKnownEgressIp != null) {
+    return l10n.egressProbeStillRoutingHint;
+  }
+  if (vpn.isRefreshingDiagnostics) {
+    return l10n.egressProbeHelp;
+  }
+  return vpn.diagnosticsError ?? l10n.egressProbeStillRoutingHint;
 }

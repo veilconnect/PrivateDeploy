@@ -61,6 +61,92 @@ void main() {
       expect(stats.connectionTime, Duration.zero);
     });
 
+    test('connect applies native uptime to session stats', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 1024,
+              'download_bytes': 2048,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+      expect(success, true);
+
+      await vpnProvider.loadStats();
+
+      expect(vpnProvider.stats.connectionTime,
+          greaterThanOrEqualTo(const Duration(seconds: 5)));
+      expect(vpnProvider.stats.connectionTimeFormatted, isNot('0s'));
+    });
+
+    test(
+        'loadStats advances session time locally when native uptime starts at zero',
+        () async {
+      var statusCallCount = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            statusCallCount += 1;
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 0,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 1024,
+              'download_bytes': 2048,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Test',
+      );
+      expect(success, true);
+      expect(statusCallCount, greaterThan(0));
+
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      await vpnProvider.loadStats();
+
+      expect(vpnProvider.stats.connectionTime,
+          greaterThanOrEqualTo(const Duration(seconds: 1)));
+      expect(vpnProvider.stats.connectionTimeFormatted, isNot('0s'));
+    });
+
     test('connect returns false when native start does not reach running state',
         () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -90,6 +176,33 @@ void main() {
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.isConnected, false);
       expect(vpnProvider.error, 'boom');
+    });
+
+    test('connect surfaces a friendly message when VPN permission is denied',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            throw PlatformException(
+              code: 'PERMISSION_DENIED',
+              message: 'VPN permission denied',
+            );
+          default:
+            return null;
+        }
+      });
+
+      final success =
+          await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(success, false);
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.isConnected, false);
+      expect(
+        vpnProvider.error,
+        VpnProvider.vpnPermissionDeniedMessage,
+      );
     });
 
     test('connect only reports success after confirmed running status',
@@ -371,13 +484,15 @@ void main() {
       expect(vpnProvider.error, VpnProvider.vpnConflictMessage);
     });
 
-    test('connect fails when the startup egress probe cannot reach the node',
+    test(
+        'connect fails when the startup egress probe cannot reach the node in hard-fail mode',
         () async {
       var stopVpnCalls = 0;
       var tunnelStopped = false;
 
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: false,
       );
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -427,6 +542,350 @@ void main() {
       expect(vpnProvider.status, VpnStatus.disconnected);
       expect(vpnProvider.activeProfile, isNull);
       expect(vpnProvider.isLoading, false);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupConnectivityFailureMessage,
+      );
+    });
+
+    test(
+        'restart fails when the startup egress probe cannot reach the node in hard-fail mode',
+        () async {
+      var stopVpnCalls = 0;
+      var tunnelStopped = false;
+
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: false,
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            return true;
+          case 'stopVpn':
+            stopVpnCalls += 1;
+            tunnelStopped = true;
+            return true;
+          case 'getStatus':
+            if (tunnelStopped) {
+              return {
+                'running': false,
+                'status': 'disconnected',
+                'message': null,
+                'connected_at': 0,
+                'uptime': 0,
+              };
+            }
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return !tunnelStopped;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.restart();
+
+      expect(success, false);
+      expect(stopVpnCalls, 1);
+      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(vpnProvider.activeProfile, isNull);
+      expect(vpnProvider.isLoading, false);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupConnectivityFailureMessage,
+      );
+    });
+
+    test(
+        'connect keeps Android VPN up and defers warning when startup egress probe is inconclusive',
+        () async {
+      var stopVpnCalls = 0;
+
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: true,
+        androidStartupRetryDelay: const Duration(milliseconds: 1),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'stopVpn':
+            stopVpnCalls += 1;
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Good Android Node',
+      );
+
+      expect(success, true);
+      expect(stopVpnCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Good Android Node');
+      expect(vpnProvider.error, isNull);
+      expect(vpnProvider.diagnosticsError, isNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+    });
+
+    test(
+        'connect uses Dart startup fallback before a slow native probe times out on Android',
+        () async {
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => '198.51.100.24',
+        softFailStartupConnectivityProbe: true,
+        androidStartupFallbackProbeDelay: const Duration(milliseconds: 1),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final stopwatch = Stopwatch()..start();
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Fast Fallback Node',
+      );
+      stopwatch.stop();
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Fast Fallback Node');
+      expect(vpnProvider.diagnosticsEgressIp, '198.51.100.24');
+      expect(vpnProvider.diagnosticsError, isNull);
+      expect(
+        stopwatch.elapsed,
+        lessThan(const Duration(milliseconds: 200)),
+      );
+    });
+
+    test(
+        'restart keeps Android VPN up and defers warning when startup egress probe is inconclusive',
+        () async {
+      var stopVpnCalls = 0;
+
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: true,
+        androidStartupRetryDelay: const Duration(milliseconds: 1),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            return true;
+          case 'stopVpn':
+            stopVpnCalls += 1;
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.restart();
+
+      expect(success, true);
+      expect(stopVpnCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.error, isNull);
+      expect(vpnProvider.diagnosticsError, isNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+    });
+
+    test(
+        'connect clears the deferred warning when Android startup retry later confirms egress',
+        () async {
+      var egressProbeCalls = 0;
+
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: true,
+        androidStartupRetryDelay: const Duration(milliseconds: 1),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            egressProbeCalls += 1;
+            if (egressProbeCalls == 1) {
+              return {
+                'ip': null,
+                'source': 'android_native',
+                'error': 'Timed out contacting public IP probe endpoints.',
+              };
+            }
+            return {
+              'ip': '203.0.113.42',
+              'source': 'android_native',
+              'error': null,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Slow Android Node',
+      );
+
+      expect(success, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.diagnosticsEgressIp, isNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(vpnProvider.diagnosticsEgressIp, '203.0.113.42');
+      expect(vpnProvider.diagnosticsError, isNull);
+    });
+
+    test(
+        'connect normalizes benign Android Private DNS probe errors on hard startup verification failure',
+        () async {
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+        softFailStartupConnectivityProbe: false,
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'stopVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error':
+                  'connection: open outbound connection: operation not permitted',
+            };
+          case 'isRunning':
+            return false;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Hard Failure Node',
+      );
+
+      expect(success, false);
+      expect(vpnProvider.status, VpnStatus.disconnected);
       expect(
         vpnProvider.error,
         VpnProvider.startupConnectivityFailureMessage,
@@ -634,6 +1093,50 @@ void main() {
       expect(vpnProvider.diagnosticsEgressIp, '198.51.100.10');
       expect(vpnProvider.diagnosticsError, isNull);
       expect(fallbackCalls, 1);
+    });
+
+    test(
+        'refreshDiagnostics normalizes benign Android Private DNS probe errors when fallback also fails',
+        () async {
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getRecentLogs':
+            return const [];
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error':
+                  'connection: open outbound connection: operation not permitted',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.loadStatus();
+      await vpnProvider.refreshDiagnostics();
+
+      expect(vpnProvider.diagnosticsEgressIp, isNull);
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.egressProbeFailureMessage,
+      );
     });
 
     test(

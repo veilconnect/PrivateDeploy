@@ -14,7 +14,6 @@ import 'nodes_cloud_actions.dart';
 import 'nodes_profile_actions.dart';
 import 'nodes_sections.dart';
 import 'nodes_screen_fab.dart';
-import 'nodes_test_keys.dart';
 import 'nodes_vpn_actions.dart';
 import 'nodes_widgets.dart';
 import '../../l10n/app_localizations.dart';
@@ -67,7 +66,7 @@ class _NodesScreenState extends State<NodesScreen> {
     ]);
 
     if (!cloudProvider.hasApiKey) {
-      // No API key — nothing to sync remotely.
+      // No saved access credentials — nothing to sync remotely.
       await cloudProvider.refreshCloudConfig();
       return;
     }
@@ -345,17 +344,6 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
-  Future<void> _handleWorkspaceMenuAction(_WorkspaceMenuAction action) async {
-    switch (action) {
-      case _WorkspaceMenuAction.cloudApiKey:
-        await _showCloudApiKeyDialog(context.read<CloudProvider>());
-        break;
-      case _WorkspaceMenuAction.refresh:
-        await _refreshAll();
-        break;
-    }
-  }
-
   Future<void> _switchManagedCloudProvider(
     CloudProvider cloudProvider,
     CloudProviderId providerId,
@@ -366,158 +354,14 @@ class _NodesScreenState extends State<NodesScreen> {
     await cloudProvider.setActiveProvider(providerId);
   }
 
-  Widget? _buildWorkspaceGuide({
-    required AppLocalizations l10n,
-    required CloudProvider cloudProvider,
-    required ProfileProvider profileProvider,
-    required VpnProvider vpnProvider,
-    required List<Profile> localProfiles,
-  }) {
-    if (vpnProvider.status == VpnStatus.connected) {
-      return null;
-    }
-
-    final readyCloudNodes = connectableCloudInstances(cloudProvider);
-    final hasAnyProfiles = profileProvider.profiles.isNotEmpty;
-    final hasActiveProfile = profileProvider.activeProfile != null;
-    final journeySteps = _buildWorkspaceJourneySteps(
-      l10n: l10n,
-      hasAccess: cloudProvider.hasApiKey || localProfiles.isNotEmpty,
-      hasReadyRoute: readyCloudNodes.isNotEmpty || localProfiles.isNotEmpty,
-    );
-
-    if (!cloudProvider.hasApiKey && localProfiles.isEmpty) {
-      return NodesJourneyCard(
-        eyebrow: l10n.nextStep,
-        title: l10n.workspaceGuideSetupTitle,
-        message: l10n
-            .workspaceGuideSetupMessage(cloudProvider.providerId.displayName),
-        icon: Icons.key_rounded,
-        color: const Color(0xFF1452CC),
-        primaryLabel: l10n.setApiKey,
-        onPrimary: () => _showCloudApiKeyDialog(cloudProvider),
-        secondaryLabel: l10n.importProfile,
-        onSecondary: _showImportProfileDialog,
-        steps: journeySteps,
-      );
-    }
-
-    if (cloudProvider.hasApiKey &&
-        cloudProvider.allInstances.isEmpty &&
-        !hasAnyProfiles) {
-      return NodesJourneyCard(
-        eyebrow: l10n.nextStep,
-        title: l10n.workspaceGuideDeployTitle,
-        message: l10n.workspaceGuideDeployMessage,
-        icon: Icons.rocket_launch_outlined,
-        color: const Color(0xFF7C3AED),
-        primaryLabel: l10n.deployNode,
-        onPrimary: () => _showCreateCloudNodeDialog(cloudProvider),
-        secondaryLabel: l10n.importProfile,
-        onSecondary: _showImportProfileDialog,
-        steps: journeySteps,
-      );
-    }
-
-    if (cloudProvider.allInstances.isNotEmpty &&
-        readyCloudNodes.isEmpty &&
-        !hasAnyProfiles) {
-      return NodesJourneyCard(
-        eyebrow: l10n.nextStep,
-        title: l10n.workspaceGuideSyncTitle,
-        message: l10n.workspaceGuideSyncMessage,
-        icon: Icons.sync_problem_outlined,
-        color: const Color(0xFFF59E0B),
-        primaryLabel: l10n.refresh,
-        onPrimary: _refreshAll,
-        steps: journeySteps,
-      );
-    }
-
-    if (!hasActiveProfile && readyCloudNodes.isNotEmpty) {
-      return NodesJourneyCard(
-        eyebrow: l10n.nextStep,
-        title: l10n.workspaceGuideChooseTitle,
-        message: l10n.workspaceGuideChooseMessage,
-        icon: Icons.flash_on_outlined,
-        color: const Color(0xFF0E9F6E),
-        primaryLabel: l10n.connect,
-        onPrimary: () => _handleConnect(
-          cloudProvider,
-          profileProvider,
-          vpnProvider,
-        ),
-        steps: journeySteps,
-      );
-    }
-
-    return null;
-  }
-
-  List<NodesJourneyStep> _buildWorkspaceJourneySteps({
-    required AppLocalizations l10n,
-    required bool hasAccess,
-    required bool hasReadyRoute,
-  }) {
-    final currentStepIndex = !hasAccess
-        ? 0
-        : !hasReadyRoute
-            ? 1
-            : 2;
-    final labels = [
-      l10n.workspaceStepAccess,
-      l10n.workspaceStepRoute,
-      l10n.workspaceStepConnect,
-    ];
-
-    return List<NodesJourneyStep>.generate(labels.length, (index) {
-      final state = index < currentStepIndex
-          ? NodesJourneyStepState.complete
-          : index == currentStepIndex
-              ? NodesJourneyStepState.current
-              : NodesJourneyStepState.upcoming;
-      return NodesJourneyStep(
-        label: labels[index],
-        state: state,
-      );
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final listBottomPadding = 132.h + MediaQuery.paddingOf(context).bottom;
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.workspace),
+        title: Text(l10n.connection),
         actions: [
-          PopupMenuButton<_WorkspaceMenuAction>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (action) {
-              unawaited(_handleWorkspaceMenuAction(action));
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: _WorkspaceMenuAction.cloudApiKey,
-                child: Row(
-                  children: [
-                    const Icon(Icons.key, size: 18),
-                    const SizedBox(width: 10),
-                    Text(l10n.cloudApiKey),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: _WorkspaceMenuAction.refresh,
-                child: Row(
-                  children: [
-                    const Icon(Icons.refresh, size: 18),
-                    const SizedBox(width: 10),
-                    Text(l10n.refresh),
-                  ],
-                ),
-              ),
-            ],
-          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _openSettings,
@@ -530,13 +374,8 @@ class _NodesScreenState extends State<NodesScreen> {
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
-          final workspaceGuide = _buildWorkspaceGuide(
-            l10n: l10n,
-            cloudProvider: cloudProvider,
-            profileProvider: profileProvider,
-            vpnProvider: vpnProvider,
-            localProfiles: localProfiles,
-          );
+          final showLocalProfilesFirst = localProfiles.isNotEmpty &&
+              connectableCloudInstances(cloudProvider).isEmpty;
 
           if (profileProvider.isLoading &&
               profileProvider.profiles.isEmpty &&
@@ -549,16 +388,18 @@ class _NodesScreenState extends State<NodesScreen> {
             onRefresh: _refreshAll,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.all(16.w),
+              padding: EdgeInsets.fromLTRB(
+                16.w,
+                16.w,
+                16.w,
+                listBottomPadding,
+              ),
               children: [
-                if (workspaceGuide != null) ...[
-                  workspaceGuide,
-                  SizedBox(height: 14.h),
-                ],
                 NodesVpnSection(
                   vpnProvider: vpnProvider,
                   profileProvider: profileProvider,
                   cloudProvider: cloudProvider,
+                  showSetupShortcuts: false,
                   onConnect: () => _handleConnect(
                       cloudProvider, profileProvider, vpnProvider),
                   onDisconnect: () => handleNodesDisconnect(
@@ -574,22 +415,37 @@ class _NodesScreenState extends State<NodesScreen> {
                       _showCreateCloudNodeDialog(cloudProvider),
                   onRefreshRoutes: _refreshAll,
                 ),
-                if (vpnProvider.error != null) ...[
-                  SizedBox(height: 12.h),
-                  KeyedSubtree(
-                    key: NodesTestKeys.vpnNoticeCard,
-                    child: NodesInlineInfoCard(
-                      icon: Icons.error_outline,
-                      title: l10n.vpnNotice,
-                      message: vpnProvider.error!,
-                    ),
-                  ),
-                ],
                 SizedBox(height: 20.h),
+                if (showLocalProfilesFirst && localProfiles.isNotEmpty) ...[
+                  NodesManualProfilesSection(
+                    profiles: localProfiles,
+                    activeProfileId: profileProvider.activeProfile?.id,
+                    isConnected: vpnProvider.status == VpnStatus.connected,
+                    speedResults: _profileSpeedResults,
+                    onActivate: (profile) => _activateProfile(
+                      cloudProvider,
+                      profileProvider,
+                      vpnProvider,
+                      profile,
+                    ),
+                    onSpeedTest: (profile) => _testProfileSpeed(
+                      profileProvider,
+                      vpnProvider,
+                      profile,
+                    ),
+                    onView: (profile) => _viewProfileContent(context, profile),
+                    onEdit: (profile) =>
+                        _renameProfile(profileProvider, profile),
+                    onDelete: (profile) =>
+                        _deleteProfile(profileProvider, profile),
+                  ),
+                  SizedBox(height: 20.h),
+                ],
                 NodesCloudSection(
                   cloudProvider: cloudProvider,
                   profileProvider: profileProvider,
                   vpnProvider: vpnProvider,
+                  suppressSetupActions: true,
                   onConfigureApiKey: () =>
                       _showCloudApiKeyDialog(cloudProvider),
                   onImportProfile: _showImportProfileDialog,
@@ -610,7 +466,11 @@ class _NodesScreenState extends State<NodesScreen> {
                     instance,
                   ),
                   onTestCloudNodeLatency: (instance) => _testCloudNodeLatency(
-                      cloudProvider, profileProvider, vpnProvider, instance),
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                    instance,
+                  ),
                   onTestAllCloudNodesLatency: () => _testAllCloudNodesLatency(
                     cloudProvider,
                     profileProvider,
@@ -619,7 +479,7 @@ class _NodesScreenState extends State<NodesScreen> {
                   onManageProviderChanged: (providerId) =>
                       _switchManagedCloudProvider(cloudProvider, providerId),
                 ),
-                if (localProfiles.isNotEmpty) ...[
+                if (!showLocalProfilesFirst && localProfiles.isNotEmpty) ...[
                   SizedBox(height: 20.h),
                   NodesManualProfilesSection(
                     profiles: localProfiles,
@@ -650,8 +510,16 @@ class _NodesScreenState extends State<NodesScreen> {
         },
       ),
       floatingActionButton: Consumer<CloudProvider>(
-        builder: (context, _cloudProvider, child) {
+        builder: (context, cloudProvider, child) {
           return NodesScreenFab(
+            cloudAccessActionLabel:
+                cloudProvider.providerId == CloudProviderId.ssh
+                    ? l10n.setSshAccess
+                    : l10n.setCloudAccess,
+            onConfigureCloudAccess: () => _showCloudApiKeyDialog(cloudProvider),
+            onCreateCloudNode: cloudProvider.hasStoredApiKey
+                ? () => _showCreateCloudNodeDialog(cloudProvider)
+                : null,
             onImportProfile: _showImportProfileDialog,
             onCreateProfile: _showCreateProfileDialog,
           );
@@ -678,9 +546,4 @@ class _NodesScreenState extends State<NodesScreen> {
       ),
     );
   }
-}
-
-enum _WorkspaceMenuAction {
-  cloudApiKey,
-  refresh,
 }

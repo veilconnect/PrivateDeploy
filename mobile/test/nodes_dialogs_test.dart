@@ -13,7 +13,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('nodes dialogs', () {
-    testWidgets('create profile dialog validates trimmed name and config',
+    testWidgets('create profile dialog validates trimmed name and JSON config',
         (tester) async {
       NodesCreateProfileRequest? request;
 
@@ -44,12 +44,7 @@ void main() {
       await tester.tap(find.text('Create'));
       await tester.pump();
       expect(find.text('Please enter a profile name'), findsOneWidget);
-      expect(
-        find.text(
-          'Unrecognized format. Paste proxy links (ss://, vless://, etc.) or sing-box JSON.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Invalid config: not a JSON object'), findsOneWidget);
 
       await tester.enterText(
         find.byType(TextFormField).first,
@@ -74,14 +69,34 @@ void main() {
       expect(request?.config, '{"outbounds":[{"type":"direct"}]}');
     });
 
-    testWidgets('import dialog validates http url and trims fields',
-        (tester) async {
-      NodesImportProfileRequest? request;
-
+    testWidgets('create profile dialog rejects proxy links', (tester) async {
       await _pumpDialogHarness(
         tester,
         onLaunch: (context) async {
-          request = await showNodesImportProfileDialog(
+          await showNodesCreateProfileDialog(context);
+        },
+      );
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField).first, 'Manual SG');
+      await tester.enterText(
+        find.byType(TextFormField).last,
+        'ss://YWVzLTI1Ni1nY206cGFzcw==@1.2.3.4:443#SS',
+      );
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+
+      expect(find.text('Invalid config: not valid JSON'), findsOneWidget);
+    });
+
+    testWidgets('encrypted import dialog validates payload fields',
+        (tester) async {
+      await _pumpDialogHarness(
+        tester,
+        onLaunch: (context) async {
+          await showNodesImportProfileDialog(
             context,
             validateName: (name) {
               if (name == 'Sub A') {
@@ -98,10 +113,14 @@ void main() {
 
       await tester.tap(find.text('Import'));
       await tester.pump();
-      expect(find.text('Please enter a URL or proxy links'), findsOneWidget);
+      expect(
+        find.text('Please paste encrypted config content'),
+        findsOneWidget,
+      );
 
       await tester.enterText(find.byType(TextFormField).first, '  Sub A  ');
-      await tester.enterText(find.byType(TextFormField).last, 'not-a-url');
+      await tester.enterText(find.byType(TextFormField).at(1), 'not-a-url');
+      await tester.enterText(find.byType(TextFormField).last, 'shared-pass');
       await tester.tap(find.text('Import'));
       await tester.pump();
       expect(
@@ -109,22 +128,9 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text(
-          'Enter an http(s) URL or proxy links (ss://, vless://, etc.)',
-        ),
+        find.text('Paste encrypted content copied from PrivateDeploy'),
         findsOneWidget,
       );
-
-      await tester.enterText(find.byType(TextFormField).first, '  Sub B  ');
-      await tester.enterText(
-        find.byType(TextFormField).last,
-        ' https://example.com/sub?token=1 ',
-      );
-      await tester.tap(find.text('Import'));
-      await tester.pumpAndSettle();
-
-      expect(request?.name, 'Sub B');
-      expect(request?.url, 'https://example.com/sub?token=1');
     });
 
     testWidgets(
@@ -346,6 +352,12 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
 
   @override
   CloudProviderId get providerId => CloudProviderId.vultr;
+
+  @override
+  String get providerDisplayName => providerId.displayName;
+
+  @override
+  Map<String, String> get providerExtra => const {};
 
   @override
   bool get isBenchmarkingAll => false;

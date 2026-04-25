@@ -9,12 +9,16 @@ OUTDIR="$2"
 PKG="com.privatedeploy.mobile"
 ACTIVITY="$PKG/.MainActivity"
 UI_XML="/sdcard/ui.xml"
-WORKSPACE_PATTERN='content-desc="(Workspace|工作区)"|text="(Workspace|工作区)"'
+WORKSPACE_PATTERN='content-desc="(Workspace|工作区|Connect|连接)"|text="(Workspace|工作区|Connect|连接)"'
 CONNECT_PATTERN='content-desc="(Connect|连接)"|text="(Connect|连接)"'
+CREATE_FAB_PATTERN='content-desc="(Create|创建)"|text="(Create|创建)"'
 CREATE_PROFILE_PATTERN='content-desc="(Create [Pp]rofile|Create profile|创建配置)"|text="(Create [Pp]rofile|Create profile|创建配置)"'
 IMPORT_PROFILE_PATTERN='content-desc="(Import [Pp]rofile|Import profile|导入配置)"|text="(Import [Pp]rofile|Import profile|导入配置)"'
 SETTINGS_PATTERN='content-desc="(Settings|设置)"|text="(Settings|设置)"'
-CLOUD_API_KEY_PATTERN='content-desc="(Cloud API Key|云端 API Key|Set API Key|设置 API Key)"|text="(Cloud API Key|云端 API Key|Set API Key|设置 API Key)"'
+HOME_API_KEY_ACTION_PATTERN='content-desc="[^"]*(Cloud API Key|云端 API Key|Set API Key|设置 API Key)[^"]*"|text="[^"]*(Cloud API Key|云端 API Key|Set API Key|设置 API Key)[^"]*"'
+SETTINGS_API_KEY_ACTION_PATTERN='content-desc="[^"]*API Key[^"]*"|text="[^"]*API Key[^"]*"'
+PROVIDER_FIELD_PATTERN='content-desc="[^"]*(Cloud Service|云服务)[^"]*"|text="[^"]*(Cloud Service|云服务)[^"]*"'
+PROVIDER_OPTION_PATTERN='content-desc="(Vultr|DigitalOcean)"|text="(Vultr|DigitalOcean)"'
 CANCEL_PATTERN='content-desc="(Cancel|取消)"|text="(Cancel|取消)"'
 CREATE_BUTTON_PATTERN='content-desc="(Create|创建)"|text="(Create|创建)"'
 VERIFY_SAVE_PATTERN='content-desc="(Verify (&amp;|&) Save|验证并保存)"|text="(Verify (&amp;|&) Save|验证并保存)"'
@@ -56,6 +60,86 @@ ensure_foreground() {
     fi
     launch_app
     app_is_foreground
+}
+
+open_settings_screen() {
+    local settings_bounds
+    settings_bounds=$(wait_for_bounds "$SETTINGS_PATTERN" 5 1 || true)
+    if [ -z "$settings_bounds" ]; then
+        return 1
+    fi
+    tap_bounds "$settings_bounds"
+    sleep 2
+    return 0
+}
+
+return_to_workspace() {
+    local i
+    local workspace_bounds
+
+    for ((i = 0; i < 3; i++)); do
+        workspace_bounds=$(find_bounds "$WORKSPACE_PATTERN")
+        if [ -n "$workspace_bounds" ] && app_is_foreground; then
+            return 0
+        fi
+        press_back
+        sleep 1
+    done
+
+    ensure_foreground || true
+    workspace_bounds=$(find_bounds "$WORKSPACE_PATTERN")
+    [ -n "$workspace_bounds" ]
+}
+
+open_create_profile_dialog() {
+    local create_fab_bounds
+    local create_profile_bounds
+    local attempt
+
+    for ((attempt = 0; attempt < 3; attempt++)); do
+        ensure_foreground || true
+        create_fab_bounds=$(wait_for_bounds "$CREATE_FAB_PATTERN" 5 1 || true)
+        if [ -z "$create_fab_bounds" ]; then
+            continue
+        fi
+        tap_bounds "$create_fab_bounds"
+        sleep 1
+
+        create_profile_bounds=$(wait_for_bounds "$CREATE_PROFILE_PATTERN" 5 1 || true)
+        if [ -n "$create_profile_bounds" ]; then
+            tap_bounds "$create_profile_bounds"
+            sleep 2
+            if wait_for_bounds 'class="android.widget.EditText"' 5 1 >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+
+        press_back
+        sleep 1
+    done
+
+    return 1
+}
+
+select_first_cloud_provider() {
+    local provider_field_bounds
+    local provider_option_bounds
+
+    provider_field_bounds=$(wait_for_bounds "$PROVIDER_FIELD_PATTERN" 5 1 || true)
+    if [ -z "$provider_field_bounds" ]; then
+        return 1
+    fi
+
+    tap_bounds "$provider_field_bounds"
+    sleep 1
+    provider_option_bounds=$(wait_for_bounds "$PROVIDER_OPTION_PATTERN" 5 1 || true)
+    if [ -z "$provider_option_bounds" ]; then
+        return 1
+    fi
+
+    tap_bounds "$provider_option_bounds"
+    sleep 1
+    return 0
 }
 
 bounds_center() {
@@ -154,19 +238,23 @@ if [ -n "$CONNECT_BOUNDS" ]; then
         record_result "TEST2_NO_CONFIG" "PASS"
     fi
 else
-    log "FAIL: Could not find Connect button on workspace screen"
-    record_result "TEST2_NO_CONFIG" "FAIL"
+    SETUP_API_BOUNDS=$(find_bounds "$HOME_API_KEY_ACTION_PATTERN")
+    IMPORT_BOUNDS=$(find_bounds "$IMPORT_PROFILE_PATTERN")
+    screenshot "02_no_config"
+
+    if [ -n "$SETUP_API_BOUNDS" ] && [ -n "$IMPORT_BOUNDS" ] && app_is_running && app_is_foreground; then
+        log "PASS: Start setup actions are shown instead of Connect"
+        record_result "TEST2_NO_CONFIG" "PASS"
+    else
+        log "FAIL: Could not find Connect button or setup actions on workspace screen"
+        record_result "TEST2_NO_CONFIG" "FAIL"
+    fi
 fi
 
 # ========== TEST 3: Create profile with invalid config ==========
 log "TEST 3: Create invalid profile"
 ensure_foreground || true
-CREATE_FAB_BOUNDS=$(wait_for_bounds "$CREATE_PROFILE_PATTERN" 5 1 || true)
-
-if [ -n "$CREATE_FAB_BOUNDS" ]; then
-    tap_bounds "$CREATE_FAB_BOUNDS"
-    sleep 2
-
+if open_create_profile_dialog; then
     NAME_BOUNDS=$(wait_for_bounds 'class="android.widget.EditText"' 5 1 || true)
     CONFIG_BOUNDS=$(find_nth_bounds 'class="android.widget.EditText"' 2)
     CREATE_BTN=$(wait_for_bounds "$CREATE_BUTTON_PATTERN" 5 1 || true)
@@ -212,11 +300,21 @@ ensure_foreground || true
 log "TEST 4: Invalid API key dialog"
 
 ensure_foreground || true
-API_KEY_BOUNDS=$(wait_for_bounds "$CLOUD_API_KEY_PATTERN" 5 1 || true)
+API_KEY_BOUNDS=$(wait_for_bounds "$HOME_API_KEY_ACTION_PATTERN" 5 1 || true)
+
+if [ -z "$API_KEY_BOUNDS" ]; then
+    if open_settings_screen; then
+        API_KEY_BOUNDS=$(wait_for_bounds "$SETTINGS_API_KEY_ACTION_PATTERN" 5 1 || true)
+    fi
+fi
 
 if [ -n "$API_KEY_BOUNDS" ]; then
     tap_bounds "$API_KEY_BOUNDS"
     sleep 2
+
+    if ! wait_for_bounds 'class="android.widget.EditText"' 2 1 >/dev/null 2>&1; then
+        select_first_cloud_provider || true
+    fi
 
     API_KEY_FIELD_BOUNDS=$(wait_for_bounds 'class="android.widget.EditText"' 5 1 || true)
     VERIFY_SAVE_BOUNDS=$(wait_for_bounds "$VERIFY_SAVE_PATTERN" 5 1 || true)
@@ -254,7 +352,7 @@ else
     press_back
     sleep 1
 fi
-ensure_foreground || true
+return_to_workspace || ensure_foreground || true
 
 # ========== TEST 5: Settings navigation ==========
 log "TEST 5: Settings navigation"

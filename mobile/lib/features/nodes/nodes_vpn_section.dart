@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../l10n/app_localizations.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
 import 'nodes_cloud_actions.dart';
@@ -21,6 +22,7 @@ class NodesVpnSection extends StatelessWidget {
   final VoidCallback onImportProfile;
   final VoidCallback onCreateCloudNode;
   final VoidCallback onRefreshRoutes;
+  final bool showSetupShortcuts;
 
   const NodesVpnSection({
     Key? key,
@@ -34,38 +36,32 @@ class NodesVpnSection extends StatelessWidget {
     required this.onImportProfile,
     required this.onCreateCloudNode,
     required this.onRefreshRoutes,
+    this.showSetupShortcuts = true,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final statusColor = _statusColor(vpnProvider.status);
-    final selectedProfile = profileProvider.activeProfile?.name;
+    final selectedProfile = profileProvider.activeProfile;
     final stats = vpnProvider.stats;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
-    final allCloudNodes = cloudProvider.allInstances.length;
     final savedProfileCount = profileProvider.profiles
         .where((profile) => !isCloudManagedProfile(profile))
         .length;
     final availableRouteCount = readyCloudNodes.length + savedProfileCount;
-    final profileValue = selectedProfile ?? l10n.noNodeSelected;
-    final profileHint = selectedProfile == null
-        ? _connectionHint(cloudProvider, l10n)
-        : _statusLabel(vpnProvider.status, l10n);
+    final profileValue = selectedProfile?.name ?? l10n.disconnected;
+    final profileHint = _connectionHeaderHint(
+      l10n: l10n,
+      vpnProvider: vpnProvider,
+      cloudProvider: cloudProvider,
+      selectedProfile: selectedProfile,
+      savedProfileCount: savedProfileCount,
+      readyCloudNodeCount: readyCloudNodes.length,
+    );
     final latestDecision = vpnProvider.recentRouteDecisions.isNotEmpty
         ? vpnProvider.recentRouteDecisions.first
         : null;
-    final quickActions = _buildQuickActions(
-      l10n: l10n,
-      savedProfileCount: savedProfileCount,
-      readyCloudNodeCount: readyCloudNodes.length,
-      allCloudNodeCount: allCloudNodes,
-      hasCloudAccess: cloudProvider.hasApiKey,
-      onConfigureApiKey: onConfigureApiKey,
-      onImportProfile: onImportProfile,
-      onCreateCloudNode: onCreateCloudNode,
-      onRefreshRoutes: onRefreshRoutes,
-    );
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -109,19 +105,9 @@ class NodesVpnSection extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 8.w,
-                        runSpacing: 8.h,
-                        children: [
-                          NodesStatusChip(
-                            text: _statusLabel(vpnProvider.status, l10n),
-                            color: statusColor,
-                          ),
-                          NodesStatusChip(
-                            text: cloudProvider.providerId.displayName,
-                            color: const Color(0xFF155EEF),
-                          ),
-                        ],
+                      NodesStatusChip(
+                        text: _statusLabel(vpnProvider.status, l10n),
+                        color: statusColor,
                       ),
                       SizedBox(height: 10.h),
                       Text(
@@ -148,99 +134,51 @@ class NodesVpnSection extends StatelessWidget {
               ],
             ),
             SizedBox(height: 16.h),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final tileWidth = (constraints.maxWidth - 10.w) / 2;
-                return Wrap(
-                  spacing: 10.w,
-                  runSpacing: 10.h,
-                  children: [
-                    SizedBox(
-                      width: tileWidth,
-                      child: NodesMetricTile(
-                        icon: Icons.hub_outlined,
-                        label: l10n.availableRoutes,
-                        value: '$availableRouteCount',
-                        hint: _availableRoutesHint(
-                          l10n: l10n,
-                          readyCloudNodeCount: readyCloudNodes.length,
-                          savedProfileCount: savedProfileCount,
-                        ),
-                        color: const Color(0xFF1452CC),
-                      ),
-                    ),
-                    SizedBox(
-                      width: tileWidth,
-                      child: NodesMetricTile(
-                        icon: Icons.route,
-                        label: l10n.activeNode,
-                        value: profileValue,
-                        hint: _statusLabel(vpnProvider.status, l10n),
-                        color: statusColor,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-            if (vpnProvider.isConnected) ...[
-              SizedBox(height: 10.h),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final tileWidth = (constraints.maxWidth - 10.w) / 2;
-                  return Wrap(
-                    spacing: 10.w,
-                    runSpacing: 10.h,
-                    children: [
-                      SizedBox(
-                        width: tileWidth,
-                        child: NodesMetricTile(
-                          icon: Icons.timer_outlined,
-                          label: l10n.session,
-                          value: stats.connectionTimeFormatted,
-                          hint:
-                              '${l10n.downStats(stats.downloadFormatted)} · ${l10n.upStats(stats.uploadFormatted)}',
-                          color: const Color(0xFF7C3AED),
-                        ),
-                      ),
-                      SizedBox(
-                        width: tileWidth,
-                        child: NodesMetricTile(
-                          icon: Icons.public_outlined,
-                          label: l10n.currentEgressIp,
-                          value: _egressValue(vpnProvider, l10n),
-                          hint: _egressHint(vpnProvider, l10n),
-                          color: const Color(0xFF155EEF),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              if (latestDecision != null) ...[
-                SizedBox(height: 12.h),
-                _LatestRouteCard(decision: latestDecision),
-              ],
-            ],
-            if (vpnProvider.isConnected) ...[
-              SizedBox(height: 14.h),
-              Wrap(
-                spacing: 8.w,
-                runSpacing: 8.h,
+            if (!vpnProvider.isConnected)
+              NodesMetricTile(
+                icon: Icons.hub_outlined,
+                label: l10n.availableRoutes,
+                value: '$availableRouteCount',
+                hint: _availableRoutesHint(
+                  l10n: l10n,
+                  readyCloudNodeCount: readyCloudNodes.length,
+                  savedProfileCount: savedProfileCount,
+                ),
+                color: const Color(0xFF1452CC),
+              )
+            else
+              Column(
                 children: [
-                  NodesStatusChip(
-                    text: l10n.speedStats(stats.downloadSpeedFormatted),
-                    color: const Color(0xFF7C3AED),
+                  SizedBox(
+                    width: double.infinity,
+                    child: NodesMetricTile(
+                      icon: Icons.timer_outlined,
+                      label: l10n.session,
+                      value: stats.connectionTimeFormatted,
+                      hint:
+                          '${l10n.downStats(stats.downloadFormatted)} · ${l10n.upStats(stats.uploadFormatted)}',
+                      color: const Color(0xFF7C3AED),
+                    ),
                   ),
-                  NodesStatusChip(
-                    text: l10n.downStats(stats.downloadFormatted),
-                    color: const Color(0xFF0E9F6E),
-                  ),
-                  NodesStatusChip(
-                    text: l10n.upStats(stats.uploadFormatted),
-                    color: const Color(0xFF1452CC),
+                  SizedBox(height: 10.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: NodesMetricTile(
+                      icon: Icons.public_outlined,
+                      label: l10n.currentEgressIp,
+                      value: _egressValue(vpnProvider, l10n),
+                      hint: _egressHint(vpnProvider, l10n),
+                      color: const Color(0xFF155EEF),
+                    ),
                   ),
                 ],
+              ),
+            if (vpnProvider.isConnected &&
+                _hasConnectionDetails(vpnProvider)) ...[
+              SizedBox(height: 12.h),
+              _ConnectionDetailsTile(
+                vpnProvider: vpnProvider,
+                latestDecision: latestDecision,
               ),
             ],
             SizedBox(height: 16.h),
@@ -256,32 +194,45 @@ class NodesVpnSection extends StatelessWidget {
               LoadingIndicator(message: l10n.processingVpn)
             else
               Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (vpnProvider.status == VpnStatus.connected)
+                  if (vpnProvider.status == VpnStatus.connected) ...[
                     Row(
                       children: [
                         Expanded(
-                          flex: 3,
                           child: FilledButton.icon(
                             key: NodesTestKeys.connectButton,
                             onPressed: onDisconnect,
                             icon: const Icon(Icons.power_settings_new),
-                            label: Text(l10n.disconnect),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                l10n.disconnect,
+                                maxLines: 1,
+                                softWrap: false,
+                              ),
+                            ),
                           ),
                         ),
                         SizedBox(width: 10.w),
                         Expanded(
-                          flex: 2,
-                          child: OutlinedButton.icon(
+                          child: FilledButton.tonalIcon(
                             key: NodesTestKeys.restartButton,
                             onPressed: onRestart,
                             icon: const Icon(Icons.restart_alt),
-                            label: Text(l10n.restartVpn),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                l10n.restartVpn,
+                                maxLines: 1,
+                                softWrap: false,
+                              ),
+                            ),
                           ),
                         ),
                       ],
-                    )
-                  else
+                    ),
+                  ] else
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
@@ -289,13 +240,31 @@ class NodesVpnSection extends StatelessWidget {
                         onPressed: vpnProvider.status == VpnStatus.disconnected
                             ? onConnect
                             : null,
-                        icon: const Icon(Icons.shield),
-                        label: Text(l10n.connect),
+                        icon: Icon(
+                          vpnProvider.status == VpnStatus.disconnected &&
+                                  vpnProvider.error != null
+                              ? Icons.refresh
+                              : Icons.shield,
+                        ),
+                        label: Text(
+                          vpnProvider.status == VpnStatus.disconnected &&
+                                  vpnProvider.error != null
+                              ? l10n.retryConnect
+                              : l10n.connect,
+                        ),
                       ),
                     ),
-                  if (quickActions != null) ...[
+                  if (vpnProvider.error != null) ...[
                     SizedBox(height: 10.h),
-                    quickActions,
+                    KeyedSubtree(
+                      key: NodesTestKeys.vpnNoticeCard,
+                      child: NodesInlineBanner(
+                        icon: Icons.error_outline,
+                        title: l10n.vpnNotice,
+                        message: vpnProvider.error!,
+                        accentColor: Colors.orange,
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -306,78 +275,10 @@ class NodesVpnSection extends StatelessWidget {
   }
 }
 
-Widget? _buildQuickActions({
-  required AppLocalizations l10n,
-  required int savedProfileCount,
-  required int readyCloudNodeCount,
-  required int allCloudNodeCount,
-  required bool hasCloudAccess,
-  required VoidCallback onConfigureApiKey,
-  required VoidCallback onImportProfile,
-  required VoidCallback onCreateCloudNode,
-  required VoidCallback onRefreshRoutes,
-}) {
-  final needsSavedRoute = savedProfileCount == 0;
-  if (!hasCloudAccess && needsSavedRoute) {
-    return Wrap(
-      spacing: 8.w,
-      runSpacing: 8.h,
-      children: [
-        OutlinedButton.icon(
-          onPressed: onConfigureApiKey,
-          icon: const Icon(Icons.key_outlined),
-          label: Text(l10n.setApiKey),
-        ),
-        TextButton.icon(
-          onPressed: onImportProfile,
-          icon: const Icon(Icons.link),
-          label: Text(l10n.importProfile),
-        ),
-      ],
-    );
-  }
-
-  if (hasCloudAccess && allCloudNodeCount == 0 && needsSavedRoute) {
-    return Wrap(
-      spacing: 8.w,
-      runSpacing: 8.h,
-      children: [
-        OutlinedButton.icon(
-          onPressed: onCreateCloudNode,
-          icon: const Icon(Icons.add_circle_outline),
-          label: Text(l10n.deployNode),
-        ),
-        TextButton.icon(
-          onPressed: onImportProfile,
-          icon: const Icon(Icons.link),
-          label: Text(l10n.importProfile),
-        ),
-      ],
-    );
-  }
-
-  if (allCloudNodeCount > 0 &&
-      readyCloudNodeCount == 0 &&
-      needsSavedRoute) {
-    return Wrap(
-      spacing: 8.w,
-      runSpacing: 8.h,
-      children: [
-        OutlinedButton.icon(
-          onPressed: onRefreshRoutes,
-          icon: const Icon(Icons.refresh),
-          label: Text(l10n.refresh),
-        ),
-        TextButton.icon(
-          onPressed: onImportProfile,
-          icon: const Icon(Icons.link),
-          label: Text(l10n.importProfile),
-        ),
-      ],
-    );
-  }
-
-  return null;
+bool _hasConnectionDetails(VpnProvider vpnProvider) {
+  return vpnProvider.recentRouteDecisions.isNotEmpty ||
+      vpnProvider.stats.uploadBytes > 0 ||
+      vpnProvider.stats.downloadBytes > 0;
 }
 
 String _availableRoutesHint({
@@ -388,32 +289,101 @@ String _availableRoutesHint({
   return '$readyCloudNodeCount ${l10n.cloudNodes} · $savedProfileCount ${l10n.manualProfiles}';
 }
 
+String _connectionHeaderHint({
+  required AppLocalizations l10n,
+  required VpnProvider vpnProvider,
+  required CloudProvider cloudProvider,
+  required Profile? selectedProfile,
+  required int savedProfileCount,
+  required int readyCloudNodeCount,
+}) {
+  if (selectedProfile != null) {
+    if (isCloudManagedProfile(selectedProfile)) {
+      final providerLabel = _selectedCloudProviderLabel(
+        cloudProvider: cloudProvider,
+        selectedProfile: selectedProfile,
+      );
+      if (providerLabel != null) {
+        return '$providerLabel · ${_statusLabel(vpnProvider.status, l10n)}';
+      }
+    }
+    return _statusLabel(vpnProvider.status, l10n);
+  }
+
+  final routeSummary = _availableRoutesHint(
+    l10n: l10n,
+    readyCloudNodeCount: readyCloudNodeCount,
+    savedProfileCount: savedProfileCount,
+  );
+  if (readyCloudNodeCount > 0 || savedProfileCount > 0) {
+    return routeSummary;
+  }
+  if (cloudProvider.allInstances.isNotEmpty) {
+    return l10n.waitingForCredentials;
+  }
+  if (!cloudProvider.hasApiKey && savedProfileCount == 0) {
+    return cloudProvider.providerId == CloudProviderId.ssh
+        ? l10n.setSshAccessHint
+        : l10n.setCloudProviderApiKeyHint;
+  }
+  return l10n.noNodeSelectedHint;
+}
+
+String? _selectedCloudProviderLabel({
+  required CloudProvider cloudProvider,
+  required Profile selectedProfile,
+}) {
+  final instanceLabel = selectedProfile.name.replaceFirst(
+    ProfileProvider.cloudManagedProfilePrefix,
+    '',
+  );
+  final instance = cloudProvider.allInstances
+      .where((candidate) => candidate.label == instanceLabel)
+      .firstOrNull;
+  final providerId = CloudProviderId.tryParse(instance?.provider);
+  return providerId?.displayName;
+}
+
 String _egressValue(VpnProvider vpnProvider, AppLocalizations l10n) {
-  return switch ((
-    vpnProvider.isConnected,
-    vpnProvider.isRefreshingDiagnostics,
-    vpnProvider.diagnosticsEgressIp,
-    vpnProvider.diagnosticsError,
-  )) {
-    (false, _, _, _) => l10n.connectVpnToMeasure,
-    (true, true, null, _) => l10n.refreshing,
-    (true, _, String ip, _) => ip,
-    (true, _, null, String _) => l10n.probeUnavailable,
-    _ => l10n.unavailable,
-  };
+  if (!vpnProvider.isConnected) {
+    return l10n.connectVpnToMeasure;
+  }
+  final currentIp = vpnProvider.diagnosticsEgressIp;
+  if (currentIp != null) {
+    return currentIp;
+  }
+  // Current probe did not land a fresh IP. If we ever confirmed one during
+  // this session, show it with a "last seen" tag so the user sees a concrete
+  // value rather than a misleading "unavailable" — the tunnel is still up
+  // and routing traffic; only the probe lagged.
+  final lastSeen = vpnProvider.lastKnownEgressIp;
+  if (lastSeen != null) {
+    return l10n.egressLastSeen(lastSeen);
+  }
+  if (vpnProvider.isRefreshingDiagnostics) {
+    return l10n.refreshing;
+  }
+  return l10n.egressProbeBusy;
 }
 
 String? _egressHint(VpnProvider vpnProvider, AppLocalizations l10n) {
-  return switch ((
-    vpnProvider.isConnected,
-    vpnProvider.isRefreshingDiagnostics,
-    vpnProvider.diagnosticsEgressIp,
-    vpnProvider.diagnosticsError,
-  )) {
-    (true, false, null, String error) => error,
-    (true, true, null, _) => l10n.egressProbeHelp,
-    _ => null,
-  };
+  if (!vpnProvider.isConnected) {
+    return null;
+  }
+  final currentIp = vpnProvider.diagnosticsEgressIp;
+  if (currentIp != null) {
+    return null;
+  }
+  // Probe failed or is pending but VPN is up — explicitly reassure the user
+  // that traffic is still going through the tunnel, so a transient probe
+  // failure doesn't look like a broken VPN.
+  if (vpnProvider.lastKnownEgressIp != null) {
+    return l10n.egressProbeStillRoutingHint;
+  }
+  if (vpnProvider.isRefreshingDiagnostics) {
+    return l10n.egressProbeHelp;
+  }
+  return vpnProvider.diagnosticsError ?? l10n.egressProbeStillRoutingHint;
 }
 
 Color _statusColor(VpnStatus status) {
@@ -453,15 +423,74 @@ String _statusLabel(VpnStatus status, AppLocalizations l10n) {
   }
 }
 
-String _connectionHint(CloudProvider cloudProvider, AppLocalizations l10n) {
-  final readyCloudNodes = connectableCloudInstances(cloudProvider);
-  if (readyCloudNodes.isNotEmpty) {
-    return l10n.tapConnectHint;
+class _ConnectionDetailsTile extends StatelessWidget {
+  const _ConnectionDetailsTile({
+    required this.vpnProvider,
+    required this.latestDecision,
+  });
+
+  final VpnProvider vpnProvider;
+  final VpnRouteDecision? latestDecision;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final stats = vpnProvider.stats;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.05)),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 2.h),
+          childrenPadding: EdgeInsets.fromLTRB(14.w, 0, 14.w, 14.h),
+          title: Text(
+            l10n.connectionDetails,
+            style: TextStyle(
+              fontSize: 13.sp,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          subtitle: Text(
+            l10n.speedStats(stats.downloadSpeedFormatted),
+            style: TextStyle(
+              fontSize: 11.sp,
+              color: Colors.grey[700],
+            ),
+          ),
+          children: [
+            Wrap(
+              spacing: 8.w,
+              runSpacing: 8.h,
+              children: [
+                NodesStatusChip(
+                  text: l10n.speedStats(stats.downloadSpeedFormatted),
+                  color: const Color(0xFF7C3AED),
+                ),
+                NodesStatusChip(
+                  text: l10n.downStats(stats.downloadFormatted),
+                  color: const Color(0xFF0E9F6E),
+                ),
+                NodesStatusChip(
+                  text: l10n.upStats(stats.uploadFormatted),
+                  color: const Color(0xFF1452CC),
+                ),
+              ],
+            ),
+            if (latestDecision != null) ...[
+              SizedBox(height: 12.h),
+              _LatestRouteCard(decision: latestDecision!),
+            ],
+          ],
+        ),
+      ),
+    );
   }
-  if (cloudProvider.allInstances.isNotEmpty) {
-    return l10n.waitingForCredentials;
-  }
-  return l10n.noNodeSelected;
 }
 
 class _LatestRouteCard extends StatelessWidget {

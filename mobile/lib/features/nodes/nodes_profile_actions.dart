@@ -1,8 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/subscription/parser.dart';
-import '../../core/subscription/subscription_fetcher.dart';
+import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
 import '../../shared/utils/logger.dart';
 import '../cloud/cloud_throughput_probe.dart';
@@ -14,11 +15,6 @@ import 'nodes_action_feedback.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
 import 'nodes_profile_widgets.dart';
-
-String _subscriptionSourceLabel(String url) {
-  final uri = Uri.tryParse(url.trim());
-  return uri?.host.isNotEmpty == true ? uri!.host : 'unknown source';
-}
 
 Future<void> confirmDeleteProfile({
   required BuildContext context,
@@ -88,8 +84,6 @@ Future<void> showRenameProfileFlow({
 Future<void> showImportProfileFlow({
   required BuildContext context,
   required ProfileProvider profileProvider,
-  Future<Object?> Function(String url)? fetchSubscriptionData,
-  String? Function(Object? responseData)? parseSubscriptionData,
 }) async {
   final request = await showNodesImportProfileDialog(
     context,
@@ -99,93 +93,41 @@ Future<void> showImportProfileFlow({
     return;
   }
 
-  final input = request.url.trim();
-
-  // Check if input is proxy URIs (not an HTTP URL)
-  final uri = Uri.tryParse(input);
-  final isHttpUrl = uri != null &&
-      uri.hasAuthority &&
-      (uri.scheme == 'http' || uri.scheme == 'https');
-
-  if (!isHttpUrl) {
-    // Parse proxy URIs directly
-    final config = normalizeToSingboxConfig(input);
-    if (config == null || config == '{}') {
-      if (context.mounted) {
-        showNodesActionSnackBar(
-          context,
-          message: AppLocalizations.of(context)!.failedToParseProxyLinks,
-          backgroundColor: Colors.red,
-        );
-      }
-      return;
-    }
-
-    final profileName = request.name.isNotEmpty
-        ? request.name
-        : 'Import ${DateTime.now().toString().substring(0, 16)}';
-    final success = await profileProvider.createProfile(
-      name: profileName,
-      content: config,
-    );
-    if (success) {
-      final created = profileProvider.getProfileByName(profileName);
-      if (created != null) {
-        await profileProvider.activateProfile(created.id);
-      } else {
-        AppLogger.warning(
-          '[Nodes] Imported proxy profile "$profileName" but could not resolve it for activation',
-        );
-      }
-    }
-
-    if (!context.mounted) return;
-    final l10nImport = AppLocalizations.of(context)!;
-    showNodesActionSnackBar(
-      context,
-      message: success
-          ? l10nImport.importedSuccess
-          : profileProvider.error ?? l10nImport.failedToImport,
-      backgroundColor: success ? Colors.green : Colors.red,
-    );
-    return;
-  }
-
-  showNodesActionSnackBar(
-    context,
-    message: AppLocalizations.of(context)!.fetchingSubscription,
-    backgroundColor: Colors.grey.shade800,
-  );
-
   try {
-    final sourceLabel = _subscriptionSourceLabel(request.url);
-    final responseData =
-        await (fetchSubscriptionData ?? fetchSubscriptionResponseData)(
-      request.url,
+    final payload = await EncryptedShareCodec.decrypt(
+      armored: request.payload,
+      passphrase: request.passphrase,
     );
-    final config = (parseSubscriptionData ??
-        SubscriptionParser.parseResponseDataToSingboxConfig)(responseData);
-    if (config == null) {
-      AppLogger.warning(
-        '[Nodes] Failed to parse subscription response from $sourceLabel',
-      );
-      if (context.mounted) {
-        showNodesActionSnackBar(
-          context,
-          message: AppLocalizations.of(context)!.failedToParseSubscription,
-          backgroundColor: Colors.red,
-          replaceCurrent: true,
+
+    String? config;
+    switch (payload.kind) {
+      case EncryptedShareKind.proxyLinks:
+        config = normalizeToSingboxConfig(payload.content);
+        if (config == null || config == '{}') {
+          throw const FormatException('Encrypted config could not be parsed');
+        }
+        break;
+      case EncryptedShareKind.profileConfig:
+        final configError = validateSingboxConfig(payload.content);
+        if (configError != null) {
+          throw FormatException(configError);
+        }
+        config = const JsonEncoder.withIndent('  ')
+            .convert(jsonDecode(payload.content) as Map<String, dynamic>);
+        break;
+      default:
+        throw const FormatException(
+          'This encrypted content is not a shareable route config',
         );
-      }
-      return;
     }
 
     final profileName = request.name.isNotEmpty
         ? request.name
-        : 'Sub ${DateTime.now().toString().substring(0, 16)}';
+        : ((payload.label ?? '').trim().isNotEmpty
+            ? payload.label!.trim()
+            : 'Import ${DateTime.now().toString().substring(0, 16)}');
     final success = await profileProvider.createProfile(
       name: profileName,
-      subscriptionUrl: request.url,
       content: config,
     );
     if (success) {
@@ -194,18 +136,18 @@ Future<void> showImportProfileFlow({
         await profileProvider.activateProfile(created.id);
       } else {
         AppLogger.warning(
-          '[Nodes] Imported subscription profile "$profileName" but could not resolve it for activation',
+          '[Nodes] Imported encrypted profile "$profileName" but could not resolve it for activation',
         );
       }
     }
 
     if (success) {
       AppLogger.info(
-        '[Nodes] Imported subscription profile "$profileName" from $sourceLabel',
+        '[Nodes] Imported encrypted profile "$profileName"',
       );
     } else {
       AppLogger.warning(
-        '[Nodes] Failed to create imported profile "$profileName" from $sourceLabel: '
+        '[Nodes] Failed to create imported encrypted profile "$profileName": '
         '${profileProvider.error ?? 'unknown error'}',
       );
     }
@@ -221,19 +163,17 @@ Future<void> showImportProfileFlow({
           ? l10nSubImport.importedSuccess
           : profileProvider.error ?? l10nSubImport.failedToImport,
       backgroundColor: success ? Colors.green : Colors.red,
-      replaceCurrent: true,
     );
   } catch (e, stackTrace) {
-    AppLogger.error('[Nodes] Subscription import failed', e, stackTrace);
+    AppLogger.error('[Nodes] Encrypted import failed', e, stackTrace);
     if (!context.mounted) {
       return;
     }
 
     showNodesActionSnackBar(
       context,
-      message: AppLocalizations.of(context)!.networkError('$e'),
+      message: AppLocalizations.of(context)!.encryptedImportFailed('$e'),
       backgroundColor: Colors.red,
-      replaceCurrent: true,
     );
   }
 }
@@ -252,17 +192,7 @@ Future<void> showCreateProfileFlow({
 
   final profileName = request.name.trim();
   final rawConfig = request.config.trim();
-  final config = normalizeToSingboxConfig(rawConfig);
-  if (config == null || config == '{}') {
-    showNodesActionSnackBar(
-      context,
-      message: AppLocalizations.of(context)!.unrecognizedConfigFormat,
-      backgroundColor: Colors.red,
-    );
-    return;
-  }
-
-  final configError = validateSingboxConfig(config);
+  final configError = validateSingboxConfig(rawConfig);
   if (configError != null) {
     showNodesActionSnackBar(
       context,
@@ -271,6 +201,9 @@ Future<void> showCreateProfileFlow({
     );
     return;
   }
+
+  final config = const JsonEncoder.withIndent('  ')
+      .convert(jsonDecode(rawConfig) as Map<String, dynamic>);
 
   final success = await profileProvider.createProfile(
     name: profileName,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_screen.dart';
+import 'package:privatedeploy_mobile/features/nodes/nodes_test_keys.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'support/nodes_test_support.dart';
 
@@ -44,12 +45,17 @@ void main() {
       expect(cloudProvider.loadInstancesCalls, 1);
       expect(profileProvider.pruneCalls, 1);
 
-      expect(find.text('Workspace'), findsOneWidget);
-      expect(find.text('Cloud Nodes'), findsWidgets);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Connect'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Cloud Routes'), findsWidgets);
       expect(find.text('Saved Profiles'), findsOneWidget);
       expect(find.text('fra-node'), findsOneWidget);
       expect(find.text('Manual A'), findsOneWidget);
-      expect(find.byIcon(Icons.link), findsOneWidget);
       expect(find.byIcon(Icons.add), findsOneWidget);
       expect(find.byIcon(Icons.cloud_upload), findsNothing);
     });
@@ -81,15 +87,9 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.descendant(
-          of: find.byType(AppBar),
-          matching: find.byIcon(Icons.more_vert),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Refresh').last);
-      await tester.pump();
+      final refreshIndicator =
+          tester.widget<RefreshIndicator>(find.byType(RefreshIndicator));
+      await refreshIndicator.onRefresh();
       await tester.pumpAndSettle();
 
       expect(profileProvider.loadProfilesCalls, 2);
@@ -102,7 +102,8 @@ void main() {
 
     testWidgets('disconnects and prunes stale active cloud profiles',
         (tester) async {
-      final staleProfile = testProfile(id: 'cloud-old', name: 'Cloud: old-node');
+      final staleProfile =
+          testProfile(id: 'cloud-old', name: 'Cloud: old-node');
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
         hasApiKeyAfterRefresh: true,
@@ -171,11 +172,17 @@ void main() {
       await tester.pageBack();
       await tester.pumpAndSettle();
 
-      expect(find.text('Workspace'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Connect'),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Settings'), findsNothing);
     });
 
-    testWidgets('opens cloud api key flow from workspace menu',
+    testWidgets('opens cloud access flow from action sheet when cloud access is not configured',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: false,
@@ -192,20 +199,17 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.descendant(
-          of: find.byType(AppBar),
-          matching: find.byIcon(Icons.more_vert),
-        ),
-      );
+      expect(find.byKey(NodesTestKeys.workspaceFab), findsOneWidget);
+
+      await tester.tap(find.byKey(NodesTestKeys.workspaceFab));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Cloud API Key').last);
+      await tester.tap(find.byKey(NodesTestKeys.configureCloudAccessFab));
       await tester.pumpAndSettle();
 
-      expect(find.text('API Key'), findsWidgets);
+      expect(find.text('Cloud Access'), findsOneWidget);
     });
 
-    testWidgets('shows journey progress for first-time cloud setup',
+    testWidgets('shows cloud empty state and primary actions for first-time setup',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: false,
@@ -227,12 +231,72 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(find.text('Add cloud access'), findsOneWidget);
-      expect(find.text('Add access'), findsOneWidget);
-      expect(find.text('Prepare route'), findsOneWidget);
-      expect(find.text('Connect'), findsWidgets);
-      expect(find.text('Now'), findsOneWidget);
-      expect(find.text('Next'), findsNWidgets(2));
+      expect(find.text('Cloud Routes'), findsOneWidget);
+      expect(find.text('Cloud access has not been added yet'), findsOneWidget);
+      expect(find.text('Saved Profiles'), findsNothing);
+      expect(find.text('Vultr'), findsOneWidget);
+      expect(find.text('DigitalOcean'), findsOneWidget);
+      expect(find.text('SSH'), findsOneWidget);
+      expect(find.byKey(NodesTestKeys.workspaceFab), findsOneWidget);
+    });
+
+    testWidgets('shows saved profiles before cloud routes when local routes are the only usable path',
+        (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: true,
+        instances: [
+          testCloudInstance(
+            label: 'warming-node',
+            status: 'active',
+            nodeInfo: null,
+          ),
+        ],
+      );
+      final profileProvider = TestProfileProvider(
+        loadedProfiles: [testProfile(id: 'manual-1', name: 'Manual A')],
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const NodesScreen(),
+        cloudProvider: cloudProvider,
+        profileProvider: profileProvider,
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+      );
+
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      final savedProfilesY = tester.getTopLeft(find.text('Saved Profiles')).dy;
+      final cloudRoutesY = tester.getTopLeft(find.text('Cloud Routes').first).dy;
+
+      expect(savedProfilesY, lessThan(cloudRoutesY));
+    });
+
+    testWidgets('reserves bottom scroll padding so the fab does not cover the last controls',
+        (tester) async {
+      final cloudProvider = TestCloudProvider(
+        hasApiKey: true,
+        instances: [readyCloudTestInstance(label: 'sgp-node')],
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        wrapInScaffold: false,
+        child: const NodesScreen(),
+        cloudProvider: cloudProvider,
+        profileProvider: TestProfileProvider(),
+        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+      );
+
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      final listView = tester.widget<ListView>(find.byType(ListView));
+      expect(listView.padding, isA<EdgeInsets>());
+      final padding = listView.padding! as EdgeInsets;
+      expect(padding.bottom, greaterThan(100));
     });
   });
 }

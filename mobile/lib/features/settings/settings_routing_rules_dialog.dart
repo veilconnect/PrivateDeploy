@@ -40,6 +40,7 @@ class _SettingsRoutingRulesDialog extends StatefulWidget {
 
 class _SettingsRoutingRulesDialogState
     extends State<_SettingsRoutingRulesDialog> {
+  late VpnDnsMode _dnsMode;
   late bool _directPrivateNetworks;
   late bool _directCnDomains;
   late bool _directCnIpRanges;
@@ -62,6 +63,7 @@ class _SettingsRoutingRulesDialogState
   void initState() {
     super.initState();
     final settings = widget.initialSettings;
+    _dnsMode = settings.dnsMode;
     _directPrivateNetworks = settings.directPrivateNetworks;
     _directCnDomains = settings.directCnDomains;
     _directCnIpRanges = settings.directCnIpRanges;
@@ -108,6 +110,42 @@ class _SettingsRoutingRulesDialogState
               Text(
                 l10n.routingRulesHelp,
                 style: Theme.of(context).textTheme.bodySmall,
+              ),
+              SizedBox(height: 12.h),
+              Text(
+                l10n.dnsMode,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              SizedBox(height: 8.h),
+              DropdownButtonFormField<VpnDnsMode>(
+                initialValue: _dnsMode,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: VpnDnsMode.regionalOptimized,
+                    child: Text(l10n.cnOptimizedDns),
+                  ),
+                  DropdownMenuItem(
+                    value: VpnDnsMode.strictProxy,
+                    child: Text(l10n.strictProxyDns),
+                  ),
+                  DropdownMenuItem(
+                    value: VpnDnsMode.systemResolver,
+                    child: Text(l10n.systemDns),
+                  ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _dnsMode = value;
+                        });
+                      },
               ),
               SizedBox(height: 12.h),
               CheckboxListTile(
@@ -380,10 +418,11 @@ class _SettingsRoutingRulesDialogState
       _errorText = null;
     });
 
-    final settings = widget.initialSettings.copyWith(
-      directPrivateNetworks: _directPrivateNetworks,
-      directCnDomains: _directCnDomains,
-      directCnIpRanges: _directCnIpRanges,
+      final settings = widget.initialSettings.copyWith(
+        dnsMode: _dnsMode,
+        directPrivateNetworks: _directPrivateNetworks,
+        directCnDomains: _directCnDomains,
+        directCnIpRanges: _directCnIpRanges,
       customDirectPackages: _directPackages,
       customProxyPackages: _proxyPackages,
       customDirectDomains: directDomains,

@@ -45,13 +45,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get copy => 'Copy';
 
   @override
+  String get confirm => 'Confirm';
+
+  @override
+  String copyProtocolLink(Object protocol) {
+    return 'Copy Encrypted $protocol Config';
+  }
+
+  @override
   String get ok => 'OK';
 
   @override
   String get back => 'Back';
 
   @override
+  String get more => 'More';
+
+  @override
+  String get automatic => 'Automatic';
+
+  @override
   String get cloudApiKey => 'Cloud API Key';
+
+  @override
+  String get cloudAccess => 'Cloud Access';
 
   @override
   String get apiKey => 'API Key';
@@ -66,7 +83,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get failedToSaveApiKey => 'Failed to save API key';
 
   @override
+  String get failedToSaveCloudAccess => 'Failed to save cloud access';
+
+  @override
   String get apiKeySavedAndVerified => 'API key saved and verified';
+
+  @override
+  String get cloudAccessSavedAndVerified => 'Cloud access saved and verified';
 
   @override
   String get notSet => 'Not set';
@@ -82,6 +105,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String deployToSshServer(Object target) {
+    return 'Deploy to $target';
+  }
+
+  @override
   String get loadingNodes => 'Loading nodes...';
 
   @override
@@ -91,7 +119,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nextStep => 'Next step';
 
   @override
-  String get connection => 'Connection';
+  String get connection => 'Connect';
 
   @override
   String get connected => 'Connected';
@@ -109,13 +137,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tapConnectHint => 'Tap Connect to use the fastest node.';
 
   @override
-  String get waitingForCredentials => 'Waiting for node credentials…';
+  String get waitingForCredentials =>
+      'Node is still preparing connection details';
 
   @override
   String get noNodeSelected => 'No node selected.';
 
   @override
   String get connect => 'Connect';
+
+  @override
+  String get retryConnect => 'Retry connect';
 
   @override
   String get disconnect => 'Disconnect';
@@ -149,24 +181,41 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get cloudNodes => 'Cloud Nodes';
+  String get connectionDetails => 'Connection details';
+
+  @override
+  String get cloudNodes => 'Cloud Routes';
 
   @override
   String get availableRoutes => 'Available Routes';
 
   @override
-  String get cloudAccessNotConfigured => 'Cloud access not configured';
+  String get cloudAccessNotConfigured => 'Cloud access has not been added yet';
 
   @override
-  String setCloudProviderApiKeyHint(Object provider) {
-    return 'Set your $provider API key to get started.';
-  }
+  String get setCloudProviderApiKeyHint =>
+      'Add cloud API access to list routes and create new ones on this device.';
 
   @override
   String get setApiKey => 'Set API Key';
 
   @override
-  String get benchmarkAll => 'Benchmark All';
+  String get setCloudAccess => 'Set Cloud Access';
+
+  @override
+  String get setSshAccess => 'Set SSH Access';
+
+  @override
+  String get setSshAccessHint =>
+      'Save the SSH server host, username, and password so this device can deploy directly.';
+
+  @override
+  String sshDeployUsesSavedAccess(Object target) {
+    return 'This route will deploy through the saved SSH access: $target';
+  }
+
+  @override
+  String get benchmarkAll => 'Measure All';
 
   @override
   String get failedToLoad => 'Failed to load';
@@ -176,22 +225,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deployFirstNodeHint =>
-      'Create one cloud node to start routing traffic from this device.';
+      'Create one cloud route, then connect from this device.';
 
   @override
-  String get deployNode => 'Deploy Node';
+  String get deployNode => 'Create Route';
 
   @override
-  String get manualProfilesDesc => 'Profiles stored only on this device';
+  String get manualProfilesDesc => 'Routes saved only on this device';
 
   @override
   String get activeNode => 'Current Route';
 
   @override
-  String get useAndConnect => 'Use & Connect';
+  String get useAndConnect => 'Connect';
 
   @override
-  String get useAndSwitch => 'Use & Switch';
+  String get useAndSwitch => 'Switch Here';
 
   @override
   String get speedTest => 'Speed Test';
@@ -203,6 +252,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get testing => 'Testing...';
 
   @override
+  String get protocol => 'Protocol';
+
+  @override
+  String chooseProtocolForNode(Object label) {
+    return 'Choose protocol for $label';
+  }
+
+  @override
+  String get protocolAutomaticHint =>
+      'Follow the latest benchmark or fastest available endpoint automatically.';
+
+  @override
+  String protocolSaved(Object label, Object protocol) {
+    return '$label will use $protocol next time it connects.';
+  }
+
+  @override
   String get active => 'Ready';
 
   @override
@@ -210,6 +276,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get inUse => 'In Use';
+
+  @override
+  String get selectedRoute => 'Selected';
 
   @override
   String get saved => 'Saved';
@@ -311,30 +380,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceGuideSetupTitle => 'Add cloud access';
 
   @override
-  String workspaceGuideSetupMessage(Object provider) {
-    return 'Save your $provider API key so this device can list nodes, deploy new ones, and reconnect later.';
-  }
+  String get workspaceGuideSetupMessage =>
+      'Add cloud API access or SSH access so this device can list routes, deploy new ones, and reconnect later.';
 
   @override
-  String get workspaceGuideDeployTitle => 'Create your first route';
+  String get workspaceGuideDeployTitle => 'Prepare your first route';
 
   @override
   String get workspaceGuideDeployMessage =>
-      'Start with one cloud node, or import an existing profile if you already have one.';
+      'Start with one cloud route, or import an existing profile if you already have one.';
 
   @override
   String get workspaceGuideChooseTitle => 'Ready to connect';
 
   @override
   String get workspaceGuideChooseMessage =>
-      'Tap Connect to pick the fastest ready node automatically, or choose one below first.';
+      'Tap Connect to pick the fastest ready route automatically, or choose one below first.';
 
   @override
-  String get workspaceGuideSyncTitle => 'Finish node setup';
+  String get workspaceGuideSyncTitle => 'Routes are still getting ready';
 
   @override
   String get workspaceGuideSyncMessage =>
-      'Your nodes are visible, but this device is still waiting for connection details. Refresh, or use a node from this device once it is ready.';
+      'These routes are visible, but this device is still waiting for connection details. Refresh, or connect after they finish preparing.';
 
   @override
   String get workspaceStepAccess => 'Add access';
@@ -390,11 +458,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'No ready cloud node is available for testing';
 
   @override
-  String get benchmarkAllNodesTitle => 'Benchmark All Nodes';
+  String get benchmarkAllNodesTitle => 'Measure All Routes';
 
   @override
   String get benchmarkAllNodesConfirm =>
-      'This benchmark will temporarily disconnect your current VPN connection, test each ready cloud node with a real download sample, and then restore your previous connection.\n\nContinue?';
+      'This check will temporarily disconnect your current VPN connection, test each ready cloud route with a real download sample, and then restore your previous connection.\n\nContinue?';
 
   @override
   String get startBenchmark => 'Start Benchmark';
@@ -424,7 +492,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get restoreConnectionFailed => 'Previous connection restore failed';
 
   @override
-  String get deployNodeTitle => 'Deploy Node';
+  String get deployNodeTitle => 'Create Route';
 
   @override
   String get loadingRegionsPlans => 'Loading regions and plans...';
@@ -466,16 +534,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Selected plan is not available in the chosen region';
 
   @override
-  String get importFromUrl => 'Import from URL';
+  String get importFromUrl => 'Import Encrypted Config';
 
   @override
   String get profileName => 'Profile Name';
 
   @override
+  String get optionalProfileNameHint => 'Optional shared profile name';
+
+  @override
   String get egMySubscription => 'e.g. My Subscription';
 
   @override
-  String get urlOrProxyLinks => 'URL or Proxy Links';
+  String get urlOrProxyLinks => 'Subscription URL or Proxy Links';
 
   @override
   String get urlOrProxyLinksHint => 'https://... or ss://... or vless://...';
@@ -484,29 +555,48 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pasteFromClipboard => 'Paste from clipboard';
 
   @override
-  String get pleaseEnterUrlOrLinks => 'Please enter a URL or proxy links';
+  String get pleaseEnterUrlOrLinks =>
+      'Please enter a subscription URL or proxy links';
 
   @override
   String get enterHttpUrlOrLinks =>
-      'Enter an http(s) URL or proxy links (ss://, vless://, etc.)';
+      'Enter a subscription URL or proxy links (https://, ss://, vless://, etc.)';
 
   @override
-  String get createProfile => 'Create Profile';
+  String get importEncryptedProfile => 'Import Encrypted Config';
 
   @override
-  String get egMyVpnConfig => 'e.g. My VPN Config';
+  String get encryptedConfig => 'Encrypted Config';
 
   @override
-  String get config => 'Config';
+  String get pasteEncryptedConfigHint =>
+      'Paste encrypted content copied from PrivateDeploy...';
 
   @override
-  String get pasteProxyLinksOrJson => 'Paste proxy links or sing-box JSON...';
+  String get pleasePasteEncryptedConfig =>
+      'Please paste encrypted config content';
+
+  @override
+  String get enterEncryptedConfig =>
+      'Paste encrypted content copied from PrivateDeploy';
+
+  @override
+  String get createProfile => 'Create Local Config';
+
+  @override
+  String get egMyVpnConfig => 'e.g. My JSON Config';
+
+  @override
+  String get config => 'sing-box JSON';
+
+  @override
+  String get pasteProxyLinksOrJson => 'Paste sing-box JSON...';
 
   @override
   String get pleaseEnterProfileName => 'Please enter a profile name';
 
   @override
-  String get pleasePasteConfig => 'Please paste config or proxy links';
+  String get pleasePasteConfig => 'Please paste sing-box JSON';
 
   @override
   String get renameProfile => 'Rename Profile';
@@ -526,16 +616,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get rename => 'Rename';
 
   @override
-  String get deployCloudNode => 'Deploy cloud node';
+  String get deployCloudNode => 'Create cloud route';
 
   @override
-  String get importProfile => 'Import profile';
+  String get importProfile => 'Import Encrypted Config';
 
   @override
-  String get createProfileTooltip => 'Create profile';
+  String get createProfileTooltip => 'Create Local Config';
 
   @override
-  String get copyAllLinks => 'Copy All Links';
+  String get copyAllLinks => 'Copy Encrypted Node';
 
   @override
   String get nodeInfo => 'Node Info';
@@ -640,6 +730,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get failedToParseProxyLinks => 'Failed to parse proxy links';
 
   @override
+  String encryptedImportFailed(Object error) {
+    return 'Failed to import encrypted config: $error';
+  }
+
+  @override
   String networkError(Object error) {
     return 'Network error: $error';
   }
@@ -659,43 +754,63 @@ class AppLocalizationsEn extends AppLocalizations {
       'Paste sing-box JSON configuration here...';
 
   @override
-  String get server => 'Server';
+  String get server => 'Cloud';
 
   @override
-  String get standaloneCloudAccess => 'Standalone Cloud Access';
+  String get standaloneCloudAccess => 'Cloud Access';
 
   @override
-  String get standaloneCloudAccessDesc =>
-      'This device directly calls the Vultr API';
-
-  @override
-  String get cloudProvider => 'Cloud Provider';
-
-  @override
-  String cloudProviderDirect(Object name) {
-    return '$name (direct)';
+  String standaloneCloudAccessDesc(Object provider) {
+    return 'This device directly calls the $provider API';
   }
 
   @override
-  String get sensitiveData => 'Sensitive Data';
+  String get standaloneSshAccessDesc => 'This device deploys directly over SSH';
+
+  @override
+  String get cloudProvider => 'Cloud Service';
+
+  @override
+  String cloudProviderDirect(Object name) {
+    return '$name · direct access';
+  }
+
+  @override
+  String get chooseCloudProviderHint =>
+      'Choose a cloud service or SSH when you add access.';
+
+  @override
+  String get sshAccess => 'SSH Access';
+
+  @override
+  String get sshHost => 'SSH Host';
+
+  @override
+  String get username => 'Username';
+
+  @override
+  String get sshPassword => 'SSH Password';
+
+  @override
+  String get sensitiveData => 'Security & Backup';
 
   @override
   String get sensitiveDataDesc =>
-      'API keys stay in device secure storage. Backup export and restore can expose secrets, so rotate keys if a backup is shared.';
+      'Saved cloud access stays in device secure storage. Backup export and restore can expose secrets, so rotate or replace credentials if a backup is shared.';
 
   @override
-  String get copyCloudBackup => 'Copy Cloud Backup';
+  String get copyCloudBackup => 'Export Encrypted Cloud Backup';
 
   @override
   String get copyCloudBackupDesc =>
-      'Review the summary first, then copy sensitive backup JSON with API key and local node records';
+      'Review the summary first, then encrypt and copy a cloud backup with your saved access and cloud route records.';
 
   @override
-  String get restoreCloudBackup => 'Restore Cloud Backup';
+  String get restoreCloudBackup => 'Import Encrypted Cloud Backup';
 
   @override
   String get restoreCloudBackupDesc =>
-      'Paste a backup JSON, validate it, then confirm restoring the API key and local nodes';
+      'Paste encrypted cloud backup content from PrivateDeploy to restore saved access and cloud route records.';
 
   @override
   String get app => 'App';
@@ -726,7 +841,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get routingModeDesc =>
-      'LAN direct · CN domains direct · CN IPs direct';
+      'LAN direct · regional apps direct · CN domains direct · CN IPs direct';
 
   @override
   String get vpnDiagnostics => 'VPN Diagnostics';
@@ -753,14 +868,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get clearLocalCloudDataDesc =>
-      'Removes saved API key and local node cache';
+      'Removes saved access and local node cache';
 
   @override
   String get clearLocalCloudDataTitle => 'Clear Local Cloud Data?';
 
   @override
-  String get clearLocalCloudDataConfirm =>
-      'This removes the saved Vultr API key and cached cloud node records from this device only. It does not delete any cloud instances.';
+  String clearLocalCloudDataConfirm(Object provider) {
+    return 'This removes the saved $provider access and cached cloud node records from this device only. It does not delete any cloud instances.';
+  }
 
   @override
   String get clear => 'Clear';
@@ -785,57 +901,57 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get backupSensitiveWarning =>
-      'Sensitive backup JSON is visible below. Store it safely because it includes your Vultr API key and node credentials.';
+      'Encrypted cloud backup text is visible below. Only someone with the same share passphrase can import it.';
 
   @override
   String get backupClipboardWarning =>
-      'Sensitive backup copied to your clipboard. Clipboard contents may be accessible to other apps until you replace them.';
+      'Encrypted cloud backup copied to your clipboard. Even if you share it through chat apps, the recipient still needs the share passphrase.';
 
   @override
   String get backupReviewWarning =>
-      'Review the backup summary below before copying. The backup includes sensitive data such as your Vultr API key and node credentials.';
+      'Review the backup summary below first. Copying will require a share passphrase and the clipboard will never contain raw backup JSON.';
 
   @override
-  String get copySensitiveBackup => 'Copy Sensitive Backup';
+  String get copySensitiveBackup => 'Copy Encrypted Backup';
 
   @override
   String get copyAgain => 'Copy Again';
 
   @override
-  String get revealJson => 'Reveal JSON';
+  String get revealJson => 'Reveal Encrypted Text';
 
   @override
-  String get hideJson => 'Hide JSON';
+  String get hideJson => 'Hide Encrypted Text';
 
   @override
-  String get copySensitiveBackupTitle => 'Copy Sensitive Backup?';
+  String get copySensitiveBackupTitle => 'Copy Encrypted Backup?';
 
   @override
   String get copySensitiveBackupConfirm =>
-      'This will place the full backup JSON on the system clipboard, including the saved API key and node credentials.';
+      'Enter a share passphrase first. The clipboard will receive encrypted backup text instead of raw JSON.';
 
   @override
-  String get sensitiveBackupCopied => 'Sensitive backup copied to clipboard';
+  String get sensitiveBackupCopied => 'Encrypted backup copied to clipboard';
 
   @override
-  String get revealSensitiveBackupTitle => 'Reveal Sensitive Backup?';
+  String get revealSensitiveBackupTitle => 'Reveal Encrypted Backup?';
 
   @override
   String get revealSensitiveBackupConfirm =>
-      'This will display the full backup JSON on screen, including the saved API key and node credentials.';
+      'Enter a share passphrase first. The screen will show encrypted backup text instead of raw JSON.';
 
   @override
   String get reveal => 'Reveal';
 
   @override
-  String get restoreCloudBackupTitle => 'Restore Cloud Backup';
+  String get restoreCloudBackupTitle => 'Import Encrypted Cloud Backup';
 
   @override
   String get restoreCloudBackupDesc2 =>
-      'Paste a backup JSON exported from this app. Restoring can replace the saved API key and overwrite the local cloud node cache on this device.';
+      'Paste encrypted cloud backup content exported from this app, then enter the same share passphrase. Importing can replace your saved access and overwrite this device\'s local cloud route cache.';
 
   @override
-  String get pasteCloudBackupHint => 'Paste cloud backup JSON here';
+  String get pasteCloudBackupHint => 'Paste encrypted cloud backup text here';
 
   @override
   String get pasteClipboard => 'Paste Clipboard';
@@ -848,16 +964,48 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get restoreThisBackupConfirm =>
-      'This will overwrite the local cloud node cache on this device. If the backup contains an API key, it will replace the currently saved key.';
+      'This will overwrite the local cloud node cache on this device. If the backup contains saved access, it will replace the currently saved credentials.';
 
   @override
-  String get backupJsonEmpty => 'Backup JSON cannot be empty';
+  String get backupJsonEmpty => 'Encrypted backup cannot be empty';
 
   @override
-  String get backupJsonInvalid => 'Backup JSON is not valid yet';
+  String get backupJsonInvalid => 'Encrypted backup is not valid yet';
 
   @override
   String get cloudBackupRestored => 'Cloud backup restored';
+
+  @override
+  String get sharePassphrase => 'Share Passphrase';
+
+  @override
+  String get confirmSharePassphrase => 'Confirm Passphrase';
+
+  @override
+  String get passphraseRequired => 'Please enter the share passphrase';
+
+  @override
+  String get passphraseMismatch => 'Passphrases do not match';
+
+  @override
+  String get encryptBeforeCopyTitle => 'Encrypt Before Copying';
+
+  @override
+  String get encryptBeforeCopyMessage =>
+      'Set a share passphrase first. Only someone with the same passphrase can import this content.';
+
+  @override
+  String encryptedProtocolCopied(Object protocol) {
+    return 'Encrypted $protocol config copied';
+  }
+
+  @override
+  String get encryptedNodeCopied => 'Encrypted node copied';
+
+  @override
+  String encryptedCopyFailed(Object error) {
+    return 'Failed to copy encrypted content: $error';
+  }
 
   @override
   String get vpnDiagnosticsTitle => 'VPN Diagnostics';
@@ -890,6 +1038,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get currentEgressIp => 'Exit IP';
 
   @override
+  String get vpnExcludedAppsTitle => 'Apps bypassing VPN';
+
+  @override
+  String vpnExcludedAppsDescription(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count apps are currently excluded from Android VPN coverage and use the local network directly.',
+      one:
+          '1 app is currently excluded from Android VPN coverage and uses the local network directly.',
+      zero: 'No apps are currently excluded from Android VPN coverage.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String vpnExcludedAppsMore(int count) {
+    return '+$count more';
+  }
+
+  @override
   String get connectVpnToMeasure => 'Connect VPN to measure current egress IP';
 
   @override
@@ -901,6 +1071,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get egressProbeHelp =>
       'Trying a short native probe first, then falling back only if needed.';
+
+  @override
+  String get egressProbeBusy => 'Checking egress...';
+
+  @override
+  String egressLastSeen(Object ip) {
+    return '$ip (last seen)';
+  }
+
+  @override
+  String get egressProbeStillRoutingHint =>
+      'VPN is still forwarding traffic; the egress probe just hasn\'t reconfirmed yet.';
 
   @override
   String get latestRoute => 'Latest Route Match';
@@ -925,7 +1107,19 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get routingRulesHelp =>
-      'Built-in defaults follow common split patterns: LAN direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.';
+      'Built-in defaults follow common split patterns: LAN direct, regional apps direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.';
+
+  @override
+  String get dnsMode => 'DNS Mode';
+
+  @override
+  String get cnOptimizedDns => 'regional optimized DNS';
+
+  @override
+  String get strictProxyDns => 'Strict proxy DNS';
+
+  @override
+  String get systemDns => 'System DNS';
 
   @override
   String get lanDirectRule => 'LAN / private networks direct';

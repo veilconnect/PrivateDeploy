@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
+import '../cloud/ssh_deployer.dart';
 import 'nodes_dialog_models.dart';
 
 Future<NodesCreateCloudRequest?> showNodesCreateCloudDialog(
@@ -64,15 +66,18 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<CloudProvider>();
+    final isSsh = provider.providerId == CloudProviderId.ssh;
     final availablePlans = _availablePlans(provider, _selectedRegion);
     final isLoadingOptions =
         provider.isLoadingRegions || provider.isLoadingPlans;
     final missingRegions = provider.regions.isEmpty;
     final missingPlans = provider.plans.isEmpty;
-    final canDeploy = !missingRegions &&
-        !missingPlans &&
-        _selectedRegion != null &&
-        _selectedPlan != null;
+    final canDeploy = isSsh
+        ? provider.hasStoredApiKey
+        : !missingRegions &&
+            !missingPlans &&
+            _selectedRegion != null &&
+            _selectedPlan != null;
 
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
@@ -90,14 +95,20 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             Padding(
               padding: EdgeInsets.only(bottom: 8.h),
               child: Text(
-                l10n.deployToCloudProvider(provider.providerDisplayName),
+                isSsh
+                    ? l10n.deployToSshServer(
+                        provider.providerExtra.isEmpty
+                            ? provider.providerDisplayName
+                            : sshAccessSummary(provider.providerExtra),
+                      )
+                    : l10n.deployToCloudProvider(provider.providerDisplayName),
                 style: TextStyle(
                   fontSize: 12.sp,
                   color: Colors.black54,
                 ),
               ),
             ),
-            if (missingRegions || missingPlans)
+            if (!isSsh && (missingRegions || missingPlans))
               Container(
                 width: double.infinity,
                 margin: EdgeInsets.only(bottom: 16.h),
@@ -156,59 +167,79 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                 hintText: l10n.autoGenerateHint,
               ),
             ),
-            SizedBox(height: 16.h),
-            DropdownButtonFormField<String>(
-              initialValue: _selectedRegion,
-              decoration: InputDecoration(labelText: l10n.region),
-              isExpanded: true,
-              items: provider.regions
-                  .map(
-                    (region) => DropdownMenuItem(
-                      value: region.id,
-                      child: Text(region.displayName),
-                    ),
-                  )
-                  .toList(),
-              onChanged: missingRegions
-                  ? null
-                  : (value) {
-                      setState(() {
-                        _selectedRegion = value;
-                        final availablePlanIds =
-                            _availablePlans(provider, value)
-                                .map((plan) => plan.id)
-                                .toSet();
-                        if (_selectedPlan != null &&
-                            !availablePlanIds.contains(_selectedPlan)) {
-                          _selectedPlan = null;
-                        }
-                      });
-                    },
-            ),
-            SizedBox(height: 16.h),
-            DropdownButtonFormField<String>(
-              initialValue: _selectedPlan,
-              decoration: InputDecoration(
-                labelText: l10n.plan,
-                helperText: !missingPlans &&
-                        _selectedRegion != null &&
-                        availablePlans.isEmpty
-                    ? l10n.noPlansInRegion
-                    : null,
+            if (isSsh) ...[
+              SizedBox(height: 14.h),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(12.w),
+                decoration: BoxDecoration(
+                  color: Colors.blueGrey.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                child: Text(
+                  provider.hasStoredApiKey
+                      ? l10n.sshDeployUsesSavedAccess(
+                          sshAccessSummary(provider.providerExtra),
+                        )
+                      : l10n.setSshAccessHint,
+                  style: TextStyle(fontSize: 12.sp),
+                ),
               ),
-              isExpanded: true,
-              items: availablePlans
-                  .map(
-                    (plan) => DropdownMenuItem(
-                      value: plan.id,
-                      child: Text(plan.displayName),
-                    ),
-                  )
-                  .toList(),
-              onChanged: missingPlans || availablePlans.isEmpty
-                  ? null
-                  : (value) => setState(() => _selectedPlan = value),
-            ),
+            ] else ...[
+              SizedBox(height: 16.h),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedRegion,
+                decoration: InputDecoration(labelText: l10n.region),
+                isExpanded: true,
+                items: provider.regions
+                    .map(
+                      (region) => DropdownMenuItem(
+                        value: region.id,
+                        child: Text(region.displayName),
+                      ),
+                    )
+                    .toList(),
+                onChanged: missingRegions
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _selectedRegion = value;
+                          final availablePlanIds =
+                              _availablePlans(provider, value)
+                                  .map((plan) => plan.id)
+                                  .toSet();
+                          if (_selectedPlan != null &&
+                              !availablePlanIds.contains(_selectedPlan)) {
+                            _selectedPlan = null;
+                          }
+                        });
+                      },
+              ),
+              SizedBox(height: 16.h),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedPlan,
+                decoration: InputDecoration(
+                  labelText: l10n.plan,
+                  helperText: !missingPlans &&
+                          _selectedRegion != null &&
+                          availablePlans.isEmpty
+                      ? l10n.noPlansInRegion
+                      : null,
+                ),
+                isExpanded: true,
+                items: availablePlans
+                    .map(
+                      (plan) => DropdownMenuItem(
+                        value: plan.id,
+                        child: Text(plan.displayName),
+                      ),
+                    )
+                    .toList(),
+                onChanged: missingPlans || availablePlans.isEmpty
+                    ? null
+                    : (value) => setState(() => _selectedPlan = value),
+              ),
+            ],
           ],
         ),
       ),
@@ -247,8 +278,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                     context,
                     NodesCreateCloudRequest(
                       label: _labelController.text.trim(),
-                      region: _selectedRegion!,
-                      plan: _selectedPlan!,
+                      region: isSsh ? '' : _selectedRegion!,
+                      plan: isSsh ? '' : _selectedPlan!,
+                      usesSavedSshAccess: isSsh,
                     ),
                   );
                 },

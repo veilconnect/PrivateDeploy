@@ -65,6 +65,101 @@ void main() {
 
       expect(parser.recentDecisions, hasLength(2));
     });
+
+    test('ignores loopback Android Private DNS probe decisions', () {
+      final parser = VpnRuntimeLogParser();
+
+      parser.replaceWith([
+        VpnNativeLogEntry(
+          message:
+              'outbound/direct[direct]: outbound connection to 127.0.0.1:853',
+          timestamp: DateTime(2026, 3, 30, 7, 2, 0),
+        ),
+        VpnNativeLogEntry(
+          message: 'outbound/direct[direct]: outbound connection to [::1]:853',
+          timestamp: DateTime(2026, 3, 30, 7, 2, 1),
+        ),
+        VpnNativeLogEntry(
+          message:
+              'outbound/shadowsocks[新加坡-SS]: outbound connection to 103.102.166.224:443',
+          timestamp: DateTime(2026, 3, 30, 7, 2, 2),
+        ),
+      ]);
+
+      expect(parser.recentDecisions, hasLength(1));
+      expect(parser.recentDecisions.single.target, '103.102.166.224:443');
+    });
+
+    test('classifies DNS server hits for diagnostics', () {
+      final parser = VpnRuntimeLogParser();
+
+      parser.replaceWith([
+        VpnNativeLogEntry(
+          message:
+              'outbound/direct[direct]: outbound connection to 223.5.5.5:53',
+          timestamp: DateTime(2026, 3, 30, 7, 3, 0),
+        ),
+        VpnNativeLogEntry(
+          message:
+              'outbound/shadowsocks[新加坡-SS]: outbound connection to 1.1.1.1:443',
+          timestamp: DateTime(2026, 3, 30, 7, 3, 1),
+        ),
+      ]);
+
+      expect(parser.recentDecisions, hasLength(2));
+      expect(parser.recentDecisions.first.isDnsDecision, isTrue);
+      expect(parser.recentDecisions.first.dnsServerTag, 'dns-remote');
+      expect(parser.recentDecisions.first.typeLabel, 'DNS');
+      expect(parser.recentDecisions.last.dnsServerTag, 'dns-cn');
+      expect(parser.recentDecisions.last.routeLabel, 'dns-cn');
+    });
+
+    test('classifies remote fallback and bootstrap DoH hits', () {
+      final parser = VpnRuntimeLogParser();
+
+      parser.replaceWith([
+        VpnNativeLogEntry(
+          message:
+              'outbound/direct[direct]: outbound connection to 1.12.12.12:443',
+          timestamp: DateTime(2026, 3, 30, 7, 3, 0),
+        ),
+        VpnNativeLogEntry(
+          message:
+              'outbound/shadowsocks[新加坡-SS]: outbound connection to 8.8.8.8:443',
+          timestamp: DateTime(2026, 3, 30, 7, 3, 1),
+        ),
+      ]);
+
+      expect(parser.recentDecisions, hasLength(2));
+      expect(parser.recentDecisions.first.dnsServerTag, 'dns-remote-google');
+      expect(parser.recentDecisions.first.routeLabel, 'dns-remote-alt');
+      expect(parser.recentDecisions.last.dnsServerTag, 'dns-direct');
+      expect(parser.recentDecisions.last.routeLabel, 'dns-bootstrap');
+    });
+
+    test('ignores urltest gstatic probe noise', () {
+      final parser = VpnRuntimeLogParser();
+
+      parser.replaceWith([
+        VpnNativeLogEntry(
+          message: 'dns: exchanged A www.gstatic.com. 1 IN A 142.250.72.36',
+          timestamp: DateTime(2026, 3, 30, 7, 4, 0),
+        ),
+        VpnNativeLogEntry(
+          message:
+              'outbound/shadowsocks[节点-A]: outbound connection to 142.250.72.36:80',
+          timestamp: DateTime(2026, 3, 30, 7, 4, 1),
+        ),
+        VpnNativeLogEntry(
+          message:
+              'outbound/shadowsocks[节点-A]: outbound connection to 103.102.166.224:443',
+          timestamp: DateTime(2026, 3, 30, 7, 4, 2),
+        ),
+      ]);
+
+      expect(parser.recentDecisions, hasLength(1));
+      expect(parser.recentDecisions.single.target, '103.102.166.224:443');
+    });
   });
 
   group('extractVpnEgressIp', () {
