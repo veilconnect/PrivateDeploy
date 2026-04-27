@@ -1,6 +1,8 @@
 # PrivateDeploy
 
-PrivateDeploy is a cross-platform desktop application (Vue 3 + Wails) that automates the provisioning of hardened proxy nodes on Vultr. A single deployment script brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – and the GUI keeps credentials, client profiles, and health information in sync.
+PrivateDeploy provisions hardened multi-protocol VPS proxies and ships clients on every surface that talks to them: a Vue 3 + Wails desktop app, a Flutter mobile app (Android + iOS) with a native sing-box network service, and a standalone Go HTTP API for headless / multi-device use. A single user-data bundle brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – across Vultr, DigitalOcean, SSH-reachable hosts, and a static catalog (Contabo, Oracle).
+
+For a one-page topology diagram and module map, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Highlights
 
@@ -44,9 +46,13 @@ Reality parameters (public key + short ID) are stored on the VPS under `/etc/pri
 
 ## Additional Documentation
 
-- `docs/MULTI-PROTOCOL-DESIGN.md` – Deep dive into the multi-protocol deployment flow.
-- `docs/DEPLOYMENT-IMPROVEMENTS.md` – Notes on user-data hardening and firewall fixes.
-- `docs/GO-NO-GO-CHECKLIST.md` – Release decision checklist with rollback template.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) – System topology, module map, deployment flow.
+- [`docs/MULTI-PROTOCOL-DESIGN.md`](docs/MULTI-PROTOCOL-DESIGN.md) – Deep dive into the multi-protocol deployment flow.
+- [`docs/MULTI-CLOUD-ARCHITECTURE.md`](docs/MULTI-CLOUD-ARCHITECTURE.md) – Provider abstraction and adding a new cloud.
+- [`docs/API_DESIGN.md`](docs/API_DESIGN.md) – HTTP API surface.
+- [`docs/DEPLOYMENT-IMPROVEMENTS.md`](docs/DEPLOYMENT-IMPROVEMENTS.md) – Notes on user-data hardening and firewall fixes.
+- [`docs/GO-NO-GO-CHECKLIST.md`](docs/GO-NO-GO-CHECKLIST.md) – Release decision checklist with rollback template.
+- [`docs/archive/`](docs/archive/) – Phase reports and one-off completion summaries (frozen, kept for history).
 
 ## Quality Gate (Local)
 
