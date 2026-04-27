@@ -122,3 +122,78 @@ func TestDetectUnsupportedLinuxRemoteDisplay(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanWebView2LocksIn_RemovesLockFilesAndKeepsOthers(t *testing.T) {
+	root := t.TempDir()
+
+	// Files we expect to be removed (top-level + nested).
+	want := []string{
+		filepath.Join(root, "SingletonLock"),
+		filepath.Join(root, "SingletonCookie"),
+		filepath.Join(root, "EBWebView", "Default", "lockfile"),
+		filepath.Join(root, "EBWebView", "Default", "Cache", "LOCK"),
+	}
+	// Files that must NOT be removed.
+	keep := []string{
+		filepath.Join(root, "Preferences"),
+		filepath.Join(root, "EBWebView", "Default", "Preferences"),
+		filepath.Join(root, "EBWebView", "Default", "Cookies"),
+	}
+
+	for _, p := range append(append([]string{}, want...), keep...) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(p), err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	got := cleanWebView2LocksIn(root)
+	if got != len(want) {
+		t.Fatalf("cleanWebView2LocksIn returned %d, want %d", got, len(want))
+	}
+	for _, p := range want {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected lock %q to be removed, stat err = %v", p, err)
+		}
+	}
+	for _, p := range keep {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected non-lock %q to be retained, stat err = %v", p, err)
+		}
+	}
+}
+
+func TestCleanWebView2LocksIn_MissingFolderIsNoop(t *testing.T) {
+	if got := cleanWebView2LocksIn(filepath.Join(t.TempDir(), "does-not-exist")); got != 0 {
+		t.Fatalf("expected 0 cleaned for missing folder, got %d", got)
+	}
+	if got := cleanWebView2LocksIn(""); got != 0 {
+		t.Fatalf("expected 0 cleaned for empty path, got %d", got)
+	}
+}
+
+func TestCleanWebView2LocksIn_FileTargetIsNoop(t *testing.T) {
+	// If the candidate path turns out to be a regular file (corrupt or odd
+	// install layout), we should not panic or treat it as a folder.
+	dir := t.TempDir()
+	regular := filepath.Join(dir, "PrivateDeploy.WebView2")
+	if err := os.WriteFile(regular, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", regular, err)
+	}
+	if got := cleanWebView2LocksIn(regular); got != 0 {
+		t.Fatalf("expected 0 cleaned for file target, got %d", got)
+	}
+	if _, err := os.Stat(regular); err != nil {
+		t.Fatalf("regular file should be untouched: %v", err)
+	}
+}
+
+func TestWebView2UserDataCandidates_HonorsExplicitEnv(t *testing.T) {
+	t.Setenv("WEBVIEW2_USER_DATA_FOLDER", filepath.Join(t.TempDir(), "explicit-wv2"))
+	got := webView2UserDataCandidates()
+	if len(got) == 0 || got[0] != os.Getenv("WEBVIEW2_USER_DATA_FOLDER") {
+		t.Fatalf("explicit env should appear first; got %v", got)
+	}
+}

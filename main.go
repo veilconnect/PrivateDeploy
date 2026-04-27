@@ -39,6 +39,7 @@ var linuxTrayIcon []byte
 
 func main() {
 	configureOptionalFileLogging()
+	cleanStaleWebView2Locks()
 
 	if err := validateLinuxDisplay(); err != nil {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
@@ -258,6 +259,99 @@ func main() {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
 		os.Exit(1)
 	}
+}
+
+// webView2LockNames are the Chromium/WebView2 lock files that can persist
+// after an unclean shutdown and prevent the next CreateCoreWebView2Controller
+// call from succeeding.
+var webView2LockNames = map[string]struct{}{
+	"SingletonLock":   {},
+	"SingletonCookie": {},
+	"SingletonSocket": {},
+	"lockfile":        {},
+	"LOCK":            {},
+}
+
+// cleanStaleWebView2Locks removes Chromium/WebView2 lock files left in the
+// user-data folder by a previously-crashed instance. The cleanup is best-effort
+// and Windows-only: if a live process still holds the file open, os.Remove
+// fails and we leave the file alone.
+//
+// Background: a hard crash of PrivateDeploy could leave SingletonLock and
+// friends in WebView2's user-data folder. The next start would log a stack
+// trace from go-webview2/Chromium.Embed and the process would exit before the
+// main window appeared. Cleaning these on startup turns that crash-loop into
+// a self-healing one.
+func cleanStaleWebView2Locks() {
+	if bridge.Env.OS != "windows" {
+		return
+	}
+	for _, folder := range webView2UserDataCandidates() {
+		cleanWebView2LocksIn(folder)
+	}
+}
+
+// webView2UserDataCandidates returns the paths where wails / go-webview2 might
+// have placed the user-data folder. We do not know which one was used (it
+// depends on Wails version, working directory at launch, and whether the
+// WEBVIEW2_USER_DATA_FOLDER env var is set), so we sweep all of them.
+func webView2UserDataCandidates() []string {
+	var paths []string
+	if explicit := strings.TrimSpace(os.Getenv("WEBVIEW2_USER_DATA_FOLDER")); explicit != "" {
+		paths = append(paths, explicit)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return paths
+	}
+	exeDir := filepath.Dir(exePath)
+	exeBase := filepath.Base(exePath)
+	if ext := filepath.Ext(exeBase); strings.EqualFold(ext, ".exe") {
+		exeBase = strings.TrimSuffix(exeBase, ext)
+	}
+	if exeBase == "" {
+		return paths
+	}
+	wv2Name := exeBase + ".WebView2"
+
+	paths = append(paths, filepath.Join(exeDir, wv2Name))
+	if cwd, err := os.Getwd(); err == nil && cwd != exeDir {
+		paths = append(paths, filepath.Join(cwd, wv2Name))
+	}
+	if local := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); local != "" {
+		paths = append(paths, filepath.Join(local, exeBase, wv2Name))
+	}
+	return paths
+}
+
+// cleanWebView2LocksIn removes known Chromium/WebView2 lock-named files under
+// folder, recursively. Returns the number of files actually removed. A live
+// process still holding a lock will block os.Remove on Windows; that is the
+// natural safety mechanism.
+func cleanWebView2LocksIn(folder string) int {
+	if folder == "" {
+		return 0
+	}
+	info, err := os.Stat(folder)
+	if err != nil || !info.IsDir() {
+		return 0
+	}
+	cleaned := 0
+	_ = filepath.WalkDir(folder, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		if _, ok := webView2LockNames[d.Name()]; !ok {
+			return nil
+		}
+		if removeErr := os.Remove(path); removeErr == nil {
+			cleaned++
+			log.Printf("[Startup] Cleaned stale WebView2 lock: %s", path)
+		}
+		return nil
+	})
+	return cleaned
 }
 
 func configureOptionalFileLogging() {
