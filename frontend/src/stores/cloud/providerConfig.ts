@@ -61,8 +61,6 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     loadingPlans,
     regionsUpdatedAt,
     plansUpdatedAt,
-    instances,
-    instancesUpdatedAt,
     startAutoRefresh,
     stopAutoRefresh,
     refreshInstances,
