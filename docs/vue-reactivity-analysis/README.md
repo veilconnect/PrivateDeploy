@@ -131,13 +131,13 @@ open vue-reactivity-demo.html
   - 风险评估和成功指标
 
 ### 技术深度
-- **[VUE-REACTIVITY-ISSUE-REPORT.md](./VUE-REACTIVITY-ISSUE-REPORT.md)** (11K)
+- **[ISSUE-REPORT.md](./ISSUE-REPORT.md)** (11K)
   - 完整的技术报告
   - 三种解决方案对比
   - Vue 响应式最佳实践
 
 ### 学习资源
-- **[vue-reactivity-analysis.md](./vue-reactivity-analysis.md)** (13K)
+- **[analysis.md](./analysis.md)** (13K)
   - Vue 3 响应式原理
   - ref 的内部机制
   - 响应式陷阱分析
@@ -160,7 +160,7 @@ open vue-reactivity-demo.html
   - 实时更新计数和日志
 
 ### 总索引
-- **[INDEX-VUE-REACTIVITY-ANALYSIS.md](./INDEX-VUE-REACTIVITY-ANALYSIS.md)** (7.1K)
+- **[INDEX.md](./INDEX.md)** (7.1K)
   - 所有文档的详细导航
   - 按角色推荐阅读顺序
   - 学习路径指南

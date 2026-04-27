@@ -13,10 +13,10 @@
 → 阅读 **[EXECUTIVE-SUMMARY.md](./EXECUTIVE-SUMMARY.md)** (5.5K)
 
 ### 🔍 我想深入理解问题
-→ 阅读 **[VUE-REACTIVITY-ISSUE-REPORT.md](./VUE-REACTIVITY-ISSUE-REPORT.md)** (11K)
+→ 阅读 **[ISSUE-REPORT.md](./ISSUE-REPORT.md)** (11K)
 
 ### 📖 我想学习 Vue 响应式系统
-→ 阅读 **[vue-reactivity-analysis.md](./vue-reactivity-analysis.md)** (13K)
+→ 阅读 **[analysis.md](./analysis.md)** (13K)
 
 ### 🎨 我喜欢可视化学习
 → 阅读 **[shallow-vs-deep-copy-diagram.md](./shallow-vs-deep-copy-diagram.md)** (16K)
