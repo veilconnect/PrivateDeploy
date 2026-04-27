@@ -13,6 +13,9 @@ on:
       - 'api/go.mod'
       - 'api/go.sum'
       - 'wails.json'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
       - '.github/workflows/build.yml'
       - '!mobile/**'
   pull_request:
@@ -27,6 +30,9 @@ on:
       - 'api/go.mod'
       - 'api/go.sum'
       - 'wails.json'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
       - '.github/workflows/build.yml'
       - '!mobile/**'
   workflow_dispatch:
@@ -38,6 +44,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Version consistency
+        run: bash scripts/check_versions.sh
 
       - name: Set up Go
         uses: actions/setup-go@v5
