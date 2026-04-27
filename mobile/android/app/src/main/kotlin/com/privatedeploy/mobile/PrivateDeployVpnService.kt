@@ -59,7 +59,33 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val MIN_UNDERLYING_NETWORK_RESTART_INTERVAL_MS = 4000L
         private const val RESTART_MAX_ATTEMPTS = 3
         private const val RESTART_RETRY_BASE_DELAY_MS = 1500L
-        private const val VALIDATED_NETWORK_WAIT_MS = 4000L
+        private const val START_MAX_ATTEMPTS = 3
+        private const val START_RETRY_BASE_DELAY_MS = 1500L
+        // Wait up to 12 s for the new transport to reach
+        // NET_CAPABILITY_VALIDATED before kicking off start/restart.
+        // Real-world mobile networks (mobile carrier / Telecom / Unicom)
+        // commonly need 5–10 s to complete the captive-portal probe; the
+        // earlier 4 s cap returned too often before validation, leaving
+        // sing-box bound to a half-baked upstream and producing the
+        // "tunnel up but nothing flows" symptom.
+        private const val VALIDATED_NETWORK_WAIT_MS = 12000L
+        // If the carrier blocks Android's captive-portal probe entirely
+        // (NET_CAPABILITY_VALIDATED never arrives) but a usable
+        // INTERNET-capable transport is present, accept it after this
+        // shorter window so we don't deadlock until VALIDATED_NETWORK_WAIT_MS.
+        private const val UNVALIDATED_NETWORK_FALLBACK_MS = 6000L
+        // Total wall time the post-start/restart egress verifier may spend
+        // confirming traffic actually flows out the tunnel before we
+        // declare the connection healthy. Bumped from 6s/1.5s after seeing
+        // China-mainland devices fail every TLS handshake to api.ipify.org
+        // within 1.5s through a freshly-up tunnel — the connection
+        // technically worked, but the probe timed out so the whole start
+        // was rolled back. Per-endpoint now matches the dart fallback
+        // (5s) and total fits multiple retries with the 4 default
+        // endpoints.
+        private const val EGRESS_VERIFY_TOTAL_TIMEOUT_MS = 20000L
+        private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 5000
+        private const val EGRESS_VERIFY_PROBE_RETRY_DELAY_MS = 500L
         private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
 
         @Volatile
@@ -247,26 +273,96 @@ class PrivateDeployVpnService : VpnService(), Platform {
             // (e.g. stepping out of range), which historically produced an
             // immediate failure because the default network wasn't yet
             // VALIDATED. Wait briefly for a usable transport to avoid making
-            // them retry manually. The timeout is short so a truly offline
-            // device still fails fast.
-            waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
-            try {
-                val core = ensureVpnCore()
-                core.start(config)
-                isRunning = true
-                captureCurrentUnderlyingNetworkSnapshot()
-                broadcastStatus("connected", null)
-                Log.i(TAG, "VPN started successfully")
-            } catch (e: Throwable) {
-                Log.e(TAG, "Failed to start VPN", e)
+            // them retry manually.
+            waitForUsableUnderlyingNetwork(
+                validatedTimeoutMs = VALIDATED_NETWORK_WAIT_MS,
+                unvalidatedFallbackMs = UNVALIDATED_NETWORK_FALLBACK_MS,
+            )
+
+            var lastError: Throwable? = null
+            var succeeded = false
+
+            for (attempt in 1..START_MAX_ATTEMPTS) {
+                try {
+                    if (attempt > 1) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            createNotification("VPN is connecting (retry $attempt)"),
+                        )
+                        broadcastStatus("connecting", null)
+                    }
+                    val core = ensureVpnCore()
+                    if (attempt == 1) {
+                        core.start(config)
+                    } else {
+                        // The first attempt's start() succeeded internally even
+                        // when the egress probe later failed (otherwise we'd be
+                        // in the catch branch). Use restart() on subsequent
+                        // attempts so libbox cleanly tears down stale upstream
+                        // sockets bound to the now-defunct underlying network.
+                        core.restart()
+                    }
+                    isRunning = true
+                    captureCurrentUnderlyingNetworkSnapshot()
+
+                    if (verifyTunnelEgressReachable()) {
+                        broadcastStatus("connected", null)
+                        Log.i(TAG, "VPN started successfully on attempt $attempt")
+                        succeeded = true
+                        break
+                    }
+
+                    Log.w(
+                        TAG,
+                        "VPN start attempt $attempt/$START_MAX_ATTEMPTS reached connected " +
+                            "state but tunnel egress probe failed; will retry",
+                    )
+                    lastError = IllegalStateException(
+                        startupConnectivityFailureMessage(),
+                    )
+                } catch (e: Throwable) {
+                    Log.w(
+                        TAG,
+                        "VPN start attempt $attempt/$START_MAX_ATTEMPTS failed: ${e.message}",
+                        e,
+                    )
+                    lastError = e
+                }
+
+                if (attempt < START_MAX_ATTEMPTS) {
+                    val backoff = START_RETRY_BASE_DELAY_MS shl (attempt - 1)
+                    try {
+                        Thread.sleep(backoff)
+                    } catch (ignored: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                    waitForUsableUnderlyingNetwork(
+                        validatedTimeoutMs = VALIDATED_NETWORK_WAIT_MS,
+                        unvalidatedFallbackMs = UNVALIDATED_NETWORK_FALLBACK_MS,
+                    )
+                }
+            }
+
+            if (!succeeded) {
+                Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
+                try {
+                    vpnCore?.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping VPN runtime after start failure", e)
+                }
                 cleanupTunnel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
                 isRunning = false
-                broadcastError(e.message ?: "Failed to start VPN")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                broadcastError(lastError?.message ?: "Failed to start VPN")
                 stopSelf()
             }
         }
     }
+
+    private fun startupConnectivityFailureMessage(): String =
+        "VPN tunnel started, but traffic could not reach public IP probe endpoints " +
+            "through the selected node. The node may be unreachable or misconfigured."
 
     private fun stopVpn() {
         broadcastStatus("disconnecting", null)
@@ -309,7 +405,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
             // validation, and core.restart() issued into that half-open window
             // tends to fail — which historically stopped the service and left
             // users stuck disconnected across Wi-Fi ↔ cellular switches.
-            waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
+            waitForUsableUnderlyingNetwork(
+                validatedTimeoutMs = VALIDATED_NETWORK_WAIT_MS,
+                unvalidatedFallbackMs = UNVALIDATED_NETWORK_FALLBACK_MS,
+            )
 
             for (attempt in 1..RESTART_MAX_ATTEMPTS) {
                 try {
@@ -325,10 +424,23 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     core.restart()
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
-                    broadcastStatus("connected", null)
-                    Log.i(TAG, "VPN restarted successfully on attempt $attempt")
-                    succeeded = true
-                    break
+
+                    if (verifyTunnelEgressReachable()) {
+                        broadcastStatus("connected", null)
+                        Log.i(TAG, "VPN restarted successfully on attempt $attempt")
+                        succeeded = true
+                        break
+                    }
+
+                    Log.w(
+                        TAG,
+                        "VPN restart attempt $attempt/$RESTART_MAX_ATTEMPTS: tunnel egress probe " +
+                            "failed; retrying so a fresh upstream socket gets bound to the new " +
+                            "underlying network",
+                    )
+                    lastError = IllegalStateException(
+                        "Tunnel re-established but egress probe failed",
+                    )
                 } catch (e: Throwable) {
                     lastError = e
                     Log.w(
@@ -336,15 +448,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         "VPN restart attempt $attempt/$RESTART_MAX_ATTEMPTS failed: ${e.message}",
                         e,
                     )
-                    if (attempt < RESTART_MAX_ATTEMPTS) {
-                        val backoff = RESTART_RETRY_BASE_DELAY_MS shl (attempt - 1)
-                        try {
-                            Thread.sleep(backoff)
-                        } catch (ignored: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                        }
-                        waitForValidatedUnderlyingNetwork(VALIDATED_NETWORK_WAIT_MS)
+                }
+                if (!succeeded && attempt < RESTART_MAX_ATTEMPTS) {
+                    val backoff = RESTART_RETRY_BASE_DELAY_MS shl (attempt - 1)
+                    try {
+                        Thread.sleep(backoff)
+                    } catch (ignored: InterruptedException) {
+                        Thread.currentThread().interrupt()
                     }
+                    waitForUsableUnderlyingNetwork(
+                        validatedTimeoutMs = VALIDATED_NETWORK_WAIT_MS,
+                        unvalidatedFallbackMs = UNVALIDATED_NETWORK_FALLBACK_MS,
+                    )
                 }
             }
 
@@ -384,17 +499,56 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
     }
 
-    private fun waitForValidatedUnderlyingNetwork(timeoutMs: Long) {
+    /**
+     * Waits for an underlying transport that is good enough to ride.
+     *
+     * Strategy: prefer NET_CAPABILITY_VALIDATED (system has confirmed
+     * Internet via captive-portal probe) up to [validatedTimeoutMs]. If the
+     * carrier blocks Android's probe destinations entirely
+     * (`connectivitycheck.gstatic.com` and friends — common on China
+     * Mobile/Telecom/Unicom and on networks that aggressively filter
+     * Google), VALIDATED never arrives but the network is in fact usable.
+     * In that case, accept any INTERNET-capable, NOT_SUSPENDED transport
+     * after [unvalidatedFallbackMs] so we don't deadlock until the longer
+     * cap.
+     */
+    private fun waitForUsableUnderlyingNetwork(
+        validatedTimeoutMs: Long,
+        unvalidatedFallbackMs: Long,
+    ) {
         val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline) {
+        val now = SystemClock.elapsedRealtime()
+        val validatedDeadline = now + validatedTimeoutMs
+        val unvalidatedDeadline = now + unvalidatedFallbackMs
+        var loggedFallback = false
+
+        while (SystemClock.elapsedRealtime() < validatedDeadline) {
             val network = findPreferredUnderlyingNetwork(connectivityManager)
             val capabilities = network?.let(connectivityManager::getNetworkCapabilities)
-            if (capabilities != null &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            ) {
-                return
+            if (capabilities != null) {
+                val hasInternet =
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                val isValidated =
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                val notSuspended =
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+                if (hasInternet && isValidated) {
+                    return
+                }
+                if (hasInternet && notSuspended &&
+                    SystemClock.elapsedRealtime() >= unvalidatedDeadline
+                ) {
+                    if (!loggedFallback) {
+                        Log.i(
+                            TAG,
+                            "Accepting unvalidated INTERNET-capable transport after " +
+                                "${unvalidatedFallbackMs}ms; carrier may be blocking the " +
+                                "captive-portal probe",
+                        )
+                        loggedFallback = true
+                    }
+                    return
+                }
             }
             try {
                 Thread.sleep(200)
@@ -403,6 +557,53 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 return
             }
         }
+    }
+
+    /**
+     * Confirms traffic actually flows out the tunnel by issuing a small
+     * HTTP probe through the VPN's Network. Returns false if no probe
+     * succeeds within [EGRESS_VERIFY_TOTAL_TIMEOUT_MS]. Used to gate
+     * "connected" status broadcasts so the UI never shows a successful
+     * connection that is actually a black hole — the failure mode users
+     * report when sing-box's upstream socket is bound to a dead
+     * underlying transport after a Wi-Fi ↔ cellular hand-off.
+     */
+    private fun verifyTunnelEgressReachable(): Boolean {
+        val connectivityManager =
+            getSystemService(ConnectivityManager::class.java) ?: return false
+        val deadline = SystemClock.elapsedRealtime() + EGRESS_VERIFY_TOTAL_TIMEOUT_MS
+        var attempt = 0
+        var lastError: String? = null
+        while (SystemClock.elapsedRealtime() < deadline) {
+            attempt += 1
+            val result = NativeEgressProbe.probe(
+                connectivityManager,
+                timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
+            )
+            if (result.hasIp) {
+                Log.i(
+                    TAG,
+                    "Tunnel egress verified on probe $attempt -> ${result.ip} via ${result.source}",
+                )
+                return true
+            }
+            lastError = result.error
+            Log.w(TAG, "Tunnel egress probe $attempt failed: $lastError")
+            if (SystemClock.elapsedRealtime() + EGRESS_VERIFY_PROBE_RETRY_DELAY_MS >= deadline) {
+                break
+            }
+            try {
+                Thread.sleep(EGRESS_VERIFY_PROBE_RETRY_DELAY_MS)
+            } catch (ignored: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        Log.w(
+            TAG,
+            "Tunnel egress verification timed out after $attempt probe(s); last error: $lastError",
+        )
+        return false
     }
 
     private fun updateConfig(config: String) {

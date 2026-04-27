@@ -39,6 +39,11 @@
 
   "loadingNodes": "加载节点中...",
   "vpnNotice": "VPN 通知",
+  "vpnConflictMessageLocalized": "VPN 权限被撤销，或被其他 VPN 应用 / 系统 VPN 中断。请关闭其他 VPN 后重试。",
+  "vpnPermissionDeniedMessageLocalized": "未授予 VPN 权限。请允许 VPN 访问后重试。",
+  "egressProbeFailureMessageLocalized": "无法通过当前 VPN 路由抵达公网 IP 探测端点。下方最近的路由决策仍可能有效。",
+  "startupConnectivityFailureMessageLocalized": "VPN 隧道已启动，但通过所选节点无法抵达公网 IP 探测端点。该节点可能不可达或配置有误。",
+  "startupProbeInconclusiveMessageLocalized": "VPN 已连接，但 Android 在启动期间未能确认公网 IP，流量可能仍然可用。",
   "nextStep": "下一步",
 
   "connection": "连接",
@@ -113,6 +118,8 @@
   "vpnConnectedSuccess": "VPN 连接成功",
   "vpnDisconnectedSuccess": "VPN 已断开",
   "failedToDisconnectVpn": "断开 VPN 失败",
+  "failedToConnectVpn": "VPN 连接失败",
+  "failedToSwitchActiveVpnNode": "切换活动 VPN 节点失败",
   "vpnRestartedSuccess": "VPN 重启成功",
   "vpnBusyWait": "VPN 正忙，请稍候",
   "tryingBackupNode": "正在尝试备用节点 {index}/{total}: {label}",

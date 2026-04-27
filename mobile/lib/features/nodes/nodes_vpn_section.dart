@@ -7,6 +7,7 @@ import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../vpn/vpn_status_messages.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_test_keys.dart';
 import 'nodes_widgets.dart';
@@ -262,7 +263,7 @@ class NodesVpnSection extends StatelessWidget {
                         icon: Icons.error_outline,
                         title: l10n.vpnNotice,
                         message: _sanitizeVpnErrorForDisplay(
-                          vpnProvider.error!,
+                          localizeVpnStatusMessage(vpnProvider.error, l10n),
                         ),
                         accentColor: Colors.orange,
                       ),
@@ -408,7 +409,11 @@ String? _egressHint(VpnProvider vpnProvider, AppLocalizations l10n) {
   if (vpnProvider.isRefreshingDiagnostics) {
     return l10n.egressProbeHelp;
   }
-  return vpnProvider.diagnosticsError ?? l10n.egressProbeStillRoutingHint;
+  final raw = vpnProvider.diagnosticsError;
+  if (raw == null) {
+    return l10n.egressProbeStillRoutingHint;
+  }
+  return localizeVpnStatusMessage(raw, l10n);
 }
 
 Color _statusColor(VpnStatus status) {

@@ -11,6 +11,7 @@ import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../vpn/vpn_status_messages.dart';
 import '../settings/settings_api_key_dialog.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_dialogs.dart';
@@ -210,8 +211,11 @@ Future<void> testCloudNodeLatency({
     );
     await vpnProvider.disconnect();
   } else {
+    final l10nFailure = AppLocalizations.of(context)!;
     benchmarkResult = benchmarkResult.copyWith(
-      error: vpnProvider.error ?? AppLocalizations.of(context)!.failedToConnectSpeedTestTunnel,
+      error: vpnProvider.error == null
+          ? l10nFailure.failedToConnectSpeedTestTunnel
+          : localizeVpnStatusMessage(vpnProvider.error, l10nFailure),
     );
   }
 
@@ -336,7 +340,9 @@ Future<void> testAllCloudNodesLatency({
 
       if (!connected) {
         benchmarkResult = benchmarkResult.copyWith(
-          error: vpnProvider.error ?? l10nBench.failedToConnectBenchmarkTunnel,
+          error: vpnProvider.error == null
+              ? l10nBench.failedToConnectBenchmarkTunnel
+              : localizeVpnStatusMessage(vpnProvider.error, l10nBench),
         );
         cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
         continue;

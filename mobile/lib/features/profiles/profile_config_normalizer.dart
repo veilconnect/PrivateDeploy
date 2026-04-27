@@ -96,8 +96,61 @@ bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
   }
 
   final inbounds = decoded['inbounds'];
-  if (inbounds is List) {
-    for (final inbound in inbounds) {
+  // Inject a default tun inbound when the profile has none. Without it,
+  // libbox starts cleanly but Android never sees an OpenTun call, so the
+  // VpnService never establishes a tunnel — the app shows "已连接" while
+  // traffic continues to bypass sing-box entirely (egress probe returns the
+  // device's underlying public IP and the byte counters stay at 0). This
+  // mostly affected raw-JSON profiles that ship just `outbounds`; subscription
+  // and cloud profiles already get a tun inbound from their builders.
+  if (inbounds is! List || inbounds.isEmpty) {
+    final outboundsForTun = decoded['outbounds'];
+    if (outboundsForTun is List && outboundsForTun.isNotEmpty) {
+      decoded['inbounds'] = <Map<String, dynamic>>[
+        // strict_route is intentionally omitted: subscription/cloud profiles
+        // pair it with full DNS + route rules so the egress probe is steered
+        // to the right outbound. Bare profiles (raw `direct` outbound only)
+        // don't have those rules, and strict_route turns the probe socket
+        // into a routing dead-end during startup verification.
+        <String, dynamic>{
+          'type': 'tun',
+          'tag': 'tun-in',
+          'interface_name': 'tun0',
+          'inet4_address': '172.19.0.1/30',
+          'auto_route': true,
+          'stack': 'gvisor',
+          'sniff': true,
+        },
+      ];
+      // The tun inbound captures DNS, so without an explicit DNS config the
+      // resolver loops back into the tunnel with no upstream — every
+      // hostname lookup hangs (verified: `ping api.ipify.org` returned
+      // "unknown host" while the tunnel was up). Inject a minimal local
+      // DNS pointing at the device's underlying resolver via the existing
+      // outbound, but only if the user hasn't supplied one already.
+      if (decoded['dns'] is! Map) {
+        final firstOutboundTag = outboundsForTun
+            .whereType<Map<String, dynamic>>()
+            .map((o) => o['tag']?.toString())
+            .firstWhere((t) => t != null && t.isNotEmpty, orElse: () => null);
+        decoded['dns'] = <String, dynamic>{
+          'servers': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'tag': 'dns-local',
+              'address': 'local',
+              if (firstOutboundTag != null) 'detour': firstOutboundTag,
+            },
+          ],
+          'strategy': 'prefer_ipv4',
+        };
+        changed = true;
+      }
+    }
+  }
+
+  final inboundsForStack = decoded['inbounds'];
+  if (inboundsForStack is List) {
+    for (final inbound in inboundsForStack) {
       if (inbound is! Map<String, dynamic>) {
         continue;
       }

@@ -41,6 +41,11 @@
 
   "loadingNodes": "Loading nodes...",
   "vpnNotice": "VPN notice",
+  "vpnConflictMessageLocalized": "VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.",
+  "vpnPermissionDeniedMessageLocalized": "VPN permission was not granted. Allow VPN access and try again.",
+  "egressProbeFailureMessageLocalized": "Could not reach public IP probe endpoints through the current VPN route. Recent routing decisions below may still be valid.",
+  "startupConnectivityFailureMessageLocalized": "VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.",
+  "startupProbeInconclusiveMessageLocalized": "VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.",
   "nextStep": "Next step",
 
   "connection": "Connect",
@@ -121,6 +126,8 @@
   "vpnConnectedSuccess": "VPN connected successfully",
   "vpnDisconnectedSuccess": "VPN disconnected successfully",
   "failedToDisconnectVpn": "Failed to disconnect VPN",
+  "failedToConnectVpn": "Failed to connect VPN",
+  "failedToSwitchActiveVpnNode": "Failed to switch active VPN node",
   "vpnRestartedSuccess": "VPN restarted successfully",
   "vpnBusyWait": "VPN is busy, please wait a moment",
   "tryingBackupNode": "Trying backup node {index}/{total}: {label}",

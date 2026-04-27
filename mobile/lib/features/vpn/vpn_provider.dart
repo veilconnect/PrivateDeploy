@@ -1028,6 +1028,15 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     if (_status == VpnStatus.connected) {
       _startStatsPolling();
+      // When the tunnel comes back up after an underlying-network handover
+      // (e.g. Wi-Fi ↔ cellular), the cached egress IP from the previous
+      // underlying network is stale. The "（上次探测）" suffix would otherwise
+      // stick around indefinitely. Trigger a one-shot probe to refresh it.
+      // Skipped on the very first connect transition (initial connect already
+      // probes inside _runStartupVerification).
+      if (previousStatus == VpnStatus.connecting && _lastKnownEgressIp != null) {
+        unawaited(_refreshConnectedDiagnosticsEgressIp());
+      }
     } else {
       _stopStatsPolling();
       _deferredStartupDiagnosticsTimer?.cancel();

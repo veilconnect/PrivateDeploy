@@ -296,6 +296,36 @@ abstract class AppLocalizations {
   /// **'VPN notice'**
   String get vpnNotice;
 
+  /// No description provided for @vpnConflictMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.'**
+  String get vpnConflictMessageLocalized;
+
+  /// No description provided for @vpnPermissionDeniedMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN permission was not granted. Allow VPN access and try again.'**
+  String get vpnPermissionDeniedMessageLocalized;
+
+  /// No description provided for @egressProbeFailureMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach public IP probe endpoints through the current VPN route. Recent routing decisions below may still be valid.'**
+  String get egressProbeFailureMessageLocalized;
+
+  /// No description provided for @startupConnectivityFailureMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.'**
+  String get startupConnectivityFailureMessageLocalized;
+
+  /// No description provided for @startupProbeInconclusiveMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.'**
+  String get startupProbeInconclusiveMessageLocalized;
+
   /// No description provided for @nextStep.
   ///
   /// In en, this message translates to:
@@ -697,6 +727,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to disconnect VPN'**
   String get failedToDisconnectVpn;
+
+  /// No description provided for @failedToConnectVpn.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to connect VPN'**
+  String get failedToConnectVpn;
+
+  /// No description provided for @failedToSwitchActiveVpnNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to switch active VPN node'**
+  String get failedToSwitchActiveVpnNode;
 
   /// No description provided for @vpnRestartedSuccess.
   ///

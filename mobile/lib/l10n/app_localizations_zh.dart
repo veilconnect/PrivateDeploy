@@ -116,6 +116,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String get vpnNotice => 'VPN 通知';
 
   @override
+  String get vpnConflictMessageLocalized =>
+      'VPN 权限被撤销，或被其他 VPN 应用 / 系统 VPN 中断。请关闭其他 VPN 后重试。';
+
+  @override
+  String get vpnPermissionDeniedMessageLocalized => '未授予 VPN 权限。请允许 VPN 访问后重试。';
+
+  @override
+  String get egressProbeFailureMessageLocalized =>
+      '无法通过当前 VPN 路由抵达公网 IP 探测端点。下方最近的路由决策仍可能有效。';
+
+  @override
+  String get startupConnectivityFailureMessageLocalized =>
+      'VPN 隧道已启动，但通过所选节点无法抵达公网 IP 探测端点。该节点可能不可达或配置有误。';
+
+  @override
+  String get startupProbeInconclusiveMessageLocalized =>
+      'VPN 已连接，但 Android 在启动期间未能确认公网 IP，流量可能仍然可用。';
+
+  @override
   String get nextStep => '下一步';
 
   @override
@@ -333,6 +352,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get failedToDisconnectVpn => '断开 VPN 失败';
+
+  @override
+  String get failedToConnectVpn => 'VPN 连接失败';
+
+  @override
+  String get failedToSwitchActiveVpnNode => '切换活动 VPN 节点失败';
 
   @override
   String get vpnRestartedSuccess => 'VPN 重启成功';

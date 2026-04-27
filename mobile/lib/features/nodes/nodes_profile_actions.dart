@@ -11,6 +11,7 @@ import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../vpn/vpn_status_messages.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
@@ -30,6 +31,15 @@ Future<void> confirmDeleteProfile({
   );
   if (!confirmed) {
     return;
+  }
+
+  // If the VPN is connected to this exact profile, tear the tunnel down first
+  // so the connection card doesn't keep showing a stale "已连接 / 4m 38s" badge
+  // after the underlying profile is gone (verified on Pixel 7 v2.0.0+15).
+  if (vpnProvider != null &&
+      vpnProvider.isConnected &&
+      vpnProvider.activeProfile == profile.name) {
+    await vpnProvider.disconnect();
   }
 
   final success = await profileProvider.deleteProfile(profile.id);
@@ -297,7 +307,9 @@ Future<ProfileSpeedResult> testProfileSpeed({
   } else {
     final l10n = AppLocalizations.of(context)!;
     result = ProfileSpeedResult(
-      error: vpnProvider.error ?? l10n.failedToConnectSpeedTestTunnel,
+      error: vpnProvider.error == null
+          ? l10n.failedToConnectSpeedTestTunnel
+          : localizeVpnStatusMessage(vpnProvider.error, l10n),
     );
   }
 

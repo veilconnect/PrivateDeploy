@@ -116,6 +116,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get vpnNotice => 'VPN notice';
 
   @override
+  String get vpnConflictMessageLocalized =>
+      'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.';
+
+  @override
+  String get vpnPermissionDeniedMessageLocalized =>
+      'VPN permission was not granted. Allow VPN access and try again.';
+
+  @override
+  String get egressProbeFailureMessageLocalized =>
+      'Could not reach public IP probe endpoints through the current VPN route. Recent routing decisions below may still be valid.';
+
+  @override
+  String get startupConnectivityFailureMessageLocalized =>
+      'VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.';
+
+  @override
+  String get startupProbeInconclusiveMessageLocalized =>
+      'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.';
+
+  @override
   String get nextStep => 'Next step';
 
   @override
@@ -340,6 +360,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get failedToDisconnectVpn => 'Failed to disconnect VPN';
+
+  @override
+  String get failedToConnectVpn => 'Failed to connect VPN';
+
+  @override
+  String get failedToSwitchActiveVpnNode => 'Failed to switch active VPN node';
 
   @override
   String get vpnRestartedSuccess => 'VPN restarted successfully';

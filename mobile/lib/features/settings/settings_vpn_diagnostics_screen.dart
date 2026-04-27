@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import 'app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../vpn/vpn_status_messages.dart';
 
 class SettingsVpnDiagnosticsScreen extends StatefulWidget {
   const SettingsVpnDiagnosticsScreen({Key? key}) : super(key: key);
@@ -175,7 +176,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
             if (showStatusError) ...[
               SizedBox(height: 8.h),
               Text(
-                vpn.diagnosticsError!,
+                localizeVpnStatusMessage(vpn.diagnosticsError, l10n),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.error,
                 ),
@@ -419,5 +420,9 @@ String? _diagnosticsEgressHint(VpnProvider vpn, AppLocalizations l10n) {
   if (vpn.isRefreshingDiagnostics) {
     return l10n.egressProbeHelp;
   }
-  return vpn.diagnosticsError ?? l10n.egressProbeStillRoutingHint;
+  final raw = vpn.diagnosticsError;
+  if (raw == null) {
+    return l10n.egressProbeStillRoutingHint;
+  }
+  return localizeVpnStatusMessage(raw, l10n);
 }

@@ -9,6 +9,7 @@ import '../cloud/cloud_provider.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
+import '../vpn/vpn_status_messages.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_config_validation.dart';
@@ -251,7 +252,9 @@ Future<void> handleNodesDisconnect({
     context,
     message: success
         ? l10nDisconnect.vpnDisconnectedSuccess
-        : vpnProvider.error ?? l10nDisconnect.failedToDisconnectVpn,
+        : (vpnProvider.error == null
+            ? l10nDisconnect.failedToDisconnectVpn
+            : localizeVpnStatusMessage(vpnProvider.error, l10nDisconnect)),
     backgroundColor: success ? Colors.green : Colors.red,
   );
 }
@@ -404,9 +407,12 @@ Future<void> connectSelectedProfile({
     final disconnected = await vpnProvider.disconnect();
     if (!disconnected) {
       if (context.mounted) {
+        final l10nSwitch = AppLocalizations.of(context)!;
         showNodesActionSnackBar(
           context,
-          message: vpnProvider.error ?? 'Failed to switch active VPN node',
+          message: vpnProvider.error == null
+              ? l10nSwitch.failedToSwitchActiveVpnNode
+              : localizeVpnStatusMessage(vpnProvider.error, l10nSwitch),
           backgroundColor: Colors.red,
         );
       }
@@ -430,11 +436,14 @@ Future<void> connectSelectedProfile({
     return;
   }
 
+  final l10nResult = AppLocalizations.of(context)!;
   showNodesActionSnackBar(
     context,
     message: connected
         ? successMessage
-        : vpnProvider.error ?? 'Failed to connect VPN',
+        : (vpnProvider.error == null
+            ? l10nResult.failedToConnectVpn
+            : localizeVpnStatusMessage(vpnProvider.error, l10nResult)),
     backgroundColor: connected ? Colors.green : Colors.red,
   );
 }

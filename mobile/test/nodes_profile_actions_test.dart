@@ -3,6 +3,8 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/core/security/encrypted_share.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_profile_actions.dart';
+import 'package:privatedeploy_mobile/features/vpn/vpn_models.dart';
+import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 
@@ -30,6 +32,66 @@ void main() {
 
       expect(profileProvider.deletedProfileId, 'manual-a');
       expect(find.text('Profile deleted'), findsOneWidget);
+    });
+
+    testWidgets(
+        'confirmDeleteProfile disconnects VPN when active profile is deleted',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(deleteResult: true);
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.connected,
+        activeProfileName: 'Manual A',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => confirmDeleteProfile(
+          context: context,
+          profileProvider: profileProvider,
+          profile: _profile(id: 'manual-a', name: 'Manual A'),
+          vpnProvider: vpnProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.disconnectCalls, 1,
+          reason: 'should tear down tunnel before profile is removed');
+      expect(profileProvider.deletedProfileId, 'manual-a');
+      expect(vpnProvider.clearErrorCalls, 1,
+          reason: 'success path also clears any lingering banner');
+    });
+
+    testWidgets(
+        'confirmDeleteProfile keeps VPN connected when deleting a different profile',
+        (tester) async {
+      final profileProvider = _FakeProfileProvider(deleteResult: true);
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.connected,
+        activeProfileName: 'Other Profile',
+      );
+
+      await _pumpProfileActionHarness(
+        tester,
+        onRun: (context) => confirmDeleteProfile(
+          context: context,
+          profileProvider: profileProvider,
+          profile: _profile(id: 'manual-a', name: 'Manual A'),
+          vpnProvider: vpnProvider,
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.disconnectCalls, 0,
+          reason: 'unrelated profile delete must not interrupt active tunnel');
+      expect(profileProvider.deletedProfileId, 'manual-a');
     });
 
     testWidgets('confirmDeleteProfile shows delete failure message',
@@ -481,5 +543,44 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
     bool allowReservedPrefix = false,
   }) {
     return validationError;
+  }
+}
+
+class _FakeVpnProvider extends Fake implements VpnProvider {
+  _FakeVpnProvider({
+    required this.status,
+    this.activeProfileName,
+    this.disconnectResult = true,
+  });
+
+  @override
+  VpnStatus status;
+
+  final String? activeProfileName;
+  final bool disconnectResult;
+  int disconnectCalls = 0;
+  int clearErrorCalls = 0;
+
+  @override
+  bool get isConnected => status == VpnStatus.connected;
+
+  @override
+  String? get activeProfile => activeProfileName;
+
+  @override
+  String? get error => null;
+
+  @override
+  Future<bool> disconnect() async {
+    disconnectCalls += 1;
+    if (disconnectResult) {
+      status = VpnStatus.disconnected;
+    }
+    return disconnectResult;
+  }
+
+  @override
+  void clearError() {
+    clearErrorCalls += 1;
   }
 }
