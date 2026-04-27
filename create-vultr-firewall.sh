@@ -4,9 +4,9 @@
 
 set -e
 
-VULTR_API_KEY=REMOVED"
-INSTANCE_ID="1b3bf592-336c-47d3-a4c1-031b23ab9d5e"
-SS_PORT="37265"
+VULTR_API_KEY="${VULTR_API_KEY:?Set VULTR_API_KEY in env (do not hardcode)}"
+INSTANCE_ID="${INSTANCE_ID:?Set INSTANCE_ID in env}"
+SS_PORT="${SS_PORT:?Set SS_PORT in env}"
 
 echo "==========================================="
 echo "Creating Vultr Firewall Group via API"
