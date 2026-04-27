@@ -387,7 +387,10 @@ Future<void> connectSelectedProfile({
     return;
   }
 
-  final configError = validateSingboxConfig(configJson);
+  final configError = validateSingboxConfig(
+    configJson,
+    AppLocalizations.of(context)!,
+  );
   if (configError != null) {
     showNodesActionSnackBar(
       context,

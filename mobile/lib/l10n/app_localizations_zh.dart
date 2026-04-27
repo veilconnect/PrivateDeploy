@@ -721,6 +721,76 @@ class AppLocalizationsZh extends AppLocalizations {
       '无法识别的格式。请粘贴代理链接（ss://、vless:// 等）或 sing-box JSON。';
 
   @override
+  String get invalidConfigNotJsonObject => '配置无效：不是 JSON 对象';
+
+  @override
+  String get invalidConfigMissingOutbounds => '配置无效：缺少或为空的 “outbounds” 节';
+
+  @override
+  String get invalidConfigNotJson => '配置无效：不是合法 JSON';
+
+  @override
+  String invalidConfigGeneric(Object error) {
+    return '配置无效：$error';
+  }
+
+  @override
+  String apiKeyConfiguredMask(Object length) {
+    return '•••• （$length 位）';
+  }
+
+  @override
+  String get vpnRouteDecisionProxy => '代理';
+
+  @override
+  String get vpnRouteDecisionDirect => '直连';
+
+  @override
+  String get vpnRouteDecisionDns => 'DNS';
+
+  @override
+  String get vpnStatusConnected => '已连接';
+
+  @override
+  String get vpnStatusConnecting => '连接中';
+
+  @override
+  String get vpnStatusDisconnecting => '断开中';
+
+  @override
+  String get vpnStatusDisconnected => '已断开';
+
+  @override
+  String routingSummaryGlobal(Object dns) {
+    return '全部流量经 VPN，局域网直连 · $dns';
+  }
+
+  @override
+  String routingSummaryGlobalWithCustom(Object count, Object dns) {
+    return '全部流量经 VPN，局域网直连，$count 条自定义规则 · $dns';
+  }
+
+  @override
+  String get routingSummaryNoBuiltins => '未启用任何内置规则';
+
+  @override
+  String routingSummaryWithCustom(Object builtins, Object count) {
+    return '$builtins · $count 条自定义规则';
+  }
+
+  @override
+  String get routingTagLanDirect => '局域网直连';
+
+  @override
+  String get routingTagCnAppsDirect => '国内应用直连';
+
+  @override
+  String get routingTagCnDomainsDirect => '国内域名直连';
+
+  @override
+  String get routingTagCnIpsDirect => '国内 IP 直连';
+
+  @override
   String get profileContentSaved => '配置内容已保存';
 
   @override
@@ -1064,7 +1134,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get routingRulesHelp =>
-      '内置默认遵循常见分流模式：局域网直连、国内应用直连、国内域名直连、国内 IP 直连。全局模式仅保留局域网和自定义规则。';
+      '分流模式可单独开关：局域网直连、国内域名直连、国内 IP 直连。下方还可单独指定走代理或直连的应用，并自定义域名 / CIDR。全局模式仅保留局域网和自定义规则。';
 
   @override
   String get dnsMode => 'DNS 模式';

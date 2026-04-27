@@ -7,13 +7,16 @@ import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
 
-String maskedSettingsApiKey(String? apiKey, {String notSetLabel = 'Not set'}) {
+String maskedSettingsApiKey(
+  String? apiKey, {
+  required String notSetLabel,
+  required String Function(int length) configuredLabel,
+}) {
   final trimmed = apiKey?.trim() ?? '';
   if (trimmed.isEmpty) {
     return notSetLabel;
   }
-  final visibleLength = trimmed.length < 8 ? trimmed.length : 8;
-  return '${trimmed.substring(0, visibleLength)}...';
+  return configuredLabel(trimmed.length);
 }
 
 Future<bool> showSettingsApiKeyDialog({

@@ -111,7 +111,11 @@ void main() {
       );
 
       expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('abcd1234...'), findsOneWidget);
+      // Bug J fix: API key list view now masks the value entirely instead of
+      // exposing the first 8 characters in plain text.
+      expect(find.text('abcd1234...'), findsNothing);
+      expect(find.textContaining('abcd1234'), findsNothing);
+      expect(find.text('•••• (12 chars)'), findsOneWidget);
       expect(find.text('Vultr · direct access'), findsNothing);
       expect(find.textContaining('Saved cloud access stays'), findsNothing);
       expect(find.text('Connected'), findsNothing);

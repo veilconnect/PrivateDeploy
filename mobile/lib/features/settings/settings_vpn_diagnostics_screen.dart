@@ -141,6 +141,12 @@ class _DiagnosticsStatusCard extends StatelessWidget {
       VpnStatus.disconnecting => l10n.vpnDisconnectingDiag,
       VpnStatus.disconnected => l10n.vpnDisconnectedDiag,
     };
+    final statusHeadline = switch (vpn.status) {
+      VpnStatus.connected => l10n.vpnStatusConnected,
+      VpnStatus.connecting => l10n.vpnStatusConnecting,
+      VpnStatus.disconnecting => l10n.vpnStatusDisconnecting,
+      VpnStatus.disconnected => l10n.vpnStatusDisconnected,
+    };
 
     return Card(
       child: Padding(
@@ -151,7 +157,7 @@ class _DiagnosticsStatusCard extends StatelessWidget {
             Text(l10n.session, style: theme.textTheme.titleMedium),
             SizedBox(height: 8.h),
             Text(
-              vpn.status.name.toUpperCase(),
+              statusHeadline,
               style: theme.textTheme.headlineSmall?.copyWith(
                 color: vpn.isConnected ? Colors.green : Colors.orange,
                 fontWeight: FontWeight.w700,
@@ -341,8 +347,13 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
                       : (decision.isDirect
                           ? Icons.subdirectory_arrow_left
                           : Icons.cloud_outlined);
+                  final pillLabel = decision.isDnsDecision
+                      ? l10n.vpnRouteDecisionDns
+                      : (decision.isDirect
+                          ? l10n.vpnRouteDecisionDirect
+                          : l10n.vpnRouteDecisionProxy);
                   final subtitle = decision.isDnsDecision
-                      ? 'DNS · ${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}'
+                      ? '${l10n.vpnRouteDecisionDns} · ${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}'
                       : '${decision.routeLabel} · ${DateFormat('HH:mm:ss').format(decision.timestamp)}';
 
                   return ListTile(
@@ -360,7 +371,7 @@ class _DiagnosticsDecisionCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        decision.typeLabel,
+                        pillLabel,
                         style: theme.textTheme.labelMedium?.copyWith(
                           color: accentColor,
                           fontWeight: FontWeight.w700,

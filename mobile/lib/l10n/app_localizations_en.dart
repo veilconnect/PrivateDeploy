@@ -744,6 +744,77 @@ class AppLocalizationsEn extends AppLocalizations {
       'Unrecognized format. Paste proxy links (ss://, vless://, etc.) or sing-box JSON.';
 
   @override
+  String get invalidConfigNotJsonObject => 'Invalid config: not a JSON object';
+
+  @override
+  String get invalidConfigMissingOutbounds =>
+      'Invalid config: missing or empty \"outbounds\" section';
+
+  @override
+  String get invalidConfigNotJson => 'Invalid config: not valid JSON';
+
+  @override
+  String invalidConfigGeneric(Object error) {
+    return 'Invalid config: $error';
+  }
+
+  @override
+  String apiKeyConfiguredMask(Object length) {
+    return '•••• ($length chars)';
+  }
+
+  @override
+  String get vpnRouteDecisionProxy => 'PROXY';
+
+  @override
+  String get vpnRouteDecisionDirect => 'DIRECT';
+
+  @override
+  String get vpnRouteDecisionDns => 'DNS';
+
+  @override
+  String get vpnStatusConnected => 'CONNECTED';
+
+  @override
+  String get vpnStatusConnecting => 'CONNECTING';
+
+  @override
+  String get vpnStatusDisconnecting => 'DISCONNECTING';
+
+  @override
+  String get vpnStatusDisconnected => 'DISCONNECTED';
+
+  @override
+  String routingSummaryGlobal(Object dns) {
+    return 'All traffic via VPN, LAN bypassed · $dns';
+  }
+
+  @override
+  String routingSummaryGlobalWithCustom(Object count, Object dns) {
+    return 'All traffic via VPN, LAN bypassed, $count custom rule(s) · $dns';
+  }
+
+  @override
+  String get routingSummaryNoBuiltins => 'No built-in rules enabled';
+
+  @override
+  String routingSummaryWithCustom(Object builtins, Object count) {
+    return '$builtins · $count custom rule(s)';
+  }
+
+  @override
+  String get routingTagLanDirect => 'LAN direct';
+
+  @override
+  String get routingTagCnAppsDirect => 'regional apps direct';
+
+  @override
+  String get routingTagCnDomainsDirect => 'CN domains direct';
+
+  @override
+  String get routingTagCnIpsDirect => 'CN IPs direct';
+
+  @override
   String get profileContentSaved => 'Profile content saved';
 
   @override
@@ -1107,7 +1178,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get routingRulesHelp =>
-      'Built-in defaults follow common split patterns: LAN direct, regional apps direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.';
+      'In split mode you can toggle: LAN direct, CN domains direct, CN IPs direct. Below you can also pick proxied or direct apps and customise domains / CIDRs. Global mode only keeps LAN and custom rules.';
 
   @override
   String get dnsMode => 'DNS Mode';

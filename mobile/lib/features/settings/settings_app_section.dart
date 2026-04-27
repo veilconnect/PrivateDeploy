@@ -68,7 +68,7 @@ class SettingsAppSection extends StatelessWidget {
                   ),
                   SizedBox(height: 8.h),
                   Text(
-                    routingSettings.summary,
+                    routingSettings.localizedSummary(l10n),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],

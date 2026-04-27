@@ -20,6 +20,7 @@ Future<void> confirmDeleteProfile({
   required BuildContext context,
   required ProfileProvider profileProvider,
   required Profile profile,
+  VpnProvider? vpnProvider,
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final confirmed = await showNodesDeleteConfirmationDialog(
@@ -32,6 +33,12 @@ Future<void> confirmDeleteProfile({
   }
 
   final success = await profileProvider.deleteProfile(profile.id);
+  if (success) {
+    // The error banner usually points at a failed connection / probe for the
+    // profile we just deleted. Clearing it avoids a stale notice (with a
+    // dangling "Retry" action) lingering after the underlying source is gone.
+    vpnProvider?.clearError();
+  }
   if (!context.mounted) {
     return;
   }
@@ -108,7 +115,10 @@ Future<void> showImportProfileFlow({
         }
         break;
       case EncryptedShareKind.profileConfig:
-        final configError = validateSingboxConfig(payload.content);
+        final configError = validateSingboxConfig(
+          payload.content,
+          AppLocalizations.of(context)!,
+        );
         if (configError != null) {
           throw FormatException(configError);
         }
@@ -192,7 +202,10 @@ Future<void> showCreateProfileFlow({
 
   final profileName = request.name.trim();
   final rawConfig = request.config.trim();
-  final configError = validateSingboxConfig(rawConfig);
+  final configError = validateSingboxConfig(
+    rawConfig,
+    AppLocalizations.of(context)!,
+  );
   if (configError != null) {
     showNodesActionSnackBar(
       context,
@@ -234,9 +247,20 @@ Future<ProfileSpeedResult> testProfileSpeed({
   required VpnProvider vpnProvider,
   Future<CloudThroughputSample> Function()? throughputProbe,
 }) async {
+  final l10nEarly = AppLocalizations.of(context)!;
   final configJson = await profileProvider.getProfileContent(profile.id);
   if (configJson == null || configJson.isEmpty) {
-    return const ProfileSpeedResult(error: 'No config available');
+    return ProfileSpeedResult(
+      error: l10nEarly.failedToConnectSpeedTestTunnel,
+    );
+  }
+
+  // Pre-validate so a corrupted profile fails fast with a friendly message
+  // rather than triggering a real connection attempt that bubbles a raw
+  // sing-box parser error (and the entire config body) into the UI banner.
+  final preflightError = validateNodeConfig(configJson, l10nEarly);
+  if (preflightError != null) {
+    return ProfileSpeedResult(error: preflightError);
   }
 
   final previouslyConnected = vpnProvider.status == VpnStatus.connected;
@@ -276,6 +300,11 @@ Future<ProfileSpeedResult> testProfileSpeed({
       error: vpnProvider.error ?? l10n.failedToConnectSpeedTestTunnel,
     );
   }
+
+  // The speed-test result is shown inline on the profile card. Clearing the
+  // sticky banner here avoids the failure lingering on the connection card
+  // after the user has already seen the inline result.
+  vpnProvider.clearError();
 
   // Restore previous VPN connection if one was active.
   if (previouslyConnected && previousConfigJson != null) {

@@ -1,37 +1,38 @@
 import 'dart:convert';
 
 import '../../core/subscription/parser.dart';
+import '../../l10n/app_localizations.dart';
 
-String? validateSingboxConfig(String configJson) {
+String? validateSingboxConfig(String configJson, AppLocalizations l10n) {
   try {
     final decoded = jsonDecode(configJson);
     if (decoded is! Map<String, dynamic>) {
-      return 'Invalid config: not a JSON object';
+      return l10n.invalidConfigNotJsonObject;
     }
     final outbounds = decoded['outbounds'];
     if (outbounds is! List || outbounds.isEmpty) {
-      return 'Invalid config: missing or empty "outbounds" section';
+      return l10n.invalidConfigMissingOutbounds;
     }
     return null;
   } on FormatException {
-    return 'Invalid config: not valid JSON';
+    return l10n.invalidConfigNotJson;
   } catch (e) {
-    return 'Invalid config: $e';
+    return l10n.invalidConfigGeneric(e);
   }
 }
 
 /// Validates input that can be sing-box JSON, proxy URIs, or base64-encoded
 /// URI list. Returns null if valid, or an error message.
-String? validateNodeConfig(String input) {
+String? validateNodeConfig(String input, AppLocalizations l10n) {
   // Try as sing-box JSON first
-  final jsonError = validateSingboxConfig(input);
+  final jsonError = validateSingboxConfig(input, l10n);
   if (jsonError == null) return null;
 
   // Try as proxy URI list or base64
   final parsed = SubscriptionParser.parseToSingboxConfig(input);
   if (parsed != null && parsed != '{}') return null;
 
-  return 'Unrecognized format. Paste proxy links (ss://, vless://, etc.) or sing-box JSON.';
+  return l10n.unrecognizedFormat;
 }
 
 /// Converts input to sing-box JSON config. Input can be sing-box JSON,

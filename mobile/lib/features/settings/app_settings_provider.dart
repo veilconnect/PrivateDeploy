@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../../core/storage/storage_service.dart';
+import '../../l10n/app_localizations.dart';
 
 enum VpnRoutingMode {
   split,
@@ -169,6 +170,43 @@ class VpnRoutingSettings {
       return builtinText;
     }
     return '$builtinText · $customCount custom rule(s)';
+  }
+
+  /// Localized variant of [summary] for display in the settings UI.
+  String localizedSummary(AppLocalizations l10n) {
+    final dnsLabel = switch (dnsMode) {
+      VpnDnsMode.regionalOptimized => l10n.cnOptimizedDns,
+      VpnDnsMode.strictProxy => l10n.strictProxyDns,
+      VpnDnsMode.systemResolver => l10n.systemDns,
+    };
+    final customCount = customDirectDomains.length +
+        customDirectPackages.length +
+        customProxyDomains.length +
+        customProxyPackages.length +
+        customDirectCidrs.length +
+        customProxyCidrs.length;
+
+    if (mode == VpnRoutingMode.global) {
+      if (customCount == 0) {
+        return l10n.routingSummaryGlobal(dnsLabel);
+      }
+      return l10n.routingSummaryGlobalWithCustom(customCount, dnsLabel);
+    }
+
+    final enabledBuiltins = <String>[
+      if (directPrivateNetworks) l10n.routingTagLanDirect,
+      l10n.routingTagCnAppsDirect,
+      if (directCnDomains) l10n.routingTagCnDomainsDirect,
+      if (directCnIpRanges) l10n.routingTagCnIpsDirect,
+      dnsLabel,
+    ];
+    final builtinText = enabledBuiltins.isEmpty
+        ? l10n.routingSummaryNoBuiltins
+        : enabledBuiltins.join(' · ');
+    if (customCount == 0) {
+      return builtinText;
+    }
+    return l10n.routingSummaryWithCustom(builtinText, customCount);
   }
 
   VpnRoutingSettings copyWith({

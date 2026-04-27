@@ -60,6 +60,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _passphraseController;
   bool _obscurePassphrase = true;
+  AutovalidateMode _autovalidate = AutovalidateMode.disabled;
 
   @override
   void initState() {
@@ -84,6 +85,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
       title: Text(l10n.importEncryptedProfile),
       content: Form(
         key: _formKey,
+        autovalidateMode: _autovalidate,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -94,6 +96,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                 decoration: InputDecoration(
                   labelText: l10n.profileName,
                   hintText: l10n.optionalProfileNameHint,
+                  errorMaxLines: 3,
                 ),
                 validator: (value) {
                   final name = value?.trim() ?? '';
@@ -111,6 +114,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                   labelText: l10n.encryptedConfig,
                   hintText: l10n.pasteEncryptedConfigHint,
                   border: const OutlineInputBorder(),
+                  errorMaxLines: 4,
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.paste),
                     tooltip: l10n.pasteFromClipboard,
@@ -143,6 +147,7 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
                 decoration: InputDecoration(
                   labelText: l10n.sharePassphrase,
                   border: const OutlineInputBorder(),
+                  errorMaxLines: 3,
                   suffixIcon: IconButton(
                     icon: Icon(
                       _obscurePassphrase
@@ -177,6 +182,12 @@ class _NodesImportProfileDialogState extends State<_NodesImportProfileDialog> {
           key: NodesTestKeys.importProfileSubmitButton,
           onPressed: () {
             if (!_formKey.currentState!.validate()) {
+              // Once the user has hit submit and seen errors, switch to live
+              // re-validation so corrections clear the errors immediately
+              // instead of waiting for the next submit.
+              setState(() {
+                _autovalidate = AutovalidateMode.onUserInteraction;
+              });
               return;
             }
             Navigator.pop(
@@ -211,6 +222,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
   late final TextEditingController _configController;
+  AutovalidateMode _autovalidate = AutovalidateMode.disabled;
 
   @override
   void initState() {
@@ -233,6 +245,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
       title: Text(l10n.createProfile),
       content: Form(
         key: _formKey,
+        autovalidateMode: _autovalidate,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -242,6 +255,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                 decoration: InputDecoration(
                   labelText: l10n.profileName,
                   hintText: l10n.egMyVpnConfig,
+                  errorMaxLines: 3,
                 ),
                 validator: (value) {
                   final name = value?.trim() ?? '';
@@ -262,6 +276,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                   labelText: l10n.config,
                   hintText: l10n.pasteSingboxJsonHint,
                   border: const OutlineInputBorder(),
+                  errorMaxLines: 4,
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.paste),
                     tooltip: l10n.pasteFromClipboard,
@@ -283,7 +298,7 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
                   if (config.isEmpty) {
                     return l10n.pleasePasteConfig;
                   }
-                  return validateSingboxConfig(config);
+                  return validateSingboxConfig(config, l10n);
                 },
               ),
             ],
@@ -298,6 +313,9 @@ class _NodesCreateProfileDialogState extends State<_NodesCreateProfileDialog> {
         ElevatedButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) {
+              setState(() {
+                _autovalidate = AutovalidateMode.onUserInteraction;
+              });
               return;
             }
             Navigator.pop(
@@ -332,6 +350,7 @@ class _NodesRenameProfileDialog extends StatefulWidget {
 class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
+  AutovalidateMode _autovalidate = AutovalidateMode.disabled;
 
   @override
   void initState() {
@@ -352,9 +371,13 @@ class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
       title: Text(l10n.renameProfile),
       content: Form(
         key: _formKey,
+        autovalidateMode: _autovalidate,
         child: TextFormField(
           controller: _nameController,
-          decoration: InputDecoration(labelText: l10n.profileName),
+          decoration: InputDecoration(
+            labelText: l10n.profileName,
+            errorMaxLines: 3,
+          ),
           validator: (value) {
             final name = value?.trim() ?? '';
             if (name.isEmpty) {
@@ -376,6 +399,9 @@ class _NodesRenameProfileDialogState extends State<_NodesRenameProfileDialog> {
         ElevatedButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) {
+              setState(() {
+                _autovalidate = AutovalidateMode.onUserInteraction;
+              });
               return;
             }
             Navigator.pop(context, _nameController.text.trim());

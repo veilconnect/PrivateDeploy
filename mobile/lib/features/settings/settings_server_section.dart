@@ -52,6 +52,7 @@ class SettingsServerSection extends StatelessWidget {
                           : maskedSettingsApiKey(
                               cloud.apiKey,
                               notSetLabel: l10n.notSet,
+                              configuredLabel: l10n.apiKeyConfiguredMask,
                             ),
                     ),
                     trailing: const Icon(Icons.chevron_right),

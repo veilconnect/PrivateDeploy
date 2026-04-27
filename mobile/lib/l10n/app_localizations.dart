@@ -1412,6 +1412,126 @@ abstract class AppLocalizations {
   /// **'Unrecognized format. Paste proxy links (ss://, vless://, etc.) or sing-box JSON.'**
   String get unrecognizedFormat;
 
+  /// No description provided for @invalidConfigNotJsonObject.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid config: not a JSON object'**
+  String get invalidConfigNotJsonObject;
+
+  /// No description provided for @invalidConfigMissingOutbounds.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid config: missing or empty \"outbounds\" section'**
+  String get invalidConfigMissingOutbounds;
+
+  /// No description provided for @invalidConfigNotJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid config: not valid JSON'**
+  String get invalidConfigNotJson;
+
+  /// No description provided for @invalidConfigGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid config: {error}'**
+  String invalidConfigGeneric(Object error);
+
+  /// No description provided for @apiKeyConfiguredMask.
+  ///
+  /// In en, this message translates to:
+  /// **'•••• ({length} chars)'**
+  String apiKeyConfiguredMask(Object length);
+
+  /// No description provided for @vpnRouteDecisionProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'PROXY'**
+  String get vpnRouteDecisionProxy;
+
+  /// No description provided for @vpnRouteDecisionDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'DIRECT'**
+  String get vpnRouteDecisionDirect;
+
+  /// No description provided for @vpnRouteDecisionDns.
+  ///
+  /// In en, this message translates to:
+  /// **'DNS'**
+  String get vpnRouteDecisionDns;
+
+  /// No description provided for @vpnStatusConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'CONNECTED'**
+  String get vpnStatusConnected;
+
+  /// No description provided for @vpnStatusConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'CONNECTING'**
+  String get vpnStatusConnecting;
+
+  /// No description provided for @vpnStatusDisconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'DISCONNECTING'**
+  String get vpnStatusDisconnecting;
+
+  /// No description provided for @vpnStatusDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'DISCONNECTED'**
+  String get vpnStatusDisconnected;
+
+  /// No description provided for @routingSummaryGlobal.
+  ///
+  /// In en, this message translates to:
+  /// **'All traffic via VPN, LAN bypassed · {dns}'**
+  String routingSummaryGlobal(Object dns);
+
+  /// No description provided for @routingSummaryGlobalWithCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'All traffic via VPN, LAN bypassed, {count} custom rule(s) · {dns}'**
+  String routingSummaryGlobalWithCustom(Object count, Object dns);
+
+  /// No description provided for @routingSummaryNoBuiltins.
+  ///
+  /// In en, this message translates to:
+  /// **'No built-in rules enabled'**
+  String get routingSummaryNoBuiltins;
+
+  /// No description provided for @routingSummaryWithCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'{builtins} · {count} custom rule(s)'**
+  String routingSummaryWithCustom(Object builtins, Object count);
+
+  /// No description provided for @routingTagLanDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'LAN direct'**
+  String get routingTagLanDirect;
+
+  /// No description provided for @routingTagCnAppsDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'regional apps direct'**
+  String get routingTagCnAppsDirect;
+
+  /// No description provided for @routingTagCnDomainsDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'CN domains direct'**
+  String get routingTagCnDomainsDirect;
+
+  /// No description provided for @routingTagCnIpsDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'CN IPs direct'**
+  String get routingTagCnIpsDirect;
+
   /// No description provided for @profileContentSaved.
   ///
   /// In en, this message translates to:
@@ -2033,7 +2153,7 @@ abstract class AppLocalizations {
   /// No description provided for @routingRulesHelp.
   ///
   /// In en, this message translates to:
-  /// **'Built-in defaults follow common split patterns: LAN direct, regional apps direct, CN domains direct, CN IPs direct. Global mode only keeps LAN and custom rules.'**
+  /// **'In split mode you can toggle: LAN direct, CN domains direct, CN IPs direct. Below you can also pick proxied or direct apps and customise domains / CIDRs. Global mode only keeps LAN and custom rules.'**
   String get routingRulesHelp;
 
   /// No description provided for @dnsMode.

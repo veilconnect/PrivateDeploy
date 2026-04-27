@@ -4,6 +4,7 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_cloud_actions.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_config_validation.dart';
+import 'package:privatedeploy_mobile/l10n/app_localizations_en.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_sections.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
@@ -54,20 +55,27 @@ void main() {
     });
 
     test('validateSingboxConfig rejects invalid payloads', () {
-      expect(validateSingboxConfig('[]'), 'Invalid config: not a JSON object');
+      final AppLocalizationsEn l10n = AppLocalizationsEn();
       expect(
-        validateSingboxConfig('{"outbounds": []}'),
+        validateSingboxConfig('[]', l10n),
+        'Invalid config: not a JSON object',
+      );
+      expect(
+        validateSingboxConfig('{"outbounds": []}', l10n),
         'Invalid config: missing or empty "outbounds" section',
       );
       expect(
-        validateSingboxConfig('{not-json}'),
+        validateSingboxConfig('{not-json}', l10n),
         'Invalid config: not valid JSON',
       );
     });
 
     test('validateSingboxConfig accepts config with outbounds', () {
       expect(
-        validateSingboxConfig('{"outbounds":[{"type":"direct"}]}'),
+        validateSingboxConfig(
+          '{"outbounds":[{"type":"direct"}]}',
+          AppLocalizationsEn(),
+        ),
         isNull,
       );
     });

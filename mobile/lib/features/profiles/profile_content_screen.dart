@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../nodes/nodes_config_validation.dart';
 import 'profile_provider.dart';
 
 class ProfileContentScreen extends StatefulWidget {
@@ -83,6 +84,20 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
   }
 
   Future<void> _saveContent() async {
+    final l10n = AppLocalizations.of(context)!;
+    final raw = _contentController.text.trim();
+    final validationError = validateNodeConfig(raw, l10n);
+    if (validationError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(validationError),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     final provider = context.read<ProfileProvider>();
     final success = await provider.saveProfileContent(
       widget.profile.id,
@@ -93,11 +108,11 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
       return;
     }
 
-    final l10n = AppLocalizations.of(context)!;
+    final l10nAfter = AppLocalizations.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          success ? l10n.profileContentSaved : provider.error ?? l10n.saveFailed,
+          success ? l10nAfter.profileContentSaved : provider.error ?? l10nAfter.saveFailed,
         ),
         backgroundColor: success ? Colors.green : Colors.red,
       ),

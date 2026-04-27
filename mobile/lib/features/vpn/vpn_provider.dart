@@ -76,6 +76,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   TrafficStats get stats => _stats;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  /// Clears any sticky error banner. Call this when the cause of the error
+  /// has been resolved (e.g. the offending profile was deleted, or the user
+  /// dismissed a transient probe failure).
+  void clearError() {
+    if (_error == null) {
+      return;
+    }
+    _error = null;
+    notifyListeners();
+  }
   bool get isConnected => _status == VpnStatus.connected;
   bool get isSupported => _isSupported;
   String? get unsupportedReason => _unsupportedReason;

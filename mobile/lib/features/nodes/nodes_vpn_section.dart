@@ -261,7 +261,9 @@ class NodesVpnSection extends StatelessWidget {
                       child: NodesInlineBanner(
                         icon: Icons.error_outline,
                         title: l10n.vpnNotice,
-                        message: vpnProvider.error!,
+                        message: _sanitizeVpnErrorForDisplay(
+                          vpnProvider.error!,
+                        ),
                         accentColor: Colors.orange,
                       ),
                     ),
@@ -279,6 +281,29 @@ bool _hasConnectionDetails(VpnProvider vpnProvider) {
   return vpnProvider.recentRouteDecisions.isNotEmpty ||
       vpnProvider.stats.uploadBytes > 0 ||
       vpnProvider.stats.downloadBytes > 0;
+}
+
+/// Strips embedded JSON / multi-line config bodies from a raw VPN error so
+/// secrets like passwords or UUIDs are never echoed into the UI banner.
+/// Keeps only the first informative line and caps the length.
+String _sanitizeVpnErrorForDisplay(String raw) {
+  const maxLen = 200;
+  // Drop everything after the first newline — sing-box parser errors prefix
+  // a one-line summary and then dump the whole config body.
+  var firstLine = raw.split(RegExp(r'[\r\n]')).first.trim();
+  // Defensive: if the first line itself contains an inline config dump (e.g.
+  // "... at character N of {...}"), trim at the first opening brace.
+  final braceIdx = firstLine.indexOf('{');
+  if (braceIdx > 20) {
+    firstLine = firstLine.substring(0, braceIdx).trim();
+    if (firstLine.endsWith('of') || firstLine.endsWith('-')) {
+      firstLine = firstLine.substring(0, firstLine.length - 2).trim();
+    }
+  }
+  if (firstLine.length > maxLen) {
+    return '${firstLine.substring(0, maxLen)}…';
+  }
+  return firstLine;
 }
 
 String _availableRoutesHint({

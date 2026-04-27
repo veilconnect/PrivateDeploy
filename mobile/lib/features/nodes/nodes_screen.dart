@@ -290,12 +290,14 @@ class _NodesScreenState extends State<NodesScreen> {
 
   Future<void> _deleteProfile(
     ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
     Profile profile,
   ) {
     return confirmDeleteProfile(
       context: context,
       profileProvider: profileProvider,
       profile: profile,
+      vpnProvider: vpnProvider,
     );
   }
 
@@ -437,7 +439,7 @@ class _NodesScreenState extends State<NodesScreen> {
                     onEdit: (profile) =>
                         _renameProfile(profileProvider, profile),
                     onDelete: (profile) =>
-                        _deleteProfile(profileProvider, profile),
+                        _deleteProfile(profileProvider, vpnProvider, profile),
                   ),
                   SizedBox(height: 20.h),
                 ],
@@ -501,7 +503,7 @@ class _NodesScreenState extends State<NodesScreen> {
                     onEdit: (profile) =>
                         _renameProfile(profileProvider, profile),
                     onDelete: (profile) =>
-                        _deleteProfile(profileProvider, profile),
+                        _deleteProfile(profileProvider, vpnProvider, profile),
                   ),
                 ],
               ],
