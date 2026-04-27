@@ -371,8 +371,24 @@ func configureOptionalFileLogging() {
 		return
 	}
 
-	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	log.SetOutput(&isolatedFanoutWriter{writers: []io.Writer{os.Stderr, file}})
 	log.Printf("[Startup] File logging enabled: %s", logPath)
+}
+
+// isolatedFanoutWriter writes each payload to every backing writer
+// independently. Unlike io.MultiWriter it does not abort the fan-out when one
+// writer fails, so a missing console stderr (e.g., a Windows scheduled task
+// without an attached console) cannot silently suppress writes to the log
+// file. Errors are swallowed because logging is best-effort.
+type isolatedFanoutWriter struct {
+	writers []io.Writer
+}
+
+func (f *isolatedFanoutWriter) Write(p []byte) (int, error) {
+	for _, w := range f.writers {
+		_, _ = w.Write(p)
+	}
+	return len(p), nil
 }
 
 func configureDiagnosticShellEnv() {

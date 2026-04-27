@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -195,5 +199,46 @@ func TestWebView2UserDataCandidates_HonorsExplicitEnv(t *testing.T) {
 	got := webView2UserDataCandidates()
 	if len(got) == 0 || got[0] != os.Getenv("WEBVIEW2_USER_DATA_FOLDER") {
 		t.Fatalf("explicit env should appear first; got %v", got)
+	}
+}
+
+// failingWriter mimics a broken handle (e.g., a Windows stderr without a
+// console attached) by always returning an error.
+type failingWriter struct{ err error }
+
+func (f *failingWriter) Write(p []byte) (int, error) { return 0, f.err }
+
+func TestIsolatedFanoutWriter_FailingWriterDoesNotSuppressOthers(t *testing.T) {
+	good := &bytes.Buffer{}
+	bad := &failingWriter{err: errors.New("no console")}
+
+	w := &isolatedFanoutWriter{writers: []io.Writer{bad, good}}
+	payload := []byte("startup line\n")
+	n, err := w.Write(payload)
+	if err != nil {
+		t.Fatalf("isolatedFanoutWriter should swallow per-writer errors, got %v", err)
+	}
+	if n != len(payload) {
+		t.Fatalf("returned n = %d, want %d", n, len(payload))
+	}
+	if got := good.String(); got != string(payload) {
+		t.Fatalf("good writer received %q, want %q", got, string(payload))
+	}
+}
+
+func TestIsolatedFanoutWriter_AllWritersReceiveSamePayload(t *testing.T) {
+	a, b, c := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
+	w := &isolatedFanoutWriter{writers: []io.Writer{a, b, c}}
+	payloads := []string{"one\n", "two\n", "three\n"}
+	for _, p := range payloads {
+		if _, err := w.Write([]byte(p)); err != nil {
+			t.Fatalf("write %q: %v", p, err)
+		}
+	}
+	expected := strings.Join(payloads, "")
+	for name, buf := range map[string]*bytes.Buffer{"a": a, "b": b, "c": c} {
+		if got := buf.String(); got != expected {
+			t.Errorf("writer %s got %q, want %q", name, got, expected)
+		}
 	}
 }
