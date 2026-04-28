@@ -47,19 +47,48 @@ internal object NativeEgressProbe {
     // Pure reachability endpoints: any HTTP success here proves the tunnel is
     // forwarding traffic, even if no public IP can be extracted. Used as a
     // fallback for the dart-facing probe (when DEFAULT_ENDPOINTS all fail
-    // due to Cloudflare blocking from CN), and as the *primary* list for the
-    // service's post-connect verifier — that path only needs reachability,
-    // not a public IP, and CN-friendly endpoints respond reliably under both
-    // direct and tunneled outbounds.
+    // due to Cloudflare blocking from CN). NOT sufficient for the post-connect
+    // verifier on its own — these endpoints are matched by sing-box's
+    // "国内直连" routing rules and fall back to direct outbound, so they stay
+    // reachable even when the configured upstream node is completely dead
+    // (e.g. carrier blocked the VPS IP). Pair with TUNNEL_REQUIRED_ENDPOINTS
+    // to distinguish "tun0 forwards traffic" from "the chosen node actually
+    // works".
     val REACHABILITY_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
         EgressProbeEndpoint("https://www.baidu.com/favicon.ico"),
         EgressProbeEndpoint("https://www.qq.com/favicon.ico"),
     )
 
+    // Endpoints that only resolve when packets genuinely exit through the
+    // configured upstream node — they're geofenced behind the regional network filtering
+    // (no domestic-direct shortcut can reach them) and respond with a tiny
+    // empty 204 so the probe stays cheap. Used by the service's post-connect
+    // verifier to detect "tun0 is up but the upstream socket is dead"
+    // scenarios — typically a mobile network blocking the VPS IP after a
+    // Wi-Fi → cellular handover. /generate_204 is Google's canonical captive
+    // portal probe; Android itself uses it, so it's stable and globally
+    // mirrored across Google's edges.
+    val TUNNEL_REQUIRED_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
+        EgressProbeEndpoint("https://www.gstatic.com/generate_204"),
+        EgressProbeEndpoint("https://www.google.com/generate_204"),
+    )
+
+    /**
+     * @param allowDomesticFallback If true (default), and every [endpoints]
+     *   request fails, retry against [REACHABILITY_ENDPOINTS] before giving
+     *   up — convenient for the dart-facing diagnostics surface that just
+     *   wants any reachability signal. Callers that need to attribute
+     *   reachability to *the specific endpoint list they passed* (e.g. the
+     *   service's three-state health probe distinguishing offshore-only
+     *   endpoints from domestic-direct ones) MUST pass false, otherwise the
+     *   fallback silently turns a TUNNEL_REQUIRED-only call into a
+     *   REACHABILITY_ENDPOINTS call when the upstream is dead.
+     */
     fun probe(
         connectivityManager: ConnectivityManager?,
         endpoints: List<EgressProbeEndpoint> = DEFAULT_ENDPOINTS,
         timeoutMs: Int = DEFAULT_TIMEOUT_MS,
+        allowDomesticFallback: Boolean = true,
     ): EgressProbeResult {
         var lastError: String? = null
         var reachableSource: String? = null
@@ -97,8 +126,10 @@ internal object NativeEgressProbe {
         // No endpoint completed an HTTP request — the primary list might be
         // entirely Cloudflare-fronted and blocked from CN. Try the
         // CN-friendly reachability list as a last resort, but skip if the
-        // caller already passed it (avoids double-iterating the same URLs).
-        if (endpoints !== REACHABILITY_ENDPOINTS) {
+        // caller already passed it (avoids double-iterating the same URLs)
+        // or asked us not to fall back (e.g. a tunnel-required-only health
+        // probe that must NOT be satisfied by domestic-direct success).
+        if (allowDomesticFallback && endpoints !== REACHABILITY_ENDPOINTS) {
             for (endpoint in REACHABILITY_ENDPOINTS) {
                 try {
                     fetchProbePayload(connectivityManager, endpoint, timeoutMs)
@@ -133,6 +164,14 @@ internal object NativeEgressProbe {
             val statusCode = connection.responseCode
             if (statusCode !in 200..399) {
                 throw IllegalStateException("Unexpected HTTP status $statusCode from ${endpoint.url}")
+            }
+
+            // 204 No Content endpoints (e.g. /generate_204) intentionally have
+            // no response body and HttpURLConnection returns a null inputStream
+            // for them. Reaching this point means the request completed
+            // end-to-end, which is all the reachability probe needs.
+            if (statusCode == 204 || connection.contentLength == 0) {
+                return ""
             }
 
             return connection.inputStream.bufferedReader().use { it.readText() }
