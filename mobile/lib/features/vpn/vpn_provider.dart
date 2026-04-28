@@ -617,7 +617,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _diagnosticsEgressIp = null;
       _diagnosticsError = null;
       _diagnosticsUpdatedAt = null;
-      _error = null;
+      // Preserve any diagnostic message the native VpnService already
+      // broadcast (e.g. "upstream blocked, switch nodes" from
+      // checkTunnelHealth) — clearing it here would hide the orange banner
+      // that tells the user the chosen node can't reach offshore traffic
+      // even though the tunnel itself is up. Only clear if _error is the
+      // generic startup-failure placeholder, which is what gets set when
+      // dart's own cloudflare-fronted probe times out from CN — that one
+      // is genuinely advisory and shouldn't clutter the UI.
+      if (_error == startupConnectivityFailureMessage) {
+        _error = null;
+      }
       _scheduleDeferredStartupEgressConfirmation(generation: generation);
       AppLogger.info(
         '[VpnProvider] Android startup probe was inconclusive; deferring diagnostics retry while keeping VPN connected',
@@ -829,7 +839,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _diagnosticsEgressIp = null;
         _diagnosticsError = startupProbeInconclusiveMessage;
         _diagnosticsUpdatedAt = DateTime.now();
-        _error = null;
+        // Same rationale as the synchronous branch in
+        // _verifyStartupEgressConnectivity: don't wipe an _error message
+        // that came from the native VpnService (e.g. UpstreamDegraded
+        // "switch nodes" warning) just because dart's own Cloudflare-fronted
+        // probe couldn't confirm an egress IP — that probe failure is
+        // expected from CN. Only reset _error if it's the placeholder
+        // startup-failure string, which is genuinely advisory.
+        if (_error == startupConnectivityFailureMessage) {
+          _error = null;
+        }
         _safeNotifyListeners();
         AppLogger.warning(
           '[VpnProvider] Android startup probe could not confirm egress after deferred retry; keeping VPN connected',

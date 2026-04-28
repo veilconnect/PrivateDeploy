@@ -216,6 +216,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var vpnCore: VPNService? = null
     private var activeConfig: String? = null
+    // Most recent diagnostic message broadcast to dart. Persisted here so that
+    // dart's polling getStatus() path returns the same UpstreamDegraded text
+    // the broadcast carried — without this, polling reads vpnCore.getStatus()
+    // (which only knows about libbox-internal state) and overwrites the
+    // dart-side _error to null, hiding the orange "switch nodes" warning
+    // banner moments after the user connects to a blocked node.
+    @Volatile
+    private var latestStatusMessage: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var underlyingNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingUnderlyingNetworkRestart: Runnable? = null
@@ -313,51 +321,54 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
 
-                    // Run the probe but don't block startup if it fails on the
-                    // last attempt. Verified previously: from China + direct
-                    // outbound, every Cloudflare-fronted endpoint plus
-                    // baidu/qq fallbacks can all time out under the tunnel
-                    // even when the user can browse normally — tearing the
-                    // VPN down here just leaves them stuck without
-                    // connectivity. The dart side continues to refresh the
-                    // egress IP as part of normal diagnostics.
-                    val health = checkTunnelHealth()
-                    if (health == TunnelHealth.Healthy || attempt == START_MAX_ATTEMPTS) {
-                        val outcome = describeTunnelHealth(health)
-                        updateForegroundNotification(outcome.notificationText)
-                        broadcastStatus("connected", outcome.statusMessage)
-                        when (health) {
-                            TunnelHealth.Healthy ->
-                                Log.i(TAG, "VPN started successfully on attempt $attempt")
-                            TunnelHealth.UpstreamDegraded ->
-                                Log.w(
-                                    TAG,
-                                    "VPN start attempt $attempt: tunnel up but upstream " +
-                                        "unreachable; accepting degraded state so the user " +
-                                        "can still reach domestic sites and switch nodes",
-                                )
-                            TunnelHealth.Unreachable ->
-                                Log.w(
-                                    TAG,
-                                    "VPN start attempt $attempt/$START_MAX_ATTEMPTS: probe " +
-                                        "couldn't reach any known endpoint, but libbox reports " +
-                                        "the tunnel is up — accepting startup so the user can " +
-                                        "actually use the connection (the dart-side probe will " +
-                                        "keep refreshing the egress IP).",
-                                )
-                        }
-                        succeeded = true
-                        break
-                    }
+                    // Eager broadcast: tell dart "connected" the moment libbox
+                    // reports the tunnel is up, BEFORE we run the egress
+                    // health probe. The probe can take up to ~15s when it
+                    // has to chase a slow DNS resolution through a tunnel
+                    // whose upstream is in fact dead, and dart's
+                    // VpnPlugin.START_TIMEOUT_MS is only 30s — so blocking
+                    // the "connected" broadcast on the probe burns most of
+                    // dart's budget and risks a failPendingStart() →
+                    // ACTION_STOP that destroys the service mid-probe.
+                    // Decoupling means dart resolves its connect() future
+                    // promptly, and we then refine the user-facing state
+                    // (notification + follow-up broadcast) once the probe
+                    // returns.
+                    updateForegroundNotification("VPN connected (verifying)")
+                    broadcastStatus("connected", null)
+                    succeeded = true
 
-                    Log.w(
-                        TAG,
-                        "VPN start attempt $attempt/$START_MAX_ATTEMPTS: tunnel health=$health; " +
-                            "will retry to give the upstream socket another chance",
-                    )
-                    lastError = IllegalStateException(
-                        startupConnectivityFailureMessage(),
-                    )
+                    val health = checkTunnelHealth()
+                    val outcome = describeTunnelHealth(health)
+                    updateForegroundNotification(outcome.notificationText)
+                    if (outcome.statusMessage != null) {
+                        // Re-broadcast connected with the diagnostic message
+                        // so dart's listener (eventSink) can render the
+                        // degraded warning banner. dart treats "connected"
+                        // status as idempotent, so this just refines state
+                        // rather than re-resolving the connect() future.
+                        broadcastStatus("connected", outcome.statusMessage)
+                    }
+                    when (health) {
+                        TunnelHealth.Healthy ->
+                            Log.i(TAG, "VPN started successfully on attempt $attempt")
+                        TunnelHealth.UpstreamDegraded ->
+                            Log.w(
+                                TAG,
+                                "VPN start attempt $attempt: tunnel up but upstream " +
+                                    "unreachable; the configured node looks blocked " +
+                                    "from this network — user should switch nodes",
+                            )
+                        TunnelHealth.Unreachable ->
+                            Log.w(
+                                TAG,
+                                "VPN start attempt $attempt: probe couldn't reach any " +
+                                    "endpoint but libbox reports the tunnel is up — " +
+                                    "keeping the session; dart-side probe will keep " +
+                                    "refreshing the egress IP",
+                            )
+                    }
+                    break
                 } catch (e: Throwable) {
                     Log.w(
                         TAG,
@@ -464,7 +475,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     captureCurrentUnderlyingNetworkSnapshot()
 
                     val health = checkTunnelHealth()
-                    if (health == TunnelHealth.Healthy || attempt == RESTART_MAX_ATTEMPTS) {
+                    // Mirror startVpn's policy: don't retry on UpstreamDegraded.
+                    // The same node from the same underlying network won't
+                    // suddenly start passing offshore probes on a second
+                    // attempt; only Unreachable (probe verifier hit no
+                    // endpoints at all, possibly transient) earns a retry.
+                    val acceptNow = when (health) {
+                        TunnelHealth.Healthy, TunnelHealth.UpstreamDegraded -> true
+                        TunnelHealth.Unreachable -> attempt == RESTART_MAX_ATTEMPTS
+                    }
+                    if (acceptNow) {
                         val outcome = describeTunnelHealth(health)
                         updateForegroundNotification(outcome.notificationText)
                         broadcastStatus("connected", outcome.statusMessage)
@@ -863,7 +883,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return mapOf(
                 "running" to isRunning,
                 "status" to if (isRunning) "connected" else "disconnected",
-                "message" to null,
+                "message" to if (isRunning) latestStatusMessage else null,
                 "connected_at" to 0,
                 "uptime" to 0
             )
@@ -880,6 +900,20 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
         if (parsedStatus["status"] == "connected") {
             parsedStatus["running"] = true
+        }
+
+        // Layer the most recent broadcast message on top of libbox's
+        // internal status so dart polling sees the dart-facing diagnostic
+        // (e.g. "upstream blocked, switch nodes") rather than libbox's
+        // empty/internal one. Clear when not connected so old warnings
+        // don't bleed into a fresh disconnect/reconnect.
+        if (parsedStatus["status"] == "connected") {
+            val cached = latestStatusMessage
+            if (!cached.isNullOrBlank()) {
+                parsedStatus["message"] = cached
+            }
+        } else {
+            parsedStatus["message"] = null
         }
 
         return parsedStatus
@@ -934,6 +968,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     private fun broadcastStatus(status: String, message: String?) {
+        // Cache the latest connected-state message so polling getStatus()
+        // returns it; clear it on any non-connected transition so a stale
+        // degraded warning doesn't survive into a fresh connect attempt.
+        latestStatusMessage = if (status == "connected") message else null
         sendBroadcast(Intent(ACTION_VPN_STATUS).apply {
             setPackage(packageName)
             putExtra("status", status)
