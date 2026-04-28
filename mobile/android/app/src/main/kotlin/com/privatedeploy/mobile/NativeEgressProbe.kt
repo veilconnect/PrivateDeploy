@@ -18,6 +18,10 @@ internal data class EgressProbeResult(
     val ip: String? = null,
     val source: String? = null,
     val error: String? = null,
+    // True when at least one probe HTTP request completed end-to-end. The IP
+    // may still be unknown (e.g. a Chinese-friendly endpoint that doesn't
+    // expose the egress IP), but the tunnel is provably forwarding traffic.
+    val reachable: Boolean = false,
 ) {
     val hasIp: Boolean get() = !ip.isNullOrBlank()
 }
@@ -40,12 +44,25 @@ internal object NativeEgressProbe {
         EgressProbeEndpoint("https://icanhazip.com"),
     )
 
+    // Pure reachability endpoints: any HTTP success here proves the tunnel is
+    // forwarding traffic, even if no public IP can be extracted. Used as a
+    // fallback for the dart-facing probe (when DEFAULT_ENDPOINTS all fail
+    // due to Cloudflare blocking from CN), and as the *primary* list for the
+    // service's post-connect verifier — that path only needs reachability,
+    // not a public IP, and CN-friendly endpoints respond reliably under both
+    // direct and tunneled outbounds.
+    val REACHABILITY_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
+        EgressProbeEndpoint("https://www.baidu.com/favicon.ico"),
+        EgressProbeEndpoint("https://www.qq.com/favicon.ico"),
+    )
+
     fun probe(
         connectivityManager: ConnectivityManager?,
         endpoints: List<EgressProbeEndpoint> = DEFAULT_ENDPOINTS,
         timeoutMs: Int = DEFAULT_TIMEOUT_MS,
     ): EgressProbeResult {
         var lastError: String? = null
+        var reachableSource: String? = null
 
         for (endpoint in endpoints) {
             try {
@@ -53,16 +70,43 @@ internal object NativeEgressProbe {
                 val ip = extractIpFromProbePayload(payload)
                 if (!ip.isNullOrBlank()) {
                     Log.i(TAG, "VPN egress probe succeeded via ${endpoint.url} -> $ip")
-                    return EgressProbeResult(ip = ip, source = endpoint.url)
+                    return EgressProbeResult(ip = ip, source = endpoint.url, reachable = true)
                 }
-                Log.w(TAG, "VPN egress probe returned unparseable payload from ${endpoint.url}")
-                lastError = "Public IP probe returned an unexpected response."
+                // HTTP request completed end-to-end but the body didn't expose
+                // an IP (e.g. a binary favicon). That still proves the tunnel
+                // forwards traffic — keep iterating in case a later endpoint
+                // does yield an IP, but record reachability so we can return
+                // it if no IP ever materialises.
+                if (reachableSource == null) {
+                    reachableSource = endpoint.url
+                }
+                Log.i(TAG, "VPN egress probe reachable via ${endpoint.url} (no public IP)")
             } catch (timeout: SocketTimeoutException) {
                 Log.w(TAG, "VPN egress probe timed out for ${endpoint.url}", timeout)
                 lastError = "Timed out contacting public IP probe endpoints."
             } catch (error: Exception) {
                 Log.w(TAG, "VPN egress probe failed for ${endpoint.url}", error)
                 lastError = "Could not reach public IP probe endpoints through the current VPN route."
+            }
+        }
+
+        if (reachableSource != null) {
+            return EgressProbeResult(source = reachableSource, reachable = true)
+        }
+
+        // No endpoint completed an HTTP request — the primary list might be
+        // entirely Cloudflare-fronted and blocked from CN. Try the
+        // CN-friendly reachability list as a last resort, but skip if the
+        // caller already passed it (avoids double-iterating the same URLs).
+        if (endpoints !== REACHABILITY_ENDPOINTS) {
+            for (endpoint in REACHABILITY_ENDPOINTS) {
+                try {
+                    fetchProbePayload(connectivityManager, endpoint, timeoutMs)
+                    Log.i(TAG, "VPN egress probe reachable via ${endpoint.url} (no public IP)")
+                    return EgressProbeResult(source = endpoint.url, reachable = true)
+                } catch (error: Exception) {
+                    Log.w(TAG, "VPN egress reachability fallback failed for ${endpoint.url}", error)
+                }
             }
         }
 

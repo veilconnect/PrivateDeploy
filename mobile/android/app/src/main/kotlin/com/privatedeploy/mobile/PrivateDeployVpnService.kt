@@ -57,9 +57,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val MAX_RECENT_LOGS = 250
         private const val UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS = 300L
         private const val MIN_UNDERLYING_NETWORK_RESTART_INTERVAL_MS = 4000L
-        private const val RESTART_MAX_ATTEMPTS = 3
+        private const val RESTART_MAX_ATTEMPTS = 2
         private const val RESTART_RETRY_BASE_DELAY_MS = 1500L
-        private const val START_MAX_ATTEMPTS = 3
+        private const val START_MAX_ATTEMPTS = 2
         private const val START_RETRY_BASE_DELAY_MS = 1500L
         // Wait up to 12 s for the new transport to reach
         // NET_CAPABILITY_VALIDATED before kicking off start/restart.
@@ -75,16 +75,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // shorter window so we don't deadlock until VALIDATED_NETWORK_WAIT_MS.
         private const val UNVALIDATED_NETWORK_FALLBACK_MS = 6000L
         // Total wall time the post-start/restart egress verifier may spend
-        // confirming traffic actually flows out the tunnel before we
-        // declare the connection healthy. Bumped from 6s/1.5s after seeing
-        // China-mainland devices fail every TLS handshake to api.ipify.org
-        // within 1.5s through a freshly-up tunnel — the connection
-        // technically worked, but the probe timed out so the whole start
-        // was rolled back. Per-endpoint now matches the dart fallback
-        // (5s) and total fits multiple retries with the 4 default
-        // endpoints.
-        private const val EGRESS_VERIFY_TOTAL_TIMEOUT_MS = 20000L
-        private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 5000
+        // confirming traffic actually flows out the tunnel before we accept
+        // the connection. The service now declares foregroundServiceType=
+        // "specialUse" so the prior 30s background-FGS timeout no longer
+        // applies, but we still want a tight budget — the user is staring at
+        // a "connecting" spinner. The verifier hits CN-friendly reachability
+        // endpoints only (no Cloudflare), which respond in <1s through a
+        // healthy tunnel.
+        private const val EGRESS_VERIFY_TOTAL_TIMEOUT_MS = 6000L
+        private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 2500
         private const val EGRESS_VERIFY_PROBE_RETRY_DELAY_MS = 500L
         private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
 
@@ -305,9 +304,29 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
 
-                    if (verifyTunnelEgressReachable()) {
+                    // Run the probe but don't block startup if it fails on the
+                    // last attempt. Verified previously: from China + direct
+                    // outbound, every Cloudflare-fronted endpoint plus
+                    // baidu/qq fallbacks can all time out under the tunnel
+                    // even when the user can browse normally — tearing the
+                    // VPN down here just leaves them stuck without
+                    // connectivity. The dart side continues to refresh the
+                    // egress IP as part of normal diagnostics.
+                    val probeOk = verifyTunnelEgressReachable()
+                    if (probeOk || attempt == START_MAX_ATTEMPTS) {
                         broadcastStatus("connected", null)
-                        Log.i(TAG, "VPN started successfully on attempt $attempt")
+                        if (probeOk) {
+                            Log.i(TAG, "VPN started successfully on attempt $attempt")
+                        } else {
+                            Log.w(
+                                TAG,
+                                "VPN start attempt $attempt/$START_MAX_ATTEMPTS: probe " +
+                                    "couldn't reach a known endpoint, but libbox reports " +
+                                    "the tunnel is up — accepting startup so the user can " +
+                                    "actually use the connection (the dart-side probe will " +
+                                    "keep refreshing the egress IP).",
+                            )
+                        }
                         succeeded = true
                         break
                     }
@@ -425,9 +444,22 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
 
-                    if (verifyTunnelEgressReachable()) {
+                    val probeOk = verifyTunnelEgressReachable()
+                    if (probeOk || attempt == RESTART_MAX_ATTEMPTS) {
                         broadcastStatus("connected", null)
-                        Log.i(TAG, "VPN restarted successfully on attempt $attempt")
+                        if (probeOk) {
+                            Log.i(TAG, "VPN restarted successfully on attempt $attempt")
+                        } else {
+                            // Same rationale as startVpn: don't tear down a working
+                            // tunnel just because the verifier couldn't reach our
+                            // probe endpoints — the user should keep their session.
+                            Log.w(
+                                TAG,
+                                "VPN restart attempt $attempt/$RESTART_MAX_ATTEMPTS: probe " +
+                                    "failed but accepting libbox state so the user keeps the " +
+                                    "tunnel; dart-side probe will refresh the egress IP.",
+                            )
+                        }
                         succeeded = true
                         break
                     }
@@ -578,12 +610,26 @@ class PrivateDeployVpnService : VpnService(), Platform {
             attempt += 1
             val result = NativeEgressProbe.probe(
                 connectivityManager,
+                endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
                 timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
             )
+            // Accept reachability without a public IP too: from China + direct
+            // outbound, the IP-extracting endpoints are all Cloudflare-fronted
+            // and frequently blocked, so they fail even when the tunnel works
+            // fine for browsing. The reachability fallback (baidu/qq) confirms
+            // the tunnel forwards traffic; the dart-side probe will refresh
+            // the IP later when it can.
             if (result.hasIp) {
                 Log.i(
                     TAG,
                     "Tunnel egress verified on probe $attempt -> ${result.ip} via ${result.source}",
+                )
+                return true
+            }
+            if (result.reachable) {
+                Log.i(
+                    TAG,
+                    "Tunnel egress reachable on probe $attempt via ${result.source} (IP unknown)",
                 )
                 return true
             }
