@@ -314,6 +314,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // egress IP as part of normal diagnostics.
                     val probeOk = verifyTunnelEgressReachable()
                     if (probeOk || attempt == START_MAX_ATTEMPTS) {
+                        updateForegroundNotification(
+                            if (probeOk) "VPN connected"
+                            else "VPN connected (egress unverified)",
+                        )
                         broadcastStatus("connected", null)
                         if (probeOk) {
                             Log.i(TAG, "VPN started successfully on attempt $attempt")
@@ -446,6 +450,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
                     val probeOk = verifyTunnelEgressReachable()
                     if (probeOk || attempt == RESTART_MAX_ATTEMPTS) {
+                        updateForegroundNotification(
+                            if (probeOk) "VPN connected"
+                            else "VPN connected (egress unverified)",
+                        )
                         broadcastStatus("connected", null)
                         if (probeOk) {
                             Log.i(TAG, "VPN restarted successfully on attempt $attempt")
@@ -728,6 +736,23 @@ class PrivateDeployVpnService : VpnService(), Platform {
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
+    }
+
+    /**
+     * Refreshes the foreground service notification's content text without
+     * tearing the FGS state down. Re-using startForeground() with the same
+     * NOTIFICATION_ID is the documented way to update an FGS notification —
+     * NotificationManager.notify() works too but doesn't re-anchor the FGS,
+     * which matters on Android 14+ where reposting is also how you keep the
+     * service exempt from background time limits.
+     *
+     * Reason this helper exists: previously the notification text was set
+     * to "VPN is connecting" at startForeground() time and never updated
+     * after the tunnel reached the connected state, so the persistent
+     * notification lied about the connection state for the entire session.
+     */
+    private fun updateForegroundNotification(text: String) {
+        startForeground(NOTIFICATION_ID, createNotification(text))
     }
 
     private fun createNotification(contentText: String): Notification {
