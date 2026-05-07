@@ -23,11 +23,31 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       'VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.';
   static const String startupProbeInconclusiveMessage =
       'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.';
+  // Mirrors the canonical English string emitted by PrivateDeployVpnService
+  // when checkTunnelHealth() classifies the route as UpstreamDegraded
+  // (tunnel forwards traffic, but the upstream node itself is unreachable —
+  // typically because a cellular carrier is dropping SYNs to the VPS IP).
+  // localizeVpnStatusMessage() switches on this exact value to render the
+  // user-facing translated banner copy, so the Kotlin side MUST emit a
+  // bit-identical string. See PrivateDeployVpnService.describeTunnelHealth().
+  static const String tunnelUpstreamDegradedMessage =
+      "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.";
   static const Duration nativeEgressProbeTimeout = Duration(seconds: 3);
   static const Duration startupEgressProbeTimeout = Duration(seconds: 5);
   static const Duration androidStartupRetryDelay = Duration(seconds: 3);
   static const Duration androidStartupFallbackProbeDelay =
       Duration(milliseconds: 1500);
+
+  // How long we tolerate a sustained UpstreamDegraded broadcast before
+  // restarting the tunnel ourselves. The native VpnService only re-runs its
+  // health probe at startup, so a route that comes up partially blocked stays
+  // partially blocked until the user notices and taps "重启 VPN" — observed in
+  // production where urltest's `tolerance: 200ms` keeps a marginal first
+  // member selected even when a sibling pool member would carry traffic
+  // cleanly. The watchdog kicks core.restart() to force urltest to re-probe
+  // every member from scratch and pick a healthy one.
+  static const Duration upstreamDegradedRestartDelay = Duration(seconds: 30);
+  static const int maxUpstreamDegradedRestartAttempts = 2;
 
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
@@ -70,6 +90,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // per-probe failure.
   String? _lastKnownEgressIp;
   DateTime? _lastKnownEgressIpAt;
+  Timer? _upstreamDegradedWatchdog;
+  int _upstreamDegradedRestartAttempts = 0;
 
   VpnStatus get status => _status;
   String? get activeProfile => _activeProfile;
@@ -1056,11 +1078,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       if (previousStatus == VpnStatus.connecting && _lastKnownEgressIp != null) {
         unawaited(_refreshConnectedDiagnosticsEgressIp());
       }
+      _handleUpstreamDegradedSignal(
+        degraded: message != null && message.isNotEmpty,
+      );
     } else {
       _stopStatsPolling();
       _deferredStartupDiagnosticsTimer?.cancel();
       _deferredStartupDiagnosticsTimer = null;
       _diagnosticsEgressIp = null;
+      _handleUpstreamDegradedSignal(degraded: false);
+      if (previousStatus == VpnStatus.connected) {
+        // Fresh tunnel session next time → reset the budget. A user-initiated
+        // reconnect should get its full attempt count back.
+        _upstreamDegradedRestartAttempts = 0;
+      }
     }
 
     if (notify) {
@@ -1093,6 +1124,61 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  /// Reacts to whether the current `connected` broadcast carries a non-null
+  /// statusMessage from the native VpnService. The native side only sets a
+  /// message on the `connected` channel for `TunnelHealth.UpstreamDegraded`,
+  /// so any non-empty message while connected = "tunnel is up but can't reach
+  /// offshore". When that signal persists past [upstreamDegradedRestartDelay]
+  /// we kick a native restart so urltest re-probes every pool member from
+  /// scratch and (hopefully) lands on a healthy one.
+  void _handleUpstreamDegradedSignal({required bool degraded}) {
+    if (!degraded) {
+      _upstreamDegradedWatchdog?.cancel();
+      _upstreamDegradedWatchdog = null;
+      return;
+    }
+    if (_upstreamDegradedWatchdog?.isActive ?? false) {
+      return;
+    }
+    _upstreamDegradedWatchdog = Timer(
+      upstreamDegradedRestartDelay,
+      _runUpstreamDegradedRestart,
+    );
+  }
+
+  Future<void> _runUpstreamDegradedRestart() async {
+    _upstreamDegradedWatchdog = null;
+    if (_disposed || _status != VpnStatus.connected) {
+      return;
+    }
+    if (_error == null || _error!.isEmpty) {
+      // The signal cleared on its own between scheduling and firing.
+      return;
+    }
+    if (_upstreamDegradedRestartAttempts >= maxUpstreamDegradedRestartAttempts) {
+      AppLogger.warning(
+        '[VpnProvider] Upstream-degraded watchdog: budget exhausted '
+        '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}); '
+        'leaving the tunnel up so the user can choose to switch nodes.',
+      );
+      return;
+    }
+
+    _upstreamDegradedRestartAttempts += 1;
+    AppLogger.info(
+      '[VpnProvider] Upstream-degraded watchdog firing restart attempt '
+      '${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts} '
+      'after ${upstreamDegradedRestartDelay.inSeconds}s of sustained warning',
+    );
+    try {
+      await _nativeService.restartVpn();
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnProvider] Upstream-degraded watchdog restart failed: $e',
+      );
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -1108,6 +1194,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _stopStatsPolling();
     _logNotifyTimer?.cancel();
     _deferredStartupDiagnosticsTimer?.cancel();
+    _upstreamDegradedWatchdog?.cancel();
     _statusSub?.cancel();
     _statsSub?.cancel();
     _logSub?.cancel();
