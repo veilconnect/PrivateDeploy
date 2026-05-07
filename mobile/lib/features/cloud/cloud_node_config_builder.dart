@@ -408,7 +408,15 @@ String? buildCloudNodeConfig(
           'tag': 'auto',
           'interrupt_exist_connections': true,
           'outbounds': allUrlTestTags,
-          'url': 'http://www.gstatic.com/generate_204',
+          // IP-literal so the urltest probe never has to resolve a hostname.
+          // The DNS module's "any" rule routes through dns-remote (DoH 1.1.1.1)
+          // with detour: select → auto → urltest's first member. If that
+          // member is unreachable (carrier blocking the VPS IP, captive
+          // portal, etc.) DNS hangs, no probe ever fires, and urltest can't
+          // discover the working failover member it already has in pool.
+          // 1.0.0.1 is Cloudflare's anycast resolver; /cdn-cgi/trace returns
+          // a small 200 OK so any 2xx counts as reachable for urltest.
+          'url': 'http://1.0.0.1/cdn-cgi/trace',
           'interval': '5m',
           'tolerance': 200,
         },

@@ -729,6 +729,52 @@ void main() {
       expect(pool, ['lax-1-SS']);
     });
 
+    test('urltest probes via IP-literal so DNS deadlock cannot stall it', () {
+      final instance = CloudInstance(
+        id: 'node-1',
+        provider: 'vultr',
+        label: 'tokyo-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: const NodeInfo(
+          ssPort: 443,
+          ssPassword: 'ss-pass',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: false,
+          vlessPort: 0,
+          vlessUuid: '',
+          vlessPublicKey: '',
+          vlessShortId: '',
+          vlessServerName: '',
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(instance);
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final urltest = outbounds.firstWhere((o) => o['tag'] == 'auto');
+      final url = urltest['url']?.toString() ?? '';
+
+      // Must be IP-literal: hostname-based probes deadlock when DNS itself
+      // routes through the urltest pool and every initial member is down.
+      final hostMatch = RegExp(r'^https?://([^/:]+)').firstMatch(url);
+      expect(hostMatch, isNotNull, reason: 'urltest url must include host: $url');
+      final host = hostMatch!.group(1)!;
+      final isIpLiteral = RegExp(r'^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(host);
+      expect(isIpLiteral, isTrue,
+          reason: 'urltest probe must be an IP-literal so it never depends '
+              'on DNS resolution: got $host');
+    });
+
     test('extracts the active cloud endpoint label from selector default', () {
       const raw = '''
 {
