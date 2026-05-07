@@ -1851,11 +1851,40 @@ class CloudProvider extends CloudProviderBase {
     );
   }
 
+  /// Optional callback the App injects so that node configs include a
+  /// CDN-fronted variant when the user has set one up. Returns the Cloudflare
+  /// Worker hostname for the given node id (e.g. `pd-relay-foo.acme.workers.dev`),
+  /// or null when the node has no Worker deployed.
+  String? Function(String nodeId)? _cdnWorkerHostResolver;
+
+  void setCdnWorkerHostResolver(String? Function(String nodeId)? resolver) {
+    _cdnWorkerHostResolver = resolver;
+  }
+
   String? generateNodeConfig(CloudInstance instance) {
+    // Pull in every other usable cloud node as a failover. sing-box urltest
+    // then probes them all and picks whichever is reachable from the
+    // current underlying network. The user-facing intent: when their
+    // carrier blackholes one VPS IP on cellular, another node still works
+    // without manual intervention.
+    final failovers = _instances
+        .where(
+          (candidate) =>
+              candidate.id != instance.id &&
+              candidate.hasIp &&
+              candidate.nodeInfo != null,
+        )
+        .toList(growable: false);
+
     return buildCloudNodeConfig(
       instance,
       preferredEndpointLabel: preferredEndpointLabelFor(instance),
       targetPlatform: defaultTargetPlatform,
+      cdnWorkerHost: _cdnWorkerHostResolver?.call(instance.id),
+      failoverInstances: failovers,
+      failoverCdnWorkerHostResolver: _cdnWorkerHostResolver == null
+          ? null
+          : (failover) => _cdnWorkerHostResolver?.call(failover.id),
     );
   }
 

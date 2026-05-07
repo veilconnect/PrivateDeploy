@@ -78,21 +78,24 @@ String? _cloudEndpointLabelFromTag(String? tag) {
   };
 }
 
-String? buildCloudNodeConfig(
+/// Append all viable protocol outbounds for [instance] into [outbounds] and
+/// their tags into [tags]. Mirrors the per-protocol blocks the active node
+/// uses, so a failover node ends up with the same shape (including the
+/// optional CDN-fronted variant). Returns the protocol→tag map for the
+/// instance, used by the active node's preferred-endpoint selector.
+Map<String, String> _appendInstanceOutbounds(
   CloudInstance instance, {
-  String? preferredEndpointLabel,
-  TargetPlatform? targetPlatform,
+  required List<Map<String, dynamic>> outbounds,
+  required List<String> tags,
+  String? cdnWorkerHost,
 }) {
-  if (!instance.hasIp || instance.nodeInfo == null) {
-    return null;
-  }
-
-  final ip = instance.ipv4!;
-  final info = instance.nodeInfo!;
-  final label = instance.label;
-  final outbounds = <Map<String, dynamic>>[];
-  final tags = <String>[];
   final endpointTagByLabel = <String, String>{};
+  final info = instance.nodeInfo;
+  if (info == null || !instance.hasIp) {
+    return endpointTagByLabel;
+  }
+  final ip = instance.ipv4!;
+  final label = instance.label;
 
   if (info.ssPort > 0 && info.ssPassword.isNotEmpty) {
     final tag = '$label-SS';
@@ -165,6 +168,39 @@ String? buildCloudNodeConfig(
     endpointTagByLabel['VLESS'] = tag;
   }
 
+  // CDN-fronted variant. Routed to a Cloudflare Worker host that relays
+  // WS↔TCP to the node's vlessRelayPort. Only added when both the worker
+  // host is provided AND the node has the relay port (older deploys lack
+  // it and would yield a non-functional outbound).
+  if (cdnWorkerHost != null &&
+      cdnWorkerHost.isNotEmpty &&
+      info.vlessRelayPort > 0 &&
+      info.vlessUuid.isNotEmpty) {
+    final tag = '$label-CDN';
+    outbounds.add({
+      'type': 'vless',
+      'tag': tag,
+      'server': cdnWorkerHost,
+      'server_port': 443,
+      'uuid': info.vlessUuid,
+      'transport': {
+        'type': 'ws',
+        'path': '/?ed=2560',
+        'headers': {'Host': cdnWorkerHost},
+      },
+      'tls': {
+        'enabled': true,
+        'server_name': cdnWorkerHost,
+        'utls': {
+          'enabled': true,
+          'fingerprint': 'chrome',
+        },
+      },
+    });
+    tags.add(tag);
+    endpointTagByLabel['CDN'] = tag;
+  }
+
   if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
     final tag = '$label-Trojan';
     outbounds.add({
@@ -183,6 +219,43 @@ String? buildCloudNodeConfig(
     tags.add(tag);
     endpointTagByLabel['Trojan'] = tag;
   }
+
+  return endpointTagByLabel;
+}
+
+String? buildCloudNodeConfig(
+  CloudInstance instance, {
+  String? preferredEndpointLabel,
+  TargetPlatform? targetPlatform,
+  // When non-null, append a CDN-fronted VLESS variant pointing at this
+  // Cloudflare Worker host. The Worker is expected to relay WS frames to the
+  // node's vlessRelayPort over plain TCP — see docs/cdn-acceleration. The
+  // CDN variant joins the urltest pool so sing-box auto-fails over from
+  // direct → CDN when the carrier blocks the direct path.
+  String? cdnWorkerHost,
+  // Other cloud nodes to enroll in the same urltest failover pool. When the
+  // active node's IP is dropped by the carrier (e.g. mobile carrier silently
+  // blackholing some VPS ranges on cellular), sing-box urltest will pick a
+  // working failover node automatically. Failover only applies in "auto"
+  // mode — if [preferredEndpointLabel] pins a protocol, the user explicitly
+  // wants that one outbound and we honor it.
+  List<CloudInstance> failoverInstances = const [],
+  // Resolves the CDN worker host for any instance in [failoverInstances].
+  // The active instance keeps the simpler [cdnWorkerHost] for back-compat.
+  String? Function(CloudInstance instance)? failoverCdnWorkerHostResolver,
+}) {
+  if (!instance.hasIp || instance.nodeInfo == null) {
+    return null;
+  }
+
+  final outbounds = <Map<String, dynamic>>[];
+  final tags = <String>[];
+  final endpointTagByLabel = _appendInstanceOutbounds(
+    instance,
+    outbounds: outbounds,
+    tags: tags,
+    cdnWorkerHost: cdnWorkerHost,
+  );
 
   if (outbounds.isEmpty) {
     return null;
@@ -206,14 +279,43 @@ String? buildCloudNodeConfig(
       ..insert(0, preferredTag);
   }
   final manualProtocolSelection = preferredTag != null;
+
+  // Failover instances: only enrolled when in auto mode. Tag conflicts (two
+  // instances with the same label) are skipped — the second occurrence is
+  // dropped rather than ambiguously routed.
+  final failoverOutbounds = <Map<String, dynamic>>[];
+  final failoverTags = <String>[];
+  if (!manualProtocolSelection) {
+    final activeTagSet = tags.toSet();
+    for (final fi in failoverInstances) {
+      if (fi.id == instance.id) continue;
+      if (!fi.hasIp || fi.nodeInfo == null) continue;
+      final scratchOutbounds = <Map<String, dynamic>>[];
+      final scratchTags = <String>[];
+      _appendInstanceOutbounds(
+        fi,
+        outbounds: scratchOutbounds,
+        tags: scratchTags,
+        cdnWorkerHost: failoverCdnWorkerHostResolver?.call(fi),
+      );
+      for (var i = 0; i < scratchTags.length; i++) {
+        final tag = scratchTags[i];
+        if (activeTagSet.contains(tag) || failoverTags.contains(tag)) continue;
+        failoverTags.add(tag);
+        failoverOutbounds.add(scratchOutbounds[i]);
+      }
+    }
+  }
+
+  final allUrlTestTags = <String>[...tags, ...failoverTags];
   final protocolOutbounds = manualProtocolSelection
       ? outbounds
           .where((outbound) => outbound['tag']?.toString() == preferredTag)
           .toList(growable: false)
-      : List<Map<String, dynamic>>.from(outbounds);
+      : <Map<String, dynamic>>[...outbounds, ...failoverOutbounds];
   final selectorOutbounds = manualProtocolSelection
       ? List<String>.from(tags.take(1))
-      : ['auto', ...tags];
+      : ['auto', ...allUrlTestTags];
   final includeUrlTest = !manualProtocolSelection;
 
   final config = {
@@ -305,7 +407,7 @@ String? buildCloudNodeConfig(
           'type': 'urltest',
           'tag': 'auto',
           'interrupt_exist_connections': true,
-          'outbounds': tags,
+          'outbounds': allUrlTestTags,
           'url': 'http://www.gstatic.com/generate_204',
           'interval': '5m',
           'tolerance': 200,
