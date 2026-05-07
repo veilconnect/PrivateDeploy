@@ -229,6 +229,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private var pendingUnderlyingNetworkRestart: Runnable? = null
     private var lastObservedUnderlyingNetworkHandle: Long? = null
     private var lastObservedUnderlyingNetworkType: Int? = null
+    // Tracks what we last actually pushed to setUnderlyingNetworks. Distinct
+    // from lastObserved* (which tracks what NetworkCallback has told us about
+    // the world) — this lets applyUnderlyingNetworks() skip framework calls
+    // when the desired state matches what we already published. NetworkCallback
+    // can fire repeatedly during airplane-mode flaps with the same end state,
+    // and each redundant publish makes the framework re-attribute every VPN
+    // socket for nothing.
+    private var lastPublishedUnderlyingNetworkHandle: Long? = null
+    private var lastPublishedUnderlyingNetworkPublished: Boolean = false
     @Volatile
     private var restartInProgress = false
     private var lastUnderlyingRestartAtMs = 0L
@@ -822,6 +831,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
             Log.w(TAG, "Failed to close VPN interface", e)
         } finally {
             vpnInterface = null
+            // Forget what we last published — the next establish() will need
+            // to publish from scratch even if it lands on the same Network
+            // handle as the previous session.
+            lastPublishedUnderlyingNetworkHandle = null
+            lastPublishedUnderlyingNetworkPublished = false
         }
     }
 
@@ -1313,8 +1327,24 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     private fun applyUnderlyingNetworks(networks: Array<Network>?, reason: String) {
+        // Single-network publishes are the only shape we currently produce
+        // (publishUnderlyingNetwork wraps findPreferredUnderlyingNetwork's
+        // result in a 1-element array). Anything else falls through to a
+        // forced publish so future multi-network use cases still work.
+        val desiredHandle = networks?.singleOrNull()?.networkHandle
+        val desiredPublished = networks != null
+        val isSimpleShape = networks == null || networks.size == 1
+        if (
+            isSimpleShape &&
+            desiredPublished == lastPublishedUnderlyingNetworkPublished &&
+            desiredHandle == lastPublishedUnderlyingNetworkHandle
+        ) {
+            return
+        }
         try {
             setUnderlyingNetworks(networks)
+            lastPublishedUnderlyingNetworkPublished = desiredPublished
+            lastPublishedUnderlyingNetworkHandle = desiredHandle
             if (networks == null) {
                 Log.i(TAG, "Cleared underlying networks ($reason)")
             } else {
