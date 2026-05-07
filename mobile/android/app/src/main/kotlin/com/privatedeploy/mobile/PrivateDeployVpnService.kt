@@ -1042,9 +1042,6 @@ class PrivateDeployVpnService : VpnService(), Platform {
         applyExcludedRouteList(builder, options.getRouteExcludeAddressList())
         applyPackages(builder, options.getIncludePackageList(), options.getExcludePackageList())
         applyHttpProxy(builder, options)
-        // Let Android manage the VPN's underlying network automatically.
-        // setUnderlyingNetworks() is only appropriate when the VPN explicitly
-        // binds its own upstream sockets to specific Network instances.
 
         if (options.getAutoRoute() && options.getRouteAddressList().isBlank()) {
             builder.addRoute("0.0.0.0", 0)
@@ -1057,6 +1054,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
             ?: throw IllegalStateException("Failed to establish VPN interface")
 
         vpnInterface = established
+        // Tell Android which physical transport is carrying our upstream
+        // sockets. Without this, the framework keeps the VPN's underlying
+        // network frozen at whatever was default when establish() was called,
+        // so on Wi-Fi → cellular handover apps still see the VPN as riding
+        // the dead Wi-Fi (NOT_VALIDATED, NOT_NOT_SUSPENDED), system DNS and
+        // OkHttp/Volley default-network detection start refusing traffic, and
+        // the user sees "connected" but nothing actually flows. sing-box's
+        // own auto_detect_interface rebinds new outbound sockets to cellular
+        // correctly — this call fixes the orthogonal problem at the Android
+        // framework layer.
+        publishUnderlyingNetwork("openTun")
         return established.fd
     }
 
@@ -1227,6 +1235,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
             lastObservedUnderlyingNetworkHandle = null
             lastObservedUnderlyingNetworkType = null
+            // Clear Android's underlying-network attribution so apps don't keep
+            // seeing the VPN as backed by the dead transport during the gap.
+            applyUnderlyingNetworks(null, "$reason/unavailable")
             return
         }
         if (previousHandle == snapshot.handle && previousType == snapshot.type) {
@@ -1235,6 +1246,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
         lastObservedUnderlyingNetworkHandle = snapshot.handle
         lastObservedUnderlyingNetworkType = snapshot.type
+
+        // Tell Android about the new transport immediately, before the
+        // debounced restart kicks in. setUnderlyingNetworks is cheap and
+        // independent of socket rebuild — restart() refreshes sing-box's
+        // own outbound bindings, this call refreshes the framework's view
+        // of which physical network the VPN is actually riding.
+        publishUnderlyingNetwork("change/$reason", connectivityManager)
 
         if (!isRunning || activeConfig.isNullOrBlank()) {
             return
@@ -1272,6 +1290,43 @@ class PrivateDeployVpnService : VpnService(), Platform {
         lastObservedUnderlyingNetworkHandle = snapshot.handle
         lastObservedUnderlyingNetworkType = snapshot.type
         return snapshot
+    }
+
+    /**
+     * Pushes the currently preferred physical Network into Android's view of
+     * the VPN via [VpnService.setUnderlyingNetworks]. Without this, the
+     * framework keeps the VPN's underlying network frozen at whatever was
+     * default at establish() time, which breaks the framework-level
+     * "VPN-is-validated" signal across Wi-Fi ↔ cellular handovers.
+     */
+    private fun publishUnderlyingNetwork(
+        reason: String,
+        connectivityManager: ConnectivityManager? =
+            getSystemService(ConnectivityManager::class.java),
+    ) {
+        connectivityManager ?: return
+        val network = findPreferredUnderlyingNetwork(connectivityManager)
+        applyUnderlyingNetworks(
+            network?.let { arrayOf(it) },
+            reason,
+        )
+    }
+
+    private fun applyUnderlyingNetworks(networks: Array<Network>?, reason: String) {
+        try {
+            setUnderlyingNetworks(networks)
+            if (networks == null) {
+                Log.i(TAG, "Cleared underlying networks ($reason)")
+            } else {
+                Log.i(
+                    TAG,
+                    "Updated underlying networks ($reason): " +
+                        networks.joinToString { it.networkHandle.toString() },
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to setUnderlyingNetworks ($reason)", e)
+        }
     }
 
     private fun readCurrentUnderlyingNetworkSnapshot(
