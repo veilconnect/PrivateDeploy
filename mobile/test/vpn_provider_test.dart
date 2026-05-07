@@ -1294,4 +1294,106 @@ void main() {
       expect(isRunningCalls, 0);
     });
   });
+
+  group('Upstream-degraded watchdog', () {
+    VpnNativeStatus connectedDegraded() => VpnNativeStatus(
+          running: true,
+          status: 'connected',
+          message: 'Tunnel is up but offshore probe is failing',
+          connectedAt: 1,
+          uptime: 30,
+        );
+
+    VpnNativeStatus disconnected() => VpnNativeStatus(
+          running: false,
+          status: 'disconnected',
+          message: null,
+          connectedAt: 0,
+          uptime: 0,
+        );
+
+    test(
+        'attempt counter persists across watchdog-driven '
+        'connected→disconnected→connected cycles', () async {
+      var restartCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            restartCalls += 1;
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      // First degraded cycle: counter goes from 0 → 1.
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 1);
+      expect(restartCalls, 1);
+
+      // The watchdog's restartVpn() forces the tunnel through
+      // disconnected → connected. Before the fix, the disconnected step
+      // reset the counter back to 0, so the next watchdog fire would
+      // log "attempt 1/2" again forever.
+      vpnProvider.debugApplyNativeStatus(disconnected());
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
+      expect(restartCalls, 2);
+
+      // Cap reached — third fire must be a no-op so the user can switch
+      // nodes instead of looping restarts forever.
+      vpnProvider.debugApplyNativeStatus(disconnected());
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
+      expect(restartCalls, 2);
+    });
+
+    test(
+        'user-initiated restart() resets the watchdog budget',
+        () async {
+      var restartCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            restartCalls += 1;
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {'ip': '198.13.46.144', 'source': 'android_native'};
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      // Burn the budget via the watchdog.
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      vpnProvider.debugApplyNativeStatus(disconnected());
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
+
+      // User explicitly restarts — budget should be back to 0 so future
+      // degraded signals get a fresh pair of attempts.
+      final restarted = await vpnProvider.restart();
+      expect(restarted, true);
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 0);
+      // restartCalls is now 3 (2 watchdog + 1 user).
+      expect(restartCalls, 3);
+    });
+  });
 }

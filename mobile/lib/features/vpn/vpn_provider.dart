@@ -254,6 +254,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _diagnosticsEgressIp = null;
     _diagnosticsError = null;
     _diagnosticsUpdatedAt = null;
+    _upstreamDegradedRestartAttempts = 0;
     _safeNotifyListeners();
 
     try {
@@ -352,6 +353,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _cancelStartupVerification();
     _isLoading = true;
     _error = null;
+    _upstreamDegradedRestartAttempts = 0;
     _safeNotifyListeners();
 
     try {
@@ -1087,11 +1089,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _deferredStartupDiagnosticsTimer = null;
       _diagnosticsEgressIp = null;
       _handleUpstreamDegradedSignal(degraded: false);
-      if (previousStatus == VpnStatus.connected) {
-        // Fresh tunnel session next time → reset the budget. A user-initiated
-        // reconnect should get its full attempt count back.
-        _upstreamDegradedRestartAttempts = 0;
-      }
+      // Don't reset _upstreamDegradedRestartAttempts here. The watchdog's own
+      // restartVpn() forces a connected→disconnected transition; resetting on
+      // that transition gives the next watchdog cycle a fresh budget and
+      // defeats the cap (the budget is exhausted only after the user steps
+      // in via connect() / restart()).
     }
 
     if (notify) {
@@ -1184,6 +1186,26 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(loadStatus());
     }
+  }
+
+  @visibleForTesting
+  int get debugUpstreamDegradedRestartAttempts =>
+      _upstreamDegradedRestartAttempts;
+
+  /// Synchronously runs one watchdog cycle so tests don't need to wait for
+  /// the 30-second [upstreamDegradedRestartDelay] timer. Mirrors what the
+  /// scheduled callback does, including the "tunnel is connected and the
+  /// degraded signal is still set" preconditions.
+  @visibleForTesting
+  Future<void> debugFireUpstreamDegradedWatchdog() {
+    _upstreamDegradedWatchdog?.cancel();
+    _upstreamDegradedWatchdog = null;
+    return _runUpstreamDegradedRestart();
+  }
+
+  @visibleForTesting
+  void debugApplyNativeStatus(VpnNativeStatus nativeStatus) {
+    _applyNativeStatus(nativeStatus);
   }
 
   @override
