@@ -32,4 +32,16 @@ RUN gem install --no-document fpm
 # Wails CLI v2.12.0
 RUN go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
+# linuxdeploy + GTK plugin (AppImage builder).  Pre-download these on the
+# host (where the proxy works) and ship them via the build context — github
+# isn't reliably reachable from inside the container behind the regional reachability.
+COPY linuxdeploy-x86_64.AppImage /usr/local/bin/linuxdeploy
+COPY linuxdeploy-plugin-gtk.sh /usr/local/bin/linuxdeploy-plugin-gtk.sh
+COPY runtime-x86_64 /usr/local/share/appimage/runtime-x86_64
+RUN chmod +x /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-plugin-gtk.sh \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        appstream librsvg2-bin desktop-file-utils zsync libfuse2 \
+        imagemagick patchelf \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /repo

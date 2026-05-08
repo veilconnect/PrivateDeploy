@@ -62,6 +62,11 @@ GOOS=linux GOARCH=amd64 wails build \
     -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
     -o "${APP_DISPLAY_NAME}"
 
+if [[ "${SKIP_DEB_PACKAGING:-0}" = "1" ]]; then
+    echo "==> SKIP_DEB_PACKAGING=1: stopping after compile (binary at build/bin/${APP_DISPLAY_NAME})"
+    exit 0
+fi
+
 echo "==> Step 4: stage package layout"
 STAGING_DIR="/tmp/${APP_NAME}-packaging"
 rm -rf "${STAGING_DIR}"
