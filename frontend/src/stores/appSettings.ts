@@ -243,28 +243,15 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
   })
 
   const setAppTheme = (theme: Theme.Dark | Theme.Light) => {
-    const apply = () => document.body.setAttribute('theme-mode', theme)
-    // WebView2 (Windows) rejects startViewTransition during early page init
-    // with InvalidStateError "Transition was aborted because of invalid
-    // state". The DOM mutation still happens (the callback runs synchronously)
-    // so swallow the rejection — otherwise the unhandledrejection handler in
-    // index.html shows a fatal red startup screen on Windows.
-    if (document.startViewTransition) {
-      try {
-        const t = document.startViewTransition(apply)
-        // ViewTransition has three promises (ready / updateCallbackDone /
-        // finished). Any of them can reject with InvalidStateError on
-        // WebView2 (Windows) when the transition is skipped — hook all
-        // three so nothing escapes to the global unhandledrejection.
-        t.ready?.catch(() => {})
-        t.updateCallbackDone?.catch(() => {})
-        t.finished?.catch(() => {})
-      } catch {
-        apply()
-      }
-    } else {
-      apply()
-    }
+    // startViewTransition is unsafe in both of this app's webview hosts:
+    //   • WebKitGTK 2.52.3 on Ubuntu 24.04 (Wails Linux): SIGSEGV addr=0x48
+    //     inside gtk_main when invoked during the immediate-watch on themeMode
+    //     at store-construction time — the process aborts before the UI mounts.
+    //   • WebView2 on Windows: rejects with InvalidStateError "Transition was
+    //     aborted because of invalid state" during early page init.
+    // The DOM mutation (setAttribute) is what actually applies the theme; the
+    // transition is only the cross-fade animation, not worth either failure.
+    document.body.setAttribute('theme-mode', theme)
     WindowSetSystemDefaultTheme()
   }
 
