@@ -70,35 +70,38 @@ mkdir -p "${STAGING_DIR}"/{usr/bin,usr/lib/${APP_NAME},usr/lib/${APP_NAME}/lib,u
 cp "build/bin/${APP_DISPLAY_NAME}" "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}.bin"
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}.bin"
 
-# Bundle jammy-only WebKit 4.0 deps so the binary can run on Ubuntu 24.04
-# noble (which only ships webkit2gtk-4.1). The wrapper below resolves these
-# via LD_LIBRARY_PATH before noble's loader can pick the wrong .so versions.
-echo "  -> bundling WebKit 4.0 + jammy-only deps into /usr/lib/${APP_NAME}/lib"
-BUNDLE_LIBS=(
-    libwebkit2gtk-4.0.so.37
-    libjavascriptcoregtk-4.0.so.18
-    libsoup-2.4.so.1
-    libsoup-gnome-2.4.so.1
-    libicudata.so.70
-    libicui18n.so.70
-    libicuuc.so.70
-    libharfbuzz-icu.so.0
-    libpcre.so.3
-    libunistring.so.2
-)
-for lib in "${BUNDLE_LIBS[@]}"; do
-    src="$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${lib}*" -type f -o -name "${lib}*" -type l 2>/dev/null | head -1)"
-    if [[ -z "${src}" ]]; then
-        echo "  !! WARNING: ${lib} not found in jammy container — skipping"
-        continue
-    fi
-    # Resolve symlinks: ship both the symlink and its target if different
-    real="$(readlink -f "${src}")"
-    cp -P "${src}" "${STAGING_DIR}/usr/lib/${APP_NAME}/lib/"
-    if [[ "${src}" != "${real}" ]]; then
+# Bundle the full transitive .so closure of libwebkit2gtk-4.0 (minus glibc /
+# kernel-level libs that must match the host kernel) so the binary can run
+# on noble without dragging in noble's libxml2 / libicu74 / etc.
+echo "  -> computing transitive .so closure for webkit2gtk-4.0"
+EXCLUDE='ld-linux|libc\.so\.6|libdl\.so|libpthread\.so|libm\.so\.6|librt\.so|libnsl\.so|libresolv\.so|linux-vdso'
+ldd /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.0.so.37 2>&1 \
+    | awk '/=>/ && $3 ~ /^\// {print $3}' \
+    | grep -vE "${EXCLUDE}" \
+    | sort -u > /tmp/bundle-libs.txt
+# Also include the WebKitWebProcess / NetworkProcess deps that aren't in the
+# main lib's chain (they get exec'd in their own ELF context).
+for proc in WebKitWebProcess WebKitNetworkProcess; do
+    procbin=/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/${proc}
+    [[ -x "${procbin}" ]] || continue
+    ldd "${procbin}" 2>&1 \
+        | awk '/=>/ && $3 ~ /^\// {print $3}' \
+        | grep -vE "${EXCLUDE}" \
+        | sort -u >> /tmp/bundle-libs.txt
+done
+sort -u /tmp/bundle-libs.txt > /tmp/bundle-libs-uniq.txt
+echo "  -> bundling $(wc -l < /tmp/bundle-libs-uniq.txt) libs"
+
+while read libpath; do
+    [[ -f "${libpath}" ]] || continue
+    # Copy preserving symlinks; also drop the resolved target so the SONAME
+    # symlink resolves inside the bundle.
+    cp -P "${libpath}" "${STAGING_DIR}/usr/lib/${APP_NAME}/lib/"
+    real="$(readlink -f "${libpath}")"
+    if [[ "${libpath}" != "${real}" ]]; then
         cp "${real}" "${STAGING_DIR}/usr/lib/${APP_NAME}/lib/"
     fi
-done
+done < /tmp/bundle-libs-uniq.txt
 
 # Run ldconfig in the bundle dir so SONAME symlinks (libfoo.so.X -> libfoo.so.X.Y.Z)
 # exist before packaging — the loader looks up SONAMEs, not version-suffixed files.
@@ -123,6 +126,14 @@ export LD_LIBRARY_PATH="${PD_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 # WebKitGTK 4.0 finds its WebProcess/NetworkProcess binaries via this var.
 export WEBKIT_EXEC_PATH="${PD_LIB}/webkit2gtk-4.0"
 export WEBKIT_INJECTED_BUNDLE_PATH="${PD_LIB}/webkit2gtk-4.0/injected-bundle"
+# Block GLib/GIO from loading the host's GVFS / GTK / pixbuf modules — they
+# call newer glib symbols (e.g., g_task_set_static_name on noble) that aren't
+# in the bundled jammy libglib, causing undefined-symbol crashes when the
+# WebView attaches to the GTK widget tree.
+export GIO_MODULE_DIR=/nonexistent
+export GTK_PATH=/nonexistent
+export GDK_PIXBUF_MODULE_FILE=/nonexistent
+export GIO_USE_VFS=local
 exec "${PD_PREFIX}/privatedeploy.bin" "$@"
 WRAPPER
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}"
