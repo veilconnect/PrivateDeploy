@@ -1,4 +1,4 @@
-import type { CloudNode } from '@/types/cloud'
+import type { CdnDeployment, CloudNode } from '@/types/cloud'
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
@@ -82,6 +82,11 @@ export const hasTrojan = (node: CloudNode | Record<string, any>): boolean => {
   return Boolean(target.trojanPort && target.trojanPassword)
 }
 
+export const hasCdnRelay = (node: CloudNode | Record<string, any>): boolean => {
+  const target = ensureNode(node)
+  return Boolean(target.vlessRelayPort && target.vlessUUID)
+}
+
 const buildShadowsocksLink = (node: CloudNode | Record<string, any>): string | null => {
   const target = ensureNode(node)
   const port = target.ssPort || target.port
@@ -147,13 +152,45 @@ const buildTrojanLink = (node: CloudNode | Record<string, any>): string | null =
   return `trojan://${encodeURIComponent(target.trojanPassword)}@${wrapHostForUri(host)}:${target.trojanPort}?${query.toString()}#${encodeURIComponent(target.label)}`
 }
 
-export const buildNodeProtocolLinks = (node: CloudNode | Record<string, any>): NodeProtocolLink[] => {
+// buildVlessCdnLink emits a vless+ws+tls share URL pointing at the user's
+// Cloudflare Worker host. Mirrors the mobile cloud_node_config_builder.dart
+// "<label>-CDN" variant: same UUID, no Reality, ws transport over TLS to the
+// Worker on port 443. The Worker forwards encrypted bytes to the VPS plain
+// VLESS relay (vlessRelayPort) over raw TCP. Returns null unless both the
+// VPS-side relay port AND a deployed Worker host are present.
+const buildVlessCdnLink = (
+  node: CloudNode | Record<string, any>,
+  deployment: CdnDeployment | null | undefined,
+): string | null => {
+  const target = ensureNode(node)
+  if (!deployment || !deployment.workerHost) return null
+  if (!target.vlessRelayPort || !target.vlessUUID) return null
+
+  const host = deployment.workerHost
+  const query = new URLSearchParams({
+    encryption: 'none',
+    security: 'tls',
+    type: 'ws',
+    sni: host,
+    host: host,
+    path: '/?ed=2560',
+    fp: 'chrome',
+  })
+
+  return `vless://${target.vlessUUID}@${host}:443?${query.toString()}#${encodeURIComponent(`${target.label}-CDN`)}`
+}
+
+export const buildNodeProtocolLinks = (
+  node: CloudNode | Record<string, any>,
+  deployment?: CdnDeployment | null,
+): NodeProtocolLink[] => {
   const target = ensureNode(node)
   return [
     { label: 'Shadowsocks', url: buildShadowsocksLink(target) },
     { label: 'Hysteria2', url: buildHysteriaLink(target) },
     { label: 'VLESS-Reality', url: buildVlessLink(target) },
     { label: 'Trojan', url: buildTrojanLink(target) },
+    { label: 'VLESS-CDN', url: buildVlessCdnLink(target, deployment ?? null) },
   ].filter((item): item is NodeProtocolLink => Boolean(item.url))
 }
 

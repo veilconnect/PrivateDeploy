@@ -26,6 +26,11 @@ type MultiProtocolParams struct {
 	TrojanPort       int
 	TrojanPassword   string
 	TrojanServer     string
+	// VLESSRelayPort is a non-Reality, non-TLS plain VLESS inbound deployed
+	// for use behind a Cloudflare Worker WS↔TCP relay. Reuses VLESSUUID so
+	// auth stays the same as the Reality endpoint. Zero disables the inbound
+	// (used by callers that don't want the extra port exposed).
+	VLESSRelayPort   int
 	SingBoxVersion   string
 	SingBoxFallback  string
 }
@@ -101,6 +106,62 @@ func GenerateMultiProtocolScript(p MultiProtocolParams) string {
 	singBoxFallback := normalizeVersion(p.SingBoxFallback, singBoxVersion)
 	if singBoxFallback == "" {
 		singBoxFallback = singBoxVersion
+	}
+
+	// Optional plain-VLESS inbound for use behind a Cloudflare Worker
+	// WS↔TCP relay (CDN front). Reuses the existing UUID so credentials
+	// stay in sync with the Reality endpoint. Generated only when port > 0.
+	vlessRelayBlock := ""
+	if p.VLESSRelayPort > 0 {
+		vlessRelayBlock = fmt.Sprintf(`
+  cat > /etc/privatedeploy/vless/relay.json <<RELAYEOF
+{
+  "log": { "level": "info", "timestamp": true },
+  "inbounds": [{
+    "type": "vless",
+    "tag": "vless-relay-in",
+    "listen": "::",
+    "listen_port": %d,
+    "users": [{ "uuid": "%s" }]
+  }],
+  "outbounds": [{ "type": "direct", "tag": "direct" }]
+}
+RELAYEOF
+  chmod 600 /etc/privatedeploy/vless/relay.json
+  chown privatedeploy:privatedeploy /etc/privatedeploy/vless/relay.json
+
+  cat > /etc/systemd/system/vless-relay-server.service <<'RELAYSERVICE'
+[Unit]
+Description=VLESS plain relay (sing-box, for CDN front)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/relay.json
+Restart=always
+RestartSec=5
+User=privatedeploy
+Group=privatedeploy
+ProtectSystem=strict
+ReadWritePaths=/etc/privatedeploy
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+RELAYSERVICE
+
+  systemctl daemon-reload
+  systemctl enable vless-relay-server
+  systemctl start vless-relay-server
+
+  sleep 2
+  echo "VLESS plain-relay service status:"
+  systemctl status vless-relay-server --no-pager --lines=5 || journalctl -u vless-relay-server -n 10 --no-pager
+`, p.VLESSRelayPort, p.VLESSUUID)
 	}
 
 	return fmt.Sprintf(`#!/bin/bash
@@ -462,6 +523,7 @@ TROJANSERVICE
   sleep 3
   echo "Trojan service status:"
   systemctl status trojan-server --no-pager --lines=10 || journalctl -u trojan-server -n 20 --no-pager
+%[18]s
 else
   echo "[WARN] sing-box installation skipped; Hysteria2, VLESS and Trojan services were not provisioned." >&2
 fi
@@ -590,6 +652,7 @@ echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
 		singBoxVersion,
 		singBoxFallback,
 		vlessServer,
+		vlessRelayBlock,
 	)
 }
 

@@ -50,10 +50,15 @@ type DeploymentTuning struct {
 
 // PortAssignment is the full protocol port layout for a node.
 type PortAssignment struct {
-	SSPort       int
-	HysteriaPort int
-	VLESSPort    int
-	TrojanPort   int
+	SSPort         int
+	HysteriaPort   int
+	VLESSPort      int
+	TrojanPort     int
+	// VLESSRelayPort is a non-Reality, non-TLS plain VLESS inbound used as
+	// the upstream for a Cloudflare Worker WS↔TCP relay. Always allocated
+	// on new deploys so CDN front-ending is available without a re-deploy.
+	// Older nodes (provisioned before this field existed) report 0.
+	VLESSRelayPort int
 }
 
 // ResolveDeploymentTuning normalizes deployment options from provider/instance extra fields.
@@ -128,25 +133,28 @@ func AllocatePorts(profile string) PortAssignment {
 	switch NormalizePortProfile(profile) {
 	case "edge443":
 		return PortAssignment{
-			SSPort:       24443,
-			HysteriaPort: 443,
-			VLESSPort:    8443,
-			TrojanPort:   443,
+			SSPort:         24443,
+			HysteriaPort:   443,
+			VLESSPort:      8443,
+			TrojanPort:     443,
+			VLESSRelayPort: 24444,
 		}
 	case "edge8443":
 		return PortAssignment{
-			SSPort:       28443,
-			HysteriaPort: 8443,
-			VLESSPort:    9443,
-			TrojanPort:   8443,
+			SSPort:         28443,
+			HysteriaPort:   8443,
+			VLESSPort:      9443,
+			TrojanPort:     8443,
+			VLESSRelayPort: 28444,
 		}
 	default:
 		basePort := randomHighPort()
 		return PortAssignment{
-			SSPort:       basePort,
-			HysteriaPort: basePort + 1,
-			VLESSPort:    basePort + 2,
-			TrojanPort:   basePort + 3,
+			SSPort:         basePort,
+			HysteriaPort:   basePort + 1,
+			VLESSPort:      basePort + 2,
+			TrojanPort:     basePort + 3,
+			VLESSRelayPort: basePort + 4,
 		}
 	}
 }

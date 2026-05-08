@@ -114,6 +114,12 @@ type Instance struct {
 	TrojanPassword     string `json:"trojanPassword,omitempty"`     // Trojan password
 	TrojanServerName   string `json:"trojanServerName,omitempty"`   // Trojan TLS server name
 	TrojanInsecure     *bool  `json:"trojanInsecure,omitempty"`     // Trojan allow insecure TLS
+	// VLESSRelayPort is a non-Reality, non-TLS plain VLESS inbound, deployed
+	// alongside the Reality endpoint specifically for CDN front-ending. The
+	// Cloudflare Worker forwards WS frames to this port over plain TCP; auth
+	// is via the same VLESSUUID. 0 means the node was deployed with an older
+	// userdata script and CDN front-ending is unavailable until re-deploy.
+	VLESSRelayPort     int    `json:"vlessRelayPort,omitempty"`     // VLESS plain (CDN-relay) port
 }
 
 // CreateInstanceOptions contains options for creating a new instance
@@ -151,4 +157,5 @@ type InstanceRecord struct {
 	TrojanPassword     string `json:"trojanPassword,omitempty"`
 	TrojanServerName   string `json:"trojanServerName,omitempty"`
 	TrojanInsecure     *bool  `json:"trojanInsecure,omitempty"`
+	VLESSRelayPort     int    `json:"vlessRelayPort,omitempty"`
 }

@@ -136,6 +136,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.';
 
   @override
+  String get tunnelUpstreamDegradedMessageLocalized =>
+      'Tunnel is up, but this node\'s upstream can\'t be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.';
+
+  @override
+  String get cellularHelpTitle => 'Cellular network issues';
+
+  @override
+  String get cellularHelpAction => 'Why?';
+
+  @override
+  String get help => 'Help';
+
+  @override
+  String get cdnAccelerationTitle => 'CDN acceleration';
+
+  @override
+  String get cdnAccelerationSubtitle =>
+      'Optional: route through Cloudflare for cellular';
+
+  @override
   String get nextStep => 'Next step';
 
   @override

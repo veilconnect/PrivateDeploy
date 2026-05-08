@@ -135,6 +135,25 @@ class AppLocalizationsZh extends AppLocalizations {
       'VPN 已连接，但 Android 在启动期间未能确认公网 IP，流量可能仍然可用。';
 
   @override
+  String get tunnelUpstreamDegradedMessageLocalized =>
+      '隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi 或更换其他节点 —— 蜂窝运营商有时会屏蔽 VPS 的 IP。';
+
+  @override
+  String get cellularHelpTitle => '手机数据网络问题';
+
+  @override
+  String get cellularHelpAction => '了解原因';
+
+  @override
+  String get help => '帮助';
+
+  @override
+  String get cdnAccelerationTitle => 'CDN 加速';
+
+  @override
+  String get cdnAccelerationSubtitle => '可选:蜂窝网络出问题时通过 Cloudflare 中转';
+
+  @override
   String get nextStep => '下一步';
 
   @override

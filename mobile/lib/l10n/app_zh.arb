@@ -44,6 +44,12 @@
   "egressProbeFailureMessageLocalized": "无法通过当前 VPN 路由抵达公网 IP 探测端点。下方最近的路由决策仍可能有效。",
   "startupConnectivityFailureMessageLocalized": "VPN 隧道已启动，但通过所选节点无法抵达公网 IP 探测端点。该节点可能不可达或配置有误。",
   "startupProbeInconclusiveMessageLocalized": "VPN 已连接，但 Android 在启动期间未能确认公网 IP，流量可能仍然可用。",
+  "tunnelUpstreamDegradedMessageLocalized": "隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi 或更换其他节点 —— 蜂窝运营商有时会屏蔽 VPS 的 IP。",
+  "cellularHelpTitle": "手机数据网络问题",
+  "cellularHelpAction": "了解原因",
+  "help": "帮助",
+  "cdnAccelerationTitle": "CDN 加速",
+  "cdnAccelerationSubtitle": "可选:蜂窝网络出问题时通过 Cloudflare 中转",
   "nextStep": "下一步",
 
   "connection": "连接",

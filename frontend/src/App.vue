@@ -64,7 +64,10 @@ EventsOn('onLaunchApp', async (args: string[]) => {
 })
 
 EventsOn('onBeforeExitApp', async () => {
-  if (appSettings.app.exitOnClose) {
+  // Windows/Linux: always close-to-tray; users quit via tray "Exit" or the
+  // title-bar menu's "Exit App". macOS keeps the legacy exitOnClose setting.
+  const respectExitOnClose = envStore.env.os === 'darwin'
+  if (respectExitOnClose && appSettings.app.exitOnClose) {
     exitApp()
   } else {
     WindowHide()

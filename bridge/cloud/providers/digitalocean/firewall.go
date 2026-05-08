@@ -15,7 +15,12 @@ import (
 // ensurePrivateDeployFirewall finds (or creates) a protocol-specific firewall
 // for the given port assignment and returns its ID.
 func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy.PortAssignment) (string, error) {
-	firewallName := fmt.Sprintf("privatedeploy-%d-%d-%d-%d", ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort)
+	// Include vlessRelayPort in the name so distinct port profiles get
+	// distinct firewalls (avoids accidentally sharing one firewall across
+	// nodes that have different relay-port allocations).
+	firewallName := fmt.Sprintf("privatedeploy-%d-%d-%d-%d-%d",
+		ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort,
+		ports.VLESSRelayPort)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/firewalls", nil)
 	if err != nil {
@@ -93,6 +98,13 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy
 			{
 				"protocol": "tcp",
 				"ports":    fmt.Sprintf("%d", ports.TrojanPort),
+				"sources": map[string]interface{}{
+					"addresses": []string{"0.0.0.0/0", "::/0"},
+				},
+			},
+			{
+				"protocol": "tcp",
+				"ports":    fmt.Sprintf("%d", ports.VLESSRelayPort),
 				"sources": map[string]interface{}{
 					"addresses": []string{"0.0.0.0/0", "::/0"},
 				},

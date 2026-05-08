@@ -243,12 +243,27 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
   })
 
   const setAppTheme = (theme: Theme.Dark | Theme.Light) => {
+    const apply = () => document.body.setAttribute('theme-mode', theme)
+    // WebView2 (Windows) rejects startViewTransition during early page init
+    // with InvalidStateError "Transition was aborted because of invalid
+    // state". The DOM mutation still happens (the callback runs synchronously)
+    // so swallow the rejection — otherwise the unhandledrejection handler in
+    // index.html shows a fatal red startup screen on Windows.
     if (document.startViewTransition) {
-      document.startViewTransition(() => {
-        document.body.setAttribute('theme-mode', theme)
-      })
+      try {
+        const t = document.startViewTransition(apply)
+        // ViewTransition has three promises (ready / updateCallbackDone /
+        // finished). Any of them can reject with InvalidStateError on
+        // WebView2 (Windows) when the transition is skipped — hook all
+        // three so nothing escapes to the global unhandledrejection.
+        t.ready?.catch(() => {})
+        t.updateCallbackDone?.catch(() => {})
+        t.finished?.catch(() => {})
+      } catch {
+        apply()
+      }
     } else {
-      document.body.setAttribute('theme-mode', theme)
+      apply()
     }
     WindowSetSystemDefaultTheme()
   }

@@ -75,6 +75,32 @@ export interface CloudNode {
   trojanPassword?: string
   trojanServerName?: string
   trojanInsecure?: boolean
+  // Plain (non-Reality) VLESS inbound deployed alongside Reality, used as
+  // upstream for a Cloudflare Worker WS↔TCP relay. 0/undefined means the
+  // node was provisioned before this field existed; CDN front-ending is
+  // unavailable until re-deploy.
+  vlessRelayPort?: number
+}
+
+// One Cloudflare Worker deployment fronting a single cloud node.
+export interface CdnDeployment {
+  nodeId: string
+  scriptName: string
+  workerHost: string
+  backend: string
+  deployedAt: string
+}
+
+export type CdnStatus = 'disabled' | 'unverified' | 'verified'
+
+export interface CdnState {
+  status: CdnStatus
+  accountId?: string
+  accountEmail?: string
+  workersSubdomain?: string
+  lastError?: string
+  workersDevExample?: string
+  deployments: Record<string, CdnDeployment>
 }
 
 // Legacy types for backward compatibility

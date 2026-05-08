@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ExportCloudBackup, TestAllCloudRegions } from '@/bridge'
@@ -243,6 +243,7 @@ const { openEditManualNode, openImportModal, openManualNodeModal } = useCloudVie
 const {
   applyingNodeId,
   batchOperating,
+  cdnStore,
   clearSelection,
   copyNodeConfig,
   handleBatchDestroy,
@@ -392,6 +393,15 @@ const handleClearChartHistory = async () => {
     handleError(error)
   }
 }
+
+onMounted(() => {
+  // Hydrate CDN state once so per-node Deploy/Delete actions know which
+  // workers are already configured. Failures are non-fatal — Cloud view
+  // continues to work without CDN UI.
+  cdnStore.ensureLoaded().catch((err) => {
+    logError('[CloudView] failed to load CDN state:', err)
+  })
+})
 </script>
 
 <template>

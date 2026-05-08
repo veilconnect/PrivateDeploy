@@ -14,12 +14,12 @@ import (
 
 // configureInstanceFirewall sets up Vultr firewall rules for the instance.
 func (p *Provider) configureInstanceFirewall(ctx context.Context, instanceID string, ports deploy.PortAssignment, label string) {
-	firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort))
+	firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, ports.VLESSRelayPort))
 	if err != nil {
 		fmt.Printf("[VultrProvider] Warning: failed to ensure firewall group: %v\n", err)
 		return
 	}
-	if err := p.ensureFirewallRules(ctx, firewallID, ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, label); err != nil {
+	if err := p.ensureFirewallRules(ctx, firewallID, ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, ports.VLESSRelayPort, label); err != nil {
 		fmt.Printf("[VultrProvider] Warning: failed to configure firewall rules: %v\n", err)
 		return
 	}
@@ -96,8 +96,8 @@ func firewallGroupHasCapacity(group vultrFirewallGroup, requiredRules int) bool 
 	return group.RuleCount+requiredRules <= group.MaxRuleCount
 }
 
-func requiredFirewallRuleCount(ssPort, hysteriaPort, vlessPort, trojanPort int) int {
-	return len(firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, ""))
+func requiredFirewallRuleCount(ssPort, hysteriaPort, vlessPort, trojanPort, vlessRelayPort int) int {
+	return len(firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, vlessRelayPort, ""))
 }
 
 func sshFirewallRule() vultrFirewallRule {
@@ -111,7 +111,7 @@ func sshFirewallRule() vultrFirewallRule {
 	}
 }
 
-func firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort int, label string) []vultrFirewallRule {
+func firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, vlessRelayPort int, label string) []vultrFirewallRule {
 	rules := []vultrFirewallRule{sshFirewallRule()}
 	if ssPort > 0 {
 		ssPortStr := strconv.Itoa(ssPort)
@@ -164,6 +164,16 @@ func firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort int, labe
 			Notes:      fmt.Sprintf("%s Trojan", label),
 		})
 	}
+	if vlessRelayPort > 0 {
+		rules = append(rules, vultrFirewallRule{
+			IPType:     "v4",
+			Protocol:   "tcp",
+			Subnet:     "0.0.0.0",
+			SubnetSize: 0,
+			Port:       strconv.Itoa(vlessRelayPort),
+			Notes:      fmt.Sprintf("%s VLESS-Relay (CDN)", label),
+		})
+	}
 	return rules
 }
 
@@ -186,7 +196,7 @@ func (p *Provider) addFirewallRule(ctx context.Context, firewallID string, rule 
 	return nil
 }
 
-func (p *Provider) ensureFirewallRules(ctx context.Context, firewallID string, ssPort, hysteriaPort, vlessPort, trojanPort int, label string) error {
+func (p *Provider) ensureFirewallRules(ctx context.Context, firewallID string, ssPort, hysteriaPort, vlessPort, trojanPort, vlessRelayPort int, label string) error {
 	res, err := p.apiRequest(ctx, http.MethodGet, "/firewalls/"+firewallID+"/rules", nil)
 	if err != nil {
 		return fmt.Errorf("failed to list firewall rules: %w", err)
@@ -204,7 +214,7 @@ func (p *Provider) ensureFirewallRules(ctx context.Context, firewallID string, s
 		existingRules[firewallRuleKey(rule.Protocol, rule.Port)] = true
 	}
 
-	for _, rule := range firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, label) {
+	for _, rule := range firewallRulesForPorts(ssPort, hysteriaPort, vlessPort, trojanPort, vlessRelayPort, label) {
 		if existingRules[firewallRuleKey(rule.Protocol, rule.Port)] {
 			continue
 		}

@@ -13,6 +13,7 @@ import 'features/profiles/profile_provider.dart';
 import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
 import 'features/cloud/cloud_provider.dart';
+import 'features/cdn/cdn_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,6 +50,18 @@ class PrivateDeployApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
+        ChangeNotifierProxyProvider<CloudProvider, CdnProvider>(
+          create: (_) => CdnProvider()..load(),
+          update: (_, cloudProvider, cdnProvider) {
+            // Wire the CDN provider's deployment lookup into the cloud
+            // provider's outbound builder so generated node configs include
+            // a CDN-fronted variant whenever a Worker has been deployed.
+            cloudProvider.setCdnWorkerHostResolver(
+              (nodeId) => cdnProvider?.deploymentFor(nodeId)?.workerHost,
+            );
+            return cdnProvider!;
+          },
+        ),
       ],
       child: ScreenUtilInit(
         designSize: const Size(375, 812),

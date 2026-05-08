@@ -8,6 +8,7 @@ import CloudView from '@/views/CloudView/index.vue'
 import ProfilesView from '@/views/ProfilesView/index.vue'
 import RulesetsView from '@/views/RulesetsView/index.vue'
 
+import CdnSettings from './components/CdnSettings.vue'
 import CoreSettings from './components/CoreSettings.vue'
 import GeneralSettings from './components/GeneralSettings.vue'
 
@@ -17,6 +18,7 @@ const settings = [
   { key: 'cloud', tab: 'router.subscriptions' },
   { key: 'profiles', tab: 'router.profiles' },
   { key: 'rulesets', tab: 'router.rulesets' },
+  { key: 'cdn', tab: 'cdn.title' },
 ]
 
 const { t } = useI18n()
@@ -60,6 +62,10 @@ const activeKey = computed({
 
     <template #rulesets>
       <RulesetsView />
+    </template>
+
+    <template #cdn>
+      <CdnSettings />
     </template>
 
     <template #extra>

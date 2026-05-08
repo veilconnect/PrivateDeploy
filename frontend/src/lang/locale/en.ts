@@ -1097,4 +1097,56 @@ export default {
     },
     skip: 'Skip wizard, go straight in',
   },
+  cdn: {
+    title: 'CDN Acceleration (optional)',
+    subtitle:
+      'Front your VPS with a Cloudflare Worker so traffic enters via Cloudflare edge IPs instead of your bare VPS — useful when carriers drop SYN to offshore IPs.',
+    learnMore: 'Learn more',
+    docsLink: 'Read the deployment guide',
+    status: {
+      disabled: 'Not configured',
+      unverified: 'Saved, not verified',
+      verified: 'Verified',
+    },
+    setup: {
+      step1: '1. Get a Cloudflare API Token',
+      step1Body:
+        'In the Cloudflare dashboard create a token with permission "Account · Workers Scripts · Edit" for the account that owns your workers.dev subdomain.',
+      step2: '2. Paste the token below',
+      step2Body: 'It will be sent to api.cloudflare.com only — never to PrivateDeploy.',
+      step3: '3. Deploy a Worker per node',
+      step3Body:
+        'Once verified, click "Deploy CDN" on any cloud node to upload a Worker that fronts that node.',
+    },
+    tokenInput: {
+      placeholder: 'Cloudflare API token',
+      verify: 'Verify & save',
+      verifying: 'Verifying…',
+      clear: 'Clear token',
+    },
+    account: {
+      email: 'Account',
+      workersSubdomain: 'workers.dev subdomain',
+      example: 'Example URL',
+      noSubdomain:
+        'No workers.dev subdomain claimed yet. Visit the Workers dashboard once to claim one, then re-verify.',
+    },
+    node: {
+      deploy: 'Deploy CDN',
+      deploying: 'Deploying…',
+      delete: 'Delete CDN',
+      deleting: 'Deleting…',
+      deployed: 'CDN: {host}',
+      requiresRelay: 'Re-deploy this node to enable CDN front',
+      copyHost: 'Copy worker host',
+    },
+    error: {
+      tokenNotVerified: 'Token not verified — verify it first',
+      noSubdomain: 'No workers.dev subdomain claimed yet',
+    },
+    confirm: {
+      clear: 'Clear the saved token and all worker deployments? Workers on Cloudflare will not be deleted automatically.',
+      delete: 'Delete the CDN Worker for "{label}"?',
+    },
+  },
 }

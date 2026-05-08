@@ -773,5 +773,6 @@ func (p *Provider) instanceFromRemoteAndRecord(ri remoteInstance, rec cloud.Inst
 	inst.TrojanPassword = rec.TrojanPassword
 	inst.TrojanServerName = rec.TrojanServerName
 	inst.TrojanInsecure = rec.TrojanInsecure
+	inst.VLESSRelayPort = rec.VLESSRelayPort
 	return inst
 }

@@ -269,6 +269,7 @@ func (p *Provider) generateDeploymentPayload(planRAM int, tuning deploy.Deployme
 		TrojanPort:       creds.ports.TrojanPort,
 		TrojanPassword:   creds.trojanPassword,
 		TrojanServer:     tuning.TrojanServerName,
+		VLESSRelayPort:   creds.ports.VLESSRelayPort,
 		SingBoxVersion:   tuning.SingBoxVersion,
 		SingBoxFallback:  tuning.SingBoxFallbackVersion,
 	})
@@ -355,6 +356,7 @@ func (p *Provider) buildNodeRecord(instanceID string, opts *cloud.CreateInstance
 		record.TrojanPassword = creds.trojanPassword
 		record.TrojanServerName = tuning.TrojanServerName
 		record.TrojanInsecure = deploy.BoolPtr(tuning.TrojanInsecure)
+		record.VLESSRelayPort = creds.ports.VLESSRelayPort
 	}
 	return record
 }

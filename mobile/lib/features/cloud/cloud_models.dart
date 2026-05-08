@@ -283,6 +283,11 @@ class NodeInfo {
   final String trojanPassword;
   final String trojanServerName;
   final bool? trojanInsecure;
+  // Plain (non-Reality, non-TLS) VLESS port, used as the upstream for a
+  // Cloudflare Worker WS↔TCP relay. Zero on nodes deployed before the
+  // server-side Phase 5 change — those nodes can't be CDN-fronted until
+  // they are re-deployed with a userdata script that opens this port.
+  final int vlessRelayPort;
 
   const NodeInfo({
     required this.ssPort,
@@ -300,6 +305,7 @@ class NodeInfo {
     required this.trojanPassword,
     required this.trojanServerName,
     required this.trojanInsecure,
+    this.vlessRelayPort = 0,
   });
 
   factory NodeInfo.fromInstanceJson(Map<String, dynamic> json) {
@@ -329,6 +335,8 @@ class NodeInfo {
           _stringValue(json, const ['trojanServerName', 'trojan_server_name']),
       trojanInsecure:
           _boolValue(json, const ['trojanInsecure', 'trojan_insecure']),
+      vlessRelayPort:
+          _intValue(json, const ['vlessRelayPort', 'vless_relay_port']),
     );
   }
 

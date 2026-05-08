@@ -376,6 +376,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	vlessUUID := deploy.GenerateUUID()
 	trojanPort := ports.TrojanPort
 	trojanPassword := deploy.GenerateRandomPassword(22)
+	vlessRelayPort := ports.VLESSRelayPort
 
 	realityPrivateKey, realityPublicKey, err := deploy.GenerateRealityKeyPair()
 	if err != nil {
@@ -400,6 +401,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		TrojanPort:       trojanPort,
 		TrojanPassword:   trojanPassword,
 		TrojanServer:     tuning.TrojanServerName,
+		VLESSRelayPort:   vlessRelayPort,
 		SingBoxVersion:   tuning.SingBoxVersion,
 		SingBoxFallback:  tuning.SingBoxFallbackVersion,
 	})
@@ -436,6 +438,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		TrojanPassword:     trojanPassword,
 		TrojanServerName:   tuning.TrojanServerName,
 		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
+		VLESSRelayPort:     vlessRelayPort,
 	}
 	if err := p.saveNodeRecords(records); err != nil {
 		return nil, err

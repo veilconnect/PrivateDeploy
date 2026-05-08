@@ -1,11 +1,12 @@
 import { computed, ref, type Ref } from 'vue'
 
 import { ClipboardSetText } from '@/bridge'
+import { useCdnStore } from '@/stores'
 import { confirm, message } from '@/utils'
 import { logError, logInfo } from '@/utils/logger'
 import { getRecommendedNodes } from '@/utils/recommendation'
 
-import { buildNodeProtocolLinks } from './cloudNodeDisplay'
+import { buildNodeProtocolLinks, hasCdnRelay } from './cloudNodeDisplay'
 
 import type { ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNodeStatus } from '@/stores/cloud/constants'
@@ -58,6 +59,7 @@ export const useCloudViewActions = ({
   const rotatingNodeId = ref('')
   const speedTestAllLoading = ref(false)
   const loadBalanceLoading = ref(false)
+  const cdnStore = useCdnStore()
 
   const copyText = async (value: string) => {
     if (!value) return
@@ -251,7 +253,9 @@ export const useCloudViewActions = ({
   }
 
   const copyNodeConfig = async (record: CloudNode | Record<string, any>) => {
-    const links = buildNodeProtocolLinks(record)
+    const node = record as CloudNode
+    const deployment = cdnStore.deploymentFor(node.instanceId)
+    const links = buildNodeProtocolLinks(record, deployment)
     if (!links.length) {
       message.error(translate('cloud.errors.noProtocols'))
       return
@@ -259,6 +263,39 @@ export const useCloudViewActions = ({
 
     const payload = links.map((item) => `${item.label}: ${item.url}`).join('\n')
     await copyText(payload)
+  }
+
+  const handleDeployCdn = async (record: CloudNode | Record<string, any>) => {
+    const node = record as CloudNode
+    if (!hasCdnRelay(node)) {
+      message.error(translate('cdn.node.requiresRelay'))
+      return
+    }
+    if (!cdnStore.isVerified) {
+      message.error(translate('cdn.error.tokenNotVerified'))
+      return
+    }
+    const ok = await cdnStore.deploy(node.instanceId)
+    if (ok) {
+      message.success('common.success')
+    } else if (cdnStore.lastError) {
+      message.error(cdnStore.lastError)
+    }
+  }
+
+  const handleDeleteCdn = async (record: CloudNode | Record<string, any>) => {
+    const node = record as CloudNode
+    try {
+      await confirm('common.warning', translate('cdn.confirm.delete', { label: node.label }))
+    } catch {
+      return
+    }
+    const ok = await cdnStore.remove(node.instanceId)
+    if (ok) {
+      message.success('common.success')
+    } else if (cdnStore.lastError) {
+      message.error(cdnStore.lastError)
+    }
   }
 
   const handleRotateIP = async (record: CloudNode | Record<string, any>) => {
@@ -404,6 +441,17 @@ ${protocols.join('\n')}
       hidden: (record: ManagedCloudNode) => isManualNode(record) || record.connectivityStatus !== 'blocked',
     },
     {
+      label: translate('cdn.node.deploy'),
+      handler: (record: ManagedCloudNode) => handleDeployCdn(record),
+      hidden: (record: ManagedCloudNode) =>
+        !hasCdnRelay(record) || Boolean(cdnStore.deploymentFor(record.instanceId)),
+    },
+    {
+      label: translate('cdn.node.delete'),
+      handler: (record: ManagedCloudNode) => handleDeleteCdn(record),
+      hidden: (record: ManagedCloudNode) => !cdnStore.deploymentFor(record.instanceId),
+    },
+    {
       label: translate('cloud.quickActions.destroy'),
       handler: (record: ManagedCloudNode) => handleDestroy(record),
     },
@@ -412,11 +460,14 @@ ${protocols.join('\n')}
   return {
     applyingNodeId,
     batchOperating,
+    cdnStore,
     clearSelection,
     copyNodeConfig,
     handleBatchDestroy,
     handleBatchRotateIP,
     handleBatchTestConnectivity,
+    handleDeleteCdn,
+    handleDeployCdn,
     handleDestroy,
     handleRotateIP,
     handleShowRecommendations,

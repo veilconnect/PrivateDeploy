@@ -1,7 +1,7 @@
 import * as App from '@wails/go/bridge/App'
 
 import type { TrayContent } from '@/types/app'
-import type { CloudConfig, CloudPlan, CloudProvider, CloudRegion, MultiDeployResult, SSHServerInfo } from '@/types/cloud'
+import type { CdnState, CloudConfig, CloudPlan, CloudProvider, CloudRegion, MultiDeployResult, SSHServerInfo } from '@/types/cloud'
 
 export const RestartApp = App.RestartApp
 
@@ -172,4 +172,38 @@ export const TestConnectivity = async (
     throw new Error(data)
   }
   return JSON.parse(data)
+}
+
+// CDN (Cloudflare Worker front) bridge methods. Each *Typed call returns
+// the full CdnState; non-typed variants return FlagResult so the UI can
+// distinguish error states. Verify/Deploy/Delete may return Flag=false
+// with state data still attached (failure path) — the store handles both.
+export const GetCdnState = async (): Promise<CdnState> => {
+  return (await App.GetCdnStateTyped()) as CdnState
+}
+
+export const VerifyCdnToken = async (token: string): Promise<{ ok: boolean; state: CdnState }> => {
+  const { flag, data } = await App.VerifyCdnToken(token)
+  const state = JSON.parse(data) as CdnState
+  return { ok: flag, state }
+}
+
+export const ClearCdn = async (): Promise<CdnState> => {
+  return (await App.ClearCdnTyped()) as CdnState
+}
+
+export const DeployCdnWorkerForNode = async (
+  nodeId: string,
+): Promise<{ ok: boolean; state: CdnState }> => {
+  const { flag, data } = await App.DeployCdnWorkerForNode(nodeId)
+  const state = JSON.parse(data) as CdnState
+  return { ok: flag, state }
+}
+
+export const DeleteCdnWorkerForNode = async (
+  nodeId: string,
+): Promise<{ ok: boolean; state: CdnState }> => {
+  const { flag, data } = await App.DeleteCdnWorkerForNode(nodeId)
+  const state = JSON.parse(data) as CdnState
+  return { ok: flag, state }
 }

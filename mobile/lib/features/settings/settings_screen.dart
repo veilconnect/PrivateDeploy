@@ -7,6 +7,7 @@ import '../cloud/cloud_provider.dart';
 import 'settings_about_section.dart';
 import 'settings_app_section.dart';
 import 'settings_cloud_dialogs.dart';
+import 'settings_help_section.dart';
 import 'settings_server_section.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -98,6 +99,8 @@ class SettingsScreen extends StatelessWidget {
                 }),
             SizedBox(height: 16.h),
             const SettingsAppSection(),
+            SizedBox(height: 16.h),
+            const SettingsHelpSection(),
             SizedBox(height: 16.h),
             const SettingsAboutSection(),
           ],

@@ -49,7 +49,10 @@ const pinWindow = () => {
 }
 
 const closeWindow = async () => {
-  if (appSettingsStore.app.exitOnClose) {
+  // Windows/Linux: always close-to-tray; users quit via tray "Exit" or the
+  // title-bar menu's "Exit App". macOS keeps the legacy exitOnClose setting.
+  const respectExitOnClose = isDarwin
+  if (respectExitOnClose && appSettingsStore.app.exitOnClose) {
     exitApp()
   } else {
     WindowHide()

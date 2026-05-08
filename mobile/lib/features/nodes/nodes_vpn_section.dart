@@ -5,6 +5,7 @@ import '../../l10n/app_localizations.dart';
 import '../../shared/widgets/loading_indicator.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
+import '../help/cellular_help_screen.dart';
 import '../profiles/profile_provider.dart';
 import '../vpn/vpn_provider.dart';
 import '../vpn/vpn_status_messages.dart';
@@ -265,6 +266,22 @@ class NodesVpnSection extends StatelessWidget {
                         message: _sanitizeVpnErrorForDisplay(
                           localizeVpnStatusMessage(vpnProvider.error, l10n),
                         ),
+                        // Only the UpstreamDegraded canonical message has a
+                        // self-explanatory "Why?" deep-link — generic sing-box
+                        // errors stay button-less so we don't promise users an
+                        // explanation that doesn't apply to their case.
+                        secondaryLabel: vpnProvider.error ==
+                                VpnProvider.tunnelUpstreamDegradedMessage
+                            ? l10n.cellularHelpAction
+                            : null,
+                        onSecondary: vpnProvider.error ==
+                                VpnProvider.tunnelUpstreamDegradedMessage
+                            ? () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const CellularHelpScreen(),
+                                  ),
+                                )
+                            : null,
                         accentColor: Colors.orange,
                       ),
                     ),

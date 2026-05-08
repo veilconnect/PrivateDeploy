@@ -809,13 +809,28 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
       }
     }
 
+    // Repair persisted profiles whose managed smart-routing rules were saved by
+    // an older build (e.g. inserted before icmp, which made TCP/443 catch CN
+    // domains before the Mainland → direct rule could match). Running
+    // ensureSmartAutoRouting via syncManagedCloudProfiles re-runs cleanup +
+    // reinsertion in the current correct position; if nothing differs it's a
+    // no-op.
+    let repaired = false
+    try {
+      repaired = await syncManagedCloudProfiles('apply-all-nodes-repair', false)
+    } catch (error) {
+      logError('[CloudStore] Failed to repair managed profiles on apply-all:', error)
+    }
+
     if (applied.length) {
-      try {
-        await reloadKernel('apply-all-nodes')
-      } catch (error) {
-        logError('[CloudStore] Failed to restart core after auto-applying nodes:', error)
+      if (!repaired) {
+        try {
+          await reloadKernel('apply-all-nodes')
+        } catch (error) {
+          logError('[CloudStore] Failed to restart core after auto-applying nodes:', error)
+        }
       }
-    } else if (!kernelApiStore.running && candidates.length > 0) {
+    } else if (!repaired && !kernelApiStore.running && candidates.length > 0) {
       try {
         await reloadKernel('apply-existing-ready-nodes')
       } catch (error) {

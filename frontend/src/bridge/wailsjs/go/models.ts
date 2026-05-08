@@ -278,6 +278,92 @@ export namespace bridge {
 
 }
 
+export namespace cdn {
+	
+	export class Deployment {
+	    nodeId: string;
+	    scriptName: string;
+	    workerHost: string;
+	    backend: string;
+	    // Go type: time
+	    deployedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Deployment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.nodeId = source["nodeId"];
+	        this.scriptName = source["scriptName"];
+	        this.workerHost = source["workerHost"];
+	        this.backend = source["backend"];
+	        this.deployedAt = this.convertValues(source["deployedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class State {
+	    status: string;
+	    accountId?: string;
+	    accountEmail?: string;
+	    workersSubdomain?: string;
+	    lastError?: string;
+	    workersDevExample?: string;
+	    deployments: Record<string, Deployment>;
+	
+	    static createFrom(source: any = {}) {
+	        return new State(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.accountId = source["accountId"];
+	        this.accountEmail = source["accountEmail"];
+	        this.workersSubdomain = source["workersSubdomain"];
+	        this.lastError = source["lastError"];
+	        this.workersDevExample = source["workersDevExample"];
+	        this.deployments = this.convertValues(source["deployments"], Deployment, true);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace cloud {
 	
 	export class CreateInstanceOptions {
@@ -334,6 +420,7 @@ export namespace cloud {
 	    trojanPassword?: string;
 	    trojanServerName?: string;
 	    trojanInsecure?: boolean;
+	    vlessRelayPort?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Instance(source);
@@ -369,6 +456,7 @@ export namespace cloud {
 	        this.trojanPassword = source["trojanPassword"];
 	        this.trojanServerName = source["trojanServerName"];
 	        this.trojanInsecure = source["trojanInsecure"];
+	        this.vlessRelayPort = source["vlessRelayPort"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

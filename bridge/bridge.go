@@ -17,6 +17,7 @@ import (
 
 	sysruntime "runtime"
 
+	"privatedeploy/bridge/cdn"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
 	"privatedeploy/bridge/cloud/health"
@@ -96,6 +97,7 @@ func CreateApp(fs embed.FS) *App {
 	registry := defaults.Registry()
 	app.CloudManager = cloud.NewManager(context.Background(), registry)
 	app.HealthMonitor = health.NewMonitor(5 * time.Minute)
+	app.CdnManager = cdn.NewManager(Env.BasePath)
 
 	// Set Vultr as the default active provider
 	if err := app.CloudManager.SetActiveProvider("vultr"); err != nil {

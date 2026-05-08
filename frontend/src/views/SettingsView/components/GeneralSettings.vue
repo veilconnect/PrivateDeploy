@@ -270,7 +270,7 @@ watch(
         <span class="ml-8">{{ t('settings.appFolder.open') }}</span>
       </Button>
     </div>
-    <div class="px-16 py-8">
+    <div v-if="envStore.env.os === 'darwin'" class="px-16 py-8">
       <div class="text-18 font-bold pt-8 pb-16">
         {{ t('settings.exitOnClose') }}
       </div>

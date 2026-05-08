@@ -172,6 +172,9 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		if record.TrojanInsecure != nil {
 			instance.TrojanInsecure = record.TrojanInsecure
 		}
+		if record.VLESSRelayPort != 0 {
+			instance.VLESSRelayPort = record.VLESSRelayPort
+		}
 
 		records[instanceID] = record
 		seen[instanceID] = struct{}{}
@@ -211,10 +214,11 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	ports := deploy.AllocatePorts(tuning.PortProfile)
 	if tuning.PortProfile == deploy.DefaultPortProfile {
 		ports = deploy.PortAssignment{
-			SSPort:       23650,
-			HysteriaPort: 23651,
-			VLESSPort:    23652,
-			TrojanPort:   23653,
+			SSPort:         23650,
+			HysteriaPort:   23651,
+			VLESSPort:      23652,
+			TrojanPort:     23653,
+			VLESSRelayPort: 23654,
 		}
 	}
 
@@ -226,6 +230,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	vlessUUID := deploy.GenerateUUID()
 	trojanPort := ports.TrojanPort
 	trojanPassword := deploy.GenerateRandomPassword(22)
+	vlessRelayPort := ports.VLESSRelayPort
 
 	realityPrivateKey, realityPublicKey, err := deploy.GenerateRealityKeyPair()
 	if err != nil {
@@ -251,6 +256,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		TrojanPort:       trojanPort,
 		TrojanPassword:   trojanPassword,
 		TrojanServer:     tuning.TrojanServerName,
+		VLESSRelayPort:   vlessRelayPort,
 		SingBoxVersion:   tuning.SingBoxVersion,
 		SingBoxFallback:  tuning.SingBoxFallbackVersion,
 	})
@@ -344,6 +350,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		TrojanPassword:     trojanPassword,
 		TrojanServerName:   tuning.TrojanServerName,
 		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
+		VLESSRelayPort:     vlessRelayPort,
 	}
 
 	records, err := p.loadNodeRecords()
@@ -369,6 +376,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		TrojanPassword:     trojanPassword,
 		TrojanServerName:   tuning.TrojanServerName,
 		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
+		VLESSRelayPort:     vlessRelayPort,
 	}
 
 	if instance.IPv4 != "" {
@@ -609,6 +617,9 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		}
 		if record.TrojanInsecure != nil {
 			instance.TrojanInsecure = record.TrojanInsecure
+		}
+		if record.VLESSRelayPort != 0 {
+			instance.VLESSRelayPort = record.VLESSRelayPort
 		}
 
 		records[instance.ID] = record

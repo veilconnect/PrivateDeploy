@@ -100,6 +100,7 @@ func toCloudInstance(inst vultrInstance, record nodeRecord) cloud.Instance {
 		TrojanPassword:     record.TrojanPassword,
 		TrojanServerName:   record.TrojanServerName,
 		TrojanInsecure:     record.TrojanInsecure,
+		VLESSRelayPort:     record.VLESSRelayPort,
 	}
 }
 
@@ -142,6 +143,7 @@ func clearNodeRecordCredentials(record *nodeRecord) bool {
 	resetString(&record.TrojanPassword)
 	resetString(&record.TrojanServerName)
 	resetBoolPtr(&record.TrojanInsecure)
+	resetInt(&record.VLESSRelayPort)
 
 	return changed
 }

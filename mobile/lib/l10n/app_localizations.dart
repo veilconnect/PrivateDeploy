@@ -326,6 +326,42 @@ abstract class AppLocalizations {
   /// **'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.'**
   String get startupProbeInconclusiveMessageLocalized;
 
+  /// No description provided for @tunnelUpstreamDegradedMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'Tunnel is up, but this node\'s upstream can\'t be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.'**
+  String get tunnelUpstreamDegradedMessageLocalized;
+
+  /// No description provided for @cellularHelpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cellular network issues'**
+  String get cellularHelpTitle;
+
+  /// No description provided for @cellularHelpAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Why?'**
+  String get cellularHelpAction;
+
+  /// No description provided for @help.
+  ///
+  /// In en, this message translates to:
+  /// **'Help'**
+  String get help;
+
+  /// No description provided for @cdnAccelerationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'CDN acceleration'**
+  String get cdnAccelerationTitle;
+
+  /// No description provided for @cdnAccelerationSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional: route through Cloudflare for cellular'**
+  String get cdnAccelerationSubtitle;
+
   /// No description provided for @nextStep.
   ///
   /// In en, this message translates to:

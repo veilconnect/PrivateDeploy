@@ -369,11 +369,18 @@ export const ensureSmartAutoRouting = (
     { ...tcpWebRuleTemplate },
     { ...udpRuleTemplate },
   ]
-  const firstIcmpRule = profile.route.rules.findIndex(
-    (rule) => rule.type === RuleType.Network && String(rule.payload) === 'icmp',
-  )
-  if (firstIcmpRule >= 0) {
-    profile.route.rules.splice(firstIcmpRule, 0, ...managedRules)
+  // Place smart-routing port/UDP rules AFTER the last direct (bypass) rule —
+  // otherwise TCP/443 catches everything and CN domain rules (Mainland → direct)
+  // never run, sending jd.com / taobao.com etc. through the proxy.
+  let insertAfter = -1
+  for (let i = profile.route.rules.length - 1; i >= 0; i--) {
+    if (profile.route.rules[i].outbound === ProfileDefaults.DefaultOutboundIds.Direct) {
+      insertAfter = i
+      break
+    }
+  }
+  if (insertAfter >= 0) {
+    profile.route.rules.splice(insertAfter + 1, 0, ...managedRules)
   } else {
     profile.route.rules.push(...managedRules)
   }

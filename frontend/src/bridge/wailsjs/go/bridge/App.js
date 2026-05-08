@@ -10,6 +10,14 @@ export function CleanInvalidCloudNodes() {
   return window['go']['bridge']['App']['CleanInvalidCloudNodes']();
 }
 
+export function ClearCdn() {
+  return window['go']['bridge']['App']['ClearCdn']();
+}
+
+export function ClearCdnTyped() {
+  return window['go']['bridge']['App']['ClearCdnTyped']();
+}
+
 export function CloseMMDB(arg1, arg2) {
   return window['go']['bridge']['App']['CloseMMDB'](arg1, arg2);
 }
@@ -32,6 +40,22 @@ export function CreateMultipleCloudInstances(arg1) {
 
 export function CreateMultipleCloudInstancesTyped(arg1) {
   return window['go']['bridge']['App']['CreateMultipleCloudInstancesTyped'](arg1);
+}
+
+export function DeleteCdnWorkerForNode(arg1) {
+  return window['go']['bridge']['App']['DeleteCdnWorkerForNode'](arg1);
+}
+
+export function DeleteCdnWorkerForNodeTyped(arg1) {
+  return window['go']['bridge']['App']['DeleteCdnWorkerForNodeTyped'](arg1);
+}
+
+export function DeployCdnWorkerForNode(arg1) {
+  return window['go']['bridge']['App']['DeployCdnWorkerForNode'](arg1);
+}
+
+export function DeployCdnWorkerForNodeTyped(arg1) {
+  return window['go']['bridge']['App']['DeployCdnWorkerForNodeTyped'](arg1);
 }
 
 export function DestroyCloudInstance(arg1) {
@@ -72,6 +96,14 @@ export function FileExists(arg1) {
 
 export function GetAvailablePort() {
   return window['go']['bridge']['App']['GetAvailablePort']();
+}
+
+export function GetCdnState() {
+  return window['go']['bridge']['App']['GetCdnState']();
+}
+
+export function GetCdnStateTyped() {
+  return window['go']['bridge']['App']['GetCdnStateTyped']();
 }
 
 export function GetCloudConfig() {
@@ -316,6 +348,14 @@ export function UpdateTrayMenus(arg1) {
 
 export function Upload(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['bridge']['App']['Upload'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function VerifyCdnToken(arg1) {
+  return window['go']['bridge']['App']['VerifyCdnToken'](arg1);
+}
+
+export function VerifyCdnTokenTyped(arg1) {
+  return window['go']['bridge']['App']['VerifyCdnTokenTyped'](arg1);
 }
 
 export function WriteFile(arg1, arg2, arg3) {

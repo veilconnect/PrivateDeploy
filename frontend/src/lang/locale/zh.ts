@@ -1186,4 +1186,54 @@ export default {
     },
     skip: '跳过向导，直接进入',
   },
+  cdn: {
+    title: 'CDN 加速（可选）',
+    subtitle:
+      '通过 Cloudflare Worker 给你的 VPS 增加一层 CDN 入口：流量从 Cloudflare 边缘 IP 进入，而非裸 VPS。适合运营商屏蔽境外 IP 的网络。',
+    learnMore: '了解更多',
+    docsLink: '查看部署指南',
+    status: {
+      disabled: '未配置',
+      unverified: '已保存，未验证',
+      verified: '已验证',
+    },
+    setup: {
+      step1: '1. 获取 Cloudflare API Token',
+      step1Body:
+        '在 Cloudflare 控制台创建 Token，权限选择 "Account · Workers Scripts · Edit"，账号需为已绑定 workers.dev 子域名的账号。',
+      step2: '2. 在下方粘贴 Token',
+      step2Body: 'Token 仅会发送到 api.cloudflare.com，不会上传到 PrivateDeploy。',
+      step3: '3. 为每个节点部署 Worker',
+      step3Body: '验证通过后，在任意云节点上点击 "部署 CDN" 即可上传 Worker 作为该节点的 CDN 前端。',
+    },
+    tokenInput: {
+      placeholder: 'Cloudflare API Token',
+      verify: '验证并保存',
+      verifying: '验证中…',
+      clear: '清除 Token',
+    },
+    account: {
+      email: '账号',
+      workersSubdomain: 'workers.dev 子域名',
+      example: '示例 URL',
+      noSubdomain: '尚未申领 workers.dev 子域名。请先在 Cloudflare Workers 控制台申领一次，然后重新验证。',
+    },
+    node: {
+      deploy: '部署 CDN',
+      deploying: '部署中…',
+      delete: '删除 CDN',
+      deleting: '删除中…',
+      deployed: 'CDN: {host}',
+      requiresRelay: '请重新部署该节点以启用 CDN 前端',
+      copyHost: '复制 Worker 域名',
+    },
+    error: {
+      tokenNotVerified: 'Token 未验证，请先验证',
+      noSubdomain: '尚未申领 workers.dev 子域名',
+    },
+    confirm: {
+      clear: '清除已保存的 Token 和所有 Worker 部署记录？已上传到 Cloudflare 的 Worker 不会被自动删除。',
+      delete: '确认删除节点 "{label}" 的 CDN Worker？',
+    },
+  },
 }

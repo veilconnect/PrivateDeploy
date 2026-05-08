@@ -43,6 +43,8 @@ class CloudProvider extends CloudProviderBase {
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
   static const Duration benchmarkProbeTimeout = Duration(milliseconds: 1500);
   static const int benchmarkProbeSamplesPerEndpoint = 3;
+  static const Duration _pendingPollInterval = Duration(seconds: 12);
+  static const Duration _pendingPollMaxDuration = Duration(minutes: 30);
 
   List<CloudInstance> _instances = [];
   List<CloudRegion> _regions = [];
@@ -70,6 +72,9 @@ class CloudProvider extends CloudProviderBase {
   // the UI can show all nodes from every configured provider in one list.
   // Populated by loadInstances alongside the active provider's live fetch.
   final Map<CloudProviderId, List<CloudInstance>> _otherProviderInstances = {};
+  Timer? _pendingPollTimer;
+  DateTime? _pendingPollStartedAt;
+  bool _disposed = false;
 
   List<CloudInstance> get instances => _instances;
 
@@ -1130,7 +1135,70 @@ class CloudProvider extends CloudProviderBase {
       if (notify) {
         notifyListeners();
       }
+      _evaluatePendingPoll();
     }
+  }
+
+  bool _hasPendingInstances() {
+    if (isSshProvider) {
+      return false;
+    }
+    for (final inst in _instances) {
+      if (!(inst.isActive && inst.hasIp && inst.nodeInfo != null)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _evaluatePendingPoll() {
+    if (_disposed) {
+      _pendingPollTimer?.cancel();
+      _pendingPollTimer = null;
+      _pendingPollStartedAt = null;
+      return;
+    }
+    final pending = _hasPendingInstances();
+    if (!pending) {
+      _pendingPollTimer?.cancel();
+      _pendingPollTimer = null;
+      _pendingPollStartedAt = null;
+      return;
+    }
+    if (_pendingPollTimer != null) {
+      return;
+    }
+    _pendingPollStartedAt = DateTime.now();
+    _pendingPollTimer = Timer.periodic(_pendingPollInterval, (_) {
+      if (_disposed) {
+        _pendingPollTimer?.cancel();
+        _pendingPollTimer = null;
+        return;
+      }
+      final startedAt = _pendingPollStartedAt;
+      if (startedAt != null &&
+          DateTime.now().difference(startedAt) > _pendingPollMaxDuration) {
+        AppLogger.info(
+            '[CloudProvider] Pending poll exceeded max duration; stopping');
+        _pendingPollTimer?.cancel();
+        _pendingPollTimer = null;
+        _pendingPollStartedAt = null;
+        return;
+      }
+      if (_isLoading) {
+        return;
+      }
+      unawaited(loadInstances());
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _pendingPollTimer?.cancel();
+    _pendingPollTimer = null;
+    _pendingPollStartedAt = null;
+    super.dispose();
   }
 
   Future<void> _loadOtherProviderInstancesFromCache() async {

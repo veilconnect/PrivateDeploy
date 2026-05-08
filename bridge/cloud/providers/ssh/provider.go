@@ -204,6 +204,7 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			TrojanPassword:     rec.TrojanPassword,
 			TrojanServerName:   rec.TrojanServerName,
 			TrojanInsecure:     rec.TrojanInsecure,
+			VLESSRelayPort:     rec.VLESSRelayPort,
 		})
 	}
 
@@ -279,6 +280,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	hysteriaPort := ports.HysteriaPort
 	vlessPort := ports.VLESSPort
 	trojanPort := ports.TrojanPort
+	vlessRelayPort := ports.VLESSRelayPort
 
 	ssPassword := deploy.GenerateRandomPassword(16)
 	hysteriaPassword := deploy.GenerateRandomPassword(22)
@@ -316,6 +318,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 			TrojanPort:       trojanPort,
 			TrojanPassword:   trojanPassword,
 			TrojanServer:     tuning.TrojanServerName,
+			VLESSRelayPort:   vlessRelayPort,
 			SingBoxVersion:   tuning.SingBoxVersion,
 			SingBoxFallback:  tuning.SingBoxFallbackVersion,
 		})
@@ -391,6 +394,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		instance.TrojanPassword = trojanPassword
 		instance.TrojanServerName = tuning.TrojanServerName
 		instance.TrojanInsecure = deploy.BoolPtr(tuning.TrojanInsecure)
+		instance.VLESSRelayPort = vlessRelayPort
 	}
 
 	// Persist node record
@@ -423,6 +427,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 			TrojanPassword:     instance.TrojanPassword,
 			TrojanServerName:   instance.TrojanServerName,
 			TrojanInsecure:     instance.TrojanInsecure,
+			VLESSRelayPort:     instance.VLESSRelayPort,
 		},
 	}
 
@@ -524,6 +529,7 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 		TrojanPassword:     rec.TrojanPassword,
 		TrojanServerName:   rec.TrojanServerName,
 		TrojanInsecure:     rec.TrojanInsecure,
+		VLESSRelayPort:     rec.VLESSRelayPort,
 	}, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"privatedeploy/bridge/cdn"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/health"
 	filesystem "privatedeploy/bridge/services/filesystem"
@@ -18,6 +19,7 @@ type App struct {
 	CloudManager  *cloud.Manager
 	HealthMonitor *health.Monitor
 	FileService   *filesystem.Service
+	CdnManager    *cdn.Manager
 }
 
 type EnvResult struct {

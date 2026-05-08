@@ -36,6 +36,22 @@
 
         window.addEventListener('unhandledrejection', function (event) {
           const reason = event && 'reason' in event ? event.reason : 'Unknown rejection'
+          // WebView2 (Windows) can reject internal Web API promises with
+          // InvalidStateError during early page init — most notably the View
+          // Transitions API, which Chromium aborts when the document isn't
+          // yet visible. These rejections are transient and recoverable; the
+          // app continues to function. Don't show the fatal red screen for
+          // them.
+          if (
+            reason &&
+            typeof reason === 'object' &&
+            (reason.name === 'InvalidStateError' ||
+              (typeof reason.message === 'string' &&
+                reason.message.indexOf('Transition was aborted') !== -1))
+          ) {
+            event.preventDefault()
+            return
+          }
           const message =
             reason && typeof reason === 'object' && 'stack' in reason
               ? String(reason.stack || reason)
