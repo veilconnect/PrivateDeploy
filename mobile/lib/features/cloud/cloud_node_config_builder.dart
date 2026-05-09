@@ -87,7 +87,7 @@ Map<String, String> _appendInstanceOutbounds(
   CloudInstance instance, {
   required List<Map<String, dynamic>> outbounds,
   required List<String> tags,
-  String? cdnWorkerHost,
+  String? cdnHost,
 }) {
   final endpointTagByLabel = <String, String>{};
   final info = instance.nodeInfo;
@@ -169,28 +169,32 @@ Map<String, String> _appendInstanceOutbounds(
   }
 
   // CDN-fronted variant. Routed to a Cloudflare Worker host that relays
-  // WS↔TCP to the node's vlessRelayPort. Only added when both the worker
-  // host is provided AND the node has the relay port (older deploys lack
-  // it and would yield a non-functional outbound).
-  if (cdnWorkerHost != null &&
-      cdnWorkerHost.isNotEmpty &&
+  // WS↔TCP to the node's vlessRelayPort. The caller resolves cdnHost to
+  // the user's M1 custom-domain (preferred — bypasses the *.workers.dev
+  // DNS-poisoning that some carriers apply) and falls back to the
+  // workers.dev hostname if no custom domain is bound. Strict M1: we
+  // never emit BOTH simultaneously, because keeping a known-bad
+  // workers.dev sibling in the urltest group costs probe latency before
+  // urltest converges away from it.
+  if (cdnHost != null &&
+      cdnHost.isNotEmpty &&
       info.vlessRelayPort > 0 &&
       info.vlessUuid.isNotEmpty) {
     final tag = '$label-CDN';
     outbounds.add({
       'type': 'vless',
       'tag': tag,
-      'server': cdnWorkerHost,
+      'server': cdnHost,
       'server_port': 443,
       'uuid': info.vlessUuid,
       'transport': {
         'type': 'ws',
         'path': '/?ed=2560',
-        'headers': {'Host': cdnWorkerHost},
+        'headers': {'Host': cdnHost},
       },
       'tls': {
         'enabled': true,
-        'server_name': cdnWorkerHost,
+        'server_name': cdnHost,
         'utls': {
           'enabled': true,
           'fingerprint': 'chrome',
@@ -228,11 +232,13 @@ String? buildCloudNodeConfig(
   String? preferredEndpointLabel,
   TargetPlatform? targetPlatform,
   // When non-null, append a CDN-fronted VLESS variant pointing at this
-  // Cloudflare Worker host. The Worker is expected to relay WS frames to the
-  // node's vlessRelayPort over plain TCP — see docs/cdn-acceleration. The
-  // CDN variant joins the urltest pool so sing-box auto-fails over from
-  // direct → CDN when the carrier blocks the direct path.
-  String? cdnWorkerHost,
+  // Cloudflare-fronted host (Workers Custom Domain when M1 is bound,
+  // otherwise the *.workers.dev fallback). The Worker is expected to relay
+  // WS frames to the node's vlessRelayPort over plain TCP — see
+  // docs/cdn-acceleration. The CDN variant joins the urltest pool so
+  // sing-box auto-fails over from direct → CDN when the carrier blocks
+  // the direct path.
+  String? cdnHost,
   // Other cloud nodes to enroll in the same urltest failover pool. When the
   // active node's IP is dropped by the carrier (e.g. mobile carrier silently
   // blackholing some VPS ranges on cellular), sing-box urltest will pick a
@@ -240,9 +246,9 @@ String? buildCloudNodeConfig(
   // mode — if [preferredEndpointLabel] pins a protocol, the user explicitly
   // wants that one outbound and we honor it.
   List<CloudInstance> failoverInstances = const [],
-  // Resolves the CDN worker host for any instance in [failoverInstances].
-  // The active instance keeps the simpler [cdnWorkerHost] for back-compat.
-  String? Function(CloudInstance instance)? failoverCdnWorkerHostResolver,
+  // Resolves the CDN host for any instance in [failoverInstances]. Should
+  // prefer the M1 customHost when bound; falls back to workerHost.
+  String? Function(CloudInstance instance)? failoverCdnHostResolver,
 }) {
   if (!instance.hasIp || instance.nodeInfo == null) {
     return null;
@@ -254,7 +260,7 @@ String? buildCloudNodeConfig(
     instance,
     outbounds: outbounds,
     tags: tags,
-    cdnWorkerHost: cdnWorkerHost,
+    cdnHost: cdnHost,
   );
 
   if (outbounds.isEmpty) {
@@ -296,7 +302,7 @@ String? buildCloudNodeConfig(
         fi,
         outbounds: scratchOutbounds,
         tags: scratchTags,
-        cdnWorkerHost: failoverCdnWorkerHostResolver?.call(fi),
+        cdnHost: failoverCdnHostResolver?.call(fi),
       );
       for (var i = 0; i < scratchTags.length; i++) {
         final tag = scratchTags[i];
@@ -362,7 +368,16 @@ String? buildCloudNodeConfig(
       ],
       'rules': [
         {
-          'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+          // api.cloudflare.com belongs here too: when M1 (Workers Custom
+          // Domains) is being configured the user is verifying tokens and
+          // attaching/detaching Worker domains; if the VPN is already up
+          // those calls would tunnel through the proxy node and frequently
+          // time out before the user even sees the picker.
+          'domain_suffix': [
+            'api.vultr.com',
+            'api.digitalocean.com',
+            'api.cloudflare.com',
+          ],
           'server': managedDnsBootstrapTag,
         },
         {
@@ -437,7 +452,16 @@ String? buildCloudNodeConfig(
         // Otherwise requests egress via the proxy node, whose path to these
         // endpoints is often slow enough to hit the 12s timeout.
         {
-          'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+          // api.cloudflare.com belongs here too: when M1 (Workers Custom
+          // Domains) is being configured the user is verifying tokens and
+          // attaching/detaching Worker domains; if the VPN is already up
+          // those calls would tunnel through the proxy node and frequently
+          // time out before the user even sees the picker.
+          'domain_suffix': [
+            'api.vultr.com',
+            'api.digitalocean.com',
+            'api.cloudflare.com',
+          ],
           'outbound': 'direct',
         },
       ],

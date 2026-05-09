@@ -28,6 +28,10 @@ class CdnProvider with ChangeNotifier {
   // Stores a JSON map<nodeId, CdnDeployment.toJson()> in shared prefs. Not
   // sensitive (just URLs and timestamps), so we don't use secure storage.
   static const _kDeploymentsKey = 'cdn.cf_deployments_v1';
+  // M1: Workers Custom Domains binding config. Stored as a single global
+  // entry — every deploy uses the same zone+subdomain prefix and a per-
+  // script-hash suffix to keep hostnames unique across nodes.
+  static const _kCustomDomainKey = 'cdn.cf_custom_domain_v1';
   // Compatibility date the Worker is deployed with. Bumping this can change
   // runtime behavior, so it lives next to the worker template.
   static const _kCompatDate = '2024-09-23';
@@ -36,6 +40,8 @@ class CdnProvider with ChangeNotifier {
       'https://api.cloudflare.com/client/v4/user/tokens/verify';
   static const _accountsEndpoint =
       'https://api.cloudflare.com/client/v4/accounts';
+  static const _zonesEndpoint =
+      'https://api.cloudflare.com/client/v4/zones';
 
   CdnStatus _status = CdnStatus.disabled;
   String? _accountId;
@@ -45,6 +51,10 @@ class CdnProvider with ChangeNotifier {
   bool _isVerifying = false;
   bool _isDeploying = false;
   Map<String, CdnDeployment> _deployments = {};
+  CdnCustomDomain? _customDomain;
+  List<CdnZone> _zones = const [];
+  bool _zonesLoading = false;
+  bool _isSavingCustomDomain = false;
 
   CdnStatus get status => _status;
   String? get accountId => _accountId;
@@ -57,6 +67,10 @@ class CdnProvider with ChangeNotifier {
   Map<String, CdnDeployment> get deployments =>
       Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
+  CdnCustomDomain? get customDomain => _customDomain;
+  List<CdnZone> get zones => List.unmodifiable(_zones);
+  bool get isZonesLoading => _zonesLoading;
+  bool get isSavingCustomDomain => _isSavingCustomDomain;
 
   /// Build the workers.dev URL fragment we display in the UI as
   /// "<your-name>.<subdomain>.workers.dev". Returns null if not yet known.
@@ -83,7 +97,37 @@ class CdnProvider with ChangeNotifier {
         ? CdnStatus.verified
         : CdnStatus.unverified;
     _loadDeployments();
+    _loadCustomDomain();
     notifyListeners();
+  }
+
+  void _loadCustomDomain() {
+    final raw = StorageService.getString(_kCustomDomainKey);
+    if (raw == null || raw.isEmpty) {
+      _customDomain = null;
+      return;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        _customDomain = CdnCustomDomain.fromJson(decoded);
+      } else {
+        _customDomain = null;
+      }
+    } catch (_) {
+      _customDomain = null;
+    }
+  }
+
+  Future<void> _persistCustomDomain() async {
+    if (_customDomain == null) {
+      await StorageService.saveString(_kCustomDomainKey, '');
+      return;
+    }
+    await StorageService.saveString(
+      _kCustomDomainKey,
+      jsonEncode(_customDomain!.toJson()),
+    );
   }
 
   void _loadDeployments() {
@@ -355,15 +399,45 @@ class CdnProvider with ChangeNotifier {
       }
 
       final url = '$scriptName.$_workersSubdomain.workers.dev';
+      String? customHost;
+      String? customDomainId;
+      if (_customDomain != null) {
+        // M1: bind the same script to the user's Workers Custom Domain.
+        // Failure here is non-fatal — the workers.dev path still works
+        // and the error surfaces through lastError so the user can
+        // re-deploy after fixing token scope. The earlier flow continues
+        // with a partial deployment record (workerHost only).
+        final host = _customHostFor(scriptName);
+        if (host != null) {
+          final binding = await _attachWorkerCustomDomain(
+            dio,
+            host,
+            scriptName,
+            _customDomain!.zoneId,
+          );
+          if (binding != null) {
+            customHost = binding.hostname;
+            customDomainId = binding.id;
+          }
+        }
+      }
       _deployments[nodeId] = CdnDeployment(
         nodeId: nodeId,
         scriptName: scriptName,
         workerHost: url,
         backend: backend,
         deployedAt: DateTime.now().toUtc(),
+        customHost: customHost,
+        customDomainId: customDomainId,
       );
       await _persistDeployments();
-      _lastError = null;
+      // Preserve _lastError if the M1 step failed (so the UI can show it)
+      // but clear it when everything succeeded.
+      if (_customDomain != null && customHost == null && _lastError == null) {
+        _lastError = 'workers.dev path live, but custom-domain binding produced no host.';
+      } else if (customHost != null) {
+        _lastError = null;
+      }
       return true;
     } on DioException catch (e) {
       _lastError = 'Network error deploying Worker: ${e.message ?? e.type.name}';
@@ -397,6 +471,21 @@ class CdnProvider with ChangeNotifier {
       headers: {'Authorization': 'Bearer $token'},
       validateStatus: (_) => true,
     ));
+
+    // Detach the M1 custom-domain binding first. Best-effort: 404 is
+    // success (already gone). Non-fatal — proceed with script delete
+    // even if detach fails, so we don't leak the script when the
+    // custom-domain binding was edited externally.
+    final domainId = dep.customDomainId;
+    String? detachWarning;
+    if (domainId != null && domainId.isNotEmpty) {
+      final detached = await _detachWorkerCustomDomain(dio, domainId);
+      if (!detached) {
+        // Capture the error before script-delete clears _lastError.
+        detachWarning = _lastError ?? 'custom-domain detach failed';
+      }
+    }
+
     final r = await dio.delete(
       '$_accountsEndpoint/$_accountId/workers/scripts/${dep.scriptName}',
     );
@@ -409,9 +498,217 @@ class CdnProvider with ChangeNotifier {
     }
     _deployments.remove(nodeId);
     await _persistDeployments();
-    _lastError = null;
+    // Surface the detach failure even when script delete succeeded — an
+    // orphan custom-domain binding in CF is far worse than a stale local
+    // record and the user needs to know to clean it up via dashboard.
+    _lastError = detachWarning;
     notifyListeners();
     return true;
+  }
+
+  /// List active CF zones the verified token can see. Drives the M1
+  /// custom-domain zone picker. Active filter is applied here so the UI
+  /// doesn't need to think about pending/initializing zones (CF won't
+  /// accept Worker domain bindings on those anyway).
+  Future<List<CdnZone>> listZones() async {
+    if (_status != CdnStatus.verified) {
+      _lastError = 'Token not verified — verify it first';
+      notifyListeners();
+      return const [];
+    }
+    final token = await StorageService.getSecureString(_kTokenKey);
+    if (token == null || token.isEmpty) {
+      _lastError = 'Token missing from storage.';
+      notifyListeners();
+      return const [];
+    }
+    _zonesLoading = true;
+    notifyListeners();
+    try {
+      final dio = Dio(BaseOptions(
+        headers: {'Authorization': 'Bearer $token'},
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 30),
+        validateStatus: (_) => true,
+      ));
+      final r = await dio.get('$_zonesEndpoint?per_page=50');
+      if (r.statusCode == null || r.statusCode! >= 400) {
+        _lastError = _extractCloudflareError(r.data) ??
+            'Listing zones failed (HTTP ${r.statusCode}).';
+        return const [];
+      }
+      final body = r.data;
+      if (body is! Map || body['result'] is! List) {
+        _lastError = 'Unexpected /zones response shape.';
+        return const [];
+      }
+      final out = <CdnZone>[];
+      for (final raw in body['result'] as List) {
+        if (raw is! Map) continue;
+        if (raw['status'] != 'active') continue;
+        final id = raw['id']?.toString();
+        final name = raw['name']?.toString();
+        if (id == null || id.isEmpty || name == null || name.isEmpty) continue;
+        out.add(CdnZone(id: id, name: name));
+      }
+      _zones = out;
+      _lastError = null;
+      return List.unmodifiable(out);
+    } on DioException catch (e) {
+      _lastError = 'Network error listing zones: ${e.message ?? e.type.name}';
+      return const [];
+    } finally {
+      _zonesLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Persist the M1 binding config. Subsequent [deployWorkerForNode] calls
+  /// also attach the script to a Workers Custom Domain on this zone, with
+  /// hostname = "<subdomain>-<scriptHash>.<zoneName>". Existing deployments
+  /// are NOT re-bound — the user must re-deploy them to pick up the change.
+  Future<bool> setCustomDomain(String zoneId, String subdomain) async {
+    final cleanZone = zoneId.trim();
+    final cleanSub = subdomain.trim();
+    if (cleanZone.isEmpty) {
+      _lastError = 'Zone id required.';
+      notifyListeners();
+      return false;
+    }
+    if (cleanSub.isEmpty) {
+      _lastError = 'Subdomain required (e.g. "relay").';
+      notifyListeners();
+      return false;
+    }
+    if (cleanSub.contains('.') || cleanSub.contains('/') || cleanSub.contains(' ')) {
+      _lastError = 'Subdomain must be a single label (no ".", "/", or whitespace).';
+      notifyListeners();
+      return false;
+    }
+    if (_status != CdnStatus.verified) {
+      _lastError = 'Token not verified — verify it first.';
+      notifyListeners();
+      return false;
+    }
+    _isSavingCustomDomain = true;
+    notifyListeners();
+    try {
+      // Validate the zone is reachable with the current token. Reuses the
+      // listZones result to avoid an extra round-trip if we just fetched.
+      final available = _zones.isNotEmpty ? _zones : await listZones();
+      CdnZone? matched;
+      for (final z in available) {
+        if (z.id == cleanZone) {
+          matched = z;
+          break;
+        }
+      }
+      if (matched == null) {
+        _lastError = 'Zone $cleanZone not visible to this token. '
+            'Add Zone:Read for that zone or pick another.';
+        return false;
+      }
+      _customDomain = CdnCustomDomain(
+        zoneId: matched.id,
+        zoneName: matched.name,
+        subdomain: cleanSub,
+      );
+      await _persistCustomDomain();
+      _lastError = null;
+      return true;
+    } finally {
+      _isSavingCustomDomain = false;
+      notifyListeners();
+    }
+  }
+
+  /// Wipe the M1 binding config. Existing deployments retain their bindings
+  /// on disk so [deleteWorkerForNode] can still detach them; only future
+  /// deploys revert to workers.dev only.
+  Future<void> clearCustomDomain() async {
+    _customDomain = null;
+    await _persistCustomDomain();
+    _lastError = null;
+    notifyListeners();
+  }
+
+  /// Compose the per-script host. Each Worker gets a distinct host so multi-
+  /// node deploys don't collide on a single Custom Domain (CF binds one
+  /// hostname → one script).
+  String? _customHostFor(String scriptName) {
+    final cd = _customDomain;
+    if (cd == null) return null;
+    final suffix = _scriptShortSuffix(scriptName);
+    if (suffix == null) return null;
+    return '${cd.subdomain}-$suffix.${cd.zoneName}';
+  }
+
+  /// Extract the trailing 6-hex-digit hash that [_safeWorkerName] always
+  /// appends, mirroring the Go side. Same script → same host.
+  String? _scriptShortSuffix(String scriptName) {
+    if (scriptName.length < 6) return null;
+    final cand = scriptName.substring(scriptName.length - 6);
+    final hex = RegExp(r'^[0-9a-f]{6}$');
+    return hex.hasMatch(cand) ? cand : null;
+  }
+
+  /// Workers Custom Domains attach. Single PUT replaces the older two-step
+  /// (DNS CNAME + Worker route) flow; CF auto-creates DNS + managed cert.
+  /// Returned id lets [_detachWorkerCustomDomain] address the binding later
+  /// without re-resolving by hostname.
+  Future<_WorkerCustomDomainBinding?> _attachWorkerCustomDomain(
+    Dio dio,
+    String hostname,
+    String scriptName,
+    String zoneId,
+  ) async {
+    final r = await dio.put(
+      '$_accountsEndpoint/$_accountId/workers/domains',
+      data: jsonEncode({
+        'hostname': hostname,
+        'service': scriptName,
+        'environment': 'production',
+        'zone_id': zoneId,
+      }),
+      options: Options(headers: {'Content-Type': 'application/json'}),
+    );
+    if (r.statusCode == null || r.statusCode! >= 400) {
+      _lastError = _extractCloudflareError(r.data) ??
+          'Custom domain attach failed (HTTP ${r.statusCode}).';
+      return null;
+    }
+    final body = r.data;
+    if (body is! Map || body['result'] is! Map) {
+      _lastError = 'Unexpected /workers/domains response shape.';
+      return null;
+    }
+    final res = body['result'] as Map;
+    final id = res['id']?.toString();
+    if (id == null || id.isEmpty) {
+      _lastError = 'Custom domain attach returned no id.';
+      return null;
+    }
+    return _WorkerCustomDomainBinding(
+      id: id,
+      hostname: res['hostname']?.toString() ?? hostname,
+    );
+  }
+
+  /// Workers Custom Domains detach. 404 is treated as success (the binding
+  /// is already gone — CF dashboard or another tool may have removed it).
+  /// CF cascades the auto-created DNS record as part of the detach.
+  Future<bool> _detachWorkerCustomDomain(Dio dio, String domainId) async {
+    if (domainId.isEmpty) return true;
+    final r = await dio.delete(
+      '$_accountsEndpoint/$_accountId/workers/domains/$domainId',
+    );
+    final ok = r.statusCode != null &&
+        (r.statusCode! < 400 || r.statusCode == 404);
+    if (!ok) {
+      _lastError = _extractCloudflareError(r.data) ??
+          'Custom domain detach failed (HTTP ${r.statusCode}).';
+    }
+    return ok;
   }
 
   String _safeWorkerName(String nodeId, String label) {
@@ -471,6 +768,8 @@ class CdnDeployment {
     required this.workerHost,
     required this.backend,
     required this.deployedAt,
+    this.customHost,
+    this.customDomainId,
   });
 
   /// The PrivateDeploy cloud node id this Worker fronts (e.g. Vultr instance
@@ -481,7 +780,8 @@ class CdnDeployment {
   final String scriptName;
 
   /// Full hostname under workers.dev, e.g.
-  /// "pd-relay-vultr-9f2c8a.acme.workers.dev".
+  /// "pd-relay-vultr-9f2c8a.acme.workers.dev". Always set even if M1's
+  /// custom-domain binding is also active — used as a fallback path.
   final String workerHost;
 
   /// "host:port" string we wrote into the Worker's BACKEND constant.
@@ -490,12 +790,24 @@ class CdnDeployment {
   /// UTC timestamp of the most recent successful deploy.
   final DateTime deployedAt;
 
+  /// M1: per-script Workers Custom Domain hostname (e.g.
+  /// "relay-9f2c8a.example.com"). Empty when only the workers.dev path
+  /// is bound.
+  final String? customHost;
+
+  /// M1: id returned by PUT /accounts/{aid}/workers/domains. Lets the
+  /// detach call address the binding without re-resolving by hostname.
+  final String? customDomainId;
+
   Map<String, dynamic> toJson() => {
         'nodeId': nodeId,
         'scriptName': scriptName,
         'workerHost': workerHost,
         'backend': backend,
         'deployedAt': deployedAt.toIso8601String(),
+        if (customHost != null && customHost!.isNotEmpty) 'customHost': customHost,
+        if (customDomainId != null && customDomainId!.isNotEmpty)
+          'customDomainId': customDomainId,
       };
 
   factory CdnDeployment.fromJson(Map json) => CdnDeployment(
@@ -506,5 +818,56 @@ class CdnDeployment {
         deployedAt:
             DateTime.tryParse(json['deployedAt']?.toString() ?? '') ??
                 DateTime.fromMillisecondsSinceEpoch(0).toUtc(),
+        customHost: (json['customHost']?.toString().isEmpty ?? true)
+            ? null
+            : json['customHost'].toString(),
+        customDomainId: (json['customDomainId']?.toString().isEmpty ?? true)
+            ? null
+            : json['customDomainId'].toString(),
       );
+}
+
+/// M1 binding config — global, applied to every future deploy. Per-node
+/// uniqueness comes from a script-hash suffix in [_customHostFor].
+class CdnCustomDomain {
+  CdnCustomDomain({
+    required this.zoneId,
+    required this.zoneName,
+    required this.subdomain,
+  });
+
+  final String zoneId;
+  final String zoneName;
+  final String subdomain;
+
+  /// The host pattern shown in the UI: '<subdomain>-<node>.<zoneName>'.
+  /// Per-deployment hostnames substitute the 6-hex script-name hash for
+  /// '<node>'. Used only for preview text — deployment records carry the
+  /// real customHost.
+  String get hostPattern => '$subdomain-<node>.$zoneName';
+
+  Map<String, dynamic> toJson() => {
+        'zoneId': zoneId,
+        'zoneName': zoneName,
+        'subdomain': subdomain,
+      };
+
+  factory CdnCustomDomain.fromJson(Map json) => CdnCustomDomain(
+        zoneId: json['zoneId']?.toString() ?? '',
+        zoneName: json['zoneName']?.toString() ?? '',
+        subdomain: json['subdomain']?.toString() ?? '',
+      );
+}
+
+/// One CF zone visible to the verified token, surfaced to the picker.
+class CdnZone {
+  CdnZone({required this.id, required this.name});
+  final String id;
+  final String name;
+}
+
+class _WorkerCustomDomainBinding {
+  _WorkerCustomDomainBinding({required this.id, required this.hostname});
+  final String id;
+  final String hostname;
 }

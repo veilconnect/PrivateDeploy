@@ -27,6 +27,24 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
   static const _docsUrl =
       'https://github.com/veilconnect/PrivateDeploy/blob/main/docs/cdn-acceleration/README.md';
 
+  // CF dashboard supports prefilling User API token creation via
+  // permissionGroupKeys + name + scope params. We use this to skip the
+  // five-row permission ritual entirely — clicking opens a token form
+  // with the three scopes M1 actually needs already selected.
+  // Source: developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
+  static String get _cfTokenDeeplink {
+    final perms = Uri.encodeComponent(
+      '[{"key":"workers_scripts","type":"edit"},'
+      '{"key":"account_settings","type":"read"},'
+      '{"key":"zone","type":"read"}]',
+    );
+    return 'https://dash.cloudflare.com/profile/api-tokens'
+        '?permissionGroupKeys=$perms'
+        '&name=PrivateDeploy+CDN'
+        '&accountId=*'
+        '&zoneId=all';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -53,9 +71,12 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
               provider: provider,
               isZh: isZh,
               cfTokenDashboard: _cfTokenDashboard,
+              cfTokenDeeplink: _cfTokenDeeplink,
               docsUrl: _docsUrl,
             ),
             if (provider.status == CdnStatus.verified) ...[
+              SizedBox(height: 14.h),
+              _CustomDomainSection(provider: provider, isZh: isZh),
               SizedBox(height: 14.h),
               _NodesSection(
                 provider: provider,
@@ -228,11 +249,13 @@ class _SetupSection extends StatelessWidget {
     required this.provider,
     required this.isZh,
     required this.cfTokenDashboard,
+    required this.cfTokenDeeplink,
     required this.docsUrl,
   });
   final CdnProvider provider;
   final bool isZh;
   final String cfTokenDashboard;
+  final String cfTokenDeeplink;
   final String docsUrl;
 
   @override
@@ -253,15 +276,19 @@ class _SetupSection extends StatelessWidget {
               n: 1,
               title: isZh ? '生成 Cloudflare API Token' : 'Create a Cloudflare API token',
               body: isZh
-                  ? '在 Cloudflare 后台创建一个 API token,模板选 '
-                      '"Edit Cloudflare Workers"。点下方按钮拷贝链接到剪贴板。'
-                  : 'Create an API token in the Cloudflare dashboard using the '
-                      '"Edit Cloudflare Workers" template. Tap below to copy '
-                      'the URL.',
+                  ? '点下方按钮拷贝链接,在浏览器打开 — Cloudflare 会预填好我们需要的 '
+                      '3 行权限 (Workers Scripts:Edit / Account Settings:Read / '
+                      'Zone:Read),点 Continue → Create Token,然后把 Token 拷回 '
+                      'Step 2。'
+                  : 'Tap below to copy the prefilled URL — Cloudflare will '
+                      'pre-select the three permissions PrivateDeploy needs '
+                      '(Workers Scripts:Edit / Account Settings:Read / '
+                      'Zone:Read). Hit Continue → Create Token in Cloudflare, '
+                      'then paste the token into Step 2.',
               actionLabel:
-                  isZh ? '拷贝 Cloudflare 链接' : 'Copy Cloudflare URL',
+                  isZh ? '拷贝预填链接 (推荐)' : 'Copy prefilled URL (recommended)',
               onAction: () =>
-                  _copyToClipboard(context, cfTokenDashboard, isZh: isZh),
+                  _copyToClipboard(context, cfTokenDeeplink, isZh: isZh),
             ),
             _step(
               context,
@@ -463,6 +490,225 @@ class _SetupSection extends StatelessWidget {
     );
     if (ok != true || !context.mounted) return;
     await context.read<CdnProvider>().clear();
+  }
+}
+
+/// M1 — Workers Custom Domain binding section. Visible only when the
+/// token is verified. Lazy-loads zones the first time the toggle is
+/// flipped on (many users have Workers-only tokens with zero zones, so
+/// don't fetch on mount).
+class _CustomDomainSection extends StatefulWidget {
+  const _CustomDomainSection({required this.provider, required this.isZh});
+  final CdnProvider provider;
+  final bool isZh;
+
+  @override
+  State<_CustomDomainSection> createState() => _CustomDomainSectionState();
+}
+
+class _CustomDomainSectionState extends State<_CustomDomainSection> {
+  bool _enabled = false;
+  String? _zoneId;
+  late final TextEditingController _subdomainCtl;
+
+  @override
+  void initState() {
+    super.initState();
+    _subdomainCtl = TextEditingController(text: 'relay');
+    final cd = widget.provider.customDomain;
+    if (cd != null) {
+      _enabled = true;
+      _zoneId = cd.zoneId;
+      _subdomainCtl.text = cd.subdomain;
+    }
+  }
+
+  @override
+  void didUpdateWidget(_CustomDomainSection old) {
+    super.didUpdateWidget(old);
+    final cd = widget.provider.customDomain;
+    if (cd != null && _zoneId != cd.zoneId) {
+      _zoneId = cd.zoneId;
+      _subdomainCtl.text = cd.subdomain;
+      _enabled = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _subdomainCtl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _onToggle(bool next) async {
+    setState(() => _enabled = next);
+    if (next && widget.provider.zones.isEmpty) {
+      await widget.provider.listZones();
+    }
+  }
+
+  Future<void> _onSave() async {
+    final zid = _zoneId;
+    final sub = _subdomainCtl.text.trim();
+    if (zid == null || zid.isEmpty || sub.isEmpty) return;
+    final ok = await widget.provider.setCustomDomain(zid, sub);
+    if (!mounted) return;
+    final isZh = widget.isZh;
+    final msg = ok
+        ? (isZh ? '已保存自定义域名绑定' : 'Custom domain saved')
+        : (widget.provider.lastError ??
+            (isZh ? '保存失败' : 'Save failed'));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _onClear() async {
+    await widget.provider.clearCustomDomain();
+    if (!mounted) return;
+    setState(() => _enabled = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isZh = widget.isZh;
+    final p = widget.provider;
+    final zones = p.zones;
+    final loading = p.isZonesLoading;
+    final saving = p.isSavingCustomDomain;
+
+    final previewHost = (() {
+      final sub = _subdomainCtl.text.trim();
+      if (sub.isEmpty) return '';
+      final zone = zones.firstWhere(
+        (z) => z.id == _zoneId,
+        orElse: () => CdnZone(id: '', name: ''),
+      );
+      if (zone.id.isEmpty) return '';
+      return '$sub-<node>.${zone.name}';
+    })();
+
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(14.w),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isZh ? '自定义域名 (可选)' : 'Custom domain (optional)',
+              style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+            ),
+            SizedBox(height: 6.h),
+            Text(
+              isZh
+                  ? '把 Worker 同时绑定到你 Cloudflare 上的某个域名 (例如 '
+                      'relay-<node>.example.com)。部分蜂窝运营商会针对 '
+                      '*.workers.dev 做指纹/投毒,自定义域名能绕开。'
+                  : 'Bind the Worker to a domain on your Cloudflare zone '
+                      '(e.g. relay-<node>.example.com). Some carriers '
+                      'fingerprint or DNS-poison *.workers.dev; a personal '
+                      'domain bypasses that.',
+              style: TextStyle(
+                  fontSize: 12.sp, height: 1.5, color: Colors.grey[700]),
+            ),
+            SizedBox(height: 8.h),
+            Row(
+              children: [
+                Switch(value: _enabled, onChanged: _onToggle),
+                SizedBox(width: 8.w),
+                Text(
+                  isZh ? '启用自定义域名' : 'Use custom domain',
+                  style: TextStyle(fontSize: 13.sp),
+                ),
+              ],
+            ),
+            if (_enabled) ...[
+              SizedBox(height: 8.h),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (zones.isEmpty)
+                Text(
+                  isZh
+                      ? '当前 token 看不到任何活跃的 zone。请先在 Cloudflare 添加站点,'
+                          '并确认 token 拥有该 zone 的 Zone:Read 权限。'
+                      : 'No active zones visible to this token. Add a site to '
+                          'Cloudflare first and make sure your token has '
+                          'Zone:Read for it.',
+                  style: TextStyle(
+                      fontSize: 12.sp, color: const Color(0xFFB05010)),
+                )
+              else ...[
+                DropdownButtonFormField<String>(
+                  initialValue: _zoneId,
+                  decoration: InputDecoration(
+                    labelText: isZh ? '选择域名' : 'Zone',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: zones
+                      .map((z) => DropdownMenuItem(
+                            value: z.id,
+                            child: Text(z.name),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _zoneId = v),
+                ),
+                SizedBox(height: 8.h),
+                TextField(
+                  controller: _subdomainCtl,
+                  decoration: InputDecoration(
+                    labelText: isZh ? '子域名前缀' : 'Subdomain prefix',
+                    helperText: isZh
+                        ? '不含 ".",最终主机 = 前缀-<节点哈希>.根域名'
+                        : 'No "."; final host = prefix-<node-hash>.zone',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                SizedBox(height: 6.h),
+                if (previewHost.isNotEmpty)
+                  Text(
+                    (isZh ? '生效后域名: ' : 'Resulting host: ') + previewHost,
+                    style: TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                  ),
+                SizedBox(height: 10.h),
+                Row(
+                  children: [
+                    ElevatedButton(
+                      onPressed: saving
+                          ? null
+                          : (_zoneId == null ||
+                                  _subdomainCtl.text.trim().isEmpty
+                              ? null
+                              : _onSave),
+                      child: Text(saving
+                          ? (isZh ? '保存中…' : 'Saving…')
+                          : (isZh ? '保存绑定' : 'Save binding')),
+                    ),
+                    SizedBox(width: 8.w),
+                    if (p.customDomain != null)
+                      TextButton(
+                        onPressed: saving ? null : _onClear,
+                        child: Text(isZh ? '关闭并解绑' : 'Disable and unbind'),
+                      ),
+                  ],
+                ),
+                if (p.customDomain != null) ...[
+                  SizedBox(height: 6.h),
+                  Text(
+                    (isZh ? '已绑定: ' : 'Bound: ') +
+                        p.customDomain!.hostPattern,
+                    style: TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                  ),
+                ],
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 

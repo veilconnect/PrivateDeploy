@@ -56,9 +56,17 @@ class PrivateDeployApp extends StatelessWidget {
             // Wire the CDN provider's deployment lookup into the cloud
             // provider's outbound builder so generated node configs include
             // a CDN-fronted variant whenever a Worker has been deployed.
-            cloudProvider.setCdnWorkerHostResolver(
-              (nodeId) => cdnProvider?.deploymentFor(nodeId)?.workerHost,
-            );
+            cloudProvider.setCdnHostResolver((nodeId) {
+              final dep = cdnProvider?.deploymentFor(nodeId);
+              if (dep == null) return null;
+              // Strict M1: prefer the user's Workers Custom Domain when
+              // bound. Falls back to *.workers.dev only when M1 is off,
+              // since workers.dev is the path we actually need M1 to
+              // bypass.
+              final custom = dep.customHost;
+              if (custom != null && custom.isNotEmpty) return custom;
+              return dep.workerHost;
+            });
             return cdnProvider!;
           },
         ),

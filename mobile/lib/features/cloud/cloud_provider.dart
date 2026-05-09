@@ -1920,13 +1920,15 @@ class CloudProvider extends CloudProviderBase {
   }
 
   /// Optional callback the App injects so that node configs include a
-  /// CDN-fronted variant when the user has set one up. Returns the Cloudflare
-  /// Worker hostname for the given node id (e.g. `pd-relay-foo.acme.workers.dev`),
-  /// or null when the node has no Worker deployed.
-  String? Function(String nodeId)? _cdnWorkerHostResolver;
+  /// CDN-fronted variant when the user has set one up. Returns the host for
+  /// the CDN outbound — preferring the M1 Workers Custom Domain
+  /// (e.g. `relay-9f2c8a.example.com`) when bound, falling back to the
+  /// `*.workers.dev` host. Returns null when the node has no Worker
+  /// deployed.
+  String? Function(String nodeId)? _cdnHostResolver;
 
-  void setCdnWorkerHostResolver(String? Function(String nodeId)? resolver) {
-    _cdnWorkerHostResolver = resolver;
+  void setCdnHostResolver(String? Function(String nodeId)? resolver) {
+    _cdnHostResolver = resolver;
   }
 
   String? generateNodeConfig(CloudInstance instance) {
@@ -1948,11 +1950,11 @@ class CloudProvider extends CloudProviderBase {
       instance,
       preferredEndpointLabel: preferredEndpointLabelFor(instance),
       targetPlatform: defaultTargetPlatform,
-      cdnWorkerHost: _cdnWorkerHostResolver?.call(instance.id),
+      cdnHost: _cdnHostResolver?.call(instance.id),
       failoverInstances: failovers,
-      failoverCdnWorkerHostResolver: _cdnWorkerHostResolver == null
+      failoverCdnHostResolver: _cdnHostResolver == null
           ? null
-          : (failover) => _cdnWorkerHostResolver?.call(failover.id),
+          : (failover) => _cdnHostResolver?.call(failover.id),
     );
   }
 
