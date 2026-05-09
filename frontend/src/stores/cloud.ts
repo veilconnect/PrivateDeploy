@@ -4,6 +4,7 @@ import { reactive, ref, shallowRef, computed, watch } from 'vue'
 import { logError, logInfo } from '@/utils/logger'
 
 import { useAppSettingsStore } from './appSettings'
+import { useCdnStore } from './cdn'
 import {
   type CloudNodeStatus,
   type ProtocolHealthMap,
@@ -148,6 +149,7 @@ export const useCloudStore = defineStore('cloud', () => {
 
   // ─── Subscription & Profile Apply ────────────────────────────────────────────
 
+  const cdnStore = useCdnStore()
   const subscriptionApply = createSubscriptionApply({
     protocolHealth,
     protocolHealthLoaded,
@@ -156,6 +158,7 @@ export const useCloudStore = defineStore('cloud', () => {
     appSettingsStore,
     kernelApiStore,
     reloadKernel,
+    cdnDeploymentFor: (nodeId) => cdnStore.deploymentFor(nodeId),
   })
 
   const {

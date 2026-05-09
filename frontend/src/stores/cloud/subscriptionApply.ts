@@ -42,7 +42,7 @@ import { ensureSmartAutoRouting } from './smartRouting'
 
 import type { ManagedCloudNode } from './types'
 import type { Subscription } from '@/types/app'
-import type { CloudNode, ConnectivityResult } from '@/types/cloud'
+import type { CdnDeployment, CloudNode, ConnectivityResult } from '@/types/cloud'
 import type { Ref, ShallowRef } from 'vue'
 
 export type SubscriptionApplyDeps = {
@@ -75,6 +75,7 @@ export type SubscriptionApplyDeps = {
     removeProxyFromGroups: (id: string) => void
   }
   reloadKernel: (reason: string, options?: { allowStartWhenStopped?: boolean }) => Promise<void>
+  cdnDeploymentFor?: (nodeId: string) => CdnDeployment | null
 }
 
 export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
@@ -86,6 +87,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     appSettingsStore,
     kernelApiStore,
     reloadKernel,
+    cdnDeploymentFor,
   } = deps
 
   const loadProtocolHealth = async () => {
@@ -295,6 +297,46 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
             },
           },
         })
+      })
+    }
+
+    // 3b. CDN-fronted VLESS (Cloudflare Worker WS↔TCP relay).
+    // Mirrors mobile/lib/features/cloud/cloud_node_config_builder.dart so a
+    // failover-via-CDN path is available when carriers SYN-drop the bare VPS
+    // IP (typical on mobile carrier cellular). Only added when:
+    //   - a Worker is deployed for this node (workerHost known),
+    //   - the deploy script provisioned the plain-VLESS relay port on the VPS,
+    //   - the node has a UUID we can authenticate with end-to-end.
+    // The outbound talks to the CF anycast edge (workerHost:443 over TLS+WS);
+    // CF terminates TLS, the Worker dials the VPS at vlessRelayPort, and the
+    // VPS terminates the inner VLESS auth. CF holds no credentials.
+    const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
+    const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
+    if (
+      cdnWorkerHost &&
+      node.vlessRelayPort &&
+      node.vlessRelayPort > 0 &&
+      node.vlessUUID
+    ) {
+      outbounds.push({
+        type: 'vless',
+        tag: `${node.label}-cdn`,
+        server: cdnWorkerHost,
+        server_port: 443,
+        uuid: node.vlessUUID,
+        transport: {
+          type: 'ws',
+          path: '/?ed=2560',
+          headers: { Host: cdnWorkerHost },
+        },
+        tls: {
+          enabled: true,
+          server_name: cdnWorkerHost,
+          utls: {
+            enabled: true,
+            fingerprint: 'chrome',
+          },
+        },
       })
     }
 
