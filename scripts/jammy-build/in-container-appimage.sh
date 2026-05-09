@@ -83,6 +83,19 @@ linuxdeploy \
 # linuxdeploy-plugin-gtk does NOT bundle WebKitWebProcess / NetworkProcess
 # (those are exec'd as separate binaries at runtime). Ship them ourselves and
 # patch the AppRun to point WEBKIT_EXEC_PATH at the bundled directory.
+# Sidecar: tray + dbus runs in a separate process so godbus's package init()
+# never touches the WebKit/JSC main process address space. Copy AFTER
+# linuxdeploy has finished its dep-walking — its gtk plugin invokes ldd on
+# every ELF inside the AppDir and aborts with "Failed to run ldd: exit 1"
+# on stripped Go binaries (tested with both stripped and unstripped builds
+# of the same binary; failure is reproducible inside the container only).
+echo "==> Step C0: copy tray sidecar (post-linuxdeploy so it isn't ldd-walked)"
+mkdir -p "${APP_DIR}/usr/lib/privatedeploy"
+if [[ -x build/bin/privatedeploy-tray ]]; then
+    cp build/bin/privatedeploy-tray "${APP_DIR}/usr/lib/privatedeploy/privatedeploy-tray"
+    chmod +x "${APP_DIR}/usr/lib/privatedeploy/privatedeploy-tray"
+fi
+
 echo "==> Step C: bundle WebKit subprocess executables + LD_PRELOAD path-rewrite shim"
 mkdir -p "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle"
 cp /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/WebKitNetworkProcess \

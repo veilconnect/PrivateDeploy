@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/zalando/go-keyring"
 )
 
 const (
@@ -90,15 +88,7 @@ func saveProviderAPIKey(configPath, provider, apiKey string) error {
 		return writeFileSecret(storeDir, configPath, provider, secret)
 	}
 
-	if err := keyring.Set(keyringServiceName, providerSecretKey(configPath, provider), secret); err != nil {
-		return fmt.Errorf(
-			"failed to store %s API key in system keyring: %w (set %s for explicit file-backed fallback in headless environments)",
-			provider,
-			err,
-			secretStoreDirEnv,
-		)
-	}
-	return nil
+	return platformSaveSecret(configPath, provider, secret)
 }
 
 func loadProviderAPIKey(configPath, provider string) (string, error) {
@@ -107,19 +97,7 @@ func loadProviderAPIKey(configPath, provider string) (string, error) {
 		return readFileSecret(storeDir, configPath, provider)
 	}
 
-	value, err := keyring.Get(keyringServiceName, providerSecretKey(configPath, provider))
-	if err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
-			return "", errSecretNotFound
-		}
-		return "", fmt.Errorf("failed to read %s API key from system keyring: %w", provider, err)
-	}
-
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", errSecretNotFound
-	}
-	return value, nil
+	return platformLoadSecret(configPath, provider)
 }
 
 func deleteProviderAPIKey(configPath, provider string) error {
@@ -132,10 +110,7 @@ func deleteProviderAPIKey(configPath, provider string) error {
 		return nil
 	}
 
-	if err := keyring.Delete(keyringServiceName, providerSecretKey(configPath, provider)); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return fmt.Errorf("failed to delete %s API key from system keyring: %w", provider, err)
-	}
-	return nil
+	return platformDeleteSecret(configPath, provider)
 }
 
 func providerSecretKey(configPath, provider string) string {
@@ -196,4 +171,16 @@ func cloneStringMap(input map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// linuxSecretStoreDir is the default file-backed secret store location on
+// Linux. We always use it (instead of the Secret Service / godbus path) so
+// that bridge/cloud doesn't transitively pull github.com/godbus/dbus/v5 into
+// the main binary — its package init() races WebKitGTK's JSC initialization
+// and crashes the process at gtk_main on noble.
+func linuxDefaultSecretStoreDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "PrivateDeploy", "secrets")
+	}
+	return ""
 }

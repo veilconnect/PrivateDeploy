@@ -1,95 +1,248 @@
 package bridge
 
 import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 
-	"github.com/energye/systray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"privatedeploy/bridge/trayipc"
 )
 
-func CreateTray(a *App, icon []byte) (trayStart, trayEnd func()) {
-	return systray.RunWithExternalLoop(func() {
-		systray.SetIcon(icon)
-		systray.SetTooltip("PrivateDeploy")
-
-		systray.SetOnRClick(func(menu systray.IMenu) { menu.ShowMenu() })
-		systray.SetOnClick(func(menu systray.IMenu) {
-			if Env.OS == "darwin" {
-				menu.ShowMenu()
-			} else {
-				a.ShowMainWindow()
-			}
-		})
-
-		// Ensure the tray is still available if rolling-release fails
-		addClickMenuItem("Show", "Show", func() { a.ShowMainWindow() })
-		addClickMenuItem("Restart", "Restart", func() { a.RestartApp() })
-		addClickMenuItem("Exit", "Exit", func() { a.ExitApp() })
-	}, nil)
+// trayProc owns the privatedeploy-tray sidecar. We talk to it via stdin/stdout
+// JSON-lines — keeps godbus/systray's package init() out of the main binary's
+// address space (where it conflicts with WebKitGTK's JSC initialization).
+type trayProc struct {
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	app      *App
+	idSeq    atomic.Uint64
+	handlers sync.Map // id → func()
 }
 
+var tray = &trayProc{}
+
+// CreateTray spawns the sidecar and returns a (start, stop) pair. The start
+// function performs the initial menu population once the sidecar reports
+// "ready". The signature matches the previous CreateTray so main.go is
+// unchanged.
+func CreateTray(a *App, icon []byte) (trayStart, trayEnd func()) {
+	tray.app = a
+
+	if err := tray.spawn(icon); err != nil {
+		log.Printf("[Tray] sidecar spawn failed: %v — running without tray", err)
+		return func() {}, func() {}
+	}
+
+	start := func() {
+		tray.mu.Lock()
+		defer tray.mu.Unlock()
+		// Default click bindings on the tray icon itself
+		tray.send(trayipc.Cmd{Op: "init", Tooltip: "PrivateDeploy", IconB64: encodeIcon(icon)})
+		// Fallback menu items in case the frontend never calls UpdateTrayMenus
+		tray.addItemLocked("__show", "Show", "Show", false, func() { a.ShowMainWindow() })
+		tray.addItemLocked("__restart", "Restart", "Restart", false, func() { a.RestartApp() })
+		tray.addItemLocked("__exit", "Exit", "Exit", false, func() { a.ExitApp() })
+	}
+
+	stop := func() {
+		tray.mu.Lock()
+		defer tray.mu.Unlock()
+		_ = tray.sendLocked(trayipc.Cmd{Op: "quit"})
+	}
+	return start, stop
+}
+
+func encodeIcon(icon []byte) string {
+	if len(icon) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(icon)
+}
+
+func (t *trayProc) spawn(icon []byte) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Look for the sidecar in three places, in order:
+	//   1. Same dir as the main binary (deb install: /usr/lib/privatedeploy/)
+	//   2. ../lib/privatedeploy/ relative to main binary (AppImage: usr/bin
+	//      → usr/lib/privatedeploy/privatedeploy-tray)
+	//   3. PATH (dev fallback after `go build ./cmd/privatedeploy-tray`)
+	candidates := []string{
+		filepath.Join(filepath.Dir(exePath), "privatedeploy-tray"),
+		filepath.Join(filepath.Dir(exePath), "..", "lib", "privatedeploy", "privatedeploy-tray"),
+	}
+	var sidecar string
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			sidecar = c
+			break
+		}
+	}
+	if sidecar == "" {
+		if p, err := exec.LookPath("privatedeploy-tray"); err == nil {
+			sidecar = p
+		} else {
+			return fmt.Errorf("privatedeploy-tray not found next to %q (searched %v): %w", exePath, candidates, err)
+		}
+	}
+
+	cmd := exec.Command(sidecar)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	t.cmd = cmd
+	t.stdin = stdin
+
+	go t.reader(stdout)
+	return nil
+}
+
+func (t *trayProc) reader(r io.ReadCloser) {
+	defer r.Close()
+	scan := bufio.NewScanner(r)
+	scan.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scan.Scan() {
+		var ev trayipc.Event
+		if err := json.Unmarshal(scan.Bytes(), &ev); err != nil {
+			continue
+		}
+		switch ev.Op {
+		case "click":
+			if h, ok := t.handlers.Load(ev.ID); ok {
+				go h.(func())()
+			}
+		case "tray_click":
+			if t.app != nil {
+				if Env.OS == "darwin" {
+					// macOS shows menu on click
+				} else {
+					t.app.ShowMainWindow()
+				}
+			}
+		}
+	}
+}
+
+func (t *trayProc) sendLocked(c trayipc.Cmd) error {
+	if t.stdin == nil {
+		return errors.New("tray sidecar not running")
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	_, err = t.stdin.Write(b)
+	return err
+}
+
+func (t *trayProc) send(c trayipc.Cmd) {
+	if err := t.sendLocked(c); err != nil {
+		log.Printf("[Tray] send: %v", err)
+	}
+}
+
+func (t *trayProc) nextID() string {
+	return "id" + strconv.FormatUint(t.idSeq.Add(1), 10)
+}
+
+func (t *trayProc) addItemLocked(id, title, tooltip string, checked bool, click func()) string {
+	if id == "" {
+		id = t.nextID()
+	}
+	t.handlers.Store(id, click)
+	t.sendLocked(trayipc.Cmd{Op: "add_item", ID: id, Title: title, Tooltip: tooltip, Checked: checked})
+	return id
+}
+
+func (t *trayProc) addSubItemLocked(parentID, id, title, tooltip string, checked bool, click func()) string {
+	if id == "" {
+		id = t.nextID()
+	}
+	t.handlers.Store(id, click)
+	t.sendLocked(trayipc.Cmd{Op: "add_sub_item", ParentID: parentID, ID: id, Title: title, Tooltip: tooltip, Checked: checked})
+	return id
+}
+
+// UpdateTrayMenus replaces the dynamic menu portion. Called by the frontend.
 func (a *App) UpdateTrayMenus(menus []MenuItem) {
 	log.Printf("UpdateTrayMenus")
-
-	systray.ResetMenu()
-
-	for _, menu := range menus {
-		createMenuItem(menu, a, nil)
+	tray.mu.Lock()
+	defer tray.mu.Unlock()
+	tray.handlers = sync.Map{}
+	tray.send(trayipc.Cmd{Op: "reset_menu"})
+	for _, m := range menus {
+		tray.createMenuItemLocked(m, a, "")
 	}
 }
 
-func addClickMenuItem(title, tooltip string, action func()) *systray.MenuItem {
-	m := systray.AddMenuItem(title, tooltip)
-	m.Click(action)
-	return m
-}
-
-func createMenuItem(menu MenuItem, a *App, parent *systray.MenuItem) {
-	if menu.Hidden {
+func (t *trayProc) createMenuItemLocked(m MenuItem, a *App, parentID string) {
+	if m.Hidden {
 		return
 	}
-	switch menu.Type {
+	switch m.Type {
 	case "item":
-		var m *systray.MenuItem
-		if parent == nil {
-			m = systray.AddMenuItem(menu.Text, menu.Tooltip)
+		event := m.Event
+		click := func() { go runtime.EventsEmit(a.Ctx, "onMenuItemClick", event) }
+		var id string
+		if parentID == "" {
+			id = t.addItemLocked("", m.Text, m.Tooltip, m.Checked, click)
 		} else {
-			m = parent.AddSubMenuItem(menu.Text, menu.Tooltip)
+			id = t.addSubItemLocked(parentID, "", m.Text, m.Tooltip, m.Checked, click)
 		}
-
-		m.Click(func() { go runtime.EventsEmit(a.Ctx, "onMenuItemClick", menu.Event) })
-
-		if menu.Checked {
-			m.Check()
-		}
-
-		for _, child := range menu.Children {
-			createMenuItem(child, a, m)
+		for _, child := range m.Children {
+			t.createMenuItemLocked(child, a, id)
 		}
 	case "separator":
-		systray.AddSeparator()
+		t.send(trayipc.Cmd{Op: "add_separator"})
 	}
 }
 
-func (a *App) UpdateTray(tray TrayContent) {
-	if tray.Icon != "" {
-		ico, err := os.ReadFile(GetPath(tray.Icon))
-		if err == nil {
-			systray.SetIcon(ico)
+func (a *App) UpdateTray(traySpec TrayContent) {
+	tray.mu.Lock()
+	defer tray.mu.Unlock()
+	if traySpec.Icon != "" {
+		if ico, err := os.ReadFile(GetPath(traySpec.Icon)); err == nil {
+			tray.send(trayipc.Cmd{Op: "set_icon", IconB64: encodeIcon(ico)})
 		}
 	}
-	if tray.Title != "" {
-		systray.SetTitle(tray.Title)
-		runtime.WindowSetTitle(a.Ctx, tray.Title)
+	if traySpec.Title != "" {
+		tray.send(trayipc.Cmd{Op: "set_title", Value: traySpec.Title})
+		runtime.WindowSetTitle(a.Ctx, traySpec.Title)
 	}
-	if tray.Tooltip != "" {
-		systray.SetTooltip(tray.Tooltip)
+	if traySpec.Tooltip != "" {
+		tray.send(trayipc.Cmd{Op: "set_tooltip", Value: traySpec.Tooltip})
 	}
 }
 
 func (a *App) ExitApp() {
-	systray.Quit()
+	tray.mu.Lock()
+	tray.send(trayipc.Cmd{Op: "quit"})
+	tray.mu.Unlock()
 	runtime.Quit(a.Ctx)
 	os.Exit(0)
 }

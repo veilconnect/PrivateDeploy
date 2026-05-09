@@ -62,6 +62,13 @@ GOOS=linux GOARCH=amd64 wails build \
     -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
     -o "${APP_DISPLAY_NAME}"
 
+echo "==> Step 3b: build privatedeploy-tray sidecar (isolates godbus/systray)"
+GOOS=linux GOARCH=amd64 go build \
+    -trimpath -buildvcs=false \
+    -ldflags="-X privatedeploy/bridge.AppVersion=v${VERSION}" \
+    -o "build/bin/privatedeploy-tray" \
+    ./cmd/privatedeploy-tray/
+
 if [[ "${SKIP_DEB_PACKAGING:-0}" = "1" ]]; then
     echo "==> SKIP_DEB_PACKAGING=1: stopping after compile (binary at build/bin/${APP_DISPLAY_NAME})"
     exit 0
@@ -74,6 +81,11 @@ mkdir -p "${STAGING_DIR}"/{usr/bin,usr/lib/${APP_NAME},usr/lib/${APP_NAME}/lib,u
 
 cp "build/bin/${APP_DISPLAY_NAME}" "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}.bin"
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}.bin"
+
+# Tray sidecar — main binary spawns this child process to run systray + dbus
+# so godbus's package init() never lives in the WebKit/JSC main address space.
+cp "build/bin/privatedeploy-tray" "${STAGING_DIR}/usr/lib/${APP_NAME}/privatedeploy-tray"
+chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/privatedeploy-tray"
 
 # Bundle the full transitive .so closure of libwebkit2gtk-4.0 (minus glibc /
 # kernel-level libs that must match the host kernel) so the binary can run
