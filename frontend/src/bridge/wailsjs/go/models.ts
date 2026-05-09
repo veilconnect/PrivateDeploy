@@ -279,7 +279,39 @@ export namespace bridge {
 }
 
 export namespace cdn {
-	
+
+	export class CustomDomain {
+	    zoneId?: string;
+	    zoneName?: string;
+	    subdomain?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CustomDomain(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.zoneId = source["zoneId"];
+	        this.zoneName = source["zoneName"];
+	        this.subdomain = source["subdomain"];
+	    }
+	}
+	export class Zone {
+	    id: string;
+	    name: string;
+	    status?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Zone(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.status = source["status"];
+	    }
+	}
 	export class Deployment {
 	    nodeId: string;
 	    scriptName: string;
@@ -287,11 +319,15 @@ export namespace cdn {
 	    backend: string;
 	    // Go type: time
 	    deployedAt: any;
-	
+	    customHost?: string;
+	    zoneId?: string;
+	    routeId?: string;
+	    dnsRecordId?: string;
+
 	    static createFrom(source: any = {}) {
 	        return new Deployment(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.nodeId = source["nodeId"];
@@ -299,6 +335,10 @@ export namespace cdn {
 	        this.workerHost = source["workerHost"];
 	        this.backend = source["backend"];
 	        this.deployedAt = this.convertValues(source["deployedAt"], null);
+	        this.customHost = source["customHost"];
+	        this.zoneId = source["zoneId"];
+	        this.routeId = source["routeId"];
+	        this.dnsRecordId = source["dnsRecordId"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -327,11 +367,12 @@ export namespace cdn {
 	    lastError?: string;
 	    workersDevExample?: string;
 	    deployments: Record<string, Deployment>;
-	
+	    customDomain?: CustomDomain;
+
 	    static createFrom(source: any = {}) {
 	        return new State(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.status = source["status"];
@@ -341,6 +382,7 @@ export namespace cdn {
 	        this.lastError = source["lastError"];
 	        this.workersDevExample = source["workersDevExample"];
 	        this.deployments = this.convertValues(source["deployments"], Deployment, true);
+	        this.customDomain = this.convertValues(source["customDomain"], CustomDomain);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

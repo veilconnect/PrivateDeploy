@@ -11,6 +11,10 @@ export function CleanInvalidCloudNodes():Promise<bridge.FlagResult>;
 
 export function ClearCdn():Promise<bridge.FlagResult>;
 
+export function ClearCdnCustomDomain():Promise<bridge.FlagResult>;
+
+export function ClearCdnCustomDomainTyped():Promise<cdn.State>;
+
 export function ClearCdnTyped():Promise<cdn.State>;
 
 export function CloseMMDB(arg1:string,arg2:string):Promise<bridge.FlagResult>;
@@ -81,6 +85,10 @@ export function IsStartup():Promise<boolean>;
 
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
 
+export function ListCdnZones():Promise<bridge.FlagResult>;
+
+export function ListCdnZonesTyped():Promise<Array<cdn.Zone>>;
+
 export function ListCloudAvailability(arg1:string):Promise<bridge.FlagResult>;
 
 export function ListCloudAvailabilityTyped(arg1:string):Promise<Array<string>>;
@@ -130,6 +138,10 @@ export function SaveCloudConfig(arg1:string):Promise<bridge.FlagResult>;
 export function SaveCloudConfigTyped(arg1:cloud.ProviderConfig):Promise<void>;
 
 export function ScoreCloudRegions(arg1:string):Promise<bridge.FlagResult>;
+
+export function SetCdnCustomDomain(arg1:string,arg2:string):Promise<bridge.FlagResult>;
+
+export function SetCdnCustomDomainTyped(arg1:string,arg2:string):Promise<cdn.State>;
 
 export function SetCloudProvider(arg1:string):Promise<bridge.FlagResult>;
 

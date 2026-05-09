@@ -14,6 +14,14 @@ export function ClearCdn() {
   return window['go']['bridge']['App']['ClearCdn']();
 }
 
+export function ClearCdnCustomDomain() {
+  return window['go']['bridge']['App']['ClearCdnCustomDomain']();
+}
+
+export function ClearCdnCustomDomainTyped() {
+  return window['go']['bridge']['App']['ClearCdnCustomDomainTyped']();
+}
+
 export function ClearCdnTyped() {
   return window['go']['bridge']['App']['ClearCdnTyped']();
 }
@@ -154,6 +162,14 @@ export function KillProcess(arg1, arg2) {
   return window['go']['bridge']['App']['KillProcess'](arg1, arg2);
 }
 
+export function ListCdnZones() {
+  return window['go']['bridge']['App']['ListCdnZones']();
+}
+
+export function ListCdnZonesTyped() {
+  return window['go']['bridge']['App']['ListCdnZonesTyped']();
+}
+
 export function ListCloudAvailability(arg1) {
   return window['go']['bridge']['App']['ListCloudAvailability'](arg1);
 }
@@ -252,6 +268,14 @@ export function SaveCloudConfigTyped(arg1) {
 
 export function ScoreCloudRegions(arg1) {
   return window['go']['bridge']['App']['ScoreCloudRegions'](arg1);
+}
+
+export function SetCdnCustomDomain(arg1, arg2) {
+  return window['go']['bridge']['App']['SetCdnCustomDomain'](arg1, arg2);
+}
+
+export function SetCdnCustomDomainTyped(arg1, arg2) {
+  return window['go']['bridge']['App']['SetCdnCustomDomainTyped'](arg1, arg2);
 }
 
 export function SetCloudProvider(arg1) {
