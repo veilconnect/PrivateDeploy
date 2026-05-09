@@ -312,12 +312,13 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     // VPS terminates the inner VLESS auth. CF holds no credentials.
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
-    if (
-      cdnWorkerHost &&
-      node.vlessRelayPort &&
+    const cdnCustomHost = cdnDeployment?.customHost?.trim()
+    const cdnEligible =
+      !!cdnDeployment &&
+      !!node.vlessRelayPort &&
       node.vlessRelayPort > 0 &&
-      node.vlessUUID
-    ) {
+      !!node.vlessUUID
+    if (cdnEligible && cdnWorkerHost) {
       outbounds.push({
         type: 'vless',
         tag: `${node.label}-cdn`,
@@ -332,6 +333,33 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
         tls: {
           enabled: true,
           server_name: cdnWorkerHost,
+          utls: {
+            enabled: true,
+            fingerprint: 'chrome',
+          },
+        },
+      })
+    }
+    // 3c. M1 custom-domain Worker route. Same Worker, served from a user
+    // zone (e.g. relay.example.com) instead of *.workers.dev. urltest
+    // picks whichever path responds first; on networks where the
+    // workers.dev pattern is fingerprinted/throttled the custom-host
+    // variant wins automatically without any client-side detection.
+    if (cdnEligible && cdnCustomHost && cdnCustomHost !== cdnWorkerHost) {
+      outbounds.push({
+        type: 'vless',
+        tag: `${node.label}-cdn-custom`,
+        server: cdnCustomHost,
+        server_port: 443,
+        uuid: node.vlessUUID,
+        transport: {
+          type: 'ws',
+          path: '/?ed=2560',
+          headers: { Host: cdnCustomHost },
+        },
+        tls: {
+          enabled: true,
+          server_name: cdnCustomHost,
           utls: {
             enabled: true,
             fingerprint: 'chrome',
