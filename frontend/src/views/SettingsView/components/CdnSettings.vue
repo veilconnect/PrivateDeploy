@@ -12,6 +12,33 @@ const cdnStore = useCdnStore()
 const tokenInput = ref('')
 const showStep3 = computed(() => cdnStore.isVerified)
 
+// CF dashboard supports prefilling User API token creation via
+// permissionGroupKeys + name + scope params. We use this to skip the
+// "five-row permission ritual" entirely — clicking opens a token form with
+// the three scopes M1 actually needs already selected.
+//
+// Source for the URL schema:
+//   https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
+//
+// The "Edit Cloudflare Workers" preset users typically pick has only
+// Workers Scripts:Edit + Account Settings:Read; using this deeplink also
+// adds Zone:Read so the zone picker works after token verification.
+const CF_TOKEN_DEEPLINK = (() => {
+  const perms = [
+    { key: 'workers_scripts', type: 'edit' },
+    { key: 'account_settings', type: 'read' },
+    { key: 'zone', type: 'read' },
+  ]
+  const params = new URLSearchParams({
+    permissionGroupKeys: JSON.stringify(perms),
+    name: 'PrivateDeploy CDN',
+    accountId: '*',
+    zoneId: 'all',
+  })
+  return `https://dash.cloudflare.com/profile/api-tokens?${params.toString()}`
+})()
+const showScopeHelp = ref(false)
+
 // Custom domain (M1) toggle. The toggle starts ON whenever a binding is
 // already saved on disk so the panel reflects current state, even if the
 // user opens Settings cold. Manually flipping it off here doesn't unbind
@@ -185,13 +212,40 @@ onMounted(async () => {
       <div class="text-14 font-bold pt-4 pb-8">{{ t('cdn.setup.step1') }}</div>
       <div class="text-12 opacity-70 pb-8">{{ t('cdn.setup.step1Body') }}</div>
       <Button
-        type="text"
+        type="primary"
         size="small"
         icon="link"
-        @click="BrowserOpenURL('https://dash.cloudflare.com/profile/api-tokens')"
+        @click="BrowserOpenURL(CF_TOKEN_DEEPLINK)"
       >
-        dash.cloudflare.com/profile/api-tokens
+        {{ t('cdn.setup.createTokenAuto') }}
       </Button>
+      <div class="text-12 pt-8">
+        <Button
+          type="text"
+          size="small"
+          :icon="showScopeHelp ? 'arrowDown' : 'arrowRight'"
+          @click="showScopeHelp = !showScopeHelp"
+        >
+          {{ t('cdn.setup.scopeChecklistTitle') }}
+        </Button>
+      </div>
+      <div v-if="showScopeHelp" class="text-12 opacity-80 pt-4 pl-12">
+        <ul class="font-mono">
+          <li>· Account · Workers Scripts · Edit</li>
+          <li>· Account · Account Settings · Read</li>
+          <li>· Zone · Zone · Read</li>
+        </ul>
+        <div class="pt-8 opacity-70">{{ t('cdn.setup.scopeChecklistNote') }}</div>
+        <Button
+          type="text"
+          size="small"
+          icon="link"
+          class="mt-4"
+          @click="BrowserOpenURL('https://dash.cloudflare.com/profile/api-tokens')"
+        >
+          {{ t('cdn.setup.openTokenList') }}
+        </Button>
+      </div>
     </div>
 
     <div class="px-16 py-8">

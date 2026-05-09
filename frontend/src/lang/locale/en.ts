@@ -1111,7 +1111,12 @@ export default {
     setup: {
       step1: '1. Get a Cloudflare API Token',
       step1Body:
-        'In the Cloudflare dashboard create a token with permission "Account · Workers Scripts · Edit" for the account that owns your workers.dev subdomain.',
+        'Click the button below — Cloudflare will prefill the exact permissions PrivateDeploy needs. Hit Continue → Create Token, then paste the result into step 2.',
+      createTokenAuto: 'Auto-create token (recommended)',
+      scopeChecklistTitle: 'Prefer to create the token by hand?',
+      scopeChecklistNote:
+        'If you skip the prefilled link, make sure your token includes these three permissions. Set Zone Resources to "All zones from an account → your Cloudflare account".',
+      openTokenList: 'Open Cloudflare Tokens list',
       step2: '2. Paste the token below',
       step2Body: 'It will be sent to api.cloudflare.com only — never to PrivateDeploy.',
       step3: '3. Deploy a Worker per node',

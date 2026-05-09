@@ -1200,7 +1200,12 @@ export default {
     setup: {
       step1: '1. 获取 Cloudflare API Token',
       step1Body:
-        '在 Cloudflare 控制台创建 Token，权限选择 "Account · Workers Scripts · Edit"，账号需为已绑定 workers.dev 子域名的账号。',
+        '点下面的按钮，Cloudflare 会预填好需要的权限——直接点 Continue → Create Token，把生成的 Token 粘到下一步。',
+      createTokenAuto: '一键创建 Token (推荐)',
+      scopeChecklistTitle: '想手动创建 / 检查 Token 权限？',
+      scopeChecklistNote:
+        '如果不用上面的一键链接，自己创建 Token 时务必加上这三行权限。Zone Resources 选 “All zones from an account → 你的 Cloudflare 账号”。',
+      openTokenList: '打开 Cloudflare Token 列表',
       step2: '2. 在下方粘贴 Token',
       step2Body: 'Token 仅会发送到 api.cloudflare.com，不会上传到 PrivateDeploy。',
       step3: '3. 为每个节点部署 Worker',
