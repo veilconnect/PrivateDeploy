@@ -485,12 +485,19 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 	customWarn := ""
 	if customDomainCopy.IsSet() {
 		customHost := customDomainCopy.hostForScript(scriptName)
-		bind, err := m.attachWorkerCustomDomain(ctx, token, accountID, customHost, scriptName, customDomainCopy.ZoneID)
-		if err != nil {
-			customWarn = fmt.Sprintf("workers.dev path live, but custom-domain binding failed: %v", err)
+		if customHost == "" {
+			// hostForScript fail-closed (scriptName missing the standard
+			// 6-hex tail). Skip Custom Domain attach — workers.dev path
+			// still works.
+			customWarn = "custom-domain binding skipped: script name lacks standard hash suffix"
 		} else {
-			dep.CustomHost = bind.Hostname
-			dep.CustomDomainID = bind.ID
+			bind, err := m.attachWorkerCustomDomain(ctx, token, accountID, customHost, scriptName, customDomainCopy.ZoneID)
+			if err != nil {
+				customWarn = fmt.Sprintf("workers.dev path live, but custom-domain binding failed: %v", err)
+			} else {
+				dep.CustomHost = bind.Hostname
+				dep.CustomDomainID = bind.ID
+			}
 		}
 	}
 
@@ -638,8 +645,8 @@ func (m *Manager) SetCustomDomain(ctx context.Context, zoneID, subdomain string)
 	if subdomain == "" {
 		return m.State(), errors.New("subdomain required (e.g. \"relay\")")
 	}
-	if strings.ContainsAny(subdomain, " ./") {
-		return m.State(), errors.New("subdomain must be a single label (no '.', '/', or whitespace)")
+	if err := validateDNSLabel(subdomain); err != nil {
+		return m.State(), err
 	}
 
 	m.mu.Lock()
@@ -869,4 +876,29 @@ func escapeJSString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `\'`)
 	return s
+}
+
+// validateDNSLabel enforces RFC 1035 DNS label rules tightened for the
+// CDN subdomain field: lowercase [a-z0-9-], 1-56 chars (leaves room for
+// the "-<6hex>" suffix inside the 63-char total label budget), no
+// leading/trailing hyphen. Returns nil when the label is acceptable.
+func validateDNSLabel(label string) error {
+	if label == "" {
+		return errors.New("subdomain required")
+	}
+	// 56 = 63 (DNS label max) - 1 (separator '-') - 6 (script-hash suffix).
+	if len(label) > 56 {
+		return errors.New("subdomain too long (max 56 chars; needs room for the per-node hash suffix)")
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return errors.New("subdomain cannot start or end with '-'")
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
+			return errors.New("subdomain must be lowercase a-z, 0-9, or '-'")
+		}
+	}
+	return nil
 }

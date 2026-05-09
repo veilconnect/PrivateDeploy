@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -598,13 +599,9 @@ class CdnProvider with ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if (cleanSub.isEmpty) {
-      _lastError = 'Subdomain required (e.g. "relay").';
-      notifyListeners();
-      return false;
-    }
-    if (cleanSub.contains('.') || cleanSub.contains('/') || cleanSub.contains(' ')) {
-      _lastError = 'Subdomain must be a single label (no ".", "/", or whitespace).';
+    final subError = _validateDnsLabel(cleanSub);
+    if (subError != null) {
+      _lastError = subError;
       notifyListeners();
       return false;
     }
@@ -757,13 +754,34 @@ class CdnProvider with ChangeNotifier {
     return name;
   }
 
+  /// SHA-256 → first [length] hex chars. Must match Go bridge/cdn/cdn.go
+  /// `shortHash` byte-for-byte: cross-platform parity (same nodeID → same
+  /// scriptName → same customHost) is the contract that makes Workers
+  /// Custom Domains work across desktop and mobile.
   String _shortHash(String s, {int length = 6}) {
-    var h = 5381;
-    for (final cu in s.codeUnits) {
-      h = ((h << 5) + h + cu) & 0x7fffffff;
-    }
-    final hex = h.toRadixString(16).padLeft(8, '0');
+    final digest = crypto.sha256.convert(utf8.encode(s));
+    final hex = digest.toString();
     return hex.substring(0, min(length, hex.length));
+  }
+
+  /// DNS label rules tightened to lowercase [a-z0-9-], 1-56 chars
+  /// (leaves room for the per-node "-<6hex>" suffix inside the 63-char
+  /// total label budget), no leading/trailing hyphen. Mirrors the Go
+  /// validateDNSLabel in bridge/cdn/cdn.go so both platforms reject
+  /// the same inputs at save time.
+  String? _validateDnsLabel(String label) {
+    if (label.isEmpty) return 'Subdomain required.';
+    if (label.length > 56) {
+      return 'Subdomain too long (max 56 chars; needs room for the per-node hash suffix).';
+    }
+    if (label.startsWith('-') || label.endsWith('-')) {
+      return "Subdomain cannot start or end with '-'.";
+    }
+    final ok = RegExp(r'^[a-z0-9-]+$');
+    if (!ok.hasMatch(label)) {
+      return "Subdomain must be lowercase a-z, 0-9, or '-'.";
+    }
+    return null;
   }
 
   String _escapeJsString(String s) =>

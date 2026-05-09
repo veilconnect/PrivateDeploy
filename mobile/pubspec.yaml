@@ -37,6 +37,7 @@ dependencies:
   permission_handler: ^11.1.0
   package_info_plus: ^9.0.0
   cryptography: ^2.7.0
+  crypto: ^3.0.3
 
   # Notifications
   flutter_local_notifications: ^19.0.0

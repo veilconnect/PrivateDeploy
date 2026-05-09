@@ -77,11 +77,11 @@ func (c *CustomDomain) hostForScript(scriptName string) string {
 	zone := strings.TrimSpace(c.ZoneName)
 	suffix := scriptShortSuffix(scriptName)
 	if suffix == "" {
-		// Defensive fallback for hand-crafted script names that don't end
-		// in the standard 6-hex hash. Still per-script (uses the full
-		// script name) but uglier — exists only to avoid hostname
-		// collisions even in pathological inputs.
-		return scriptName + "." + zone
+		// Fail-closed: a hand-crafted scriptName without the standard
+		// 6-hex tail can't be turned into a stable, DNS-legal hostname,
+		// so we refuse to bind a Custom Domain. Caller treats "" as
+		// "no customHost" and falls back to workers.dev.
+		return ""
 	}
 	return fmt.Sprintf("%s-%s.%s", sub, suffix, zone)
 }
