@@ -128,6 +128,26 @@ func main() {
 		log.Fatalf("relay port %d on %s never came up", relayPort, inst.IPv4)
 	}
 
+	// M1: optionally exercise the custom-domain Worker route. Off by default
+	// so the harness still works for users without a CF zone. Set both env
+	// vars to enable:
+	//   CF_ZONE_ID=<32-char zone id>
+	//   CF_CUSTOM_SUBDOMAIN=relay   (single label; final host = relay.<zone>)
+	zoneID := os.Getenv("CF_ZONE_ID")
+	customSub := os.Getenv("CF_CUSTOM_SUBDOMAIN")
+	if zoneID != "" && customSub != "" {
+		fmt.Printf("\n[M1] bind custom domain: zone=%s subdomain=%s\n", zoneID, customSub)
+		if _, err := cdnMgr.SetCustomDomain(ctx, zoneID, customSub); err != nil {
+			fmt.Printf("  ⚠ SetCustomDomain failed: %v\n", err)
+			fmt.Println("    falling back to workers.dev-only — token may lack Zone:Read or DNS:Edit")
+			zoneID = "" // disable later checks
+		} else {
+			fmt.Println("  ✓ custom domain saved")
+		}
+	} else {
+		fmt.Println("\n[M1] CF_ZONE_ID / CF_CUSTOM_SUBDOMAIN not set — skipping custom-domain test")
+	}
+
 	fmt.Println("\n[3/5] deploy CF Worker via bridge/cdn.DeployWorker...")
 	cdnState, err = cdnMgr.DeployWorker(ctx, inst.ID, inst.Label, inst.IPv4, relayPort)
 	if err != nil {
@@ -143,18 +163,44 @@ func main() {
 		log.Fatalf("no deployment record for %s after deploy", inst.ID)
 	}
 	fmt.Printf("  ✓ worker live: https://%s  backend=%s\n", dep.WorkerHost, dep.Backend)
+	if dep.CustomHost != "" {
+		fmt.Printf("  ✓ custom-domain bound: https://%s (route=%s, dns=%s)\n", dep.CustomHost, dep.RouteID, dep.DNSRecordID)
+	} else if zoneID != "" {
+		fmt.Println("  ⚠ custom domain configured but Deployment has no CustomHost — check cdnState.LastError")
+		if cdnState.LastError != "" {
+			fmt.Printf("    lastError: %s\n", cdnState.LastError)
+		}
+	}
 
 	fmt.Println("\n[4/5] verify Worker accepts WS upgrade (CF edge propagation ~10s)...")
 	time.Sleep(12 * time.Second)
 	if err := probeWorkerWS(dep.WorkerHost); err != nil {
-		fmt.Printf("  ⚠ %v\n", err)
-		fmt.Println("    (Worker deployed but WS probe failed — could be CF cold-start or relay-server not ready)")
+		fmt.Printf("  ⚠ workers.dev: %v\n", err)
+		fmt.Println("    (probably regional reachability DNS interference of *.workers.dev — expected from regional networks)")
 	} else {
-		fmt.Println("  ✓ WS upgrade succeeded — Worker is relaying to backend")
+		fmt.Println("  ✓ workers.dev WS upgrade succeeded")
+	}
+	if dep.CustomHost != "" {
+		// Custom-domain DNS (CF orange cloud) takes a beat to propagate to
+		// the public resolvers we use; one short retry catches the race.
+		fmt.Printf("  probing custom host: %s ...\n", dep.CustomHost)
+		var probeErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			probeErr = probeWorkerWS(dep.CustomHost)
+			if probeErr == nil {
+				fmt.Printf("  ✓ custom-domain WS upgrade succeeded on attempt %d\n", attempt)
+				break
+			}
+			fmt.Printf("  attempt %d: %v\n", attempt, probeErr)
+			time.Sleep(8 * time.Second)
+		}
+		if probeErr != nil {
+			fmt.Printf("  ✗ custom-domain probe failed after retries: %v\n", probeErr)
+		}
 	}
 
 	if *keepNode {
-		fmt.Printf("\n[keep] not destroying. instance=%s worker=%s\n", inst.ID, dep.WorkerHost)
+		fmt.Printf("\n[keep] not destroying. instance=%s worker=%s custom=%s\n", inst.ID, dep.WorkerHost, dep.CustomHost)
 		return
 	}
 
@@ -162,7 +208,14 @@ func main() {
 	if _, err := cdnMgr.DeleteWorker(ctx, inst.ID); err != nil {
 		fmt.Printf("  worker delete err: %v\n", err)
 	} else {
-		fmt.Println("  ✓ worker deleted")
+		fmt.Println("  ✓ worker deleted (route + DNS torn down if M1 was active)")
+	}
+	if zoneID != "" {
+		if _, err := cdnMgr.ClearCustomDomain(); err != nil {
+			fmt.Printf("  custom-domain clear err: %v\n", err)
+		} else {
+			fmt.Println("  ✓ custom-domain config cleared")
+		}
 	}
 	if err := provider.DestroyInstance(ctx, inst.ID); err != nil {
 		fmt.Printf("  destroy err: %v\n", err)
