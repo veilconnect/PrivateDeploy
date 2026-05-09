@@ -130,6 +130,77 @@ func (a *App) DeleteCdnWorkerForNode(nodeID string) FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
+// ListCdnZonesTyped returns the active CF zones the verified token can see.
+// Used by the Settings UI to populate the M1 custom-domain zone picker.
+func (a *App) ListCdnZonesTyped() ([]cdn.Zone, error) {
+	if a.CdnManager == nil {
+		return nil, errors.New("cdn manager not initialized")
+	}
+	return a.CdnManager.ListZones(a.bgCtx())
+}
+
+// ListCdnZones — Vue-friendly variant. Returns Flag=true with JSON-encoded
+// []Zone in Data on success; Flag=false with the error message in Data on
+// failure (e.g. token not verified, network error).
+func (a *App) ListCdnZones() FlagResult {
+	zones, err := a.ListCdnZonesTyped()
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+	data, err := json.Marshal(zones)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// SetCdnCustomDomainTyped persists the M1 binding for future deploys.
+// Returns the new full CdnState so the UI can refresh in one round-trip.
+func (a *App) SetCdnCustomDomainTyped(zoneID, subdomain string) (CdnState, error) {
+	if a.CdnManager == nil {
+		return CdnState{}, errors.New("cdn manager not initialized")
+	}
+	state, err := a.CdnManager.SetCustomDomain(a.bgCtx(), zoneID, subdomain)
+	a.emitCdnEvent("cdn:state", state)
+	return state, err
+}
+
+// SetCdnCustomDomain — Vue-friendly variant. Failure path still attaches
+// state so the UI can render lastError.
+func (a *App) SetCdnCustomDomain(zoneID, subdomain string) FlagResult {
+	state, err := a.SetCdnCustomDomainTyped(zoneID, subdomain)
+	if err != nil {
+		log.Printf("[CdnBridge] set custom domain failed: %v", err)
+		data, _ := json.Marshal(state)
+		return FlagResult{Flag: false, Data: string(data)}
+	}
+	data, _ := json.Marshal(state)
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
+// ClearCdnCustomDomainTyped wipes the M1 binding config. Existing
+// deployments retain their bindings on disk so DeleteWorker can clean them
+// up; only future deploys revert to workers.dev only.
+func (a *App) ClearCdnCustomDomainTyped() (CdnState, error) {
+	if a.CdnManager == nil {
+		return CdnState{}, errors.New("cdn manager not initialized")
+	}
+	state, err := a.CdnManager.ClearCustomDomain()
+	a.emitCdnEvent("cdn:state", state)
+	return state, err
+}
+
+// ClearCdnCustomDomain — Vue-friendly variant.
+func (a *App) ClearCdnCustomDomain() FlagResult {
+	state, err := a.ClearCdnCustomDomainTyped()
+	if err != nil {
+		data, _ := json.Marshal(state)
+		return FlagResult{Flag: false, Data: string(data)}
+	}
+	data, _ := json.Marshal(state)
+	return FlagResult{Flag: true, Data: string(data)}
+}
+
 // lookupCdnBackendForNode finds the cloud instance with the given ID across
 // all enabled providers, returning (host, vlessRelayPort, label).
 func (a *App) lookupCdnBackendForNode(nodeID string) (string, int, string, error) {

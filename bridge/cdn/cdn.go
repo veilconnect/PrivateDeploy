@@ -59,15 +59,25 @@ type State struct {
 	LastError         string                 `json:"lastError,omitempty"`
 	WorkersDevExample string                 `json:"workersDevExample,omitempty"`
 	Deployments       map[string]*Deployment `json:"deployments"`
+	CustomDomain      *CustomDomain          `json:"customDomain,omitempty"`
 }
 
 // Deployment describes one Worker scoped to one cloud node.
+//
+// CustomHost / RouteID / DNSRecordID / ZoneID are populated only when M1's
+// custom-domain binding has been applied. They live on the deployment (not
+// just global config) so DeleteWorker can clean up route+DNS even after the
+// user has changed or cleared the global CustomDomain config.
 type Deployment struct {
-	NodeID     string    `json:"nodeId"`
-	ScriptName string    `json:"scriptName"`
-	WorkerHost string    `json:"workerHost"`
-	Backend    string    `json:"backend"`
-	DeployedAt time.Time `json:"deployedAt"`
+	NodeID       string    `json:"nodeId"`
+	ScriptName   string    `json:"scriptName"`
+	WorkerHost   string    `json:"workerHost"`
+	Backend      string    `json:"backend"`
+	DeployedAt   time.Time `json:"deployedAt"`
+	CustomHost   string    `json:"customHost,omitempty"`
+	ZoneID       string    `json:"zoneId,omitempty"`
+	RouteID      string    `json:"routeId,omitempty"`
+	DNSRecordID  string    `json:"dnsRecordId,omitempty"`
 }
 
 // persistedConfig is the on-disk representation of the verifier state. The
@@ -75,10 +85,11 @@ type Deployment struct {
 // but the desktop Wails app already keeps Vultr/DO API keys in the same
 // data/ directory so we follow the established pattern.
 type persistedConfig struct {
-	Token            string `json:"token,omitempty"`
-	AccountID        string `json:"accountId,omitempty"`
-	AccountEmail     string `json:"accountEmail,omitempty"`
-	WorkersSubdomain string `json:"workersSubdomain,omitempty"`
+	Token            string        `json:"token,omitempty"`
+	AccountID        string        `json:"accountId,omitempty"`
+	AccountEmail     string        `json:"accountEmail,omitempty"`
+	WorkersSubdomain string        `json:"workersSubdomain,omitempty"`
+	CustomDomain     *CustomDomain `json:"customDomain,omitempty"`
 }
 
 // Manager owns CDN state. One per process.
@@ -148,6 +159,12 @@ func (m *Manager) snapshotLocked() State {
 		example = fmt.Sprintf("pd-relay-<your-name>.%s.workers.dev", sub)
 	}
 
+	var custom *CustomDomain
+	if m.cfg.CustomDomain != nil && m.cfg.CustomDomain.IsSet() {
+		c := *m.cfg.CustomDomain
+		custom = &c
+	}
+
 	return State{
 		Status:            status,
 		AccountID:         m.cfg.AccountID,
@@ -156,6 +173,7 @@ func (m *Manager) snapshotLocked() State {
 		LastError:         m.lastError,
 		WorkersDevExample: example,
 		Deployments:       deps,
+		CustomDomain:      custom,
 	}
 }
 
@@ -426,15 +444,57 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		DeployedAt: time.Now().UTC(),
 	}
 
+	// M1: if a CustomDomain is configured, also bind this Worker to a
+	// route under that zone. Failure here is non-fatal — the Worker still
+	// works through workers.dev. We surface the error in lastError so the
+	// user can re-deploy or fix permissions, but we keep the deployment.
+	customDomainCopy, _ := m.cloneCustomDomainConfig()
+	customWarn := ""
+	if customDomainCopy.IsSet() {
+		customHost := customDomainCopy.hostFor()
+		dnsTarget := host // CNAME target = the workers.dev hostname.
+		dnsID, err := m.findOrCreateDNSCNAME(ctx, token, customDomainCopy.ZoneID, customHost, dnsTarget)
+		if err != nil {
+			customWarn = fmt.Sprintf("workers.dev path live, but custom-domain DNS step failed: %v", err)
+		} else {
+			pattern := customHost + "/*"
+			routeID, err := m.findOrCreateWorkerRoute(ctx, token, customDomainCopy.ZoneID, pattern, scriptName)
+			if err != nil {
+				customWarn = fmt.Sprintf("workers.dev path live, but custom-domain route step failed: %v", err)
+			} else {
+				dep.CustomHost = customHost
+				dep.ZoneID = customDomainCopy.ZoneID
+				dep.RouteID = routeID
+				dep.DNSRecordID = dnsID
+			}
+		}
+	}
+
 	m.mu.Lock()
 	m.deployments[nodeID] = dep
-	m.lastError = ""
+	if customWarn != "" {
+		m.lastError = customWarn
+	} else {
+		m.lastError = ""
+	}
 	if err := m.saveDeploymentsLocked(); err != nil {
 		m.lastError = fmt.Sprintf("deployed but failed to persist: %v", err)
 	}
 	state := m.snapshotLocked()
 	m.mu.Unlock()
 	return state, nil
+}
+
+// cloneCustomDomainConfig returns a value-copy of the persisted CustomDomain
+// (zero value if none) plus the auth token. Holds the lock briefly so the
+// caller can run network I/O without blocking other CDN ops.
+func (m *Manager) cloneCustomDomainConfig() (CustomDomain, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.CustomDomain == nil {
+		return CustomDomain{}, m.cfg.Token
+	}
+	return *m.cfg.CustomDomain, m.cfg.Token
 }
 
 // DeleteWorker removes a previously-deployed Worker from CF and local state.
@@ -455,7 +515,26 @@ func (m *Manager) DeleteWorker(ctx context.Context, nodeID string) (State, error
 	token := m.cfg.Token
 	accountID := m.cfg.AccountID
 	scriptName := dep.ScriptName
+	zoneID := dep.ZoneID
+	routeID := dep.RouteID
+	dnsRecordID := dep.DNSRecordID
 	m.mu.Unlock()
+
+	// Tear down the M1 custom-domain bindings first. Both are best-effort:
+	// 404 means the binding is already gone (CF's UI or another tool may
+	// have removed it). A non-404 error is surfaced through lastError but
+	// does not abort the script delete — leaving the CF Worker in place
+	// while route/DNS persist would be the worst outcome.
+	if routeID != "" {
+		if err := m.deleteWorkerRoute(ctx, token, zoneID, routeID); err != nil {
+			m.setLastError(fmt.Sprintf("worker route cleanup failed: %v", err))
+		}
+	}
+	if dnsRecordID != "" {
+		if err := m.deleteDNSRecord(ctx, token, zoneID, dnsRecordID); err != nil {
+			m.setLastError(fmt.Sprintf("custom-domain DNS cleanup failed: %v", err))
+		}
+	}
 
 	deleteURL := fmt.Sprintf("%s/%s/workers/scripts/%s", accountsEndpoint, accountID, scriptName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
@@ -488,6 +567,94 @@ func (m *Manager) DeleteWorker(ctx context.Context, nodeID string) (State, error
 	state := m.snapshotLocked()
 	m.mu.Unlock()
 	return state, nil
+}
+
+// ListZones returns the active zones the verified token can see. Used by
+// the Settings UI to populate the M1 "use custom domain" zone picker.
+func (m *Manager) ListZones(ctx context.Context) ([]Zone, error) {
+	m.mu.Lock()
+	if strings.TrimSpace(m.cfg.AccountID) == "" {
+		m.mu.Unlock()
+		return nil, errors.New("token not verified — verify it first")
+	}
+	token := m.cfg.Token
+	m.mu.Unlock()
+	return m.listZones(ctx, token)
+}
+
+// SetCustomDomain validates that the given zone is reachable with the
+// current token and persists the M1 binding config. Subsequent
+// DeployWorker calls will create a route+DNS pair on this zone in
+// addition to the workers.dev path. Existing deployments are not
+// re-bound — re-deploy them to pick up the change.
+func (m *Manager) SetCustomDomain(ctx context.Context, zoneID, subdomain string) (State, error) {
+	zoneID = strings.TrimSpace(zoneID)
+	subdomain = strings.TrimSpace(subdomain)
+	if zoneID == "" {
+		return m.State(), errors.New("zone id required")
+	}
+	if subdomain == "" {
+		return m.State(), errors.New("subdomain required (e.g. \"relay\")")
+	}
+	if strings.ContainsAny(subdomain, " ./") {
+		return m.State(), errors.New("subdomain must be a single label (no '.', '/', or whitespace)")
+	}
+
+	m.mu.Lock()
+	if strings.TrimSpace(m.cfg.AccountID) == "" {
+		m.mu.Unlock()
+		return m.State(), errors.New("token not verified — verify it first")
+	}
+	token := m.cfg.Token
+	m.mu.Unlock()
+
+	zones, err := m.listZones(ctx, token)
+	if err != nil {
+		m.setLastError(fmt.Sprintf("validating zone: %v", err))
+		return m.State(), err
+	}
+	var matched *Zone
+	for i := range zones {
+		if zones[i].ID == zoneID {
+			matched = &zones[i]
+			break
+		}
+	}
+	if matched == nil {
+		err := fmt.Errorf("zone %s not found in this account (or not active)", zoneID)
+		m.setLastError(err.Error())
+		return m.State(), err
+	}
+
+	m.mu.Lock()
+	m.cfg.CustomDomain = &CustomDomain{
+		ZoneID:    matched.ID,
+		ZoneName:  matched.Name,
+		Subdomain: subdomain,
+	}
+	m.lastError = ""
+	if err := m.saveConfigLocked(); err != nil {
+		m.lastError = fmt.Sprintf("custom domain set, but failed to persist: %v", err)
+	}
+	state := m.snapshotLocked()
+	m.mu.Unlock()
+	return state, nil
+}
+
+// ClearCustomDomain wipes the M1 binding config. Existing deployments keep
+// their custom-domain bindings (and remember zone+route ids on disk) so
+// DeleteWorker can still clean up — only future deploys revert to
+// workers.dev only.
+func (m *Manager) ClearCustomDomain() (State, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.CustomDomain = nil
+	m.lastError = ""
+	if err := m.saveConfigLocked(); err != nil {
+		m.lastError = fmt.Sprintf("custom domain cleared, but failed to persist: %v", err)
+		return m.snapshotLocked(), err
+	}
+	return m.snapshotLocked(), nil
 }
 
 // --- internal helpers ---
