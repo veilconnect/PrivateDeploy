@@ -182,7 +182,10 @@ func resolveBasePath(osName, exePath string) string {
 	exeDir := filepath.Dir(exePath)
 	switch osName {
 	case "linux":
-		if !isLinuxSystemInstallPath(exeDir) {
+		// AppImage mounts a read-only squashfs at /tmp/.mount_xxx/. Always
+		// redirect to the user data dir when running from one, or any other
+		// system install path.
+		if !isLinuxSystemInstallPath(exeDir) && !isAppImageRuntime(exeDir) {
 			return exeDir
 		}
 
@@ -207,6 +210,17 @@ func resolveBasePath(osName, exePath string) string {
 	}
 
 	return exeDir
+}
+
+// isAppImageRuntime returns true when the binary is running from an AppImage
+// FUSE mount (squashfs at /tmp/.mount_<hash>/...) or extracted AppDir
+// (APPDIR env var set by the AppImage runtime). Both surfaces are read-only
+// for the AppImage case, so we redirect BasePath to the user data dir.
+func isAppImageRuntime(exeDir string) bool {
+	if strings.TrimSpace(os.Getenv("APPDIR")) != "" {
+		return true
+	}
+	return strings.HasPrefix(exeDir, "/tmp/.mount_")
 }
 
 func isLinuxSystemInstallPath(exeDir string) bool {

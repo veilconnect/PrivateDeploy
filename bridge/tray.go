@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -102,6 +103,19 @@ func (t *trayProc) spawn(icon []byte) error {
 	}
 
 	cmd := exec.Command(sidecar)
+	// Strip LD_PRELOAD so the sidecar doesn't inherit the AppImage's
+	// webkit_path_rewrite.so shim — it segfaults Go binaries during ld-linux's
+	// `_r_debug` setup before main() runs. Also drop the WebKit-bundled
+	// LD_LIBRARY_PATH; the sidecar wants the host's standard library path
+	// since it links against jammy ABI but its only shared dep is libc.
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "LD_PRELOAD=") || strings.HasPrefix(kv, "LD_LIBRARY_PATH=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

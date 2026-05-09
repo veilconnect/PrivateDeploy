@@ -63,7 +63,11 @@ GOOS=linux GOARCH=amd64 wails build \
     -o "${APP_DISPLAY_NAME}"
 
 echo "==> Step 3b: build privatedeploy-tray sidecar (isolates godbus/systray)"
-GOOS=linux GOARCH=amd64 go build \
+# CGO_ENABLED=0 — produce a static, glibc-free binary so it can load under
+# noble's ld-linux without the jammy/noble libc-version mismatch that segfaults
+# the dynamic loader at `_dl_setup_debug_entry`. The sidecar's only deps
+# (godbus/systray) are pure Go.
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath -buildvcs=false \
     -ldflags="-X privatedeploy/bridge.AppVersion=v${VERSION}" \
     -o "build/bin/privatedeploy-tray" \
