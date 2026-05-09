@@ -321,12 +321,22 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
     const cdnCustomHost = cdnDeployment?.customHost?.trim()
+    // Custom host is only routable once CF has finished provisioning the
+    // managed cert + edge propagation. customHostStatus tracks that:
+    // 'active' means the readiness probe got a TLS handshake; anything
+    // else (pending/failed/empty) falls back to workers.dev so the user
+    // doesn't connect to a half-cooked endpoint.
+    const cdnCustomActive =
+      !!cdnCustomHost &&
+      cdnDeployment?.customHostStatus === 'active'
     const cdnEligible =
       !!cdnDeployment &&
       !!node.vlessRelayPort &&
       node.vlessRelayPort > 0 &&
       !!node.vlessUUID
-    const cdnHost = cdnEligible ? (cdnCustomHost || cdnWorkerHost || '') : ''
+    const cdnHost = cdnEligible
+      ? (cdnCustomActive ? cdnCustomHost! : cdnWorkerHost || '')
+      : ''
     if (cdnHost) {
       outbounds.push({
         type: 'vless',

@@ -846,14 +846,13 @@ class _NodeRow extends StatelessWidget {
               IconButton(
                 tooltip: isZh ? '复制 Worker URL' : 'Copy Worker URL',
                 icon: const Icon(Icons.copy, size: 18),
-                // Prefer the M1 custom-domain host when bound — workers.dev
-                // is the path M1 is meant to bypass, sharing that link
-                // defeats the point.
+                // Copy the host the client would actually route through:
+                // customHost only when readiness probe has confirmed it,
+                // otherwise workers.dev. Stops users from sharing a
+                // pending/failed cert URL.
                 onPressed: () => _copy(
                   context,
-                  (dep.customHost?.isNotEmpty ?? false)
-                      ? dep.customHost!
-                      : dep.workerHost,
+                  dep.customHostReady ? dep.customHost! : dep.workerHost,
                 ),
               ),
               IconButton(
@@ -894,18 +893,49 @@ class _NodeRow extends StatelessWidget {
                       color: const Color(0xFF15803D)),
                   SizedBox(width: 6.w),
                   Expanded(
-                    child: Text(
-                      // Display the path users actually want sharing — the
-                      // M1 custom domain when bound, workers.dev fallback
-                      // otherwise.
-                      (dep.customHost?.isNotEmpty ?? false)
-                          ? dep.customHost!
-                          : dep.workerHost,
-                      style: TextStyle(
-                          fontSize: 11.sp,
-                          fontFamily: 'monospace',
-                          color: Colors.grey[800]),
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          // Always show the routable host (gated on
+                          // readiness) so the inline label and the copy
+                          // button agree.
+                          dep.customHostReady
+                              ? dep.customHost!
+                              : dep.workerHost,
+                          style: TextStyle(
+                              fontSize: 11.sp,
+                              fontFamily: 'monospace',
+                              color: Colors.grey[800]),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if ((dep.customHost?.isNotEmpty ?? false) &&
+                            dep.customHostStatus == 'pending')
+                          Padding(
+                            padding: EdgeInsets.only(top: 2.h),
+                            child: Text(
+                              isZh
+                                  ? '自定义域名等待证书生效…暂用 workers.dev'
+                                  : 'Custom domain pending cert; using workers.dev',
+                              style: TextStyle(
+                                  fontSize: 10.sp,
+                                  color: const Color(0xFFCA8A04)),
+                            ),
+                          ),
+                        if ((dep.customHost?.isNotEmpty ?? false) &&
+                            dep.customHostStatus == 'failed')
+                          Padding(
+                            padding: EdgeInsets.only(top: 2.h),
+                            child: Text(
+                              isZh
+                                  ? '自定义域名未生效；回退 workers.dev（重新部署可重试）'
+                                  : 'Custom domain not reachable; fell back to workers.dev (redeploy to retry)',
+                              style: TextStyle(
+                                  fontSize: 10.sp,
+                                  color: const Color(0xFFDC2626)),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],

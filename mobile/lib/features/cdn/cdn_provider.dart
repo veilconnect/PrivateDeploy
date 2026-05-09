@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -100,6 +102,17 @@ class CdnProvider with ChangeNotifier {
     _loadDeployments();
     _loadCustomDomain();
     notifyListeners();
+    // Resume readiness probes for any deployment still Pending from a
+    // previous app launch. If propagation finished while we were closed,
+    // the very first probe attempt will flip it Active. "failed" stays
+    // failed until the user re-deploys.
+    for (final entry in _deployments.entries) {
+      final dep = entry.value;
+      if ((dep.customHost?.isNotEmpty ?? false) &&
+          dep.customHostStatus == 'pending') {
+        unawaited(_probeCustomHostReadiness(entry.key, dep.customHost!));
+      }
+    }
   }
 
   void _loadCustomDomain() {
@@ -441,9 +454,21 @@ class CdnProvider with ChangeNotifier {
         deployedAt: DateTime.now().toUtc(),
         customHost: customHost,
         customDomainId: customDomainId,
+        // Mark Pending the moment we attach. The readiness probe (kicked
+        // below) will flip to Active once CF answers TLS, or Failed after
+        // its retry budget. Subscription emission and share-link
+        // generation are gated on Active so users never connect through
+        // a half-cooked cert.
+        customHostStatus: customHost != null ? 'pending' : null,
         accountId: _accountId,
       );
       await _persistDeployments();
+      if (customHost != null) {
+        // Kick off readiness probe in the background. Status flips happen
+        // via _markCustomHostStatus → notifyListeners so the UI reacts
+        // when CF settles.
+        unawaited(_probeCustomHostReadiness(nodeId, customHost));
+      }
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
@@ -754,6 +779,79 @@ class CdnProvider with ChangeNotifier {
     return name;
   }
 
+  /// Polls the customHost until TLS handshakes succeed or the budget is
+  /// exhausted. Mirrors bridge/cdn/cdn_probe.go so desktop and mobile
+  /// have the same readiness semantics. Total budget ~3.7 min.
+  Future<void> _probeCustomHostReadiness(String nodeId, String host) async {
+    const delays = [
+      Duration(seconds: 3),
+      Duration(seconds: 6),
+      Duration(seconds: 12),
+      Duration(seconds: 20),
+      Duration(seconds: 30),
+      Duration(seconds: 40),
+      Duration(seconds: 50),
+      Duration(seconds: 60),
+    ];
+    for (final d in delays) {
+      await Future.delayed(d);
+      final dep = _deployments[nodeId];
+      if (dep == null || dep.customHost != host) {
+        // Deployment was deleted or re-bound; abandon this probe.
+        return;
+      }
+      if (await _customHostTLSReachable(host)) {
+        await _markCustomHostStatus(nodeId, host, 'active');
+        return;
+      }
+    }
+    await _markCustomHostStatus(nodeId, host, 'failed');
+  }
+
+  /// Single TLS handshake to host:443. Success = CF edge served a valid
+  /// cert for the SNI, which is the readiness signal we care about.
+  /// We don't probe the inner Worker response — relay-path requests
+  /// without WS upgrade naturally 4xx.
+  Future<bool> _customHostTLSReachable(String host) async {
+    try {
+      final socket = await SecureSocket.connect(
+        host,
+        443,
+        timeout: const Duration(seconds: 8),
+      );
+      await socket.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Persists a status transition for the deployment that still owns
+  /// this host. Notifies listeners so the UI can react. No-op if the
+  /// deployment was deleted/re-bound while the probe slept.
+  Future<void> _markCustomHostStatus(
+    String nodeId,
+    String host,
+    String status,
+  ) async {
+    final dep = _deployments[nodeId];
+    if (dep == null || dep.customHost != host) return;
+    if (dep.customHostStatus == status) return;
+    _deployments[nodeId] = CdnDeployment(
+      nodeId: dep.nodeId,
+      scriptName: dep.scriptName,
+      workerHost: dep.workerHost,
+      backend: dep.backend,
+      deployedAt: dep.deployedAt,
+      customHost: dep.customHost,
+      customDomainId: dep.customDomainId,
+      customHostStatus: status,
+      accountId: dep.accountId,
+    );
+    await _persistDeployments();
+    notifyListeners();
+  }
+
   /// SHA-256 → first [length] hex chars. Must match Go bridge/cdn/cdn.go
   /// `shortHash` byte-for-byte: cross-platform parity (same nodeID → same
   /// scriptName → same customHost) is the contract that makes Workers
@@ -815,6 +913,7 @@ class CdnDeployment {
     required this.deployedAt,
     this.customHost,
     this.customDomainId,
+    this.customHostStatus,
     this.accountId,
   });
 
@@ -845,6 +944,15 @@ class CdnDeployment {
   /// detach call address the binding without re-resolving by hostname.
   final String? customDomainId;
 
+  /// CF-side readiness of the bound hostname.
+  ///   null / ""  → no custom host bound.
+  ///   "pending"  → attached, awaiting cert + edge propagation.
+  ///   "active"   → TLS handshake confirmed; safe to route traffic.
+  ///   "failed"   → readiness probe gave up; client falls back to workers.dev.
+  /// Subscription emission and share-link generation only treat customHost
+  /// as routable when this is "active".
+  final String? customHostStatus;
+
   /// CF account id this deployment was created against. Pinned here so
   /// detach/delete-script use the right account even after the user
   /// re-verifies with a different token. Old persisted records may have
@@ -861,6 +969,8 @@ class CdnDeployment {
         if (customHost != null && customHost!.isNotEmpty) 'customHost': customHost,
         if (customDomainId != null && customDomainId!.isNotEmpty)
           'customDomainId': customDomainId,
+        if (customHostStatus != null && customHostStatus!.isNotEmpty)
+          'customHostStatus': customHostStatus,
         if (accountId != null && accountId!.isNotEmpty) 'accountId': accountId,
       };
 
@@ -878,10 +988,18 @@ class CdnDeployment {
         customDomainId: (json['customDomainId']?.toString().isEmpty ?? true)
             ? null
             : json['customDomainId'].toString(),
+        customHostStatus: (json['customHostStatus']?.toString().isEmpty ?? true)
+            ? null
+            : json['customHostStatus'].toString(),
         accountId: (json['accountId']?.toString().isEmpty ?? true)
             ? null
             : json['accountId'].toString(),
       );
+
+  /// True only when CF has confirmed the customHost is reachable. Use
+  /// this everywhere routing decisions are made — never raw `customHost`.
+  bool get customHostReady =>
+      (customHost?.isNotEmpty ?? false) && customHostStatus == 'active';
 }
 
 /// M1 binding config — global, applied to every future deploy. Per-node

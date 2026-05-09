@@ -82,6 +82,14 @@ type Deployment struct {
 	DeployedAt     time.Time `json:"deployedAt"`
 	CustomHost     string    `json:"customHost,omitempty"`
 	CustomDomainID string    `json:"customDomainId,omitempty"`
+	// CustomHostStatus tracks Cloudflare-side readiness of the bound
+	// hostname. Values: "" (no custom host), "pending" (attached but
+	// cert/edge propagation not yet confirmed), "active" (TLS handshake
+	// succeeded), "failed" (probe gave up after retries). Subscription
+	// emission only routes traffic through the customHost when active —
+	// users who connect immediately after attach won't hit a half-cooked
+	// cert.
+	CustomHostStatus string `json:"customHostStatus,omitempty"`
 	// AccountID pins this deployment to the CF account it was deployed
 	// against. DeleteWorker uses it (falling back to the manager's current
 	// account only when missing — for old persisted records). Without
@@ -497,6 +505,8 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 			} else {
 				dep.CustomHost = bind.Hostname
 				dep.CustomDomainID = bind.ID
+				dep.CustomHostStatus = customHostStatusPending
+				go m.probeCustomHostReadiness(nodeID, bind.Hostname)
 			}
 		}
 	}
@@ -754,6 +764,19 @@ func (m *Manager) load() {
 	}
 	if m.deployments == nil {
 		m.deployments = map[string]*Deployment{}
+	}
+	// Resume readiness probes for any deployment that was Pending when we
+	// shut down. If the cert finished propagating in the meantime the very
+	// first probe attempt will flip it Active. "failed" stays failed until
+	// re-deploy — re-trying for hours after a real propagation failure
+	// would just keep noisy probes alive.
+	for nodeID, dep := range m.deployments {
+		if dep == nil {
+			continue
+		}
+		if dep.CustomHost != "" && dep.CustomHostStatus == customHostStatusPending {
+			go m.probeCustomHostReadiness(nodeID, dep.CustomHost)
+		}
 	}
 }
 

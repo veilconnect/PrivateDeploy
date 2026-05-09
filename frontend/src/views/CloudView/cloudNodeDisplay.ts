@@ -166,11 +166,17 @@ const buildVlessCdnLink = (
   if (!deployment) return null
   if (!target.vlessRelayPort || !target.vlessUUID) return null
 
-  // Prefer the M1 Workers Custom Domain when bound. workers.dev is the
-  // path that's known to be DNS-altered in the networks where M1
-  // matters; sharing that link defeats the point of M1. Falls back to
-  // workers.dev only when no custom domain is wired.
-  const host = (deployment.customHost?.trim() || deployment.workerHost?.trim() || '')
+  // Prefer the M1 Workers Custom Domain only when readiness probe has
+  // confirmed it (status === 'active'). Pending/failed → fall back to
+  // workers.dev so a freshly-bound link the user shares isn't broken
+  // for the recipient. workers.dev is also the only fallback target
+  // when no custom domain is wired at all.
+  const customReady =
+    !!deployment.customHost?.trim() &&
+    deployment.customHostStatus === 'active'
+  const host = customReady
+    ? deployment.customHost!.trim()
+    : (deployment.workerHost?.trim() || '')
   if (!host) return null
   const query = new URLSearchParams({
     encryption: 'none',

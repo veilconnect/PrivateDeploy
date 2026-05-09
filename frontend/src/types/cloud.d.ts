@@ -98,6 +98,15 @@ export interface CdnDeployment {
   deployedAt: string
   customHost?: string
   customDomainId?: string
+  /**
+   * CF-side readiness of the bound hostname.
+   *  - undefined / "" → no custom host bound.
+   *  - "pending"      → attached, awaiting cert + edge propagation.
+   *  - "active"       → TLS handshake confirmed; safe to route traffic.
+   *  - "failed"       → probe gave up; client falls back to workers.dev.
+   * Only "active" makes the customHost eligible for subscription emission.
+   */
+  customHostStatus?: 'pending' | 'active' | 'failed'
   /** @deprecated legacy; pre-Workers-Custom-Domains route+CNAME path */
   zoneId?: string
   /** @deprecated legacy */

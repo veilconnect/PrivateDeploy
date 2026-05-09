@@ -59,12 +59,12 @@ class PrivateDeployApp extends StatelessWidget {
             cloudProvider.setCdnHostResolver((nodeId) {
               final dep = cdnProvider?.deploymentFor(nodeId);
               if (dep == null) return null;
-              // Strict M1: prefer the user's Workers Custom Domain when
-              // bound. Falls back to *.workers.dev only when M1 is off,
-              // since workers.dev is the path we actually need M1 to
-              // bypass.
-              final custom = dep.customHost;
-              if (custom != null && custom.isNotEmpty) return custom;
+              // Strict M1, with readiness gating: only route through the
+              // Workers Custom Domain after CF has confirmed the cert is
+              // live (status == 'active'). Pending/failed → fall back to
+              // *.workers.dev so the user doesn't connect through a
+              // half-cooked endpoint right after attach.
+              if (dep.customHostReady) return dep.customHost;
               return dep.workerHost;
             });
             return cdnProvider!;
