@@ -52,7 +52,7 @@ void main() {
 
       final raw = buildCloudNodeConfig(
         instance,
-        cdnWorkerHost: 'pd-relay-lax.acme.workers.dev',
+        cdnHost: 'pd-relay-lax.acme.workers.dev',
       );
       expect(raw, isNotNull);
 
@@ -115,7 +115,7 @@ void main() {
 
       final raw = buildCloudNodeConfig(
         instance,
-        cdnWorkerHost: 'pd-relay-old.acme.workers.dev',
+        cdnHost: 'pd-relay-old.acme.workers.dev',
       );
       expect(raw, isNotNull);
 

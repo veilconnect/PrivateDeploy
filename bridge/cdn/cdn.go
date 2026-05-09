@@ -82,6 +82,15 @@ type Deployment struct {
 	DeployedAt     time.Time `json:"deployedAt"`
 	CustomHost     string    `json:"customHost,omitempty"`
 	CustomDomainID string    `json:"customDomainId,omitempty"`
+	// AccountID pins this deployment to the CF account it was deployed
+	// against. DeleteWorker uses it (falling back to the manager's current
+	// account only when missing — for old persisted records). Without
+	// this, a user who re-verifies with a different account would have
+	// detach/delete-script silently 404 against the new account, the
+	// orphan resources would stay on the old account, and we'd remove
+	// the local record under the wrong assumption that they were cleaned
+	// up.
+	AccountID string `json:"accountId,omitempty"`
 	// Deprecated: legacy route+CNAME fields, retained for cleanup of older
 	// persisted deployments. New deploys leave these empty.
 	ZoneID      string `json:"zoneId,omitempty"`
@@ -266,13 +275,25 @@ func (m *Manager) VerifyAndPersist(ctx context.Context, token string) (State, er
 		}
 	}
 
-	// Persist + announce.
+	// Persist + announce. Re-verify with the *same* account preserves the
+	// existing CustomDomain config (a token rotation shouldn't lose the
+	// user's M1 binding); switching to a *different* account drops it,
+	// because the saved zoneId is account-scoped and would silently 404
+	// when the next deploy tried to attach. The user has to re-pick a
+	// zone visible to the new account.
 	m.mu.Lock()
+	priorCustomDomain := m.cfg.CustomDomain
+	priorAccount := strings.TrimSpace(m.cfg.AccountID)
+	var preservedCustomDomain *CustomDomain
+	if priorAccount != "" && priorAccount == accountID {
+		preservedCustomDomain = priorCustomDomain
+	}
 	m.cfg = persistedConfig{
 		Token:            token,
 		AccountID:        accountID,
 		AccountEmail:     email,
 		WorkersSubdomain: workersSub,
+		CustomDomain:     preservedCustomDomain,
 	}
 	if workersSub == "" {
 		m.lastError = "Token verified, but no workers.dev subdomain claimed yet — visit the Workers dashboard once to claim one."
@@ -451,6 +472,7 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		WorkerHost: host,
 		Backend:    backend,
 		DeployedAt: time.Now().UTC(),
+		AccountID:  accountID,
 	}
 
 	// M1: if a CustomDomain is configured, attach this Worker to the user's
@@ -515,7 +537,15 @@ func (m *Manager) DeleteWorker(ctx context.Context, nodeID string) (State, error
 		return s, errors.New("account id missing — re-verify token first")
 	}
 	token := m.cfg.Token
-	accountID := m.cfg.AccountID
+	// Pin to the deployment's recorded account; only fall back to the
+	// current verified account for legacy records that pre-date this
+	// field. This way a user who re-verifies with a new account doesn't
+	// silently 404 against the new account and orphan resources on the
+	// old one.
+	accountID := dep.AccountID
+	if accountID == "" {
+		accountID = m.cfg.AccountID
+	}
 	scriptName := dep.ScriptName
 	customDomainID := dep.CustomDomainID
 	legacyZoneID := dep.ZoneID

@@ -245,6 +245,17 @@ class CdnProvider with ChangeNotifier {
       await StorageService.saveString(_kAccountEmailKey, email);
       await StorageService.saveString(_kWorkersSubdomainKey, workersSub);
 
+      // Re-verify with a different account drops the saved CustomDomain
+      // — the zoneId is account-scoped and would silently 404 when the
+      // next deploy tried to attach. Same-account re-verify (token
+      // rotation) preserves the binding so the user doesn't have to
+      // re-pick zone every time their token expires.
+      final oldAccount = _accountId ?? '';
+      if (oldAccount.isNotEmpty && oldAccount != accountId) {
+        _customDomain = null;
+        await _persistCustomDomain();
+      }
+
       _accountId = accountId;
       _accountEmail = email;
       _workersSubdomain = workersSub;
@@ -429,6 +440,7 @@ class CdnProvider with ChangeNotifier {
         deployedAt: DateTime.now().toUtc(),
         customHost: customHost,
         customDomainId: customDomainId,
+        accountId: _accountId,
       );
       await _persistDeployments();
       // Preserve _lastError if the M1 step failed (so the UI can show it)
@@ -456,7 +468,14 @@ class CdnProvider with ChangeNotifier {
   Future<bool> deleteWorkerForNode(String nodeId) async {
     final dep = _deployments[nodeId];
     if (dep == null) return true;
-    if ((_accountId ?? '').isEmpty) {
+    // Pin to the deployment's recorded account; only fall back to the
+    // current verified account for legacy records pre-dating that field.
+    // Otherwise a re-verified-with-different-account user would 404
+    // against the new account and orphan resources on the old one.
+    final targetAccount = (dep.accountId != null && dep.accountId!.isNotEmpty)
+        ? dep.accountId!
+        : (_accountId ?? '');
+    if (targetAccount.isEmpty) {
       _lastError = 'Account id missing — re-verify token first.';
       notifyListeners();
       return false;
@@ -479,7 +498,11 @@ class CdnProvider with ChangeNotifier {
     final domainId = dep.customDomainId;
     String? detachWarning;
     if (domainId != null && domainId.isNotEmpty) {
-      final detached = await _detachWorkerCustomDomain(dio, domainId);
+      final detached = await _detachWorkerCustomDomain(
+        dio,
+        targetAccount,
+        domainId,
+      );
       if (!detached) {
         // Capture the error before script-delete clears _lastError.
         detachWarning = _lastError ?? 'custom-domain detach failed';
@@ -487,7 +510,7 @@ class CdnProvider with ChangeNotifier {
     }
 
     final r = await dio.delete(
-      '$_accountsEndpoint/$_accountId/workers/scripts/${dep.scriptName}',
+      '$_accountsEndpoint/$targetAccount/workers/scripts/${dep.scriptName}',
     );
     final ok = r.statusCode! < 400 || r.statusCode == 404;
     if (!ok) {
@@ -697,10 +720,14 @@ class CdnProvider with ChangeNotifier {
   /// Workers Custom Domains detach. 404 is treated as success (the binding
   /// is already gone — CF dashboard or another tool may have removed it).
   /// CF cascades the auto-created DNS record as part of the detach.
-  Future<bool> _detachWorkerCustomDomain(Dio dio, String domainId) async {
+  Future<bool> _detachWorkerCustomDomain(
+    Dio dio,
+    String accountId,
+    String domainId,
+  ) async {
     if (domainId.isEmpty) return true;
     final r = await dio.delete(
-      '$_accountsEndpoint/$_accountId/workers/domains/$domainId',
+      '$_accountsEndpoint/$accountId/workers/domains/$domainId',
     );
     final ok = r.statusCode != null &&
         (r.statusCode! < 400 || r.statusCode == 404);
@@ -770,6 +797,7 @@ class CdnDeployment {
     required this.deployedAt,
     this.customHost,
     this.customDomainId,
+    this.accountId,
   });
 
   /// The PrivateDeploy cloud node id this Worker fronts (e.g. Vultr instance
@@ -799,6 +827,13 @@ class CdnDeployment {
   /// detach call address the binding without re-resolving by hostname.
   final String? customDomainId;
 
+  /// CF account id this deployment was created against. Pinned here so
+  /// detach/delete-script use the right account even after the user
+  /// re-verifies with a different token. Old persisted records may have
+  /// this empty — DeleteWorker falls back to the manager's current
+  /// verified account in that case.
+  final String? accountId;
+
   Map<String, dynamic> toJson() => {
         'nodeId': nodeId,
         'scriptName': scriptName,
@@ -808,6 +843,7 @@ class CdnDeployment {
         if (customHost != null && customHost!.isNotEmpty) 'customHost': customHost,
         if (customDomainId != null && customDomainId!.isNotEmpty)
           'customDomainId': customDomainId,
+        if (accountId != null && accountId!.isNotEmpty) 'accountId': accountId,
       };
 
   factory CdnDeployment.fromJson(Map json) => CdnDeployment(
@@ -824,6 +860,9 @@ class CdnDeployment {
         customDomainId: (json['customDomainId']?.toString().isEmpty ?? true)
             ? null
             : json['customDomainId'].toString(),
+        accountId: (json['accountId']?.toString().isEmpty ?? true)
+            ? null
+            : json['accountId'].toString(),
       );
 }
 

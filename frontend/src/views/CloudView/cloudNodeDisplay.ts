@@ -163,10 +163,15 @@ const buildVlessCdnLink = (
   deployment: CdnDeployment | null | undefined,
 ): string | null => {
   const target = ensureNode(node)
-  if (!deployment || !deployment.workerHost) return null
+  if (!deployment) return null
   if (!target.vlessRelayPort || !target.vlessUUID) return null
 
-  const host = deployment.workerHost
+  // Prefer the M1 Workers Custom Domain when bound. workers.dev is the
+  // path that's known to be DNS-altered in the networks where M1
+  // matters; sharing that link defeats the point of M1. Falls back to
+  // workers.dev only when no custom domain is wired.
+  const host = (deployment.customHost?.trim() || deployment.workerHost?.trim() || '')
+  if (!host) return null
   const query = new URLSearchParams({
     encryption: 'none',
     security: 'tls',

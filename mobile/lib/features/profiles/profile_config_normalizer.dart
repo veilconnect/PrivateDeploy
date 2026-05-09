@@ -20,7 +20,25 @@ const _dnsRemoteAddress = managedDnsRemoteAddress;
 const _dnsRemoteFallbackAddress = managedDnsRemoteFallbackAddress;
 const _dnsBootstrapAddress = managedDnsBootstrapAddress;
 const _dnsCnAddress = managedDnsCnAddress;
-const _cloudProviderApiDomains = ['api.vultr.com', 'api.digitalocean.com'];
+// Cloud-management APIs that must bypass the tunnel even when the user is
+// running a non-cloud profile (subscription, manual config). api.cloudflare.com
+// belongs here too: M1 (Workers Custom Domains) configures itself by hitting
+// CF; if the VPN is up and CF tunnels through the proxy node, those calls
+// often time out before the user even sees the picker.
+const _cloudProviderApiDomains = [
+  'api.vultr.com',
+  'api.digitalocean.com',
+  'api.cloudflare.com',
+];
+
+// Legacy core: pre-M1 configs only listed Vultr+DO. The "is this our
+// managed cloud-API bypass rule?" heuristic still accepts those so old
+// persisted profiles keep being recognized after we expanded the domain
+// list above.
+const _cloudProviderApiCoreDomains = [
+  'api.vultr.com',
+  'api.digitalocean.com',
+];
 
 String normalizeProfileConfigForCurrentPlatform(
   String content, {
@@ -641,7 +659,7 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
   // the 12s client timeout.
   if (hasDirectOutbound) {
     managedRules.add({
-      'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+      'domain_suffix': _cloudProviderApiDomains,
       'outbound': 'direct',
     });
   }
@@ -1240,14 +1258,20 @@ bool _isCatchAllDnsRule(Map<String, dynamic> rule) {
   return outbounds.any((value) => value?.toString() == 'any');
 }
 
+// Recognize the PD-managed cloud-API bypass rule under both shapes:
+//   - legacy: ["api.vultr.com", "api.digitalocean.com"]
+//   - current: ["api.vultr.com", "api.digitalocean.com", "api.cloudflare.com"]
+// Accept any subset of [_cloudProviderApiDomains] that contains the legacy
+// core. False positives stay impossible: arbitrary user rules with other
+// domains mixed in will violate the subset constraint.
 bool _isCloudProviderApiBypassRule(Map<String, dynamic> rule) {
   final suffixes = rule['domain_suffix'];
   if (suffixes is! List) {
     return false;
   }
   final set = suffixes.map((e) => e?.toString()).toSet();
-  return set.containsAll(_cloudProviderApiDomains) &&
-      set.length == _cloudProviderApiDomains.length;
+  return set.containsAll(_cloudProviderApiCoreDomains) &&
+      _cloudProviderApiDomains.toSet().containsAll(set);
 }
 
 bool _isCloudProviderApiDnsBypassRule(Map<String, dynamic> rule) {
@@ -1256,8 +1280,8 @@ bool _isCloudProviderApiDnsBypassRule(Map<String, dynamic> rule) {
     return false;
   }
   final set = suffixes.map((e) => e?.toString()).toSet();
-  return set.containsAll(_cloudProviderApiDomains) &&
-      set.length == _cloudProviderApiDomains.length;
+  return set.containsAll(_cloudProviderApiCoreDomains) &&
+      _cloudProviderApiDomains.toSet().containsAll(set);
 }
 
 bool _isManagedRuleSet(Map<String, dynamic> ruleSet) {

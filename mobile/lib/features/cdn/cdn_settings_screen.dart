@@ -826,7 +826,15 @@ class _NodeRow extends StatelessWidget {
               IconButton(
                 tooltip: isZh ? '复制 Worker URL' : 'Copy Worker URL',
                 icon: const Icon(Icons.copy, size: 18),
-                onPressed: () => _copy(context, dep.workerHost),
+                // Prefer the M1 custom-domain host when bound — workers.dev
+                // is the path M1 is meant to bypass, sharing that link
+                // defeats the point.
+                onPressed: () => _copy(
+                  context,
+                  (dep.customHost?.isNotEmpty ?? false)
+                      ? dep.customHost!
+                      : dep.workerHost,
+                ),
               ),
               IconButton(
                 tooltip: isZh ? '删除' : 'Delete',
@@ -867,7 +875,12 @@ class _NodeRow extends StatelessWidget {
                   SizedBox(width: 6.w),
                   Expanded(
                     child: Text(
-                      dep.workerHost,
+                      // Display the path users actually want sharing — the
+                      // M1 custom domain when bound, workers.dev fallback
+                      // otherwise.
+                      (dep.customHost?.isNotEmpty ?? false)
+                          ? dep.customHost!
+                          : dep.workerHost,
                       style: TextStyle(
                           fontSize: 11.sp,
                           fontFamily: 'monospace',

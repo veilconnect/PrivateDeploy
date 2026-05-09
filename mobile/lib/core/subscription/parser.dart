@@ -381,7 +381,11 @@ class SubscriptionParser {
         ],
         'rules': [
           {
-            'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+            'domain_suffix': [
+              'api.vultr.com',
+              'api.digitalocean.com',
+              'api.cloudflare.com',
+            ],
             'server': managedDnsBootstrapTag,
           },
           {
@@ -443,7 +447,11 @@ class SubscriptionParser {
             'outbound': 'direct'
           },
           {
-            'domain_suffix': ['api.vultr.com', 'api.digitalocean.com'],
+            'domain_suffix': [
+              'api.vultr.com',
+              'api.digitalocean.com',
+              'api.cloudflare.com',
+            ],
             'outbound': 'direct',
           },
         ],
