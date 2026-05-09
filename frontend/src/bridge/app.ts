@@ -1,7 +1,7 @@
 import * as App from '@wails/go/bridge/App'
 
 import type { TrayContent } from '@/types/app'
-import type { CdnState, CloudConfig, CloudPlan, CloudProvider, CloudRegion, MultiDeployResult, SSHServerInfo } from '@/types/cloud'
+import type { CdnState, CdnZone, CloudConfig, CloudPlan, CloudProvider, CloudRegion, MultiDeployResult, SSHServerInfo } from '@/types/cloud'
 
 export const RestartApp = App.RestartApp
 
@@ -206,4 +206,30 @@ export const DeleteCdnWorkerForNode = async (
   const { flag, data } = await App.DeleteCdnWorkerForNode(nodeId)
   const state = JSON.parse(data) as CdnState
   return { ok: flag, state }
+}
+
+// M1: zones / custom-domain binding. ListCdnZones returns the active CF
+// zones the verified token can see (used by the Settings UI's zone picker).
+// Set/Clear persist the CDN-wide binding choice; only future deploys are
+// affected — existing deployments retain their workers.dev-only binding
+// until re-deployed.
+export const ListCdnZones = async (): Promise<CdnZone[]> => {
+  const { flag, data } = await App.ListCdnZones()
+  if (!flag) {
+    throw new Error(data)
+  }
+  return JSON.parse(data) as CdnZone[]
+}
+
+export const SetCdnCustomDomain = async (
+  zoneId: string,
+  subdomain: string,
+): Promise<{ ok: boolean; state: CdnState }> => {
+  const { flag, data } = await App.SetCdnCustomDomain(zoneId, subdomain)
+  const state = JSON.parse(data) as CdnState
+  return { ok: flag, state }
+}
+
+export const ClearCdnCustomDomain = async (): Promise<CdnState> => {
+  return (await App.ClearCdnCustomDomainTyped()) as CdnState
 }

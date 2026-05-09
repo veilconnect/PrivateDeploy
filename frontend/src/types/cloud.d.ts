@@ -83,15 +83,40 @@ export interface CloudNode {
 }
 
 // One Cloudflare Worker deployment fronting a single cloud node.
+//
+// customHost is the FQDN bound through M1's custom-domain Worker route
+// (e.g. "relay.example.com"); empty when only the workers.dev path is
+// active. zoneId/routeId/dnsRecordId are persisted for clean teardown:
+// DeleteWorker uses them even if the user later clears the CustomDomain
+// config. workerHost (workers.dev path) is always present.
 export interface CdnDeployment {
   nodeId: string
   scriptName: string
   workerHost: string
   backend: string
   deployedAt: string
+  customHost?: string
+  zoneId?: string
+  routeId?: string
+  dnsRecordId?: string
 }
 
 export type CdnStatus = 'disabled' | 'unverified' | 'verified'
+
+// CdnCustomDomain describes the M1 binding: future deploys produce a
+// route on <subdomain>.<zoneName> in addition to the workers.dev path.
+export interface CdnCustomDomain {
+  zoneId: string
+  zoneName: string
+  subdomain: string
+}
+
+// CdnZone — one entry returned by ListCdnZones, used by the zone picker.
+export interface CdnZone {
+  id: string
+  name: string
+  status?: string
+}
 
 export interface CdnState {
   status: CdnStatus
@@ -101,6 +126,7 @@ export interface CdnState {
   lastError?: string
   workersDevExample?: string
   deployments: Record<string, CdnDeployment>
+  customDomain?: CdnCustomDomain
 }
 
 // Legacy types for backward compatibility

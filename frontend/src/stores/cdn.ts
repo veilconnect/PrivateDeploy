@@ -3,15 +3,18 @@ import { computed, ref } from 'vue'
 
 import {
   ClearCdn,
+  ClearCdnCustomDomain,
   DeleteCdnWorkerForNode,
   DeployCdnWorkerForNode,
   EventsOff,
   EventsOn,
   GetCdnState,
+  ListCdnZones,
+  SetCdnCustomDomain,
   VerifyCdnToken,
 } from '@/bridge'
 
-import type { CdnDeployment, CdnState, CdnStatus } from '@/types/cloud'
+import type { CdnDeployment, CdnState, CdnStatus, CdnZone } from '@/types/cloud'
 
 const emptyState = (): CdnState => ({
   status: 'disabled',
@@ -30,6 +33,10 @@ export const useCdnStore = defineStore('cdn', () => {
   const deployingFor = ref<string | null>(null)
   const deletingFor = ref<string | null>(null)
   const initialized = ref(false)
+  const zones = ref<CdnZone[]>([])
+  const zonesLoading = ref(false)
+  const zonesLoadedAt = ref<number | null>(null)
+  const savingCustomDomain = ref(false)
 
   const status = computed<CdnStatus>(() => state.value.status)
   const isConfigured = computed(() => status.value !== 'disabled')
@@ -39,6 +46,12 @@ export const useCdnStore = defineStore('cdn', () => {
   const workersSubdomain = computed(() => state.value.workersSubdomain ?? '')
   const workersDevExample = computed(() => state.value.workersDevExample ?? '')
   const deployments = computed(() => state.value.deployments ?? {})
+  const customDomain = computed(() => state.value.customDomain ?? null)
+  const customDomainHost = computed(() => {
+    const c = state.value.customDomain
+    if (!c) return ''
+    return `${c.subdomain}.${c.zoneName}`
+  })
 
   const deploymentFor = (nodeId: string): CdnDeployment | null => {
     return deployments.value[nodeId] ?? null
@@ -95,6 +108,47 @@ export const useCdnStore = defineStore('cdn', () => {
     }
   }
 
+  // refreshZones lists CF zones the verified token can see. Cheap (one CF
+  // GET) but we cache the result so the picker doesn't refetch on every
+  // panel re-open. Throws if the token isn't verified — the UI should not
+  // call this until isVerified is true.
+  const refreshZones = async (): Promise<CdnZone[]> => {
+    if (zonesLoading.value) return zones.value
+    zonesLoading.value = true
+    try {
+      zones.value = await ListCdnZones()
+      zonesLoadedAt.value = Date.now()
+      return zones.value
+    } finally {
+      zonesLoading.value = false
+    }
+  }
+
+  const setCustomDomain = async (
+    zoneId: string,
+    subdomain: string,
+  ): Promise<boolean> => {
+    if (savingCustomDomain.value) return false
+    savingCustomDomain.value = true
+    try {
+      const { ok, state: next } = await SetCdnCustomDomain(zoneId, subdomain)
+      state.value = next
+      return ok
+    } finally {
+      savingCustomDomain.value = false
+    }
+  }
+
+  const clearCustomDomain = async (): Promise<void> => {
+    if (savingCustomDomain.value) return
+    savingCustomDomain.value = true
+    try {
+      state.value = await ClearCdnCustomDomain()
+    } finally {
+      savingCustomDomain.value = false
+    }
+  }
+
   // Subscribe to Go-side state updates (multi-window, Worker-deploy progress).
   let unsubscribed = false
   const handle = (next: CdnState) => {
@@ -119,12 +173,21 @@ export const useCdnStore = defineStore('cdn', () => {
     workersSubdomain,
     workersDevExample,
     deployments,
+    customDomain,
+    customDomainHost,
+    zones,
+    zonesLoading,
+    zonesLoadedAt,
+    savingCustomDomain,
     verifying,
     deployingFor,
     deletingFor,
     initialized,
     deploymentFor,
     refresh,
+    refreshZones,
+    setCustomDomain,
+    clearCustomDomain,
     ensureLoaded,
     verify,
     clear,

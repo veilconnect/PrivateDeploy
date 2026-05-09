@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { BrowserOpenURL, ClipboardSetText } from '@/bridge'
@@ -11,6 +11,86 @@ const cdnStore = useCdnStore()
 
 const tokenInput = ref('')
 const showStep3 = computed(() => cdnStore.isVerified)
+
+// Custom domain (M1) toggle. The toggle starts ON whenever a binding is
+// already saved on disk so the panel reflects current state, even if the
+// user opens Settings cold. Manually flipping it off here doesn't unbind
+// — the user has to press the explicit "Disable and unbind" button to
+// avoid accidental clears.
+const customDomainEnabled = ref(false)
+const customZoneId = ref('')
+const customSubdomain = ref('relay')
+
+watch(
+  () => cdnStore.customDomain,
+  (cd) => {
+    if (cd) {
+      customDomainEnabled.value = true
+      customZoneId.value = cd.zoneId
+      customSubdomain.value = cd.subdomain
+    } else {
+      customZoneId.value = ''
+      customSubdomain.value = 'relay'
+    }
+  },
+  { immediate: true },
+)
+
+// Zones are fetched lazily when the user opens the toggle. We never hit CF
+// at panel-mount because the user might have a verified token but no zones
+// (CF token scope can be Workers-only) and there's nothing to display in
+// that case until they ask.
+const handleEnableToggle = async (next: boolean) => {
+  customDomainEnabled.value = next
+  if (next && cdnStore.zones.length === 0) {
+    try {
+      await cdnStore.refreshZones()
+    } catch (err: any) {
+      message.error(err?.message || String(err))
+    }
+  }
+}
+
+const zoneOptions = computed(() =>
+  cdnStore.zones.map((z) => ({ label: z.name, value: z.id })),
+)
+
+const previewHost = computed(() => {
+  const sub = customSubdomain.value.trim()
+  if (!sub) return ''
+  const zone = cdnStore.zones.find((z) => z.id === customZoneId.value)
+  if (!zone) return ''
+  return `${sub}.${zone.name}`
+})
+
+const handleSaveCustomDomain = async () => {
+  const zoneId = customZoneId.value
+  const subdomain = customSubdomain.value.trim()
+  if (!zoneId || !subdomain) {
+    message.error('cdn.customDomain.zone')
+    return
+  }
+  const ok = await cdnStore.setCustomDomain(zoneId, subdomain)
+  if (ok) {
+    message.success('common.success')
+  } else if (cdnStore.lastError) {
+    message.error(cdnStore.lastError)
+  }
+}
+
+const handleClearCustomDomain = async () => {
+  await cdnStore.clearCustomDomain()
+  customDomainEnabled.value = false
+  message.success(t('cdn.customDomain.cleared'))
+}
+
+const handleReloadZones = async () => {
+  try {
+    await cdnStore.refreshZones()
+  } catch (err: any) {
+    message.error(err?.message || String(err))
+  }
+}
 
 const statusLabel = computed(() => {
   switch (cdnStore.status) {
@@ -165,6 +245,90 @@ onMounted(async () => {
     <div v-if="showStep3" class="px-16 py-8">
       <div class="text-14 font-bold pt-4 pb-8">{{ t('cdn.setup.step3') }}</div>
       <div class="text-12 opacity-70 pb-4">{{ t('cdn.setup.step3Body') }}</div>
+    </div>
+
+    <div v-if="cdnStore.isVerified" class="px-16 py-8">
+      <div class="text-16 font-bold pt-8 pb-4">{{ t('cdn.customDomain.title') }}</div>
+      <div class="text-12 opacity-70 pb-12">{{ t('cdn.customDomain.subtitle') }}</div>
+
+      <div class="flex items-center gap-8 pb-8">
+        <Switch
+          :model-value="customDomainEnabled"
+          @update:model-value="handleEnableToggle"
+        />
+        <span class="text-13">{{ t('cdn.customDomain.enable') }}</span>
+        <Button
+          v-if="customDomainEnabled"
+          type="text"
+          size="small"
+          icon="refresh"
+          :loading="cdnStore.zonesLoading"
+          @click="handleReloadZones"
+        >
+          {{ t('cdn.customDomain.reload') }}
+        </Button>
+      </div>
+
+      <div v-if="customDomainEnabled">
+        <div v-if="!cdnStore.zonesLoading && cdnStore.zones.length === 0" class="text-12 pb-8" style="color: var(--warning-color, #c80)">
+          {{ t('cdn.customDomain.noZones') }}
+        </div>
+
+        <div v-else class="flex flex-col gap-8">
+          <div class="flex items-center gap-8 flex-wrap">
+            <span class="text-13 shrink-0" style="min-width: 80px">{{ t('cdn.customDomain.zone') }}:</span>
+            <Select
+              v-model="customZoneId"
+              :options="zoneOptions"
+              :placeholder="t('cdn.customDomain.zonePlaceholder')"
+              size="small"
+              style="min-width: 240px"
+            />
+          </div>
+
+          <div class="flex items-center gap-8 flex-wrap">
+            <span class="text-13 shrink-0" style="min-width: 80px">{{ t('cdn.customDomain.subdomainLabel') }}:</span>
+            <Input
+              v-model="customSubdomain"
+              editable
+              :placeholder="t('cdn.customDomain.subdomainPlaceholder')"
+              style="width: 160px"
+            />
+            <span class="text-12 opacity-70">{{ t('cdn.customDomain.subdomainHint') }}</span>
+          </div>
+
+          <div v-if="previewHost" class="text-12 pb-4">
+            {{ t('cdn.customDomain.preview', { host: previewHost }) }}
+          </div>
+
+          <div class="flex items-center gap-8 pt-4">
+            <Button
+              type="primary"
+              :loading="cdnStore.savingCustomDomain"
+              :disabled="
+                cdnStore.savingCustomDomain ||
+                !customZoneId ||
+                customSubdomain.trim().length === 0
+              "
+              @click="handleSaveCustomDomain"
+            >
+              {{ cdnStore.savingCustomDomain ? t('cdn.customDomain.saving') : t('cdn.customDomain.save') }}
+            </Button>
+            <Button
+              v-if="cdnStore.customDomain"
+              type="text"
+              :disabled="cdnStore.savingCustomDomain"
+              @click="handleClearCustomDomain"
+            >
+              {{ t('cdn.customDomain.clear') }}
+            </Button>
+          </div>
+
+          <div v-if="cdnStore.customDomain" class="text-12 pt-4">
+            {{ t('cdn.customDomain.bound', { host: cdnStore.customDomainHost }) }}
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
