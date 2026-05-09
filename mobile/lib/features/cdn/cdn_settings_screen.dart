@@ -520,6 +520,15 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
       _enabled = true;
       _zoneId = cd.zoneId;
       _subdomainCtl.text = cd.subdomain;
+      // The toggle came up pre-enabled because we loaded a saved binding
+      // from disk. Eagerly fetch zones so the dropdown isn't stuck on
+      // "no zones" until the user toggles off+on. Skip when a fresh
+      // listZones is already cached from this session.
+      if (widget.provider.zones.isEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.provider.listZones();
+        });
+      }
     }
   }
 
@@ -610,15 +619,19 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
                   fontSize: 12.sp, height: 1.5, color: Colors.grey[700]),
             ),
             SizedBox(height: 8.h),
-            Row(
-              children: [
-                Switch(value: _enabled, onChanged: _onToggle),
-                SizedBox(width: 8.w),
-                Text(
-                  isZh ? '启用自定义域名' : 'Use custom domain',
-                  style: TextStyle(fontSize: 13.sp),
-                ),
-              ],
+            // SwitchListTile makes the entire row a tap target — bare
+            // Switch widgets have a small hit area that's annoying on
+            // touchscreens (and effectively un-driveable from `adb input
+            // tap`, which is also how tap automation breaks accidentally).
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: _enabled,
+              onChanged: _onToggle,
+              title: Text(
+                isZh ? '启用自定义域名' : 'Use custom domain',
+                style: TextStyle(fontSize: 13.sp),
+              ),
             ),
             if (_enabled) ...[
               SizedBox(height: 8.h),
