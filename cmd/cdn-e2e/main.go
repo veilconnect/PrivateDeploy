@@ -164,7 +164,7 @@ func main() {
 	}
 	fmt.Printf("  ✓ worker live: https://%s  backend=%s\n", dep.WorkerHost, dep.Backend)
 	if dep.CustomHost != "" {
-		fmt.Printf("  ✓ custom-domain bound: https://%s (route=%s, dns=%s)\n", dep.CustomHost, dep.RouteID, dep.DNSRecordID)
+		fmt.Printf("  ✓ custom-domain bound: https://%s (domainId=%s)\n", dep.CustomHost, dep.CustomDomainID)
 	} else if zoneID != "" {
 		fmt.Println("  ⚠ custom domain configured but Deployment has no CustomHost — check cdnState.LastError")
 		if cdnState.LastError != "" {
@@ -208,7 +208,7 @@ func main() {
 	if _, err := cdnMgr.DeleteWorker(ctx, inst.ID); err != nil {
 		fmt.Printf("  worker delete err: %v\n", err)
 	} else {
-		fmt.Println("  ✓ worker deleted (route + DNS torn down if M1 was active)")
+		fmt.Println("  ✓ worker deleted (custom domain detached if M1 was active)")
 	}
 	if zoneID != "" {
 		if _, err := cdnMgr.ClearCustomDomain(); err != nil {

@@ -320,6 +320,7 @@ export namespace cdn {
 	    // Go type: time
 	    deployedAt: any;
 	    customHost?: string;
+	    customDomainId?: string;
 	    zoneId?: string;
 	    routeId?: string;
 	    dnsRecordId?: string;
@@ -336,6 +337,7 @@ export namespace cdn {
 	        this.backend = source["backend"];
 	        this.deployedAt = this.convertValues(source["deployedAt"], null);
 	        this.customHost = source["customHost"];
+	        this.customDomainId = source["customDomainId"];
 	        this.zoneId = source["zoneId"];
 	        this.routeId = source["routeId"];
 	        this.dnsRecordId = source["dnsRecordId"];

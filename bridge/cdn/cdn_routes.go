@@ -1,33 +1,40 @@
 // M1: bind the same Worker script to a user-owned domain on a Cloudflare
-// zone. workers.dev is selectively throttled by some regional mobile network middleboxes
-// because it's a known proxy-traffic suffix; serving the Worker from a
+// zone via the Workers Custom Domains API. workers.dev itself is fingerprinted
+// (and DNS-altered) on some regional mobile network networks; serving the Worker from a
 // personal domain (e.g. relay.example.com) defeats the host-based pattern
 // match without changing the relay protocol.
 //
-// Three CF endpoints are involved:
-//   - GET /zones                                  — let the user pick a zone
-//   - POST /zones/{id}/dns_records (CNAME)        — relay.example.com →
-//                                                   <script>.<sub>.workers.dev
-//   - POST /zones/{id}/workers/routes             — relay.example.com/* →
-//                                                   <script>
+// We use Cloudflare's Workers Custom Domains endpoint
+// (PUT /accounts/{aid}/workers/domains) rather than the older route+CNAME
+// approach. Custom Domains is the right semantic here — the Worker IS the
+// origin — and CF auto-creates DNS + a managed cert behind the scenes. Two
+// concrete UX wins fall out:
 //
-// Each is "find-or-create": a re-deploy of the same node should not error on
-// existing records. The Deployment record stores the resulting RouteID and
-// DNSRecordID so DeleteWorker can clean both up before removing the script.
+//  1. Required token scopes drop from five to three: only
+//     `Account.Workers Scripts:Edit` + `Account.Account Settings:Read` +
+//     `Zone.Zone:Read` (the last only needed for the zone picker; the
+//     attach/detach calls themselves are pure Account-scope). The two
+//     scopes users most often forget — Zone.DNS:Edit and
+//     Zone.Workers Routes:Edit — are no longer required at all.
+//  2. DELETE on the custom domain cascades to the auto-created DNS
+//     record, so cleanup is one call instead of three.
 package cdn
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
+
+	"bytes"
+	"encoding/json"
 )
 
-const zonesEndpoint = "https://api.cloudflare.com/client/v4/zones"
+const (
+	zonesEndpoint   = "https://api.cloudflare.com/client/v4/zones"
+	domainsEndpoint = "https://api.cloudflare.com/client/v4/accounts/%s/workers/domains"
+)
 
 // Zone is the public summary returned to the UI for the zone picker.
 type Zone struct {
@@ -64,8 +71,16 @@ func (c *CustomDomain) hostFor() string {
 	return strings.TrimSpace(c.Subdomain) + "." + strings.TrimSpace(c.ZoneName)
 }
 
+// workerCustomDomainBinding is the result of a successful attachWorkerCustomDomain.
+// We persist ID on the Deployment so a later detach call addresses the exact
+// binding without needing to re-resolve by hostname.
+type workerCustomDomainBinding struct {
+	ID       string
+	Hostname string
+}
+
 // listZones runs GET /zones and returns the active zones the token can see.
-// Inactive/pending zones are filtered out — they can't host Worker routes.
+// Inactive/pending zones are filtered out — they can't host Worker domains.
 func (m *Manager) listZones(ctx context.Context, token string) ([]Zone, error) {
 	body, status, err := m.cfGetJSON(ctx, token, zonesEndpoint+"?per_page=50")
 	if err != nil {
@@ -99,188 +114,60 @@ func (m *Manager) listZones(ctx context.Context, token string) ([]Zone, error) {
 	return zones, nil
 }
 
-// findOrCreateDNSCNAME ensures host CNAMEs to target on zoneID, proxied
-// through CF (the orange cloud — required for a Worker route to fire).
-// Returns the DNS record ID. Idempotent: re-runs return the existing record
-// if its content already matches; mismatched content is repaired in place
-// (PATCH) so we don't leak stale records.
-func (m *Manager) findOrCreateDNSCNAME(ctx context.Context, token, zoneID, host, target string) (string, error) {
-	listURL := fmt.Sprintf("%s/%s/dns_records?type=CNAME&name=%s", zonesEndpoint, zoneID, url.QueryEscape(host))
-	body, status, err := m.cfGetJSON(ctx, token, listURL)
-	if err != nil {
-		return "", fmt.Errorf("listing DNS records: %w", err)
-	}
-	if status != http.StatusOK || !cfSuccess(body) {
-		msg := extractCfError(body)
-		if msg == "" {
-			msg = fmt.Sprintf("listing DNS records failed (HTTP %d)", status)
-		}
-		return "", errors.New(msg)
-	}
-	results, _ := body["result"].([]any)
-	for _, r := range results {
-		rec, _ := r.(map[string]any)
-		if rec == nil {
-			continue
-		}
-		id, _ := rec["id"].(string)
-		content, _ := rec["content"].(string)
-		proxied, _ := rec["proxied"].(bool)
-		if id == "" {
-			continue
-		}
-		if content == target && proxied {
-			return id, nil
-		}
-		// Same host, different content/proxy state → PATCH to align.
-		patchURL := fmt.Sprintf("%s/%s/dns_records/%s", zonesEndpoint, zoneID, id)
-		payload := map[string]any{
-			"type":    "CNAME",
-			"name":    host,
-			"content": target,
-			"proxied": true,
-			"ttl":     1,
-		}
-		patched, pStatus, err := m.cfJSONRequest(ctx, http.MethodPatch, token, patchURL, payload)
-		if err != nil {
-			return "", fmt.Errorf("patching DNS record %s: %w", id, err)
-		}
-		if pStatus >= 400 || !cfSuccess(patched) {
-			msg := extractCfError(patched)
-			if msg == "" {
-				msg = fmt.Sprintf("patching DNS record failed (HTTP %d)", pStatus)
-			}
-			return "", errors.New(msg)
-		}
-		return id, nil
-	}
-
-	// No existing record — create one.
-	createURL := fmt.Sprintf("%s/%s/dns_records", zonesEndpoint, zoneID)
+// attachWorkerCustomDomain binds hostname → script via the Workers Custom
+// Domains API. CF auto-creates the DNS record and the managed cert; the
+// returned id lets us detach later without re-resolving by hostname.
+//
+// Idempotency note: if a binding already exists for the same hostname →
+// same script, CF returns 200 with the existing id (no error). If a
+// hostname is bound to a *different* script, CF returns an error and we
+// surface it; the user has to detach the conflicting binding first.
+func (m *Manager) attachWorkerCustomDomain(ctx context.Context, token, accountID, hostname, script, zoneID string) (*workerCustomDomainBinding, error) {
+	target := fmt.Sprintf(domainsEndpoint, accountID)
 	payload := map[string]any{
-		"type":    "CNAME",
-		"name":    host,
-		"content": target,
-		"proxied": true,
-		"ttl":     1,
+		"hostname":    hostname,
+		"service":     script,
+		"environment": "production",
+		"zone_id":     zoneID,
 	}
-	created, cStatus, err := m.cfJSONRequest(ctx, http.MethodPost, token, createURL, payload)
+	body, status, err := m.cfJSONRequest(ctx, http.MethodPut, token, target, payload)
 	if err != nil {
-		return "", fmt.Errorf("creating DNS record: %w", err)
+		return nil, fmt.Errorf("attaching worker domain: %w", err)
 	}
-	if cStatus >= 400 || !cfSuccess(created) {
-		msg := extractCfError(created)
-		if msg == "" {
-			msg = fmt.Sprintf("creating DNS record failed (HTTP %d)", cStatus)
-		}
-		return "", errors.New(msg)
-	}
-	res, _ := created["result"].(map[string]any)
-	id, _ := res["id"].(string)
-	if id == "" {
-		return "", errors.New("DNS record created but no id returned")
-	}
-	return id, nil
-}
-
-// findOrCreateWorkerRoute ensures pattern → script on zoneID. Idempotent:
-// listing first lets us reuse an existing route id and avoid the
-// "route already exists" 400. Mismatched script bindings (same pattern,
-// different script) are repaired via PUT.
-func (m *Manager) findOrCreateWorkerRoute(ctx context.Context, token, zoneID, pattern, script string) (string, error) {
-	listURL := fmt.Sprintf("%s/%s/workers/routes", zonesEndpoint, zoneID)
-	body, status, err := m.cfGetJSON(ctx, token, listURL)
-	if err != nil {
-		return "", fmt.Errorf("listing worker routes: %w", err)
-	}
-	if status != http.StatusOK || !cfSuccess(body) {
+	if status >= 400 || !cfSuccess(body) {
 		msg := extractCfError(body)
 		if msg == "" {
-			msg = fmt.Sprintf("listing worker routes failed (HTTP %d)", status)
+			msg = fmt.Sprintf("attach worker domain failed (HTTP %d)", status)
 		}
-		return "", errors.New(msg)
+		return nil, errors.New(msg)
 	}
-	results, _ := body["result"].([]any)
-	for _, r := range results {
-		rec, _ := r.(map[string]any)
-		if rec == nil {
-			continue
-		}
-		id, _ := rec["id"].(string)
-		p, _ := rec["pattern"].(string)
-		s, _ := rec["script"].(string)
-		if id == "" || p != pattern {
-			continue
-		}
-		if s == script {
-			return id, nil
-		}
-		// Same pattern, different script — repair.
-		putURL := fmt.Sprintf("%s/%s/workers/routes/%s", zonesEndpoint, zoneID, id)
-		payload := map[string]any{"pattern": pattern, "script": script}
-		fixed, pStatus, err := m.cfJSONRequest(ctx, http.MethodPut, token, putURL, payload)
-		if err != nil {
-			return "", fmt.Errorf("updating worker route %s: %w", id, err)
-		}
-		if pStatus >= 400 || !cfSuccess(fixed) {
-			msg := extractCfError(fixed)
-			if msg == "" {
-				msg = fmt.Sprintf("updating worker route failed (HTTP %d)", pStatus)
-			}
-			return "", errors.New(msg)
-		}
-		return id, nil
-	}
-
-	createURL := fmt.Sprintf("%s/%s/workers/routes", zonesEndpoint, zoneID)
-	payload := map[string]any{"pattern": pattern, "script": script}
-	created, cStatus, err := m.cfJSONRequest(ctx, http.MethodPost, token, createURL, payload)
-	if err != nil {
-		return "", fmt.Errorf("creating worker route: %w", err)
-	}
-	if cStatus >= 400 || !cfSuccess(created) {
-		msg := extractCfError(created)
-		if msg == "" {
-			msg = fmt.Sprintf("creating worker route failed (HTTP %d)", cStatus)
-		}
-		return "", errors.New(msg)
-	}
-	res, _ := created["result"].(map[string]any)
+	res, _ := body["result"].(map[string]any)
 	id, _ := res["id"].(string)
 	if id == "" {
-		return "", errors.New("worker route created but no id returned")
+		return nil, errors.New("worker domain attached but no id returned")
 	}
-	return id, nil
+	host, _ := res["hostname"].(string)
+	if host == "" {
+		host = hostname
+	}
+	return &workerCustomDomainBinding{ID: id, Hostname: host}, nil
 }
 
-// deleteWorkerRoute is best-effort: 404 means the route was already gone.
-func (m *Manager) deleteWorkerRoute(ctx context.Context, token, zoneID, routeID string) error {
-	if zoneID == "" || routeID == "" {
+// detachWorkerCustomDomain removes the binding by id. Best-effort: 404 is
+// treated as success (binding already gone — CF dashboard or another tool
+// may have removed it). The associated CF DNS record is removed by CF as
+// part of the detach.
+func (m *Manager) detachWorkerCustomDomain(ctx context.Context, token, accountID, domainID string) error {
+	if domainID == "" {
 		return nil
 	}
-	deleteURL := fmt.Sprintf("%s/%s/workers/routes/%s", zonesEndpoint, zoneID, routeID)
-	_, status, err := m.cfDelete(ctx, token, deleteURL)
+	target := fmt.Sprintf(domainsEndpoint+"/%s", accountID, domainID)
+	_, status, err := m.cfDelete(ctx, token, target)
 	if err != nil {
 		return err
 	}
 	if status >= 400 && status != http.StatusNotFound {
-		return fmt.Errorf("delete route HTTP %d", status)
-	}
-	return nil
-}
-
-// deleteDNSRecord is best-effort: 404 is treated as success.
-func (m *Manager) deleteDNSRecord(ctx context.Context, token, zoneID, recordID string) error {
-	if zoneID == "" || recordID == "" {
-		return nil
-	}
-	deleteURL := fmt.Sprintf("%s/%s/dns_records/%s", zonesEndpoint, zoneID, recordID)
-	_, status, err := m.cfDelete(ctx, token, deleteURL)
-	if err != nil {
-		return err
-	}
-	if status >= 400 && status != http.StatusNotFound {
-		return fmt.Errorf("delete dns HTTP %d", status)
+		return fmt.Errorf("detach worker domain HTTP %d", status)
 	}
 	return nil
 }

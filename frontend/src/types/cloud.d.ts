@@ -84,11 +84,12 @@ export interface CloudNode {
 
 // One Cloudflare Worker deployment fronting a single cloud node.
 //
-// customHost is the FQDN bound through M1's custom-domain Worker route
-// (e.g. "relay.example.com"); empty when only the workers.dev path is
-// active. zoneId/routeId/dnsRecordId are persisted for clean teardown:
-// DeleteWorker uses them even if the user later clears the CustomDomain
-// config. workerHost (workers.dev path) is always present.
+// customHost / customDomainId are populated when M1's Workers Custom
+// Domains binding has been applied (e.g. "relay.example.com"); empty
+// when only the workers.dev path is active. zoneId/routeId/dnsRecordId
+// are legacy fields from the pre-Workers-Custom-Domains M1
+// implementation, retained for cleanup of older persisted deployments.
+// workerHost (workers.dev path) is always present.
 export interface CdnDeployment {
   nodeId: string
   scriptName: string
@@ -96,8 +97,12 @@ export interface CdnDeployment {
   backend: string
   deployedAt: string
   customHost?: string
+  customDomainId?: string
+  /** @deprecated legacy; pre-Workers-Custom-Domains route+CNAME path */
   zoneId?: string
+  /** @deprecated legacy */
   routeId?: string
+  /** @deprecated legacy */
   dnsRecordId?: string
 }
 

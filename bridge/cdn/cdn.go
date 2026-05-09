@@ -64,20 +64,29 @@ type State struct {
 
 // Deployment describes one Worker scoped to one cloud node.
 //
-// CustomHost / RouteID / DNSRecordID / ZoneID are populated only when M1's
-// custom-domain binding has been applied. They live on the deployment (not
-// just global config) so DeleteWorker can clean up route+DNS even after the
-// user has changed or cleared the global CustomDomain config.
+// CustomHost / CustomDomainID are populated when M1's Workers Custom Domains
+// binding has been applied. CustomDomainID is the id returned by
+// PUT /accounts/{aid}/workers/domains and lets DeleteWorker detach the
+// binding (which cascades the auto-created DNS record) without re-resolving
+// by hostname.
+//
+// ZoneID / RouteID / DNSRecordID are legacy fields from the route+CNAME
+// implementation that pre-dated Workers Custom Domains. They are still
+// honored by DeleteWorker as a fallback path so any persisted state from
+// the old format cleans up correctly; new deploys do not populate them.
 type Deployment struct {
-	NodeID       string    `json:"nodeId"`
-	ScriptName   string    `json:"scriptName"`
-	WorkerHost   string    `json:"workerHost"`
-	Backend      string    `json:"backend"`
-	DeployedAt   time.Time `json:"deployedAt"`
-	CustomHost   string    `json:"customHost,omitempty"`
-	ZoneID       string    `json:"zoneId,omitempty"`
-	RouteID      string    `json:"routeId,omitempty"`
-	DNSRecordID  string    `json:"dnsRecordId,omitempty"`
+	NodeID         string    `json:"nodeId"`
+	ScriptName     string    `json:"scriptName"`
+	WorkerHost     string    `json:"workerHost"`
+	Backend        string    `json:"backend"`
+	DeployedAt     time.Time `json:"deployedAt"`
+	CustomHost     string    `json:"customHost,omitempty"`
+	CustomDomainID string    `json:"customDomainId,omitempty"`
+	// Deprecated: legacy route+CNAME fields, retained for cleanup of older
+	// persisted deployments. New deploys leave these empty.
+	ZoneID      string `json:"zoneId,omitempty"`
+	RouteID     string `json:"routeId,omitempty"`
+	DNSRecordID string `json:"dnsRecordId,omitempty"`
 }
 
 // persistedConfig is the on-disk representation of the verifier state. The
@@ -444,29 +453,22 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		DeployedAt: time.Now().UTC(),
 	}
 
-	// M1: if a CustomDomain is configured, also bind this Worker to a
-	// route under that zone. Failure here is non-fatal — the Worker still
-	// works through workers.dev. We surface the error in lastError so the
-	// user can re-deploy or fix permissions, but we keep the deployment.
+	// M1: if a CustomDomain is configured, attach this Worker to the user's
+	// hostname via the Workers Custom Domains API. CF auto-creates DNS +
+	// managed cert; one PUT replaces the older two-step (DNS CNAME + Worker
+	// route) flow and drops two zone-level token scopes. Failure is
+	// non-fatal — the workers.dev path still works and the error surfaces
+	// through lastError so the user can re-deploy after fixing scope.
 	customDomainCopy, _ := m.cloneCustomDomainConfig()
 	customWarn := ""
 	if customDomainCopy.IsSet() {
 		customHost := customDomainCopy.hostFor()
-		dnsTarget := host // CNAME target = the workers.dev hostname.
-		dnsID, err := m.findOrCreateDNSCNAME(ctx, token, customDomainCopy.ZoneID, customHost, dnsTarget)
+		bind, err := m.attachWorkerCustomDomain(ctx, token, accountID, customHost, scriptName, customDomainCopy.ZoneID)
 		if err != nil {
-			customWarn = fmt.Sprintf("workers.dev path live, but custom-domain DNS step failed: %v", err)
+			customWarn = fmt.Sprintf("workers.dev path live, but custom-domain binding failed: %v", err)
 		} else {
-			pattern := customHost + "/*"
-			routeID, err := m.findOrCreateWorkerRoute(ctx, token, customDomainCopy.ZoneID, pattern, scriptName)
-			if err != nil {
-				customWarn = fmt.Sprintf("workers.dev path live, but custom-domain route step failed: %v", err)
-			} else {
-				dep.CustomHost = customHost
-				dep.ZoneID = customDomainCopy.ZoneID
-				dep.RouteID = routeID
-				dep.DNSRecordID = dnsID
-			}
+			dep.CustomHost = bind.Hostname
+			dep.CustomDomainID = bind.ID
 		}
 	}
 
@@ -515,24 +517,34 @@ func (m *Manager) DeleteWorker(ctx context.Context, nodeID string) (State, error
 	token := m.cfg.Token
 	accountID := m.cfg.AccountID
 	scriptName := dep.ScriptName
-	zoneID := dep.ZoneID
-	routeID := dep.RouteID
-	dnsRecordID := dep.DNSRecordID
+	customDomainID := dep.CustomDomainID
+	legacyZoneID := dep.ZoneID
+	legacyRouteID := dep.RouteID
+	legacyDNSID := dep.DNSRecordID
 	m.mu.Unlock()
 
-	// Tear down the M1 custom-domain bindings first. Both are best-effort:
-	// 404 means the binding is already gone (CF's UI or another tool may
-	// have removed it). A non-404 error is surfaced through lastError but
-	// does not abort the script delete — leaving the CF Worker in place
-	// while route/DNS persist would be the worst outcome.
-	if routeID != "" {
-		if err := m.deleteWorkerRoute(ctx, token, zoneID, routeID); err != nil {
-			m.setLastError(fmt.Sprintf("worker route cleanup failed: %v", err))
+	// Tear down the M1 custom-domain binding first. Best-effort: 404 means
+	// the binding is already gone (CF's UI or another tool may have removed
+	// it). A non-404 error is surfaced through lastError but does not abort
+	// the script delete — leaving the CF Worker in place while a custom
+	// domain points at it would be the worst outcome.
+	//
+	// Two paths because old persisted state (pre-Workers-Custom-Domains
+	// refactor) still needs cleanup. New deploys only use CustomDomainID.
+	if customDomainID != "" {
+		if err := m.detachWorkerCustomDomain(ctx, token, accountID, customDomainID); err != nil {
+			m.setLastError(fmt.Sprintf("custom-domain detach failed: %v", err))
 		}
-	}
-	if dnsRecordID != "" {
-		if err := m.deleteDNSRecord(ctx, token, zoneID, dnsRecordID); err != nil {
-			m.setLastError(fmt.Sprintf("custom-domain DNS cleanup failed: %v", err))
+	} else {
+		if legacyRouteID != "" {
+			if err := m.legacyDeleteWorkerRoute(ctx, token, legacyZoneID, legacyRouteID); err != nil {
+				m.setLastError(fmt.Sprintf("legacy worker route cleanup failed: %v", err))
+			}
+		}
+		if legacyDNSID != "" {
+			if err := m.legacyDeleteDNSRecord(ctx, token, legacyZoneID, legacyDNSID); err != nil {
+				m.setLastError(fmt.Sprintf("legacy custom-domain DNS cleanup failed: %v", err))
+			}
 		}
 	}
 
@@ -655,6 +667,40 @@ func (m *Manager) ClearCustomDomain() (State, error) {
 		return m.snapshotLocked(), err
 	}
 	return m.snapshotLocked(), nil
+}
+
+// legacyDeleteWorkerRoute / legacyDeleteDNSRecord clean up persisted state
+// from the pre-Workers-Custom-Domains M1 implementation. Kept private and
+// well-marked to avoid being conflated with current path. New deploys
+// never produce records that need these.
+func (m *Manager) legacyDeleteWorkerRoute(ctx context.Context, token, zoneID, routeID string) error {
+	if zoneID == "" || routeID == "" {
+		return nil
+	}
+	target := fmt.Sprintf("%s/%s/workers/routes/%s", zonesEndpoint, zoneID, routeID)
+	_, status, err := m.cfDelete(ctx, token, target)
+	if err != nil {
+		return err
+	}
+	if status >= 400 && status != http.StatusNotFound {
+		return fmt.Errorf("legacy delete route HTTP %d", status)
+	}
+	return nil
+}
+
+func (m *Manager) legacyDeleteDNSRecord(ctx context.Context, token, zoneID, recordID string) error {
+	if zoneID == "" || recordID == "" {
+		return nil
+	}
+	target := fmt.Sprintf("%s/%s/dns_records/%s", zonesEndpoint, zoneID, recordID)
+	_, status, err := m.cfDelete(ctx, token, target)
+	if err != nil {
+		return err
+	}
+	if status >= 400 && status != http.StatusNotFound {
+		return fmt.Errorf("legacy delete dns HTTP %d", status)
+	}
+	return nil
 }
 
 // --- internal helpers ---
