@@ -114,6 +114,13 @@ func GenerateMultiProtocolScript(p MultiProtocolParams) string {
 	vlessRelayBlock := ""
 	if p.VLESSRelayPort > 0 {
 		vlessRelayBlock = fmt.Sprintf(`
+  # Open UFW for the relay port. The main UFW block above enumerates the four
+  # always-on protocol ports as literals — the relay port is conditional on
+  # VLESSRelayPort being set, so it lives here in the same conditional block
+  # that installs the relay sing-box. Without this, the service listens on the
+  # port but UFW (default deny incoming) silently blackholes the SYN.
+  ufw allow %[1]d/tcp comment 'VLESS-Relay (CDN)'
+
   cat > /etc/privatedeploy/vless/relay.json <<RELAYEOF
 {
   "log": { "level": "info", "timestamp": true },
@@ -121,8 +128,8 @@ func GenerateMultiProtocolScript(p MultiProtocolParams) string {
     "type": "vless",
     "tag": "vless-relay-in",
     "listen": "::",
-    "listen_port": %d,
-    "users": [{ "uuid": "%s" }]
+    "listen_port": %[1]d,
+    "users": [{ "uuid": "%[2]s" }]
   }],
   "outbounds": [{ "type": "direct", "tag": "direct" }]
 }
