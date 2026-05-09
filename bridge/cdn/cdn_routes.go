@@ -63,12 +63,45 @@ func (c *CustomDomain) IsSet() bool {
 		strings.TrimSpace(c.Subdomain) != ""
 }
 
-// hostFor returns the FQDN this config produces (e.g. "relay.example.com").
-func (c *CustomDomain) hostFor() string {
+// hostForScript returns the per-script FQDN this config produces (e.g.
+// "relay-3db67e.example.com"). The 6-char suffix is the same hash
+// safeWorkerName already appends to scriptName, so each node gets a
+// stable, distinct host. Multi-node deploys would otherwise collide on
+// one hostname (CF Workers Custom Domains binds each host to exactly
+// one script).
+func (c *CustomDomain) hostForScript(scriptName string) string {
 	if !c.IsSet() {
 		return ""
 	}
-	return strings.TrimSpace(c.Subdomain) + "." + strings.TrimSpace(c.ZoneName)
+	sub := strings.TrimSpace(c.Subdomain)
+	zone := strings.TrimSpace(c.ZoneName)
+	suffix := scriptShortSuffix(scriptName)
+	if suffix == "" {
+		// Defensive fallback for hand-crafted script names that don't end
+		// in the standard 6-hex hash. Still per-script (uses the full
+		// script name) but uglier — exists only to avoid hostname
+		// collisions even in pathological inputs.
+		return scriptName + "." + zone
+	}
+	return fmt.Sprintf("%s-%s.%s", sub, suffix, zone)
+}
+
+// scriptShortSuffix extracts the trailing 6-hex-digit hash that
+// safeWorkerName always appends to script names (see shortHash). Same
+// script → same host, so re-deploys are stable.
+func scriptShortSuffix(scriptName string) string {
+	if len(scriptName) < 6 {
+		return ""
+	}
+	cand := scriptName[len(scriptName)-6:]
+	for i := 0; i < len(cand); i++ {
+		c := cand[i]
+		ok := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+		if !ok {
+			return ""
+		}
+	}
+	return cand
 }
 
 // workerCustomDomainBinding is the result of a successful attachWorkerCustomDomain.

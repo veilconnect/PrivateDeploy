@@ -47,10 +47,14 @@ export const useCdnStore = defineStore('cdn', () => {
   const workersDevExample = computed(() => state.value.workersDevExample ?? '')
   const deployments = computed(() => state.value.deployments ?? {})
   const customDomain = computed(() => state.value.customDomain ?? null)
-  const customDomainHost = computed(() => {
+  // customDomainHostPattern is the per-node host shape: each deployed Worker
+  // is bound to <subdomain>-<6hex-script-hash>.<zone>, so we can't show a
+  // single concrete host the way we used to. Used only by the preview text
+  // in Settings; deployment records carry the real customHost.
+  const customDomainHostPattern = computed(() => {
     const c = state.value.customDomain
     if (!c) return ''
-    return `${c.subdomain}.${c.zoneName}`
+    return `${c.subdomain}-<node>.${c.zoneName}`
   })
 
   const deploymentFor = (nodeId: string): CdnDeployment | null => {
@@ -174,7 +178,7 @@ export const useCdnStore = defineStore('cdn', () => {
     workersDevExample,
     deployments,
     customDomain,
-    customDomainHost,
+    customDomainHostPattern,
     zones,
     zonesLoading,
     zonesLoadedAt,

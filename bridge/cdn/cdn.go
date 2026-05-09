@@ -462,7 +462,7 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 	customDomainCopy, _ := m.cloneCustomDomainConfig()
 	customWarn := ""
 	if customDomainCopy.IsSet() {
-		customHost := customDomainCopy.hostFor()
+		customHost := customDomainCopy.hostForScript(scriptName)
 		bind, err := m.attachWorkerCustomDomain(ctx, token, accountID, customHost, scriptName, customDomainCopy.ZoneID)
 		if err != nil {
 			customWarn = fmt.Sprintf("workers.dev path live, but custom-domain binding failed: %v", err)

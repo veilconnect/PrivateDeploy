@@ -310,6 +310,14 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     // The outbound talks to the CF anycast edge (workerHost:443 over TLS+WS);
     // CF terminates TLS, the Worker dials the VPS at vlessRelayPort, and the
     // VPS terminates the inner VLESS auth. CF holds no credentials.
+    // Strict M1: when the deployment has bound a custom domain, that's the
+    // only CDN outbound we emit. workers.dev is the path we needed M1 to
+    // bypass — keeping it as a sibling in the urltest group means every
+    // probe interval pays the cost of a known-bad path (DNS-altered, TLS
+    // dial timeout) before urltest converges. When customHost is empty,
+    // we still emit the workers.dev path so users without M1 get the
+    // baseline benefit; the moment M1 is wired, the workers.dev sibling
+    // is gone.
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
     const cdnCustomHost = cdnDeployment?.customHost?.trim()
@@ -318,48 +326,22 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
       !!node.vlessRelayPort &&
       node.vlessRelayPort > 0 &&
       !!node.vlessUUID
-    if (cdnEligible && cdnWorkerHost) {
+    const cdnHost = cdnEligible ? (cdnCustomHost || cdnWorkerHost || '') : ''
+    if (cdnHost) {
       outbounds.push({
         type: 'vless',
         tag: `${node.label}-cdn`,
-        server: cdnWorkerHost,
+        server: cdnHost,
         server_port: 443,
         uuid: node.vlessUUID,
         transport: {
           type: 'ws',
           path: '/?ed=2560',
-          headers: { Host: cdnWorkerHost },
+          headers: { Host: cdnHost },
         },
         tls: {
           enabled: true,
-          server_name: cdnWorkerHost,
-          utls: {
-            enabled: true,
-            fingerprint: 'chrome',
-          },
-        },
-      })
-    }
-    // 3c. M1 custom-domain Worker route. Same Worker, served from a user
-    // zone (e.g. relay.example.com) instead of *.workers.dev. urltest
-    // picks whichever path responds first; on networks where the
-    // workers.dev pattern is fingerprinted/throttled the custom-host
-    // variant wins automatically without any client-side detection.
-    if (cdnEligible && cdnCustomHost && cdnCustomHost !== cdnWorkerHost) {
-      outbounds.push({
-        type: 'vless',
-        tag: `${node.label}-cdn-custom`,
-        server: cdnCustomHost,
-        server_port: 443,
-        uuid: node.vlessUUID,
-        transport: {
-          type: 'ws',
-          path: '/?ed=2560',
-          headers: { Host: cdnCustomHost },
-        },
-        tls: {
-          enabled: true,
-          server_name: cdnCustomHost,
+          server_name: cdnHost,
           utls: {
             enabled: true,
             fingerprint: 'chrome',

@@ -83,11 +83,14 @@ const zoneOptions = computed(() =>
 )
 
 const previewHost = computed(() => {
+  // Each node gets its own per-script-hash host so multi-node deploys
+  // don't collide on one CF Workers Custom Domain. Render the pattern
+  // with a "<node>" placeholder so users see the shape upfront.
   const sub = customSubdomain.value.trim()
   if (!sub) return ''
   const zone = cdnStore.zones.find((z) => z.id === customZoneId.value)
   if (!zone) return ''
-  return `${sub}.${zone.name}`
+  return `${sub}-<node>.${zone.name}`
 })
 
 const handleSaveCustomDomain = async () => {
@@ -379,7 +382,7 @@ onMounted(async () => {
           </div>
 
           <div v-if="cdnStore.customDomain" class="text-12 pt-4">
-            {{ t('cdn.customDomain.bound', { host: cdnStore.customDomainHost }) }}
+            {{ t('cdn.customDomain.bound', { host: cdnStore.customDomainHostPattern }) }}
           </div>
         </div>
       </div>
