@@ -665,7 +665,19 @@ func (m *Manager) SetCustomDomain(ctx context.Context, zoneID, subdomain string)
 		return m.State(), errors.New("token not verified — verify it first")
 	}
 	token := m.cfg.Token
+	accountID := m.cfg.AccountID
 	m.mu.Unlock()
+
+	// Fail-fast probe: verify the token can actually use Workers Custom
+	// Domains on the verified account *before* persisting the binding
+	// config. Catches the most common missed-scope case at save time
+	// instead of at first deploy. listZones is account-filtered too, so
+	// multi-account tokens can't accidentally bind a zone from another
+	// account.
+	if err := m.probeCustomDomainScope(ctx, token, accountID); err != nil {
+		m.setLastError(err.Error())
+		return m.State(), err
+	}
 
 	zones, err := m.listZones(ctx, token)
 	if err != nil {
@@ -680,7 +692,10 @@ func (m *Manager) SetCustomDomain(ctx context.Context, zoneID, subdomain string)
 		}
 	}
 	if matched == nil {
-		err := fmt.Errorf("zone %s not found in this account (or not active)", zoneID)
+		err := fmt.Errorf(
+			"zone %s not found in account %s (or not active) — pick a zone from this account, or re-verify with a token covering the intended account",
+			zoneID, accountID,
+		)
 		m.setLastError(err.Error())
 		return m.State(), err
 	}

@@ -112,10 +112,21 @@ type workerCustomDomainBinding struct {
 	Hostname string
 }
 
-// listZones runs GET /zones and returns the active zones the token can see.
-// Inactive/pending zones are filtered out — they can't host Worker domains.
+// listZones runs GET /zones?account.id=<verifiedAccountID> and returns the
+// active zones the token can see *in the verified account*. Filtering on
+// the account matters for tokens that span multiple Cloudflare accounts:
+// without it the picker offers zones from accounts the user didn't intend
+// to bind, and a later attach against the "wrong" account/zone pair
+// silently 404s.
 func (m *Manager) listZones(ctx context.Context, token string) ([]Zone, error) {
-	body, status, err := m.cfGetJSON(ctx, token, zonesEndpoint+"?per_page=50")
+	m.mu.Lock()
+	accountID := strings.TrimSpace(m.cfg.AccountID)
+	m.mu.Unlock()
+	url := zonesEndpoint + "?per_page=50"
+	if accountID != "" {
+		url += "&account.id=" + accountID
+	}
+	body, status, err := m.cfGetJSON(ctx, token, url)
 	if err != nil {
 		return nil, fmt.Errorf("listing zones: %w", err)
 	}
@@ -184,6 +195,36 @@ func (m *Manager) attachWorkerCustomDomain(ctx context.Context, token, accountID
 		host = hostname
 	}
 	return &workerCustomDomainBinding{ID: id, Hostname: host}, nil
+}
+
+// probeCustomDomainScope verifies the token can read the Workers Custom
+// Domains endpoint on the verified account. We GET ?per_page=1 — empty
+// result is fine (we just want to know that the call is permitted), but
+// 401/403/9109 means the token's permission set is missing
+// "Workers Scripts:Edit" against this account, so SetCustomDomain should
+// stop early with a clear, actionable error instead of waiting for the
+// per-script attach to fail mysteriously at deploy time.
+func (m *Manager) probeCustomDomainScope(ctx context.Context, token, accountID string) error {
+	target := fmt.Sprintf(domainsEndpoint+"?per_page=1", accountID)
+	body, status, err := m.cfGetJSON(ctx, token, target)
+	if err != nil {
+		return fmt.Errorf("probing Custom Domains scope: %w", err)
+	}
+	if status == http.StatusOK && cfSuccess(body) {
+		return nil
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return errors.New(
+			"token cannot read Workers Custom Domains on this account — " +
+				"add 'Account.Workers Scripts:Edit' scope to the token " +
+				"(or pick a token already verified against the right account)",
+		)
+	}
+	msg := extractCfError(body)
+	if msg == "" {
+		msg = fmt.Sprintf("Custom Domains scope probe failed (HTTP %d)", status)
+	}
+	return errors.New(msg)
 }
 
 // detachWorkerCustomDomain removes the binding by id. Best-effort: 404 is

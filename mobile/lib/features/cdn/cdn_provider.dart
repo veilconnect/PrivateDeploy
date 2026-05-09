@@ -580,7 +580,13 @@ class CdnProvider with ChangeNotifier {
         receiveTimeout: const Duration(seconds: 30),
         validateStatus: (_) => true,
       ));
-      final r = await dio.get('$_zonesEndpoint?per_page=50');
+      // Filter on the verified account so multi-account tokens don't leak
+      // zones from accounts the user didn't intend to bind.
+      final aid = (_accountId ?? '').trim();
+      final url = aid.isNotEmpty
+          ? '$_zonesEndpoint?per_page=50&account.id=$aid'
+          : '$_zonesEndpoint?per_page=50';
+      final r = await dio.get(url);
       if (r.statusCode == null || r.statusCode! >= 400) {
         _lastError = _extractCloudflareError(r.data) ??
             'Listing zones failed (HTTP ${r.statusCode}).';
@@ -638,8 +644,19 @@ class CdnProvider with ChangeNotifier {
     _isSavingCustomDomain = true;
     notifyListeners();
     try {
+      // Fail-fast probe: verify the token can read Workers Custom Domains
+      // on the verified account *before* persisting the binding config.
+      // Catches the most common missed-scope case at save time instead of
+      // surfacing as a mysterious deploy failure later.
+      final scopeError = await _probeCustomDomainScope();
+      if (scopeError != null) {
+        _lastError = scopeError;
+        return false;
+      }
       // Validate the zone is reachable with the current token. Reuses the
       // listZones result to avoid an extra round-trip if we just fetched.
+      // listZones is now account-filtered so visibility means
+      // "in the verified account", not just "in any account this token can see".
       final available = _zones.isNotEmpty ? _zones : await listZones();
       CdnZone? matched;
       for (final z in available) {
@@ -649,8 +666,9 @@ class CdnProvider with ChangeNotifier {
         }
       }
       if (matched == null) {
-        _lastError = 'Zone $cleanZone not visible to this token. '
-            'Add Zone:Read for that zone or pick another.';
+        _lastError = 'Zone $cleanZone not in account $_accountId '
+            '(or not active). Pick a zone from this account, or re-verify '
+            'with a token covering the intended account.';
         return false;
       }
       _customDomain = CdnCustomDomain(
@@ -664,6 +682,43 @@ class CdnProvider with ChangeNotifier {
     } finally {
       _isSavingCustomDomain = false;
       notifyListeners();
+    }
+  }
+
+  /// GET /accounts/{aid}/workers/domains?per_page=1 with the current token.
+  /// Empty result is fine — we just need 200; 401/403 mean the token's
+  /// permission set is missing 'Account.Workers Scripts:Edit' against this
+  /// account. Returns null when the call succeeds, or a user-actionable
+  /// error string when it doesn't.
+  Future<String?> _probeCustomDomainScope() async {
+    final token = await StorageService.getSecureString(_kTokenKey);
+    if (token == null || token.isEmpty) {
+      return 'Token missing from storage.';
+    }
+    final aid = (_accountId ?? '').trim();
+    if (aid.isEmpty) {
+      return 'Token not verified — verify it first.';
+    }
+    try {
+      final dio = Dio(BaseOptions(
+        headers: {'Authorization': 'Bearer $token'},
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 30),
+        validateStatus: (_) => true,
+      ));
+      final r = await dio
+          .get('$_accountsEndpoint/$aid/workers/domains?per_page=1');
+      final code = r.statusCode ?? 0;
+      if (code == 200) return null;
+      if (code == 401 || code == 403) {
+        return "Token cannot read Workers Custom Domains on this account — "
+            "add 'Account.Workers Scripts:Edit' scope to the token "
+            "(or pick a token already verified against the right account).";
+      }
+      return _extractCloudflareError(r.data) ??
+          'Custom Domains scope probe failed (HTTP $code).';
+    } on DioException catch (e) {
+      return 'Network error probing scope: ${e.message ?? e.type.name}';
     }
   }
 
