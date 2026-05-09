@@ -42,6 +42,7 @@ export const useCdnStore = defineStore('cdn', () => {
   const isConfigured = computed(() => status.value !== 'disabled')
   const isVerified = computed(() => status.value === 'verified')
   const lastError = computed(() => state.value.lastError ?? '')
+  const accountId = computed(() => state.value.accountId ?? '')
   const accountEmail = computed(() => state.value.accountEmail ?? '')
   const workersSubdomain = computed(() => state.value.workersSubdomain ?? '')
   const workersDevExample = computed(() => state.value.workersDevExample ?? '')
@@ -173,6 +174,7 @@ export const useCdnStore = defineStore('cdn', () => {
     isConfigured,
     isVerified,
     lastError,
+    accountId,
     accountEmail,
     workersSubdomain,
     workersDevExample,

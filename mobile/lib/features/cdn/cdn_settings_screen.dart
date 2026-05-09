@@ -32,16 +32,23 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
   // five-row permission ritual entirely — clicking opens a token form
   // with the three scopes M1 actually needs already selected.
   // Source: developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
-  static String get _cfTokenDeeplink {
+  //
+  // accountId pre-filter: when token already verified we know the actual
+  // account; passing it pins the token-creation form to that account so
+  // multi-account users don't accidentally pick another's zones later.
+  static String _cfTokenDeeplinkFor(String? verifiedAccountId) {
     final perms = Uri.encodeComponent(
       '[{"key":"workers_scripts","type":"edit"},'
       '{"key":"account_settings","type":"read"},'
       '{"key":"zone","type":"read"}]',
     );
+    final aid = (verifiedAccountId != null && verifiedAccountId.isNotEmpty)
+        ? verifiedAccountId
+        : '*';
     return 'https://dash.cloudflare.com/profile/api-tokens'
         '?permissionGroupKeys=$perms'
         '&name=PrivateDeploy+CDN'
-        '&accountId=*'
+        '&accountId=$aid'
         '&zoneId=all';
   }
 
@@ -71,7 +78,7 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
               provider: provider,
               isZh: isZh,
               cfTokenDashboard: _cfTokenDashboard,
-              cfTokenDeeplink: _cfTokenDeeplink,
+              cfTokenDeeplink: _cfTokenDeeplinkFor(provider.accountId),
               docsUrl: _docsUrl,
             ),
             if (provider.status == CdnStatus.verified) ...[

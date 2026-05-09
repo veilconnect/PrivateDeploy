@@ -23,7 +23,11 @@ const showStep3 = computed(() => cdnStore.isVerified)
 // The "Edit Cloudflare Workers" preset users typically pick has only
 // Workers Scripts:Edit + Account Settings:Read; using this deeplink also
 // adds Zone:Read so the zone picker works after token verification.
-const CF_TOKEN_DEEPLINK = (() => {
+// Deeplink is reactive so re-creating a token after verify (e.g. rotation)
+// pre-filters to the user's actual CF account. Multi-account users on '*'
+// would otherwise see /zones results from accounts they didn't intend to
+// touch.
+const cfTokenDeeplink = computed(() => {
   const perms = [
     { key: 'workers_scripts', type: 'edit' },
     { key: 'account_settings', type: 'read' },
@@ -32,11 +36,11 @@ const CF_TOKEN_DEEPLINK = (() => {
   const params = new URLSearchParams({
     permissionGroupKeys: JSON.stringify(perms),
     name: 'PrivateDeploy CDN',
-    accountId: '*',
+    accountId: cdnStore.accountId || '*',
     zoneId: 'all',
   })
   return `https://dash.cloudflare.com/profile/api-tokens?${params.toString()}`
-})()
+})
 const showScopeHelp = ref(false)
 
 // Custom domain (M1) toggle. The toggle starts ON whenever a binding is
@@ -218,7 +222,7 @@ onMounted(async () => {
         type="primary"
         size="small"
         icon="link"
-        @click="BrowserOpenURL(CF_TOKEN_DEEPLINK)"
+        @click="BrowserOpenURL(cfTokenDeeplink)"
       >
         {{ t('cdn.setup.createTokenAuto') }}
       </Button>
