@@ -12,6 +12,7 @@ class RecoveredVultrNodeRecord {
   final int trojanPort;
   final String trojanPassword;
   final String trojanServerName;
+  final int vlessRelayPort;
 
   const RecoveredVultrNodeRecord({
     required this.ssPort,
@@ -27,6 +28,7 @@ class RecoveredVultrNodeRecord {
     required this.trojanPort,
     required this.trojanPassword,
     required this.trojanServerName,
+    this.vlessRelayPort = 0,
   });
 
   bool get isUsable => ssPort > 0 && ssPassword.isNotEmpty;
@@ -45,6 +47,7 @@ class RecoveredVultrNodeRecord {
         'trojanPort': trojanPort,
         'trojanPassword': trojanPassword,
         'trojanServerName': trojanServerName,
+        if (vlessRelayPort > 0) 'vlessRelayPort': vlessRelayPort,
       };
 }
 
@@ -100,6 +103,12 @@ RecoveredVultrNodeRecord? recoverVultrNodeRecordFromUserData(String userData) {
   final trojanServerName =
       _firstMatchGroup(_trojanServerName, script, 1) ?? '';
 
+  // The plain-VLESS relay block (M1 / Workers Custom Domain front) is
+  // emitted only when a relay port is allocated. Match either the UFW
+  // line or the relay.json listen_port — UFW is cheaper to scan.
+  final vlessRelayPort =
+      _parseInt(_firstMatchGroup(_vlessRelayPort, script, 1));
+
   return RecoveredVultrNodeRecord(
     ssPort: ssPort,
     ssPassword: ssPassword,
@@ -114,6 +123,7 @@ RecoveredVultrNodeRecord? recoverVultrNodeRecordFromUserData(String userData) {
     trojanPort: trojanPort,
     trojanPassword: trojanPassword,
     trojanServerName: trojanServerName,
+    vlessRelayPort: vlessRelayPort,
   );
 }
 
@@ -176,6 +186,12 @@ final RegExp _trojanPassword = RegExp(
 final RegExp _trojanServerName = RegExp(
   "\"type\":\\s*\"trojan\".*?\"server_name\":\\s*\"([^\"]+)\"",
   dotAll: true,
+);
+// The relay block UFW comment is unique and one-line, so this matches it
+// fast and unambiguously. Falls back to nothing when M1 isn't wired
+// (legacy nodes or future deploys with the relay block disabled).
+final RegExp _vlessRelayPort = RegExp(
+  r"ufw allow (\d+)/tcp comment 'VLESS-Relay",
 );
 
 String _firstNonEmptyGroups(RegExpMatch match, List<int> indexes) {

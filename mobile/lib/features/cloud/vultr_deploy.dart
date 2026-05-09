@@ -55,6 +55,7 @@ class VultrDeploymentBuilder {
     final hyPort = ports[1];
     final vlessPort = ports[2];
     final trojanPort = ports[3];
+    final vlessRelayPort = ports.length > 4 ? ports[4] : 0;
     final hyPassword = PortProfileAllocator.generatePassword(22);
     final trojanPassword = PortProfileAllocator.generatePassword(22);
     final vlessUuid = _generateUuidV4();
@@ -75,6 +76,7 @@ class VultrDeploymentBuilder {
         vlessPublicKey: realityKeyPair.publicKey,
         vlessShortId: vlessShortId,
         vlessServerName: defaultVlessServerName,
+        vlessRelayPort: vlessRelayPort,
         trojanPort: trojanPort,
         trojanPassword: trojanPassword,
         trojanServerName: defaultTrojanServerName,
@@ -92,6 +94,7 @@ class VultrDeploymentBuilder {
         'vlessPublicKey': realityKeyPair.publicKey,
         'vlessShortId': vlessShortId,
         'vlessServerName': defaultVlessServerName,
+        if (vlessRelayPort > 0) 'vlessRelayPort': vlessRelayPort,
         'trojanPort': trojanPort,
         'trojanPassword': trojanPassword,
         'trojanServerName': defaultTrojanServerName,
@@ -161,8 +164,21 @@ class VultrDeploymentBuilder {
     required int trojanPort,
     required String trojanPassword,
     required String trojanServerName,
+    int vlessRelayPort = 0,
   }) {
     var script = _multiProtocolTemplate;
+    // The relay block (UFW rule + sing-box config + systemd service) is
+    // conditional: only emitted when a relay port is allocated. Older
+    // (zero-port) deploys produce the same multi-protocol output as before
+    // so we can ship this template change without forcing a re-deploy of
+    // every existing node.
+    final relayBlock = vlessRelayPort > 0
+        ? _vlessRelayBlock(vlessRelayPort, vlessUuid)
+        : '';
+    final relayUfw = vlessRelayPort > 0
+        ? "ufw allow $vlessRelayPort/tcp comment 'VLESS-Relay (CDN)'\n"
+        : '';
+    final relayServices = vlessRelayPort > 0 ? ' vless-relay-server' : '';
     final replacements = <String, String>{
       'SS_PORT': '$ssPort',
       'SS_PASSWORD': ssPassword,
@@ -176,6 +192,9 @@ class VultrDeploymentBuilder {
       'VLESS_PUBLIC_KEY': vlessPublicKey,
       'VLESS_SHORT_ID': vlessShortId,
       'VLESS_SERVER_NAME': vlessServerName,
+      'VLESS_RELAY_BLOCK': relayBlock,
+      'VLESS_RELAY_UFW': relayUfw,
+      'VLESS_RELAY_SERVICES': relayServices,
       'TROJAN_PORT': '$trojanPort',
       'TROJAN_PASSWORD': trojanPassword,
       'TROJAN_SERVER_NAME': trojanServerName,
@@ -186,6 +205,53 @@ class VultrDeploymentBuilder {
     }
     return script;
   }
+
+  // Mirrors the Go-side vlessRelayBlock in bridge/cloud/deploy/deploy.go so
+  // mobile-deployed nodes can be CDN-fronted without re-deploying through
+  // desktop. Plain VLESS over TCP (no Reality, no TLS — Cloudflare's edge
+  // terminates TLS, the Worker dials this port, the VPS terminates the
+  // inner VLESS auth on the same UUID as the Reality endpoint).
+  static String _vlessRelayBlock(int relayPort, String uuid) => '''
+cat > /etc/privatedeploy/vless/relay.json <<RELAYEOF
+{
+  "log": { "level": "info", "timestamp": true },
+  "inbounds": [{
+    "type": "vless",
+    "tag": "vless-relay-in",
+    "listen": "::",
+    "listen_port": $relayPort,
+    "users": [{ "uuid": "$uuid" }]
+  }],
+  "outbounds": [{ "type": "direct", "tag": "direct" }]
+}
+RELAYEOF
+chmod 600 /etc/privatedeploy/vless/relay.json
+chown privatedeploy:privatedeploy /etc/privatedeploy/vless/relay.json
+
+cat > /etc/systemd/system/vless-relay-server.service <<'RELAYSERVICE'
+[Unit]
+Description=VLESS plain relay (sing-box, for CDN front)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/privatedeploy/vless/relay.json
+Restart=always
+RestartSec=5
+User=privatedeploy
+Group=privatedeploy
+ProtectSystem=strict
+ReadWritePaths=/etc/privatedeploy
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+RELAYSERVICE
+''';
 }
 
 const String _multiProtocolTemplate = r'''#!/bin/bash
@@ -242,7 +308,7 @@ ufw allow {{SS_PORT}}/tcp comment 'Shadowsocks-TCP'
 ufw allow {{SS_PORT}}/udp comment 'Shadowsocks-UDP'
 ufw allow {{HY_PORT}}/udp comment 'Hysteria2'
 ufw allow {{VLESS_PORT}}/tcp comment 'VLESS-Reality'
-ufw allow {{TROJAN_PORT}}/tcp comment 'Trojan'
+{{VLESS_RELAY_UFW}}ufw allow {{TROJAN_PORT}}/tcp comment 'Trojan'
 echo "y" | ufw enable
 
 docker rm -f ss-server >/dev/null 2>&1 || true
@@ -332,6 +398,8 @@ PublicKey: {{VLESS_PUBLIC_KEY}}
 ShortID: {{VLESS_SHORT_ID}}
 EOF
 chmod 600 /etc/privatedeploy/vless/reality.txt
+
+{{VLESS_RELAY_BLOCK}}
 
 cat > /etc/privatedeploy/trojan/config.json <<EOF
 {
@@ -437,8 +505,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable hysteria-server vless-server trojan-server
-systemctl restart hysteria-server vless-server trojan-server
+systemctl enable hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
+systemctl restart hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
 
 sleep 5
 echo ""

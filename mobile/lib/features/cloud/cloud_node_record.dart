@@ -22,6 +22,10 @@ class VultrNodeRecord {
   final int trojanPort;
   final String trojanPassword;
   final String trojanServerName;
+  // Plain-VLESS port the deploy script provisions for CDN-front use. Zero
+  // for nodes deployed before this field existed; CDN front-ending stays
+  // unavailable until they're re-deployed.
+  final int vlessRelayPort;
   final String ipv4;
   final String ipv6;
   final String createdAt;
@@ -48,6 +52,7 @@ class VultrNodeRecord {
     this.trojanPort = 0,
     this.trojanPassword = '',
     this.trojanServerName = '',
+    this.vlessRelayPort = 0,
     this.ipv4 = '',
     this.ipv6 = '',
     this.createdAt = '',
@@ -92,6 +97,7 @@ class VultrNodeRecord {
         trojanPassword: trojanPassword,
         trojanServerName: trojanServerName,
         trojanInsecure: true,
+        vlessRelayPort: vlessRelayPort,
       ),
     );
   }
@@ -119,6 +125,8 @@ class VultrNodeRecord {
       trojanPassword: (values['trojanPassword'] ?? trojanPassword).toString(),
       trojanServerName:
           (values['trojanServerName'] ?? trojanServerName).toString(),
+      vlessRelayPort:
+          _toInt(values['vlessRelayPort'], defaultValue: vlessRelayPort),
       ipv4: (values['ipv4'] ?? ipv4).toString(),
       ipv6: (values['ipv6'] ?? ipv6).toString(),
       createdAt: (values['createdAt'] ?? createdAt).toString(),
@@ -144,6 +152,7 @@ class VultrNodeRecord {
       'trojanPort': trojanPort,
       'trojanPassword': trojanPassword,
       'trojanServerName': trojanServerName,
+      if (vlessRelayPort > 0) 'vlessRelayPort': vlessRelayPort,
     };
 
     if (label.isNotEmpty) {
@@ -188,6 +197,7 @@ class VultrNodeRecord {
         'trojanPort': trojanPort,
         'trojanPassword': trojanPassword,
         'trojanServerName': trojanServerName,
+        if (vlessRelayPort > 0) 'vlessRelayPort': vlessRelayPort,
         'ipv4': ipv4,
         'ipv6': ipv6,
         'createdAt': createdAt,
@@ -219,6 +229,7 @@ class VultrNodeRecord {
       trojanPort: _toInt(json['trojanPort']),
       trojanPassword: (json['trojanPassword'] ?? '').toString(),
       trojanServerName: (json['trojanServerName'] ?? '').toString(),
+      vlessRelayPort: _toInt(json['vlessRelayPort']),
       ipv4: (json['ipv4'] ?? '').toString(),
       ipv6: (json['ipv6'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),

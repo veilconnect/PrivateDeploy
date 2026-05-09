@@ -427,15 +427,22 @@ class PortProfileAllocator {
 
   static int portProfileEdge8443() => 28443;
 
+  // Returns 5 ports in stable order:
+  //   [ssPort, hyPort, vlessPort, trojanPort, vlessRelayPort]
+  // The relay port is for the plain-VLESS sing-box that Cloudflare Worker
+  // CDN-fronting connects to (no Reality, no TLS — Worker terminates TLS,
+  // VPS terminates VLESS auth on the inner). Older two-/four-port edge
+  // profiles get a deterministic relay slot above their fixed ports so
+  // neither family can collide with the other.
   static List<int> allocatePorts({String profile = randomProfile}) {
     switch (profile) {
       case 'edge443':
-        return const [24443, 443, 8443, 443];
+        return const [24443, 443, 8443, 443, 24444];
       case 'edge8443':
-        return const [28443, 8443, 9443, 8443];
+        return const [28443, 8443, 9443, 8443, 28444];
       default:
         final base = randomPort();
-        return [base, base + 1, base + 2, base + 3];
+        return [base, base + 1, base + 2, base + 3, base + 4];
     }
   }
 
