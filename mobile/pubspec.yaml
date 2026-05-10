@@ -64,3 +64,4 @@ flutter:
   assets:
     - assets/rules/geosite-cn.srs
     - assets/rules/geoip-cn.srs
+    - assets/cdn/worker.js
