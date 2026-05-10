@@ -13,12 +13,26 @@
 // hadn't been re-opened, or whose vlessRelayPort was wrong, would
 // still report "active" and the user's first real connection would
 // hang.
+//
+// DNS resolution goes through DoH (see resolveViaDoH) instead of the OS
+// resolver. The probe fires within seconds of the Workers Custom Domain
+// binding, before CF's auto-DNS has propagated. The OS resolver returns
+// NXDOMAIN, then per RFC 2308 caches it negatively for the zone's
+// SOA-MIN — typically far longer than the 3.7-min probe budget, so one
+// early NXDOMAIN poisons every subsequent iteration. AOSP's netd and
+// glibc's nscd / systemd-resolved both honor SOA-MIN, so the bug is
+// cross-platform; mobile (cellular) hits it hardest but desktop is not
+// immune. DoH bypass dodges both caches by going straight to
+// authoritative-by-proxy resolvers each iteration.
 package cdn
 
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +47,34 @@ const (
 	customHostStatusActive  = "active"
 	customHostStatusFailed  = "failed"
 )
+
+// dohEndpoints, tried in order until one returns A records. Hardcoded
+// to IP literals so we never consult the OS resolver for the DoH
+// provider itself (which would re-introduce the negative-cache hazard
+// the whole DoH path exists to dodge). AliDNS is listed first because
+// the app's primary audience is regional mobile network, where CF/Google are
+// reachable but markedly slower (200ms+ RTT) and sometimes middleboxed.
+// CF/Google trail as fallbacks for non-regional networks.
+var dohEndpoints = []string{
+	"https://223.5.5.5/resolve",  // AliDNS (CN-friendly)
+	"https://223.6.6.6/resolve",  // AliDNS secondary
+	"https://1.1.1.1/dns-query",  // Cloudflare
+	"https://1.0.0.1/dns-query",  // Cloudflare secondary
+	"https://8.8.8.8/resolve",    // Google
+}
+
+// dohClient is module-private and goroutine-safe. The transport pins
+// timeouts well below the per-iteration probe budget so a slow DoH
+// endpoint can't burn the whole iteration.
+var dohClient = &http.Client{
+	Timeout: 12 * time.Second,
+	Transport: &http.Transport{
+		// Disable connection pooling between probes — the IP-literal
+		// endpoints are short-lived, and pooling adds no benefit while
+		// risking stale connections across long delays.
+		DisableKeepAlives: true,
+	},
+}
 
 // probeCustomHostReadiness polls the customHost until the WS upgrade
 // succeeds end-to-end (CF cert + Worker dispatch + Worker→VPS TCP) or
@@ -64,11 +106,18 @@ func (m *Manager) probeCustomHostReadiness(nodeID, host string) {
 		if !m.deploymentStillExpectsHost(nodeID, host) {
 			return
 		}
+		// Resolve once per iteration via DoH; both checks reuse the IPs.
+		// Empty list means CF hasn't published the record yet — short
+		// circuit and wait for the next backoff.
+		ips := resolveViaDoH(host)
+		if len(ips) == 0 {
+			continue
+		}
 		// Cheap TLS handshake first — if the cert isn't propagated yet
 		// there's no point spending a WS upgrade round-trip. Lets us
 		// distinguish "cert pending" from "Worker→VPS broken" later
 		// if we ever surface diagnostic detail.
-		if !customHostTLSReachable(host, 8*time.Second) {
+		if !customHostTLSReachable(ips, host, 8*time.Second) {
 			continue
 		}
 		secret := m.deploymentPathSecret(nodeID, host)
@@ -79,7 +128,7 @@ func (m *Manager) probeCustomHostReadiness(nodeID, host string) {
 			m.markCustomHostStatus(nodeID, host, customHostStatusActive)
 			return
 		}
-		if customHostRelayReachable(host, secret, 12*time.Second) {
+		if customHostRelayReachable(ips, host, secret, 12*time.Second) {
 			m.markCustomHostStatus(nodeID, host, customHostStatusActive)
 			return
 		}
@@ -87,12 +136,18 @@ func (m *Manager) probeCustomHostReadiness(nodeID, host string) {
 	m.markCustomHostStatus(nodeID, host, customHostStatusFailed)
 }
 
-// customHostTLSReachable does a single TLS handshake against host:443.
-// Success means CF edge served a valid cert for the SNI — necessary
-// but not sufficient for the relay to work end-to-end.
-func customHostTLSReachable(host string, timeout time.Duration) bool {
+// customHostTLSReachable does a TLS handshake to the first DoH-resolved
+// IP using customHost as the SNI/Host. Success means CF edge served a
+// valid cert for the SNI — necessary but not sufficient for the relay
+// to work end-to-end. Connecting to the IP directly avoids the OS
+// resolver (see package doc on RFC 2308 negative-cache hazard).
+func customHostTLSReachable(ips []net.IP, host string, timeout time.Duration) bool {
+	if len(ips) == 0 {
+		return false
+	}
 	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", host+":443", &tls.Config{
+	addr := net.JoinHostPort(ips[0].String(), "443")
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
 		ServerName: host,
 		MinVersion: tls.VersionTLS12,
 	})
@@ -109,11 +164,16 @@ func customHostTLSReachable(host string, timeout time.Duration) bool {
 // TCP connection to the VPS upstream. We close immediately — we don't
 // care about VLESS payload exchange, only that 101 came back.
 //
+// gorilla/websocket.Dialer.NetDialContext routes the connect to the
+// DoH-resolved IP; the URL stays as wss://customHost/... so the HTTP
+// Host header CF sees is still customHost, which is what custom-domain
+// routing keys on.
+//
 // A 502/504 from the Worker means the Worker→VPS TCP failed (UFW,
 // wrong port, VPS down). 404 means the path-secret didn't match
 // (placeholder didn't render, or deployment record drift).
-func customHostRelayReachable(host, pathSecret string, timeout time.Duration) bool {
-	if host == "" || pathSecret == "" {
+func customHostRelayReachable(ips []net.IP, host, pathSecret string, timeout time.Duration) bool {
+	if len(ips) == 0 || host == "" || pathSecret == "" {
 		return false
 	}
 	u := &url.URL{
@@ -124,11 +184,17 @@ func customHostRelayReachable(host, pathSecret string, timeout time.Duration) bo
 	}
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: timeout,
-		// Use the system root CAs; CF's managed cert chains to a
-		// public root so this just works.
 		TLSClientConfig: &tls.Config{
 			ServerName: host,
 			MinVersion: tls.VersionTLS12,
+		},
+		// Override the connect step so we open TCP to the DoH-resolved
+		// IP instead of letting the OS resolver chew on customHost.
+		// Strip the (potentially synthetic) port from addr and use 443
+		// regardless — wss → 443 is unambiguous for our deploys.
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			d := &net.Dialer{Timeout: timeout}
+			return d.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), "443"))
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -155,6 +221,77 @@ func customHostRelayReachable(host, pathSecret string, timeout time.Duration) bo
 	}
 	_ = conn.Close()
 	return true
+}
+
+// resolveViaDoH walks the dohEndpoints list and returns the first
+// non-empty A-record list. Each endpoint gets its own short timeout
+// (via dohClient) so a slow/unreachable endpoint can't dominate the
+// per-iteration budget.
+//
+// Endpoints are queried in fixed order, not in parallel — the assumption
+// is the first one (AliDNS for CN; trivially routed for non-CN) is
+// almost always reachable, and parallel queries would only matter when
+// the primary fails, which is rare enough that serial fallback is fine.
+func resolveViaDoH(host string) []net.IP {
+	if host == "" {
+		return nil
+	}
+	var ips []net.IP
+	for _, ep := range dohEndpoints {
+		ips = dohQuery(ep, host)
+		if len(ips) > 0 {
+			return ips
+		}
+	}
+	return nil
+}
+
+// dohQuery sends a single DoH JSON request and parses the answer. The
+// JSON shape is the Google/Cloudflare convention also adopted by
+// AliDNS at the /resolve path. Wire-format DoH (POST application/dns-message)
+// would also work but pulls in miekg/dns; the JSON path is dependency-free.
+func dohQuery(endpoint, host string) []net.IP {
+	req, err := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("%s?name=%s&type=A", endpoint, url.QueryEscape(host)), nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Accept", "application/dns-json")
+	resp, err := dohClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	if err != nil {
+		return nil
+	}
+	var parsed struct {
+		Answer []struct {
+			Type int    `json:"type"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil
+	}
+	out := make([]net.IP, 0, len(parsed.Answer))
+	for _, a := range parsed.Answer {
+		// type 1 = A, type 28 = AAAA. We ask for A above so type-1 is
+		// the common path; defensively accept 28 in case the resolver
+		// returns mixed answers.
+		if a.Type != 1 && a.Type != 28 {
+			continue
+		}
+		ip := net.ParseIP(strings.TrimSpace(a.Data))
+		if ip != nil {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // deploymentPathSecret returns the per-deployment path-secret if and
