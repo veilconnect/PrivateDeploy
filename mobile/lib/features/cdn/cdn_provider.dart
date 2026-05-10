@@ -958,16 +958,44 @@ class CdnProvider with ChangeNotifier {
   /// Single TLS handshake to host:443. Success = CF edge served a valid
   /// cert for the SNI — necessary but not sufficient for the relay to
   /// work end-to-end.
+  ///
+  /// Resolution goes through DoH (see [_resolveViaDoH]) instead of the
+  /// OS resolver. Without that, the first probe iteration fires within
+  /// seconds of the Workers Custom Domain binding, before CF's auto-DNS
+  /// has propagated. The OS resolver returns NXDOMAIN, then per RFC 2308
+  /// caches it negatively for the zone's SOA-MIN — typically far longer
+  /// than the entire 3.7-min probe budget. Once cached, every iteration
+  /// continues to fail even after CF has fully provisioned the record.
+  /// AOSP's `netd/res_cache.cpp` and iOS's `mDNSResponder` both honor
+  /// SOA-MIN, so this is not Android-specific. DoH bypass dodges both
+  /// caches by going straight to authoritative-by-proxy resolvers each
+  /// iteration.
   Future<bool> _customHostTLSReachable(String host) async {
+    Socket? raw;
+    SecureSocket? secure;
     try {
-      final socket = await SecureSocket.connect(
-        host,
+      final ips = await _resolveViaDoH(host);
+      if (ips.isEmpty) return false;
+      // Open TCP to the DoH-resolved IP, then upgrade to TLS with the
+      // customHost as the SNI/Host so CF presents the correct cert. We
+      // avoid `SecureSocket.connect(host, ...)` because passing a hostname
+      // there would re-introduce the OS-resolver lookup we just bypassed.
+      raw = await Socket.connect(
+        ips.first,
         443,
         timeout: const Duration(seconds: 8),
       );
-      await socket.close();
+      secure = await SecureSocket.secure(raw, host: host)
+          .timeout(const Duration(seconds: 8));
+      await secure.close();
       return true;
     } catch (_) {
+      try {
+        await secure?.close();
+      } catch (_) {}
+      try {
+        raw?.destroy();
+      } catch (_) {}
       return false;
     }
   }
@@ -985,18 +1013,108 @@ class CdnProvider with ChangeNotifier {
     final uri = Uri(
       scheme: 'wss',
       host: host,
+      port: 443,
       path: '/',
       queryParameters: {'ed': '2560', 'k': pathSecret},
     );
+    HttpClient? client;
     try {
+      // Pre-resolve via DoH so we never consult the OS resolver for the
+      // brand-new custom hostname. connectionFactory then opens TCP to the
+      // resolved IP while the URL/Host header stays as the customHost so
+      // CF picks the right cert + Worker route.
+      final ips = await _resolveViaDoH(host);
+      if (ips.isEmpty) return false;
+      client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 10)
+        ..connectionFactory =
+            (Uri url, String? proxyHost, int? proxyPort) {
+          // Defensive port fallback: dart sometimes serializes the URL
+          // back through with port 0 even when our Uri sets 443.
+          final port = url.port == 0 ? 443 : url.port;
+          return Socket.startConnect(ips.first, port);
+        };
       final ws = await WebSocket.connect(
         uri.toString(),
         headers: const {'User-Agent': 'PrivateDeploy-CDN-Probe/1'},
+        customClient: client,
       ).timeout(const Duration(seconds: 12));
       await ws.close();
       return true;
     } catch (_) {
       return false;
+    } finally {
+      client?.close(force: true);
+    }
+  }
+
+  /// DoH endpoints, tried in order until one returns A records. Hardcoded
+  /// to IP literals so we never consult the OS resolver for the DoH
+  /// provider itself (which would re-introduce the negative-cache hazard
+  /// the whole DoH path exists to dodge). AliDNS is listed first because
+  /// the app's primary audience is regional mobile network, where CF/Google are
+  /// reachable but markedly slower (200ms+ RTT) and sometimes middleboxed.
+  /// CF/Google follow as fallbacks for non-regional networks where AliDNS is
+  /// the slow path.
+  static const List<String> _kDoHEndpoints = [
+    'https://223.5.5.5/resolve',           // AliDNS (CN-friendly)
+    'https://223.6.6.6/resolve',           // AliDNS secondary
+    'https://1.1.1.1/dns-query',           // Cloudflare
+    'https://1.0.0.1/dns-query',           // Cloudflare secondary
+    'https://8.8.8.8/resolve',             // Google
+  ];
+
+  Future<List<InternetAddress>> _resolveViaDoH(String host) async {
+    if (host.isEmpty) return const [];
+    for (final ep in _kDoHEndpoints) {
+      final ips = await _doHQuery(ep, host);
+      if (ips.isNotEmpty) return ips;
+    }
+    return const [];
+  }
+
+  Future<List<InternetAddress>> _doHQuery(String endpoint, String host) async {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 12),
+      validateStatus: (_) => true,
+    ));
+    try {
+      final r = await dio.getUri<dynamic>(
+        Uri.parse('$endpoint?name=$host&type=A'),
+        options: Options(headers: {'accept': 'application/dns-json'}),
+      );
+      if (r.statusCode != 200 || r.data == null) return const [];
+      final body = r.data;
+      Map<String, dynamic>? parsed;
+      if (body is Map) {
+        parsed = Map<String, dynamic>.from(body);
+      } else if (body is String) {
+        try {
+          parsed = jsonDecode(body) as Map<String, dynamic>;
+        } catch (_) {
+          return const [];
+        }
+      }
+      if (parsed == null) return const [];
+      final answers = parsed['Answer'];
+      if (answers is! List) return const [];
+      final out = <InternetAddress>[];
+      for (final a in answers) {
+        if (a is! Map) continue;
+        // type 1 = A, type 28 = AAAA. Ask for A above so type-1 is the
+        // common path; defensively handle 28 in case of mixed answer.
+        final type = a['type'];
+        final data = a['data']?.toString();
+        if (data == null || data.isEmpty) continue;
+        if (type == 1 || type == 28) {
+          final ip = InternetAddress.tryParse(data);
+          if (ip != null) out.add(ip);
+        }
+      }
+      return out;
+    } catch (_) {
+      return const [];
     }
   }
 
