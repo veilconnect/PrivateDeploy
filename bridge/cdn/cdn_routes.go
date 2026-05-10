@@ -118,42 +118,69 @@ type workerCustomDomainBinding struct {
 // without it the picker offers zones from accounts the user didn't intend
 // to bind, and a later attach against the "wrong" account/zone pair
 // silently 404s.
+//
+// Walks every page of the paginated response. Earlier code stopped at the
+// first 50 zones, which silently hid the rest from the picker — users
+// with >50 zones couldn't pick the one they wanted. Caps at
+// listZonesMaxPages to bound worst-case latency / memory if a token has
+// thousands of zones.
 func (m *Manager) listZones(ctx context.Context, token string) ([]Zone, error) {
 	m.mu.Lock()
 	accountID := strings.TrimSpace(m.cfg.AccountID)
 	m.mu.Unlock()
-	url := zonesEndpoint + "?per_page=50"
-	if accountID != "" {
-		url += "&account.id=" + accountID
-	}
-	body, status, err := m.cfGetJSON(ctx, token, url)
-	if err != nil {
-		return nil, fmt.Errorf("listing zones: %w", err)
-	}
-	if status != http.StatusOK || !cfSuccess(body) {
-		msg := extractCfError(body)
-		if msg == "" {
-			msg = fmt.Sprintf("listing zones failed (HTTP %d)", status)
+	const perPage = 50
+	const listZonesMaxPages = 40 // safety cap: 40 * 50 = 2000 zones
+	zones := make([]Zone, 0, perPage)
+	for page := 1; page <= listZonesMaxPages; page++ {
+		url := fmt.Sprintf("%s?per_page=%d&page=%d", zonesEndpoint, perPage, page)
+		if accountID != "" {
+			url += "&account.id=" + accountID
 		}
-		return nil, errors.New(msg)
-	}
-	raw, _ := body["result"].([]any)
-	zones := make([]Zone, 0, len(raw))
-	for _, item := range raw {
-		obj, _ := item.(map[string]any)
-		if obj == nil {
-			continue
+		body, status, err := m.cfGetJSON(ctx, token, url)
+		if err != nil {
+			return nil, fmt.Errorf("listing zones: %w", err)
 		}
-		st, _ := obj["status"].(string)
-		if st != "active" {
-			continue
+		if status != http.StatusOK || !cfSuccess(body) {
+			msg := extractCfError(body)
+			if msg == "" {
+				msg = fmt.Sprintf("listing zones failed (HTTP %d)", status)
+			}
+			return nil, errors.New(msg)
 		}
-		id, _ := obj["id"].(string)
-		name, _ := obj["name"].(string)
-		if id == "" || name == "" {
-			continue
+		raw, _ := body["result"].([]any)
+		for _, item := range raw {
+			obj, _ := item.(map[string]any)
+			if obj == nil {
+				continue
+			}
+			st, _ := obj["status"].(string)
+			if st != "active" {
+				continue
+			}
+			id, _ := obj["id"].(string)
+			name, _ := obj["name"].(string)
+			if id == "" || name == "" {
+				continue
+			}
+			zones = append(zones, Zone{ID: id, Name: name, Status: st})
 		}
-		zones = append(zones, Zone{ID: id, Name: name, Status: st})
+		// Stop when we've drained every page. CF reports total pages in
+		// result_info.total_pages; fall back to short-page detection so a
+		// missing/zero total_pages (e.g. older API) still terminates.
+		info, _ := body["result_info"].(map[string]any)
+		totalPages := 0
+		switch v := info["total_pages"].(type) {
+		case float64:
+			totalPages = int(v)
+		case int:
+			totalPages = v
+		}
+		if totalPages > 0 && page >= totalPages {
+			break
+		}
+		if len(raw) < perPage {
+			break
+		}
 	}
 	return zones, nil
 }

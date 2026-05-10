@@ -269,6 +269,13 @@ class CdnProvider with ChangeNotifier {
         _customDomain = null;
         await _persistCustomDomain();
       }
+      // Always invalidate the zone cache on a successful verify. Either
+      // the account changed (zones in the prior cache belong to a
+      // different account and would 404 on attach), or the token was
+      // rotated for the same account (zones may have been added/removed
+      // out-of-band). Either way the cached list is suspect and the
+      // next picker render should re-fetch.
+      _zones = const [];
 
       _accountId = accountId;
       _accountEmail = email;
@@ -626,28 +633,52 @@ class CdnProvider with ChangeNotifier {
       // Filter on the verified account so multi-account tokens don't leak
       // zones from accounts the user didn't intend to bind.
       final aid = (_accountId ?? '').trim();
-      final url = aid.isNotEmpty
-          ? '$_zonesEndpoint?per_page=50&account.id=$aid'
-          : '$_zonesEndpoint?per_page=50';
-      final r = await dio.get(url);
-      if (r.statusCode == null || r.statusCode! >= 400) {
-        _lastError = _extractCloudflareError(r.data) ??
-            'Listing zones failed (HTTP ${r.statusCode}).';
-        return const [];
-      }
-      final body = r.data;
-      if (body is! Map || body['result'] is! List) {
-        _lastError = 'Unexpected /zones response shape.';
-        return const [];
-      }
+      const perPage = 50;
+      const maxPages = 40; // safety cap: 40 * 50 = 2000 zones
       final out = <CdnZone>[];
-      for (final raw in body['result'] as List) {
-        if (raw is! Map) continue;
-        if (raw['status'] != 'active') continue;
-        final id = raw['id']?.toString();
-        final name = raw['name']?.toString();
-        if (id == null || id.isEmpty || name == null || name.isEmpty) continue;
-        out.add(CdnZone(id: id, name: name));
+      // Walk every page. Earlier code stopped at the first 50, silently
+      // hiding zones from users with >50 of them.
+      for (var page = 1; page <= maxPages; page++) {
+        final base = aid.isNotEmpty
+            ? '$_zonesEndpoint?per_page=$perPage&account.id=$aid'
+            : '$_zonesEndpoint?per_page=$perPage';
+        final url = '$base&page=$page';
+        final r = await dio.get(url);
+        if (r.statusCode == null || r.statusCode! >= 400) {
+          _lastError = _extractCloudflareError(r.data) ??
+              'Listing zones failed (HTTP ${r.statusCode}).';
+          return const [];
+        }
+        final body = r.data;
+        if (body is! Map || body['result'] is! List) {
+          _lastError = 'Unexpected /zones response shape.';
+          return const [];
+        }
+        final raw = body['result'] as List;
+        for (final z in raw) {
+          if (z is! Map) continue;
+          if (z['status'] != 'active') continue;
+          final id = z['id']?.toString();
+          final name = z['name']?.toString();
+          if (id == null || id.isEmpty || name == null || name.isEmpty) {
+            continue;
+          }
+          out.add(CdnZone(id: id, name: name));
+        }
+        // Terminate on result_info.total_pages, falling back to
+        // short-page detection so a missing total_pages still exits.
+        final info = body['result_info'];
+        var totalPages = 0;
+        if (info is Map) {
+          final tp = info['total_pages'];
+          if (tp is int) {
+            totalPages = tp;
+          } else if (tp is num) {
+            totalPages = tp.toInt();
+          }
+        }
+        if (totalPages > 0 && page >= totalPages) break;
+        if (raw.length < perPage) break;
       }
       _zones = out;
       _lastError = null;

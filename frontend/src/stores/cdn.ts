@@ -79,6 +79,16 @@ export const useCdnStore = defineStore('cdn', () => {
     try {
       const { ok, state: next } = await VerifyCdnToken(token)
       state.value = next
+      // Always invalidate the zone cache on a successful verify. Either
+      // the account changed (cached zones belong to a different account
+      // and would 404 on attach) or the token was rotated for the same
+      // account (zones may have been added/removed out-of-band). Either
+      // way the cached list is suspect and the next picker render
+      // should re-fetch.
+      if (ok) {
+        zones.value = []
+        zonesLoadedAt.value = null
+      }
       return ok
     } finally {
       verifying.value = false
@@ -87,6 +97,8 @@ export const useCdnStore = defineStore('cdn', () => {
 
   const clear = async () => {
     state.value = await ClearCdn()
+    zones.value = []
+    zonesLoadedAt.value = null
   }
 
   const deploy = async (nodeId: string): Promise<boolean> => {
