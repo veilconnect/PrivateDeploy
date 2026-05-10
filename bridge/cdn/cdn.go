@@ -449,15 +449,16 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		fmt.Sprintf(`'%s'`, escapeJSString(pathSecret)),
 	)
 	// Both placeholders must have been resolved. Leaving them in would
-	// either ship a worker that always 404s (the secret check would
-	// compare against the literal placeholder string) or, worse, ship one
-	// where every client request matches because the placeholder is
-	// well-known.
-	if strings.Contains(body, "__BACKEND_PLACEHOLDER__") {
+	// either ship a worker that always 502s (the BACKEND string can't be
+	// parsed as host:port) or — for PATH_SECRET — one whose "secret" is
+	// the literal well-known placeholder. Match the *quoted* form: it's
+	// the exact replaceAll target. The unquoted form also appears in the
+	// template's doc-comment block, which is fine to keep post-render.
+	if strings.Contains(body, `'__BACKEND_PLACEHOLDER__'`) {
 		m.setLastError("worker template missing BACKEND placeholder")
 		return m.State(), errors.New("worker template missing BACKEND placeholder")
 	}
-	if strings.Contains(body, "__PATH_SECRET_PLACEHOLDER__") {
+	if strings.Contains(body, `'__PATH_SECRET_PLACEHOLDER__'`) {
 		m.setLastError("worker template missing PATH_SECRET placeholder")
 		return m.State(), errors.New("worker template missing PATH_SECRET placeholder")
 	}

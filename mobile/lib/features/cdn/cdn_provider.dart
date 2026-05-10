@@ -396,15 +396,15 @@ class CdnProvider with ChangeNotifier {
         "'__PATH_SECRET_PLACEHOLDER__'",
         "'${_escapeJsString(pathSecret)}'",
       );
-      // Both placeholders MUST resolve. Leaving __PATH_SECRET_PLACEHOLDER__
-      // in the rendered script would either ship a Worker that 404s every
-      // request, or worse — one whose "secret" is the literal placeholder
-      // string, which is well-known.
-      if (scriptBody.contains('__BACKEND_PLACEHOLDER__')) {
+      // Both placeholders MUST resolve. Match the *quoted* form: it's
+      // the exact replaceAll target. The unquoted form also appears in
+      // the template's doc-comment block, which is fine to keep
+      // post-render — checking the unquoted form would always fire.
+      if (scriptBody.contains("'__BACKEND_PLACEHOLDER__'")) {
         _lastError = 'Worker template missing BACKEND placeholder.';
         return false;
       }
-      if (scriptBody.contains('__PATH_SECRET_PLACEHOLDER__')) {
+      if (scriptBody.contains("'__PATH_SECRET_PLACEHOLDER__'")) {
         _lastError = 'Worker template missing PATH_SECRET placeholder.';
         return false;
       }
