@@ -899,10 +899,16 @@ class _NodeRow extends StatelessWidget {
                         Text(
                           // Always show the routable host (gated on
                           // readiness) so the inline label and the copy
-                          // button agree.
+                          // button agree. Empty when neither customHost
+                          // is active nor a workers.dev fallback exists
+                          // — the status row below explains why.
                           dep.customHostReady
                               ? dep.customHost!
-                              : dep.workerHost,
+                              : dep.workerHost.isNotEmpty
+                                  ? dep.workerHost
+                                  : (isZh
+                                      ? '正在配置中…'
+                                      : 'Provisioning…'),
                           style: TextStyle(
                               fontSize: 11.sp,
                               fontFamily: 'monospace',
@@ -914,9 +920,17 @@ class _NodeRow extends StatelessWidget {
                           Padding(
                             padding: EdgeInsets.only(top: 2.h),
                             child: Text(
-                              isZh
-                                  ? '自定义域名等待证书生效…暂用 workers.dev'
-                                  : 'Custom domain pending cert; using workers.dev',
+                              // Probe checks the full CF→Worker→VPS path,
+                              // not just cert. Phrase reflects either
+                              // step still being in progress so the user
+                              // knows it's not stuck on certs alone.
+                              dep.workerHost.isNotEmpty
+                                  ? (isZh
+                                      ? '正在验证 CDN 中转链路…暂用 workers.dev'
+                                      : 'Verifying CDN relay path; using workers.dev')
+                                  : (isZh
+                                      ? '正在验证 CDN 中转链路…'
+                                      : 'Verifying CDN relay path…'),
                               style: TextStyle(
                                   fontSize: 10.sp,
                                   color: const Color(0xFFCA8A04)),
@@ -927,9 +941,13 @@ class _NodeRow extends StatelessWidget {
                           Padding(
                             padding: EdgeInsets.only(top: 2.h),
                             child: Text(
-                              isZh
-                                  ? '自定义域名未生效；回退 workers.dev（重新部署可重试）'
-                                  : 'Custom domain not reachable; fell back to workers.dev (redeploy to retry)',
+                              dep.workerHost.isNotEmpty
+                                  ? (isZh
+                                      ? 'CDN 中转链路不可用；回退 workers.dev（重新部署可重试）'
+                                      : 'CDN relay path unreachable; fell back to workers.dev (redeploy to retry)')
+                                  : (isZh
+                                      ? 'CDN 中转链路不可用（重新部署可重试）'
+                                      : 'CDN relay path unreachable (redeploy to retry)'),
                               style: TextStyle(
                                   fontSize: 10.sp,
                                   color: const Color(0xFFDC2626)),

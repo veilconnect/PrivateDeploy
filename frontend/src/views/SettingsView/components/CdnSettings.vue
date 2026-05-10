@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { BrowserOpenURL, ClipboardSetText } from '@/bridge'
 import { useCdnStore } from '@/stores'
+import type { CdnDeployment } from '@/types/cloud'
 import { confirm, message } from '@/utils'
 
 const { t } = useI18n()
@@ -181,6 +182,73 @@ const handleCopyExample = async () => {
     message.success('common.copied')
   } catch (err: any) {
     message.error(err?.message || String(err))
+  }
+}
+
+// Surface per-deployment readiness so users can see when the
+// CF→Worker→VPS probe is still in progress vs. confirmed live. The
+// probe walks an exponential back-off taking ~3.7 min worst case;
+// without UI hints the user reasonably assumes a deploy is broken
+// when in fact it's just provisioning.
+const deploymentList = computed<CdnDeployment[]>(() => {
+  const map = cdnStore.deployments ?? {}
+  return Object.values(map)
+})
+
+const deploymentLabel = (dep: CdnDeployment): string => {
+  // Show whichever host the user can actually share. Empty when both
+  // customHost is non-active AND there's no workers.dev fallback —
+  // that's the post-#97 case where the user only bound a custom
+  // domain. Status tag below covers the why.
+  const ch = (dep.customHost ?? '').trim()
+  const wh = (dep.workerHost ?? '').trim()
+  if (ch && dep.customHostStatus === 'active') return ch
+  if (wh) return wh
+  if (ch) return ch
+  return '—'
+}
+
+const statusTagType = (status: CdnDeployment['customHostStatus']): string => {
+  switch (status) {
+    case 'active':
+      return 'success'
+    case 'pending':
+      return 'warning'
+    case 'failed':
+      return 'danger'
+    default:
+      return 'default'
+  }
+}
+
+const statusTagLabel = (dep: CdnDeployment): string => {
+  if (!dep.customHost) return t('cdn.deployments.statusWorkersDev')
+  switch (dep.customHostStatus) {
+    case 'active':
+      return t('cdn.deployments.statusActive')
+    case 'pending':
+      return t('cdn.deployments.statusPending')
+    case 'failed':
+      return t('cdn.deployments.statusFailed')
+    default:
+      return t('cdn.deployments.statusWorkersDev')
+  }
+}
+
+const statusTagDetail = (dep: CdnDeployment): string => {
+  if (!dep.customHost) return ''
+  const wh = (dep.workerHost ?? '').trim()
+  switch (dep.customHostStatus) {
+    case 'pending':
+      return wh
+        ? t('cdn.deployments.detailPendingWithFallback')
+        : t('cdn.deployments.detailPending')
+    case 'failed':
+      return wh
+        ? t('cdn.deployments.detailFailedWithFallback')
+        : t('cdn.deployments.detailFailed')
+    default:
+      return ''
   }
 }
 
@@ -387,6 +455,29 @@ onMounted(async () => {
 
           <div v-if="cdnStore.customDomain" class="text-12 pt-4">
             {{ t('cdn.customDomain.bound', { host: cdnStore.customDomainHostPattern }) }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="cdnStore.isVerified && deploymentList.length > 0" class="px-16 py-8">
+      <div class="text-16 font-bold pt-8 pb-4">{{ t('cdn.deployments.title') }}</div>
+      <div class="text-12 opacity-70 pb-12">{{ t('cdn.deployments.subtitle') }}</div>
+      <div class="flex flex-col gap-8">
+        <div
+          v-for="dep in deploymentList"
+          :key="dep.nodeId"
+          class="rounded-md px-12 py-8"
+          style="background: rgba(0,0,0,0.04)"
+        >
+          <div class="text-12 font-mono pb-4" style="word-break: break-all">
+            {{ deploymentLabel(dep) }}
+          </div>
+          <div class="flex items-center gap-8 flex-wrap">
+            <Tag :type="statusTagType(dep.customHostStatus)" size="small">
+              {{ statusTagLabel(dep) }}
+            </Tag>
+            <span class="text-12 opacity-70">{{ statusTagDetail(dep) }}</span>
           </div>
         </div>
       </div>

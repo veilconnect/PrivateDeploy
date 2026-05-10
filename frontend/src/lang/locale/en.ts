@@ -1172,5 +1172,22 @@ export default {
       bound: 'Bound: {host}',
       reload: 'Refresh zones',
     },
+    deployments: {
+      title: 'Active deployments',
+      subtitle:
+        'Each deployed Worker is probed end-to-end (CF edge → Worker → VPS) before being marked active. Pending deployments fall back to workers.dev when available.',
+      statusActive: 'Active',
+      statusPending: 'Provisioning',
+      statusFailed: 'Unreachable',
+      statusWorkersDev: 'workers.dev',
+      detailPending:
+        'Verifying CDN relay path; this can take up to ~4 minutes after deploy.',
+      detailPendingWithFallback:
+        'Verifying CDN relay path; using workers.dev meanwhile.',
+      detailFailed:
+        'Probe could not reach the relay. Check the VPS firewall + relay port, then redeploy.',
+      detailFailedWithFallback:
+        'Probe could not reach the custom domain. Falling back to workers.dev; redeploy to retry.',
+    },
   },
 }

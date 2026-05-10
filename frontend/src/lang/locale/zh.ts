@@ -1259,5 +1259,18 @@ export default {
       bound: '已绑定: {host}',
       reload: '刷新域名列表',
     },
+    deployments: {
+      title: '已部署节点',
+      subtitle:
+        '每个 Worker 部署后都会做端到端探测（CF 边缘 → Worker → VPS），通过后标记为已就绪；探测中暂时回退 workers.dev（如可用）。',
+      statusActive: '已就绪',
+      statusPending: '正在配置',
+      statusFailed: '不可达',
+      statusWorkersDev: 'workers.dev',
+      detailPending: '正在验证 CDN 中转链路；部署后最多约 4 分钟内完成。',
+      detailPendingWithFallback: '正在验证 CDN 中转链路；当前使用 workers.dev。',
+      detailFailed: '探测无法到达中转链路。请检查 VPS 防火墙与中转端口后重新部署。',
+      detailFailedWithFallback: '自定义域名探测失败，已回退 workers.dev；重新部署可重试。',
+    },
   },
 }
