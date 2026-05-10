@@ -321,21 +321,24 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
     const cdnCustomHost = cdnDeployment?.customHost?.trim()
-    // Custom host is only routable once CF has finished provisioning the
-    // managed cert + edge propagation. customHostStatus tracks that:
-    // 'active' means the readiness probe got a TLS handshake; anything
-    // else (pending/failed/empty) falls back to workers.dev so the user
-    // doesn't connect to a half-cooked endpoint.
-    const cdnCustomActive =
-      !!cdnCustomHost &&
-      cdnDeployment?.customHostStatus === 'active'
+    // Once the user has configured a Workers Custom Domain for this node,
+    // route through it regardless of the customHostStatus readiness probe.
+    // The probe runs through the platform DNS resolver, which is exactly
+    // what's broken on the networks M1 is meant to fix (regional mobile network
+    // DNS-poisons both *.workers.dev and the custom hostname). A
+    // 'failed' verdict under those conditions is a false negative, and
+    // falling back to workers.dev pushes traffic onto a more altered
+    // path. sing-box's internal DoH resolves the custom host correctly,
+    // so let it try. The 'pending' window (~60s while CF provisions the
+    // cert) is still a real failure mode — surface it as UI status
+    // instead of silently rerouting.
     const cdnEligible =
       !!cdnDeployment &&
       !!node.vlessRelayPort &&
       node.vlessRelayPort > 0 &&
       !!node.vlessUUID
     const cdnHost = cdnEligible
-      ? (cdnCustomActive ? cdnCustomHost! : cdnWorkerHost || '')
+      ? (cdnCustomHost || cdnWorkerHost || '')
       : ''
     if (cdnHost) {
       outbounds.push({

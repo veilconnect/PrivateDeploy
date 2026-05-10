@@ -59,12 +59,21 @@ class PrivateDeployApp extends StatelessWidget {
             cloudProvider.setCdnHostResolver((nodeId) {
               final dep = cdnProvider?.deploymentFor(nodeId);
               if (dep == null) return null;
-              // Strict M1, with readiness gating: only route through the
-              // Workers Custom Domain after CF has confirmed the cert is
-              // live (status == 'active'). Pending/failed → fall back to
-              // *.workers.dev so the user doesn't connect through a
-              // half-cooked endpoint right after attach.
-              if (dep.customHostReady) return dep.customHost;
+              // Once the user has configured an M1 custom domain for this
+              // node, route through it regardless of customHostStatus.
+              // The status probe runs over the platform DNS resolver,
+              // which is exactly what's broken on the carriers where M1
+              // is needed most (regional mobile network DNS-poisons both *.workers.dev
+              // and the custom hostname). A 'failed' verdict from the
+              // probe under those conditions is a false negative, and
+              // falling back to workers.dev pushes traffic onto a more
+              // altered path. sing-box's internal DoH resolves the
+              // custom host correctly, so let it try. The 'pending'
+              // window (~60s while CF provisions the cert) is still a
+              // real failure mode — we surface it as a UI banner instead
+              // of silently rerouting.
+              final ch = dep.customHost;
+              if (ch != null && ch.isNotEmpty) return ch;
               return dep.workerHost;
             });
             return cdnProvider!;
