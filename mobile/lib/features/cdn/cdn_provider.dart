@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:dio/dio.dart';
@@ -1010,41 +1011,88 @@ class CdnProvider with ChangeNotifier {
   /// 404 means the path-secret didn't match.
   Future<bool> _customHostRelayReachable(String host, String pathSecret) async {
     if (host.isEmpty || pathSecret.isEmpty) return false;
-    final uri = Uri(
-      scheme: 'wss',
-      host: host,
-      port: 443,
-      path: '/',
-      queryParameters: {'ed': '2560', 'k': pathSecret},
-    );
-    HttpClient? client;
+    Socket? raw;
+    SecureSocket? secure;
+    StreamSubscription<List<int>>? sub;
     try {
-      // Pre-resolve via DoH so we never consult the OS resolver for the
-      // brand-new custom hostname. connectionFactory then opens TCP to the
-      // resolved IP while the URL/Host header stays as the customHost so
-      // CF picks the right cert + Worker route.
+      // DoH-resolve the custom host (see _resolveViaDoH for why), then
+      // open the TLS connection ourselves and write the WebSocket upgrade
+      // by hand. The earlier attempt used HttpClient.connectionFactory
+      // for this, which works for plain HTTP but not HTTPS: the factory
+      // must return a SecureSocket that's already TLS-handshaken, and
+      // ConnectionTask has no public constructor that lets us hand back
+      // a TLS-wrapped socket. Rather than fight the framework, we just
+      // do the upgrade dance directly — eight extra lines of HTTP/1.1.
       final ips = await _resolveViaDoH(host);
       if (ips.isEmpty) return false;
-      client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 10)
-        ..connectionFactory =
-            (Uri url, String? proxyHost, int? proxyPort) {
-          // Defensive port fallback: dart sometimes serializes the URL
-          // back through with port 0 even when our Uri sets 443.
-          final port = url.port == 0 ? 443 : url.port;
-          return Socket.startConnect(ips.first, port);
-        };
-      final ws = await WebSocket.connect(
-        uri.toString(),
-        headers: const {'User-Agent': 'PrivateDeploy-CDN-Probe/1'},
-        customClient: client,
-      ).timeout(const Duration(seconds: 12));
-      await ws.close();
-      return true;
+      raw = await Socket.connect(
+        ips.first,
+        443,
+        timeout: const Duration(seconds: 8),
+      );
+      secure = await SecureSocket.secure(raw, host: host)
+          .timeout(const Duration(seconds: 8));
+      // RFC 6455 Sec-WebSocket-Key: 16 random bytes, base64.
+      final keyBytes = Uint8List(16);
+      final rng = Random.secure();
+      for (var i = 0; i < 16; i++) {
+        keyBytes[i] = rng.nextInt(256);
+      }
+      final wsKey = base64Encode(keyBytes);
+      final query =
+          'ed=2560&k=${Uri.encodeQueryComponent(pathSecret)}';
+      final req = 'GET /?$query HTTP/1.1\r\n'
+          'Host: $host\r\n'
+          'Upgrade: websocket\r\n'
+          'Connection: Upgrade\r\n'
+          'Sec-WebSocket-Key: $wsKey\r\n'
+          'Sec-WebSocket-Version: 13\r\n'
+          'User-Agent: PrivateDeploy-CDN-Probe/1\r\n'
+          '\r\n';
+      secure.add(utf8.encode(req));
+      // Wait for the response status line. We don't care about anything
+      // past it — 101 Switching Protocols is the only success case; any
+      // other status code (404 secret-mismatch, 502/504 Worker→VPS down,
+      // 400 malformed request) means the relay path isn't ready.
+      final firstLine = Completer<String>();
+      final buf = BytesBuilder();
+      sub = secure.listen(
+        (chunk) {
+          buf.add(chunk);
+          final s = utf8.decode(buf.toBytes(), allowMalformed: true);
+          final eol = s.indexOf('\r\n');
+          if (eol >= 0 && !firstLine.isCompleted) {
+            firstLine.complete(s.substring(0, eol));
+          }
+        },
+        onError: (e) {
+          if (!firstLine.isCompleted) firstLine.completeError(e);
+        },
+        onDone: () {
+          if (!firstLine.isCompleted) {
+            firstLine.completeError(
+                const SocketException('connection closed before response'));
+          }
+        },
+        cancelOnError: true,
+      );
+      final line =
+          await firstLine.future.timeout(const Duration(seconds: 12));
+      // "HTTP/1.1 101 Switching Protocols" — match status code, ignore
+      // case + minor status-text variation across reverse proxies.
+      return RegExp(r'^HTTP/1\.[01]\s+101\b').hasMatch(line);
     } catch (_) {
       return false;
     } finally {
-      client?.close(force: true);
+      try {
+        await sub?.cancel();
+      } catch (_) {}
+      try {
+        await secure?.close();
+      } catch (_) {}
+      try {
+        raw?.destroy();
+      } catch (_) {}
     }
   }
 
