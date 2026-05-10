@@ -1,71 +1,64 @@
 // PrivateDeploy CDN-front relay Worker
 //
-// Drop-in Cloudflare Worker that accepts a WebSocket upgrade at "/" and pipes
-// the encrypted bytes to a configured upstream VPS over raw TCP. The VPS still
+// Drop-in Cloudflare Worker that accepts a WebSocket upgrade and pipes the
+// encrypted bytes to a configured upstream VPS over raw TCP. The VPS still
 // terminates VLESS / Trojan / Hysteria — this Worker only relocates the L3
 // entry point from "bare VPS IP" (which carriers drop SYN to) to "Cloudflare
 // edge IP" (which they don't).
 //
-// Deploy:
-//   1. Replace BACKEND with your VPS's reverse-proxy port (typically the
-//      VLESS-TLS port from Vultr nodes JSON, e.g. 144.202.124.223:23953).
-//   2. Save & deploy in Cloudflare Workers dashboard.
-//   3. Enable the workers.dev subdomain for the Worker.
-//   4. In your client, configure the node as VLESS-WS-TLS:
-//        server:    <your-worker>.workers.dev
-//        port:      443
-//        type:      ws
-//        path:      /?ed=2560
-//        host:      <your-worker>.workers.dev
-//        sni:       <your-worker>.workers.dev
-//        UUID:      same as the VPS-side VLESS server
+// Per-deployment placeholders that PrivateDeploy fills in at deploy time:
+//   - __BACKEND_PLACEHOLDER__       host:port of the VPS plain-VLESS relay
+//   - __PATH_SECRET_PLACEHOLDER__   32-hex random; client passes ?k=<secret>
 //
-// The Worker holds NO credentials. If it leaks, an attacker still needs the
-// VLESS UUID (held by the VPS) to terminate auth. Auditing this file means
-// auditing the trust boundary.
+// Hardening notes:
+//   - Every request that doesn't present the correct path secret returns a
+//     bare 404 with no body. Scanners and casual visitors see "nothing here"
+//     instead of a self-identifying landing page.
+//   - WebSocket upgrade is gated by the same secret. Without it, the Worker
+//     never opens a TCP socket to the VPS, so the relay is not a free
+//     out-of-band tunnel for anyone who learns the hostname.
+//   - The Worker still holds NO long-lived credentials. The VLESS UUID lives
+//     on the VPS only; the path secret is per-deployment and rotates with
+//     redeploy. Both layers must fall before VPS auth is even reachable.
 
 import { connect } from 'cloudflare:sockets';
 
-// Replace at deploy time. Format: "host:port".
 const BACKEND = '__BACKEND_PLACEHOLDER__';
-
-// Optional: if you want only requests from your installed clients to succeed,
-// set a long random secret here and append "?k=<secret>" to the client's
-// VLESS WebSocket path. Default is empty (no path-secret check).
-const PATH_SECRET = '';
+const PATH_SECRET = '__PATH_SECRET_PLACEHOLDER__';
 
 export default {
   async fetch(request) {
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader !== 'websocket') {
-      return new Response(landingPage(), {
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-      });
-    }
-
+    // Path-secret gate. Empty PATH_SECRET means "older deployment from before
+    // the gate landed" — fall through to the original behaviour so a plain
+    // app upgrade doesn't break in-flight tunnels. Newly-deployed Workers
+    // always have a secret because the deploy code refuses to render the
+    // template without replacing the placeholder.
     if (PATH_SECRET) {
       const url = new URL(request.url);
       if (url.searchParams.get('k') !== PATH_SECRET) {
-        return new Response('forbidden', { status: 403 });
+        return new Response(null, { status: 404 });
       }
+    }
+
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (upgradeHeader !== 'websocket') {
+      // Even with the right secret, non-WS requests return a generic 404.
+      // No landing page, no app branding — the hostname is functionally
+      // a black hole to anyone not running the WS client.
+      return new Response(null, { status: 404 });
     }
 
     const [host, portStr] = BACKEND.split(':');
     const port = Number.parseInt(portStr, 10);
     if (!host || !Number.isInteger(port)) {
-      return new Response('worker misconfigured: BACKEND not set', {
-        status: 500,
-      });
+      return new Response(null, { status: 502 });
     }
 
-    // Open TCP to the VPS first; if we can't reach it the WebSocket should
-    // fail loudly rather than silently accept and stall.
     let tcp;
     try {
       tcp = connect({ hostname: host, port });
-    } catch (err) {
-      return new Response(`upstream connect failed: ${err}`, { status: 502 });
+    } catch (_) {
+      return new Response(null, { status: 502 });
     }
 
     const wsPair = new WebSocketPair();
@@ -106,24 +99,11 @@ async function pipeTcpToWs(tcp, ws) {
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
+      if (done) break;
       ws.send(value);
     }
   } finally {
     reader.releaseLock();
     ws.close();
   }
-}
-
-function landingPage() {
-  return `<!doctype html>
-<meta charset="utf-8">
-<title>PrivateDeploy CDN relay</title>
-<style>body{font-family:system-ui;margin:40px auto;max-width:520px;color:#333}</style>
-<h2>PrivateDeploy CDN relay</h2>
-<p>This endpoint is a WebSocket relay. Clients connect via VLESS-WS-TLS;
-this page is shown only to plain HTTP clients.</p>
-<p>If you reached this URL by accident: nothing private is exposed here.</p>`;
 }

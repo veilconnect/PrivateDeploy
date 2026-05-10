@@ -321,6 +321,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
     const cdnCustomHost = cdnDeployment?.customHost?.trim()
+    const cdnPathSecret = cdnDeployment?.pathSecret?.trim() || ''
     // Once the user has configured a Workers Custom Domain for this node,
     // route through it regardless of the customHostStatus readiness probe.
     // The probe runs through the platform DNS resolver, which is exactly
@@ -340,6 +341,15 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     const cdnHost = cdnEligible
       ? (cdnCustomHost || cdnWorkerHost || '')
       : ''
+    // The Worker rejects every WS request that lacks the per-deployment
+    // PATH_SECRET with a generic 404. Emit ?k=<secret> on the path when
+    // we know it; older deployments persisted before the secret landed
+    // have an empty pathSecret and the Worker template falls through to
+    // its old behaviour (so an in-flight tunnel doesn't break on app
+    // upgrade — they'll get gated next redeploy).
+    const cdnWsPath = cdnPathSecret
+      ? `/?ed=2560&k=${cdnPathSecret}`
+      : '/?ed=2560'
     if (cdnHost) {
       outbounds.push({
         type: 'vless',
@@ -349,7 +359,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
         uuid: node.vlessUUID,
         transport: {
           type: 'ws',
-          path: '/?ed=2560',
+          path: cdnWsPath,
           headers: { Host: cdnHost },
         },
         tls: {

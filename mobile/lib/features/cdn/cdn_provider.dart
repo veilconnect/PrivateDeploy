@@ -352,15 +352,31 @@ class CdnProvider with ChangeNotifier {
         return false;
       }
 
-      // Load the worker template + render BACKEND.
+      // Load the worker template + render BACKEND + PATH_SECRET.
+      // 16 random bytes = 128 bits of entropy as 32 hex chars; same budget
+      // as the Go bridge's randomHex(16) so per-deployment secrets have
+      // identical strength on both platforms.
       final template = await rootBundle.loadString('assets/cdn/worker.js');
       final backend = '$backendHost:$backendPort';
-      final scriptBody = template.replaceAll(
+      final pathSecret = _randomHex(16);
+      var scriptBody = template.replaceAll(
         "'__BACKEND_PLACEHOLDER__'",
         "'${_escapeJsString(backend)}'",
       );
+      scriptBody = scriptBody.replaceAll(
+        "'__PATH_SECRET_PLACEHOLDER__'",
+        "'${_escapeJsString(pathSecret)}'",
+      );
+      // Both placeholders MUST resolve. Leaving __PATH_SECRET_PLACEHOLDER__
+      // in the rendered script would either ship a Worker that 404s every
+      // request, or worse — one whose "secret" is the literal placeholder
+      // string, which is well-known.
       if (scriptBody.contains('__BACKEND_PLACEHOLDER__')) {
         _lastError = 'Worker template missing BACKEND placeholder.';
+        return false;
+      }
+      if (scriptBody.contains('__PATH_SECRET_PLACEHOLDER__')) {
+        _lastError = 'Worker template missing PATH_SECRET placeholder.';
         return false;
       }
 
@@ -461,6 +477,7 @@ class CdnProvider with ChangeNotifier {
         // a half-cooked cert.
         customHostStatus: customHost != null ? 'pending' : null,
         accountId: _accountId,
+        pathSecret: pathSecret,
       );
       await _persistDeployments();
       if (customHost != null) {
@@ -902,6 +919,7 @@ class CdnProvider with ChangeNotifier {
       customDomainId: dep.customDomainId,
       customHostStatus: status,
       accountId: dep.accountId,
+      pathSecret: dep.pathSecret,
     );
     await _persistDeployments();
     notifyListeners();
@@ -915,6 +933,20 @@ class CdnProvider with ChangeNotifier {
     final digest = crypto.sha256.convert(utf8.encode(s));
     final hex = digest.toString();
     return hex.substring(0, min(length, hex.length));
+  }
+
+  /// Cryptographically random hex string of length 2*[nBytes]. Used for the
+  /// per-deployment PATH_SECRET that the Worker enforces on every request.
+  /// `Random.secure()` is documented to draw from the platform's
+  /// cryptographically-secure source (Android: SecureRandom). Mirrors
+  /// `randomHex` in Go bridge/cdn/cdn.go for entropy budget parity.
+  String _randomHex(int nBytes) {
+    final r = Random.secure();
+    final sb = StringBuffer();
+    for (var i = 0; i < nBytes; i++) {
+      sb.write(r.nextInt(256).toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
   }
 
   /// DNS label rules tightened to lowercase [a-z0-9-], 1-56 chars
@@ -970,6 +1002,7 @@ class CdnDeployment {
     this.customDomainId,
     this.customHostStatus,
     this.accountId,
+    this.pathSecret,
   });
 
   /// The PrivateDeploy cloud node id this Worker fronts (e.g. Vultr instance
@@ -1015,6 +1048,16 @@ class CdnDeployment {
   /// verified account in that case.
   final String? accountId;
 
+  /// Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
+  /// The client appends ?k=<secret> to the VLESS-WS path; the Worker
+  /// rejects every request that lacks the matching value with a bare 404.
+  /// Without this, anyone who learns the Worker hostname could use it as
+  /// a free TCP-out relay against the VPS relay port. Empty/null means
+  /// "deployed before the path-secret gate landed" — the client emits the
+  /// path without ?k= and the Worker template falls through to its old
+  /// behaviour. Newly deployed Workers always have one.
+  final String? pathSecret;
+
   Map<String, dynamic> toJson() => {
         'nodeId': nodeId,
         'scriptName': scriptName,
@@ -1027,6 +1070,8 @@ class CdnDeployment {
         if (customHostStatus != null && customHostStatus!.isNotEmpty)
           'customHostStatus': customHostStatus,
         if (accountId != null && accountId!.isNotEmpty) 'accountId': accountId,
+        if (pathSecret != null && pathSecret!.isNotEmpty)
+          'pathSecret': pathSecret,
       };
 
   factory CdnDeployment.fromJson(Map json) => CdnDeployment(
@@ -1049,6 +1094,9 @@ class CdnDeployment {
         accountId: (json['accountId']?.toString().isEmpty ?? true)
             ? null
             : json['accountId'].toString(),
+        pathSecret: (json['pathSecret']?.toString().isEmpty ?? true)
+            ? null
+            : json['pathSecret'].toString(),
       );
 
   /// True only when CF has confirmed the customHost is reachable. Use

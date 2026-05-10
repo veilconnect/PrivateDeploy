@@ -5,6 +5,24 @@ import 'package:flutter/foundation.dart';
 import '../../core/network/managed_dns_defaults.dart';
 import 'cloud_models.dart';
 
+/// Fully-qualified destination of the CDN-fronted variant for one node.
+/// Carries both the hostname (M1 custom domain when bound, falling back to
+/// `*.workers.dev`) and the per-deployment PATH_SECRET that the Worker
+/// enforces. Without the secret the client is rejected with a generic 404,
+/// so the secret is part of the routing identity, not a UI-only field.
+@immutable
+class CdnEndpoint {
+  const CdnEndpoint({required this.host, this.pathSecret});
+
+  final String host;
+
+  /// Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
+  /// Empty/null means "deployed before the gate landed" — the client emits
+  /// the path without ?k= and the Worker template falls through to its old
+  /// behaviour. Newly deployed Workers always set this.
+  final String? pathSecret;
+}
+
 const Map<String, String> _cloudEndpointLabelByTagSuffix = {
   '-SS': 'Shadowsocks',
   '-Trojan': 'Trojan',
@@ -87,7 +105,7 @@ Map<String, String> _appendInstanceOutbounds(
   CloudInstance instance, {
   required List<Map<String, dynamic>> outbounds,
   required List<String> tags,
-  String? cdnHost,
+  CdnEndpoint? cdnEndpoint,
 }) {
   final endpointTagByLabel = <String, String>{};
   final info = instance.nodeInfo;
@@ -169,18 +187,30 @@ Map<String, String> _appendInstanceOutbounds(
   }
 
   // CDN-fronted variant. Routed to a Cloudflare Worker host that relays
-  // WS↔TCP to the node's vlessRelayPort. The caller resolves cdnHost to
-  // the user's M1 custom-domain (preferred — bypasses the *.workers.dev
+  // WS↔TCP to the node's vlessRelayPort. The caller resolves cdnEndpoint
+  // to the user's M1 custom-domain (preferred — bypasses the *.workers.dev
   // DNS-poisoning that some carriers apply) and falls back to the
   // workers.dev hostname if no custom domain is bound. Strict M1: we
   // never emit BOTH simultaneously, because keeping a known-bad
   // workers.dev sibling in the urltest group costs probe latency before
   // urltest converges away from it.
+  //
+  // The path always carries the per-deployment PATH_SECRET as ?k=<secret>
+  // (when present). The Worker rejects every request that doesn't match
+  // with a generic 404, which keeps the relay from being usable as a free
+  // out-of-band tunnel by anyone who learns the hostname. Older
+  // deployments without a secret emit the same path with `ed=2560`-only;
+  // the Worker template falls through for that case.
+  final cdnHost = cdnEndpoint?.host;
   if (cdnHost != null &&
       cdnHost.isNotEmpty &&
       info.vlessRelayPort > 0 &&
       info.vlessUuid.isNotEmpty) {
     final tag = '$label-CDN';
+    final secret = cdnEndpoint?.pathSecret;
+    final wsPath = (secret != null && secret.isNotEmpty)
+        ? '/?ed=2560&k=$secret'
+        : '/?ed=2560';
     outbounds.add({
       'type': 'vless',
       'tag': tag,
@@ -189,7 +219,7 @@ Map<String, String> _appendInstanceOutbounds(
       'uuid': info.vlessUuid,
       'transport': {
         'type': 'ws',
-        'path': '/?ed=2560',
+        'path': wsPath,
         'headers': {'Host': cdnHost},
       },
       'tls': {
@@ -233,12 +263,13 @@ String? buildCloudNodeConfig(
   TargetPlatform? targetPlatform,
   // When non-null, append a CDN-fronted VLESS variant pointing at this
   // Cloudflare-fronted host (Workers Custom Domain when M1 is bound,
-  // otherwise the *.workers.dev fallback). The Worker is expected to relay
-  // WS frames to the node's vlessRelayPort over plain TCP — see
-  // docs/cdn-acceleration. The CDN variant joins the urltest pool so
-  // sing-box auto-fails over from direct → CDN when the carrier blocks
-  // the direct path.
-  String? cdnHost,
+  // otherwise the *.workers.dev fallback) and using the per-deployment
+  // PATH_SECRET on the WS path so the Worker accepts the request. The
+  // Worker relays WS frames to the node's vlessRelayPort over plain TCP
+  // — see docs/cdn-acceleration. The CDN variant joins the urltest pool
+  // so sing-box auto-fails over from direct → CDN when the carrier
+  // blocks the direct path.
+  CdnEndpoint? cdnEndpoint,
   // Other cloud nodes to enroll in the same urltest failover pool. When the
   // active node's IP is dropped by the carrier (e.g. mobile carrier silently
   // blackholing some VPS ranges on cellular), sing-box urltest will pick a
@@ -246,9 +277,10 @@ String? buildCloudNodeConfig(
   // mode — if [preferredEndpointLabel] pins a protocol, the user explicitly
   // wants that one outbound and we honor it.
   List<CloudInstance> failoverInstances = const [],
-  // Resolves the CDN host for any instance in [failoverInstances]. Should
-  // prefer the M1 customHost when bound; falls back to workerHost.
-  String? Function(CloudInstance instance)? failoverCdnHostResolver,
+  // Resolves the CDN endpoint for any instance in [failoverInstances].
+  // Should return the M1 customHost when bound (with the same
+  // pathSecret), and fall back to workerHost when not.
+  CdnEndpoint? Function(CloudInstance instance)? failoverCdnEndpointResolver,
 }) {
   if (!instance.hasIp || instance.nodeInfo == null) {
     return null;
@@ -260,7 +292,7 @@ String? buildCloudNodeConfig(
     instance,
     outbounds: outbounds,
     tags: tags,
-    cdnHost: cdnHost,
+    cdnEndpoint: cdnEndpoint,
   );
 
   if (outbounds.isEmpty) {
@@ -302,7 +334,7 @@ String? buildCloudNodeConfig(
         fi,
         outbounds: scratchOutbounds,
         tags: scratchTags,
-        cdnHost: failoverCdnHostResolver?.call(fi),
+        cdnEndpoint: failoverCdnEndpointResolver?.call(fi),
       );
       for (var i = 0; i < scratchTags.length; i++) {
         final tag = scratchTags[i];

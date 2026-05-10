@@ -10,6 +10,7 @@ package cdn
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -99,6 +100,19 @@ type Deployment struct {
 	// the local record under the wrong assumption that they were cleaned
 	// up.
 	AccountID string `json:"accountId,omitempty"`
+	// PathSecret is a per-deployment 32-hex random injected into the Worker
+	// at upload time as PATH_SECRET. The client appends ?k=<secret> to the
+	// VLESS-WS path; the Worker rejects every request that lacks the
+	// matching value with a bare 404 (no body, no app branding). Without
+	// this, anyone who learns the Worker hostname could use it as a free
+	// TCP-out relay against the VPS relay port — annoying both as a quota
+	// drain on the user's Cloudflare account and as a fingerprintable
+	// "PrivateDeploy CDN relay" landing page on the prior plain-GET path.
+	// Empty string means "deployed before the path-secret gate landed";
+	// the Worker template falls through to its old behaviour in that case
+	// so an app upgrade doesn't break in-flight tunnels until the user
+	// redeploys.
+	PathSecret string `json:"pathSecret,omitempty"`
 	// Deprecated: legacy route+CNAME fields, retained for cleanup of older
 	// persisted deployments. New deploys leave these empty.
 	ZoneID      string `json:"zoneId,omitempty"`
@@ -388,14 +402,35 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 	}()
 
 	backend := fmt.Sprintf("%s:%d", backendHost, backendPort)
+	// 32 hex chars = 128 bits of entropy. Plenty for a per-deployment secret
+	// that lives in a TLS query string and rotates on every redeploy.
+	pathSecret, err := randomHex(16)
+	if err != nil {
+		m.setLastError(fmt.Sprintf("failed to generate path secret: %v", err))
+		return m.State(), err
+	}
 	body := strings.ReplaceAll(
 		m.workerTpl,
 		`'__BACKEND_PLACEHOLDER__'`,
 		fmt.Sprintf(`'%s'`, escapeJSString(backend)),
 	)
+	body = strings.ReplaceAll(
+		body,
+		`'__PATH_SECRET_PLACEHOLDER__'`,
+		fmt.Sprintf(`'%s'`, escapeJSString(pathSecret)),
+	)
+	// Both placeholders must have been resolved. Leaving them in would
+	// either ship a worker that always 404s (the secret check would
+	// compare against the literal placeholder string) or, worse, ship one
+	// where every client request matches because the placeholder is
+	// well-known.
 	if strings.Contains(body, "__BACKEND_PLACEHOLDER__") {
 		m.setLastError("worker template missing BACKEND placeholder")
 		return m.State(), errors.New("worker template missing BACKEND placeholder")
+	}
+	if strings.Contains(body, "__PATH_SECRET_PLACEHOLDER__") {
+		m.setLastError("worker template missing PATH_SECRET placeholder")
+		return m.State(), errors.New("worker template missing PATH_SECRET placeholder")
 	}
 
 	scriptName := safeWorkerName(nodeID, nodeLabel)
@@ -481,6 +516,7 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		Backend:    backend,
 		DeployedAt: time.Now().UTC(),
 		AccountID:  accountID,
+		PathSecret: pathSecret,
 	}
 
 	// M1: if a CustomDomain is configured, attach this Worker to the user's
@@ -914,6 +950,18 @@ func escapeJSString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `\'`)
 	return s
+}
+
+// randomHex returns a hex-encoded random string of length 2*nBytes drawn
+// from crypto/rand. Used for the per-deployment Worker path secret —
+// caller picks nBytes based on entropy budget (16 = 128 bits, plenty for
+// a path token that lives in a TLS query string and rotates per redeploy).
+func randomHex(nBytes int) (string, error) {
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // validateDNSLabel enforces RFC 1035 DNS label rules tightened for the

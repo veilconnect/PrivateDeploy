@@ -107,6 +107,16 @@ export interface CdnDeployment {
    * Only "active" makes the customHost eligible for subscription emission.
    */
   customHostStatus?: 'pending' | 'active' | 'failed'
+  /**
+   * Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
+   * The client emits `?k=<secret>` on the WS path; the Worker rejects
+   * every request without a matching value with a generic 404. Empty
+   * (or undefined on older persisted records) means the deployment
+   * pre-dates the secret gate — the Worker template falls through to
+   * its old behaviour for those, so an in-flight tunnel keeps working
+   * across upgrades.
+   */
+  pathSecret?: string
   /** @deprecated legacy; pre-Workers-Custom-Domains route+CNAME path */
   zoneId?: string
   /** @deprecated legacy */

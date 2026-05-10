@@ -12,6 +12,7 @@ import 'features/profiles/bundled_rule_set_registry.dart';
 import 'features/profiles/profile_provider.dart';
 import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
+import 'features/cloud/cloud_node_config_builder.dart' show CdnEndpoint;
 import 'features/cloud/cloud_provider.dart';
 import 'features/cdn/cdn_provider.dart';
 
@@ -56,7 +57,7 @@ class PrivateDeployApp extends StatelessWidget {
             // Wire the CDN provider's deployment lookup into the cloud
             // provider's outbound builder so generated node configs include
             // a CDN-fronted variant whenever a Worker has been deployed.
-            cloudProvider.setCdnHostResolver((nodeId) {
+            cloudProvider.setCdnEndpointResolver((nodeId) {
               final dep = cdnProvider?.deploymentFor(nodeId);
               if (dep == null) return null;
               // Once the user has configured an M1 custom domain for this
@@ -73,8 +74,12 @@ class PrivateDeployApp extends StatelessWidget {
               // real failure mode — we surface it as a UI banner instead
               // of silently rerouting.
               final ch = dep.customHost;
-              if (ch != null && ch.isNotEmpty) return ch;
-              return dep.workerHost;
+              final host =
+                  (ch != null && ch.isNotEmpty) ? ch : dep.workerHost;
+              return CdnEndpoint(
+                host: host,
+                pathSecret: dep.pathSecret,
+              );
             });
             return cdnProvider!;
           },
