@@ -348,10 +348,17 @@ class CdnProvider with ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if ((_workersSubdomain ?? '').isEmpty) {
+    // Hard requirement only when no M1 custom-domain is bound. A claimed
+    // workers.dev subdomain is one of two ways to reach the Worker — when
+    // the user has bound a custom hostname we can ship without it, which
+    // lets accounts that have never visited the Workers dashboard still
+    // use M1.
+    final hasCustomDomain = _customDomain != null;
+    if ((_workersSubdomain ?? '').isEmpty && !hasCustomDomain) {
       _lastError =
-          'No workers.dev subdomain claimed yet — visit the Cloudflare '
-          'dashboard once to claim one, then retry.';
+          'No workers.dev subdomain claimed and no custom domain bound — '
+          'claim a workers.dev subdomain in the Cloudflare dashboard, or '
+          'bind a custom hostname under CDN settings, then retry.';
       notifyListeners();
       return false;
     }
@@ -436,25 +443,29 @@ class CdnProvider with ChangeNotifier {
         return false;
       }
 
-      // Enable the workers.dev subdomain for the script.
-      final sub = await dio.post(
-        '$_accountsEndpoint/$_accountId/workers/scripts/$scriptName/subdomain',
-        data: jsonEncode({'enabled': true}),
-        options: Options(headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        }),
-      );
-      if (sub.statusCode! >= 400) {
-        // Upload succeeded but subdomain enable failed — still surface as
-        // partial failure; the user can re-deploy later.
-        _lastError = _extractCloudflareError(sub.data) ??
-            'Worker uploaded but subdomain enable failed '
-                '(HTTP ${sub.statusCode}).';
-        return false;
+      // Enable the workers.dev subdomain for the script — only meaningful
+      // when a subdomain has been claimed. When we're shipping via
+      // custom-domain only, skip the POST; sending it would 404 against
+      // the nonexistent subdomain and surface a confusing error even
+      // though the deploy is fine.
+      String url = '';
+      if ((_workersSubdomain ?? '').isNotEmpty) {
+        final sub = await dio.post(
+          '$_accountsEndpoint/$_accountId/workers/scripts/$scriptName/subdomain',
+          data: jsonEncode({'enabled': true}),
+          options: Options(headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          }),
+        );
+        if (sub.statusCode! >= 400) {
+          _lastError = _extractCloudflareError(sub.data) ??
+              'Worker uploaded but subdomain enable failed '
+                  '(HTTP ${sub.statusCode}).';
+          return false;
+        }
+        url = '$scriptName.$_workersSubdomain.workers.dev';
       }
-
-      final url = '$scriptName.$_workersSubdomain.workers.dev';
       String? customHost;
       String? customDomainId;
       if (_customDomain != null) {

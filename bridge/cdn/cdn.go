@@ -396,10 +396,16 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		m.mu.Unlock()
 		return s, errors.New("token not verified — verify it first")
 	}
-	if strings.TrimSpace(m.cfg.WorkersSubdomain) == "" {
+	// Hard requirement only when no M1 custom-domain is configured. A
+	// claimed workers.dev subdomain is one of two ways to reach the
+	// Worker — when the user has bound a custom hostname we can ship
+	// without it, which lets accounts that have never visited the
+	// Workers dashboard still use M1.
+	hasCustomDomain := m.cfg.CustomDomain != nil && m.cfg.CustomDomain.IsSet()
+	if strings.TrimSpace(m.cfg.WorkersSubdomain) == "" && !hasCustomDomain {
 		s := m.snapshotLocked()
 		m.mu.Unlock()
-		return s, errors.New("no workers.dev subdomain claimed yet")
+		return s, errors.New("no workers.dev subdomain claimed and no custom domain bound — claim one in the Workers dashboard, or bind a custom hostname under CDN settings")
 	}
 	if backendPort <= 0 || strings.TrimSpace(backendHost) == "" {
 		s := m.snapshotLocked()
@@ -506,32 +512,38 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 		return m.State(), errors.New(msg)
 	}
 
-	// Enable workers.dev subdomain for the script.
-	enableURL := fmt.Sprintf("%s/%s/workers/scripts/%s/subdomain", accountsEndpoint, accountID, scriptName)
-	enableReq, err := http.NewRequestWithContext(ctx, http.MethodPost, enableURL,
-		strings.NewReader(`{"enabled":true}`))
-	if err != nil {
-		m.setLastError(err.Error())
-		return m.State(), err
-	}
-	enableReq.Header.Set("Authorization", "Bearer "+token)
-	enableReq.Header.Set("Content-Type", "application/json")
-	enableResp, err := m.httpClient.Do(enableReq)
-	if err != nil {
-		m.setLastError(fmt.Sprintf("worker uploaded but subdomain enable failed: %v", err))
-		return m.State(), err
-	}
-	enableBody, _ := readJSONBody(enableResp)
-	if enableResp.StatusCode >= 400 {
-		msg := extractCfError(enableBody)
-		if msg == "" {
-			msg = fmt.Sprintf("worker uploaded but subdomain enable failed (HTTP %d)", enableResp.StatusCode)
+	// Enable workers.dev subdomain for the script — only meaningful when a
+	// subdomain has been claimed. When we're shipping via custom-domain
+	// only, skip the POST entirely; sending it would 404 against the
+	// nonexistent subdomain and we'd surface a confusing error even
+	// though the deploy is fine.
+	host := ""
+	if subdomain != "" {
+		enableURL := fmt.Sprintf("%s/%s/workers/scripts/%s/subdomain", accountsEndpoint, accountID, scriptName)
+		enableReq, err := http.NewRequestWithContext(ctx, http.MethodPost, enableURL,
+			strings.NewReader(`{"enabled":true}`))
+		if err != nil {
+			m.setLastError(err.Error())
+			return m.State(), err
 		}
-		m.setLastError(msg)
-		return m.State(), errors.New(msg)
+		enableReq.Header.Set("Authorization", "Bearer "+token)
+		enableReq.Header.Set("Content-Type", "application/json")
+		enableResp, err := m.httpClient.Do(enableReq)
+		if err != nil {
+			m.setLastError(fmt.Sprintf("worker uploaded but subdomain enable failed: %v", err))
+			return m.State(), err
+		}
+		enableBody, _ := readJSONBody(enableResp)
+		if enableResp.StatusCode >= 400 {
+			msg := extractCfError(enableBody)
+			if msg == "" {
+				msg = fmt.Sprintf("worker uploaded but subdomain enable failed (HTTP %d)", enableResp.StatusCode)
+			}
+			m.setLastError(msg)
+			return m.State(), errors.New(msg)
+		}
+		host = fmt.Sprintf("%s.%s.workers.dev", scriptName, subdomain)
 	}
-
-	host := fmt.Sprintf("%s.%s.workers.dev", scriptName, subdomain)
 	dep := &Deployment{
 		NodeID:     nodeID,
 		ScriptName: scriptName,
