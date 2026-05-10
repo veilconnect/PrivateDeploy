@@ -119,7 +119,15 @@ func GenerateMultiProtocolScript(p MultiProtocolParams) string {
   # VLESSRelayPort being set, so it lives here in the same conditional block
   # that installs the relay sing-box. Without this, the service listens on the
   # port but UFW (default deny incoming) silently blackholes the SYN.
-  ufw allow %[1]d/tcp comment 'VLESS-Relay (CDN)'
+  #
+  # 'limit' (not 'allow') uses iptables' recent module to drop sources that
+  # open more than ~6 new connections in 30s. The Worker's path-secret gate
+  # already rejects unauthorised traffic at the CDN edge, so the only way to
+  # reach this port is direct-IP probing. Limit cuts off scanners and
+  # UUID-brute-force attempts without affecting normal urltest probes (a
+  # single CF anycast egress carries every client request through the
+  # Worker, so legit traffic stays well under the threshold).
+  ufw limit %[1]d/tcp comment 'VLESS-Relay (CDN)'
 
   cat > /etc/privatedeploy/vless/relay.json <<RELAYEOF
 {
