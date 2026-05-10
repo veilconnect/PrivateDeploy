@@ -343,8 +343,31 @@ func (m *Manager) failVerify(priorVerified bool, msg string) (State, error) {
 	return m.snapshotLocked(), errors.New(msg)
 }
 
-// Clear wipes all CDN state from disk.
-func (m *Manager) Clear() (State, error) {
+// Clear wipes all CDN state from disk. Best-effort cleanup of remote
+// resources (Workers, custom-domain bindings) runs first while we still
+// have credentials; failures there are swallowed so a transient network
+// problem can't block the user from removing local state. Any leftover
+// CF resources can be cleaned via the dashboard.
+//
+// Order matters: snapshot deployment IDs under the lock, drop the lock
+// while doing the network calls (DeleteWorker takes its own lock), then
+// re-acquire to wipe.
+func (m *Manager) Clear(ctx context.Context) (State, error) {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.deployments))
+	for id := range m.deployments {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+
+	for _, id := range ids {
+		// Per-call timeout so a stuck CF API call can't pin the whole
+		// "remove token" UI for minutes.
+		dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		_, _ = m.DeleteWorker(dctx, id)
+		cancel()
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg = persistedConfig{}

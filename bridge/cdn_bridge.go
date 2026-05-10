@@ -61,12 +61,14 @@ func (a *App) VerifyCdnToken(token string) FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-// ClearCdnTyped wipes all CDN state from disk.
+// ClearCdnTyped wipes all CDN state from disk. Best-effort cleanup of
+// remote Workers + custom-domain bindings runs first while credentials
+// are still available; transient failures don't block the local wipe.
 func (a *App) ClearCdnTyped() (CdnState, error) {
 	if a.CdnManager == nil {
 		return CdnState{Status: cdn.StatusDisabled, Deployments: map[string]*cdn.Deployment{}}, nil
 	}
-	state, err := a.CdnManager.Clear()
+	state, err := a.CdnManager.Clear(a.Ctx)
 	a.emitCdnEvent("cdn:state", state)
 	return state, err
 }

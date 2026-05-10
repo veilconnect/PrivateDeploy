@@ -298,15 +298,30 @@ class CdnProvider with ChangeNotifier {
   }
 
   Future<void> clear() async {
+    // Best-effort remote cleanup of every Worker + custom-domain binding
+    // we know about, while credentials are still loaded. Failures don't
+    // block the local wipe — the user explicitly asked to clear, so we
+    // honour that even if CF is unreachable. Otherwise an offline "clear"
+    // would orphan remote resources forever.
+    final ids = _deployments.keys.toList();
+    for (final id in ids) {
+      try {
+        await deleteWorkerForNode(id);
+      } catch (_) {
+        // Swallow — local wipe still proceeds below.
+      }
+    }
     await StorageService.removeSecure(_kTokenKey);
     await StorageService.remove(_kAccountIdKey);
     await StorageService.remove(_kAccountEmailKey);
     await StorageService.remove(_kWorkersSubdomainKey);
     await StorageService.remove(_kDeploymentsKey);
+    await StorageService.remove(_kCustomDomainKey);
     _accountId = null;
     _accountEmail = null;
     _workersSubdomain = null;
     _deployments = {};
+    _customDomain = null;
     _status = CdnStatus.disabled;
     _lastError = null;
     notifyListeners();
