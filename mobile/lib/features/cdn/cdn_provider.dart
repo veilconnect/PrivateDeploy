@@ -908,9 +908,16 @@ class CdnProvider with ChangeNotifier {
     return name;
   }
 
-  /// Polls the customHost until TLS handshakes succeed or the budget is
+  /// Polls the customHost until the WS upgrade succeeds end-to-end (CF
+  /// cert + Worker dispatch + Worker→VPS TCP) or the budget is
   /// exhausted. Mirrors bridge/cdn/cdn_probe.go so desktop and mobile
   /// have the same readiness semantics. Total budget ~3.7 min.
+  ///
+  /// Two-stage: cheap TLS handshake first, then a WS upgrade with the
+  /// deployment's path-secret. The WS upgrade is the only real proof
+  /// that Worker→VPS connectivity is live (UFW open, port correct,
+  /// VPS up). Earlier code only checked TLS, which would happily report
+  /// "active" against a Worker pointing at a closed port.
   Future<void> _probeCustomHostReadiness(String nodeId, String host) async {
     const delays = [
       Duration(seconds: 3),
@@ -929,7 +936,18 @@ class CdnProvider with ChangeNotifier {
         // Deployment was deleted or re-bound; abandon this probe.
         return;
       }
-      if (await _customHostTLSReachable(host)) {
+      if (!await _customHostTLSReachable(host)) {
+        continue;
+      }
+      final secret = (dep.pathSecret ?? '').trim();
+      if (secret.isEmpty) {
+        // Legacy deployment with no path-secret on record. TLS-only
+        // is the best we can do — mark active so it doesn't sit in
+        // pending forever.
+        await _markCustomHostStatus(nodeId, host, 'active');
+        return;
+      }
+      if (await _customHostRelayReachable(host, secret)) {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
       }
@@ -938,9 +956,8 @@ class CdnProvider with ChangeNotifier {
   }
 
   /// Single TLS handshake to host:443. Success = CF edge served a valid
-  /// cert for the SNI, which is the readiness signal we care about.
-  /// We don't probe the inner Worker response — relay-path requests
-  /// without WS upgrade naturally 4xx.
+  /// cert for the SNI — necessary but not sufficient for the relay to
+  /// work end-to-end.
   Future<bool> _customHostTLSReachable(String host) async {
     try {
       final socket = await SecureSocket.connect(
@@ -949,6 +966,34 @@ class CdnProvider with ChangeNotifier {
         timeout: const Duration(seconds: 8),
       );
       await socket.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Attempts the full WS upgrade through the Worker, exercising the
+  /// entire CF-edge → Worker → VPS relay path. Success means the Worker
+  /// accepted the path-secret AND established a TCP connection to the
+  /// VPS upstream. We close immediately — no payload exchange needed,
+  /// only that the upgrade returned 101.
+  ///
+  /// A 502/504 means Worker→VPS TCP failed (UFW, wrong port, VPS down).
+  /// 404 means the path-secret didn't match.
+  Future<bool> _customHostRelayReachable(String host, String pathSecret) async {
+    if (host.isEmpty || pathSecret.isEmpty) return false;
+    final uri = Uri(
+      scheme: 'wss',
+      host: host,
+      path: '/',
+      queryParameters: {'ed': '2560', 'k': pathSecret},
+    );
+    try {
+      final ws = await WebSocket.connect(
+        uri.toString(),
+        headers: const {'User-Agent': 'PrivateDeploy-CDN-Probe/1'},
+      ).timeout(const Duration(seconds: 12));
+      await ws.close();
       return true;
     } catch (_) {
       return false;
