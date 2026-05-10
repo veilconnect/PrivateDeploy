@@ -20,17 +20,6 @@
 //   - The Worker still holds NO long-lived credentials. The VLESS UUID lives
 //     on the VPS only; the path secret is per-deployment and rotates with
 //     redeploy. Both layers must fall before VPS auth is even reachable.
-//
-// Performance notes:
-//   - Both directions use ReadableStream.pipeTo() instead of manual
-//     read/write loops. pipeTo is implemented in the Workers runtime as a
-//     backpressured V8 fast path: chunk forwarding + buffer reuse happen
-//     in native code, with no per-chunk async user-code hop. On the free
-//     tier (10 ms CPU/request) this materially extends how long a tunnel
-//     can stay open before getting CPU-budget-killed.
-//   - The WebSocket → TCP direction wraps the WS event API in a
-//     ReadableStream so the same pipeTo() path applies. Closing semantics
-//     mirror the old loop: either end closing tears the other side down.
 
 import { connect } from 'cloudflare:sockets';
 
@@ -76,11 +65,8 @@ export default {
     const [client, server] = Object.values(wsPair);
     server.accept();
 
-    // Both directions are pipeTo() onto the runtime's native streams. On
-    // any error we tear both sides down; the catch handlers swallow
-    // (close-after-close is fine and logging would just burn CPU).
-    pipeWsToTcp(server, tcp).catch(() => closeBoth(server, tcp));
-    pipeTcpToWs(tcp, server).catch(() => closeBoth(server, tcp));
+    pipeWsToTcp(server, tcp).catch(() => server.close());
+    pipeTcpToWs(tcp, server).catch(() => server.close());
 
     return new Response(null, {
       status: 101,
@@ -89,71 +75,35 @@ export default {
   },
 };
 
-// pipeWsToTcp wraps the WebSocket event API in a ReadableStream so the
-// runtime's pipeTo() can shuttle bytes into tcp.writable without a
-// per-chunk async hop. WS messages arrive as ArrayBuffer (binary VLESS)
-// or string (very rare here); we normalize ArrayBuffer → Uint8Array so
-// downstream writers see one shape.
 async function pipeWsToTcp(ws, tcp) {
-  const wsReadable = new ReadableStream({
-    start(controller) {
-      ws.addEventListener('message', (event) => {
-        try {
-          const data =
-            event.data instanceof ArrayBuffer
-              ? new Uint8Array(event.data)
-              : event.data;
-          controller.enqueue(data);
-        } catch (_) {
-          // Enqueue can throw if the stream is already closed — fine to
-          // swallow because the close listener (or the matching pipeTo
-          // tear-down) will end the relay anyway.
-        }
-      });
-      ws.addEventListener('close', () => {
-        try {
-          controller.close();
-        } catch (_) {}
-      });
-      ws.addEventListener('error', () => {
-        try {
-          controller.error(new Error('ws error'));
-        } catch (_) {}
-      });
-    },
+  const writer = tcp.writable.getWriter();
+  ws.addEventListener('message', async (event) => {
+    try {
+      const data =
+        event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
+      await writer.write(data);
+    } catch (_) {
+      ws.close();
+    }
   });
-  await wsReadable.pipeTo(tcp.writable);
+  ws.addEventListener('close', () => {
+    writer.close().catch(() => {});
+  });
+  ws.addEventListener('error', () => {
+    writer.close().catch(() => {});
+  });
 }
 
-// pipeTcpToWs walks tcp.readable straight into a WritableStream that
-// hands every chunk to ws.send. The runtime owns the loop, so we don't
-// pay the per-chunk async-await round-trip the previous reader.read()
-// version did.
 async function pipeTcpToWs(tcp, ws) {
-  await tcp.readable.pipeTo(
-    new WritableStream({
-      write(chunk) {
-        ws.send(chunk);
-      },
-      close() {
-        try {
-          ws.close();
-        } catch (_) {}
-      },
-      abort() {
-        try {
-          ws.close();
-        } catch (_) {}
-      },
-    }),
-  );
-}
-
-function closeBoth(ws, tcp) {
+  const reader = tcp.readable.getReader();
   try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      ws.send(value);
+    }
+  } finally {
+    reader.releaseLock();
     ws.close();
-  } catch (_) {}
-  try {
-    tcp.close();
-  } catch (_) {}
+  }
 }
