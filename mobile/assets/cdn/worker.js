@@ -20,6 +20,23 @@
 //   - The Worker still holds NO long-lived credentials. The VLESS UUID lives
 //     on the VPS only; the path secret is per-deployment and rotates with
 //     redeploy. Both layers must fall before VPS auth is even reachable.
+//
+// Performance notes (one-direction pipeTo, May 2026):
+//   - The download direction (TCP→WS, the dominant traffic direction for
+//     web browsing) uses ReadableStream.pipeTo onto a WritableStream that
+//     wraps ws.send. The Workers runtime executes pipeTo as a backpressured
+//     V8 fast path — chunk forwarding happens in native code without a
+//     per-chunk async hop through user JS. On the free tier (10 ms CPU/req)
+//     that materially extends how long a tunnel can stay open before
+//     getting CPU-budget-killed during large downloads.
+//   - The upload direction (WS→TCP) keeps the original event-listener +
+//     writer.write loop. Earlier we tried wrapping the WS event API in a
+//     ReadableStream so both directions could pipeTo, but that variant
+//     (commit 5ec9cf5) caused the runtime to throw at module instantiation
+//     — every request returned CF error 1101 with no diagnostic detail.
+//     Until we have a Worker tail consumer to capture the actual exception,
+//     the WS→TCP wrapper stays on the proven manual path. Asymmetric, but
+//     downloads are where the optimization matters most.
 
 import { connect } from 'cloudflare:sockets';
 
@@ -75,6 +92,9 @@ export default {
   },
 };
 
+// WS → TCP: manual event-listener loop. See "Performance notes" header
+// for why this direction stays on the proven path while the other side
+// uses pipeTo.
 async function pipeWsToTcp(ws, tcp) {
   const writer = tcp.writable.getWriter();
   ws.addEventListener('message', async (event) => {
@@ -94,16 +114,26 @@ async function pipeWsToTcp(ws, tcp) {
   });
 }
 
+// TCP → WS: tcp.readable is already a ReadableStream, so pipeTo into a
+// thin WritableStream that hands each chunk to ws.send. The runtime owns
+// the loop end-to-end, so we don't pay the per-chunk async-await
+// round-trip the previous reader.read() version did.
 async function pipeTcpToWs(tcp, ws) {
-  const reader = tcp.readable.getReader();
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      ws.send(value);
-    }
-  } finally {
-    reader.releaseLock();
-    ws.close();
-  }
+  await tcp.readable.pipeTo(
+    new WritableStream({
+      write(chunk) {
+        ws.send(chunk);
+      },
+      close() {
+        try {
+          ws.close();
+        } catch (_) {}
+      },
+      abort() {
+        try {
+          ws.close();
+        } catch (_) {}
+      },
+    }),
+  );
 }
