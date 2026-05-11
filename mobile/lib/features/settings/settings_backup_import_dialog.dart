@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
+import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_backup_preview_card.dart';
@@ -11,6 +12,7 @@ import 'settings_backup_preview_card.dart';
 Future<void> showSettingsBackupImportDialog({
   required BuildContext context,
   required CloudProvider cloud,
+  CdnProvider? cdn,
 }) async {
   final clipboard = await Clipboard.getData('text/plain');
   if (!context.mounted) {
@@ -22,6 +24,7 @@ Future<void> showSettingsBackupImportDialog({
     builder: (_) => _SettingsBackupImportDialog(
       rootContext: context,
       cloud: cloud,
+      cdn: cdn,
       initialValue: clipboard?.text ?? '',
     ),
   );
@@ -31,11 +34,13 @@ class _SettingsBackupImportDialog extends StatefulWidget {
   const _SettingsBackupImportDialog({
     required this.rootContext,
     required this.cloud,
+    required this.cdn,
     required this.initialValue,
   });
 
   final BuildContext rootContext;
   final CloudProvider cloud;
+  final CdnProvider? cdn;
   final String initialValue;
 
   @override
@@ -285,6 +290,21 @@ class _SettingsBackupImportDialogState
     try {
       final decrypted = await _decryptBackupPayload(raw);
       await widget.cloud.importBackupJson(decrypted);
+      // Apply the CDN side only after cloud succeeded — if cloud
+      // import threw we wouldn't want to half-restore CDN against a
+      // mismatched node set. The cdn block is optional; backups
+      // without it (or built by older versions) leave CDN state
+      // untouched.
+      final cdn = widget.cdn;
+      if (cdn != null) {
+        final parsed = parseCloudBackupJson(
+          decrypted,
+          expectedProvider: widget.cloud.providerName,
+        );
+        if (parsed.cdn != null) {
+          await cdn.restoreSnapshot(parsed.cdn!);
+        }
+      }
       if (mounted) {
         Navigator.pop(context);
       }

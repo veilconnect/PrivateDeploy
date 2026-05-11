@@ -5,6 +5,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
 import '../../shared/widgets/share_passphrase_dialog.dart';
+import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_backup.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_backup_preview_card.dart';
@@ -12,8 +13,30 @@ import 'settings_backup_preview_card.dart';
 Future<void> showSettingsBackupExportDialog({
   required BuildContext context,
   required CloudProvider cloud,
+  CdnProvider? cdn,
 }) async {
-  final payload = await cloud.exportBackupJson();
+  // Cloud provider encodes its own JSON; if CDN state is loaded we
+  // re-emit through createCloudBackupJson with the cdn block merged in
+  // so both halves round-trip through one encrypted blob. Skipping the
+  // merge when cdnSnap is null keeps legacy backups byte-identical.
+  String payload = await cloud.exportBackupJson();
+  final cdnSnap = cdn == null ? null : await cdn.exportSnapshot();
+  if (cdnSnap != null) {
+    final parsed = parseCloudBackupJson(
+      payload,
+      expectedProvider: cloud.providerName,
+    );
+    payload = createCloudBackupJson(
+      provider: parsed.provider,
+      apiKey: parsed.apiKey,
+      extra: parsed.extra,
+      nodeRecords: parsed.nodeRecords,
+      exportedAt: parsed.exportedAt.isEmpty
+          ? null
+          : DateTime.tryParse(parsed.exportedAt),
+      cdn: cdnSnap,
+    );
+  }
   if (!context.mounted) {
     return;
   }

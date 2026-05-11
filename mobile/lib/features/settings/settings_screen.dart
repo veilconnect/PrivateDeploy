@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_provider.dart';
 import 'settings_about_section.dart';
 import 'settings_app_section.dart';
@@ -51,10 +52,12 @@ class SettingsScreen extends StatelessWidget {
                 onExportBackup: (cloud) => showSettingsBackupExportDialog(
                       context: context,
                       cloud: cloud,
+                      cdn: context.read<CdnProvider>(),
                     ),
                 onImportBackup: (cloud) => showSettingsBackupImportDialog(
                       context: context,
                       cloud: cloud,
+                      cdn: context.read<CdnProvider>(),
                     ),
                 onClearLocalCloudData: () async {
                   final cloud = context.read<CloudProvider>();

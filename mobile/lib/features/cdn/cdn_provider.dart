@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../../core/storage/storage_service.dart';
+import '../cloud/cloud_backup.dart';
 
 /// Holds Cloudflare account state for the optional CDN-front feature.
 ///
@@ -302,6 +303,104 @@ class CdnProvider with ChangeNotifier {
     } finally {
       _isVerifying = false;
       notifyListeners();
+    }
+  }
+
+  /// Snapshot CDN state for inclusion in an encrypted cloud backup.
+  /// Caller (export dialog) merges this into the CloudBackupPayload.
+  /// Returns null when nothing useful is loaded — no token, no
+  /// deployments, no custom domain — so the backup omits the cdn block
+  /// entirely instead of carrying an empty stub.
+  Future<CdnBackup?> exportSnapshot() async {
+    final token = await StorageService.getSecureString(_kTokenKey);
+    final hasToken = token != null && token.isNotEmpty;
+    final hasDeployments = _deployments.isNotEmpty;
+    final hasCustomDomain = _customDomain != null;
+    if (!hasToken && !hasDeployments && !hasCustomDomain) {
+      return null;
+    }
+    final snap = CdnBackup(
+      token: hasToken ? token : null,
+      accountId: _accountId,
+      accountEmail: _accountEmail,
+      workersSubdomain: _workersSubdomain,
+      customDomain: hasCustomDomain ? _customDomain!.toJson() : null,
+      deployments: hasDeployments
+          ? _deployments.map((k, v) => MapEntry(k, v.toJson()))
+          : null,
+    );
+    return snap.isEmpty ? null : snap;
+  }
+
+  /// Apply a previously-exported [CdnBackup] to local storage. Overwrites
+  /// any in-place CDN state — symmetric with the cloud-side import which
+  /// also replaces nodeRecords. The status flips to verified iff the
+  /// backup carried a token + accountId. Pending deployments resume
+  /// their readiness probe on the next [load].
+  Future<void> restoreSnapshot(CdnBackup snap) async {
+    if (snap.token != null && snap.token!.isNotEmpty) {
+      await StorageService.saveSecureString(_kTokenKey, snap.token!);
+    } else {
+      await StorageService.removeSecure(_kTokenKey);
+    }
+    if (snap.accountId != null && snap.accountId!.isNotEmpty) {
+      await StorageService.saveString(_kAccountIdKey, snap.accountId!);
+    } else {
+      await StorageService.remove(_kAccountIdKey);
+    }
+    if (snap.accountEmail != null && snap.accountEmail!.isNotEmpty) {
+      await StorageService.saveString(_kAccountEmailKey, snap.accountEmail!);
+    } else {
+      await StorageService.remove(_kAccountEmailKey);
+    }
+    if (snap.workersSubdomain != null && snap.workersSubdomain!.isNotEmpty) {
+      await StorageService.saveString(
+        _kWorkersSubdomainKey,
+        snap.workersSubdomain!,
+      );
+    } else {
+      await StorageService.remove(_kWorkersSubdomainKey);
+    }
+    _accountId = snap.accountId;
+    _accountEmail = snap.accountEmail;
+    _workersSubdomain = snap.workersSubdomain;
+    _status = (snap.token != null &&
+            snap.token!.isNotEmpty &&
+            snap.accountId != null &&
+            snap.accountId!.isNotEmpty)
+        ? CdnStatus.verified
+        : (snap.token != null && snap.token!.isNotEmpty
+            ? CdnStatus.unverified
+            : CdnStatus.disabled);
+
+    _customDomain = snap.customDomain == null
+        ? null
+        : CdnCustomDomain.fromJson(snap.customDomain!);
+    await _persistCustomDomain();
+
+    final imported = <String, CdnDeployment>{};
+    final deps = snap.deployments;
+    if (deps != null) {
+      for (final entry in deps.entries) {
+        imported[entry.key] = CdnDeployment.fromJson(entry.value);
+      }
+    }
+    _deployments = imported;
+    await _persistDeployments();
+
+    _lastError = null;
+    notifyListeners();
+
+    // Kick the readiness probe on any deployment that came in pending,
+    // matching what [load] does on a cold start. Active+failed stay as
+    // they were since they reflect a probe that already completed on
+    // the source phone — the importer can re-deploy to retry.
+    for (final entry in _deployments.entries) {
+      final dep = entry.value;
+      if ((dep.customHost?.isNotEmpty ?? false) &&
+          dep.customHostStatus == 'pending') {
+        unawaited(_probeCustomHostReadiness(entry.key, dep.customHost!));
+      }
     }
   }
 

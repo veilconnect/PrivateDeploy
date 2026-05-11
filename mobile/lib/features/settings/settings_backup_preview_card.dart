@@ -25,6 +25,22 @@ class SettingsBackupPreviewCard extends StatelessWidget {
       ),
       (label: 'Exported at', value: preview.exportedAtLabel),
     ];
+    final cdn = preview.cdnPreview;
+    if (cdn != null) {
+      final parts = <String>[];
+      if (cdn.includesToken) parts.add('token');
+      if (cdn.deploymentCount > 0) {
+        parts.add('${cdn.deploymentCount} deployment'
+            '${cdn.deploymentCount == 1 ? '' : 's'}');
+      }
+      if (cdn.customDomainHost.isNotEmpty) {
+        parts.add(cdn.customDomainHost);
+      }
+      rows.add((
+        label: 'CDN',
+        value: parts.isEmpty ? 'Included' : parts.join(' · '),
+      ));
+    }
 
     return Container(
       width: double.infinity,
