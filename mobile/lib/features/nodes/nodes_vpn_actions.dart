@@ -437,14 +437,28 @@ Future<void> connectSelectedProfile({
   }
 
   final l10nResult = AppLocalizations.of(context)!;
+  // connect() returns true even when native checkTunnelHealth came back
+  // UpstreamDegraded/Unreachable (the tunnel is up but nothing routes). In
+  // that case `vpnProvider.error` carries the warning text and `isDegraded`
+  // is true. Show the warning in orange instead of a green success — a green
+  // "VPN 连接成功" snackbar while the cellular session can't actually
+  // browse is what triggered the 2026-05-12 bug report.
+  final degraded = connected && vpnProvider.isDegraded;
   showNodesActionSnackBar(
     context,
     message: connected
-        ? successMessage
+        ? (degraded
+            ? localizeVpnStatusMessage(
+                vpnProvider.error ?? successMessage,
+                l10nResult,
+              )
+            : successMessage)
         : (vpnProvider.error == null
             ? l10nResult.failedToConnectVpn
             : localizeVpnStatusMessage(vpnProvider.error, l10nResult)),
-    backgroundColor: connected ? Colors.green : Colors.red,
+    backgroundColor: connected
+        ? (degraded ? Colors.orange : Colors.green)
+        : Colors.red,
   );
 }
 

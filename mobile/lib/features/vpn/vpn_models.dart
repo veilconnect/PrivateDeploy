@@ -5,6 +5,16 @@ enum VpnStatus {
   disconnecting,
 }
 
+/// Refines `VpnStatus.connected` with what the native side observed when it
+/// probed the upstream. `healthy` is silent; `degraded` carries a non-empty
+/// status message ("upstream blocked, switch nodes" or "egress unverified")
+/// that the UI must surface honestly rather than collapsing to a green
+/// "connected" badge. Only meaningful when `VpnStatus == connected`.
+enum VpnHealth {
+  healthy,
+  degraded,
+}
+
 class TrafficStats {
   final int uploadBytes;
   final int downloadBytes;

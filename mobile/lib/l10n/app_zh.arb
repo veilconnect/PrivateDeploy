@@ -54,6 +54,7 @@
 
   "connection": "连接",
   "connected": "已连接",
+  "connectedDegraded": "已连接 · 上游受阻",
   "connecting": "连接中...",
   "disconnecting": "断开中...",
   "disconnected": "未连接",

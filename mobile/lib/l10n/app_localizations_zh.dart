@@ -163,6 +163,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connected => '已连接';
 
   @override
+  String get connectedDegraded => '已连接 · 上游受阻';
+
+  @override
   String get connecting => '连接中...';
 
   @override

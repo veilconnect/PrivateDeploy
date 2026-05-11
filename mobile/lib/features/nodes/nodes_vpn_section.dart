@@ -44,7 +44,8 @@ class NodesVpnSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final statusColor = _statusColor(vpnProvider.status);
+    final isDegraded = vpnProvider.isDegraded;
+    final statusColor = _statusColor(vpnProvider.status, degraded: isDegraded);
     final selectedProfile = profileProvider.activeProfile;
     final stats = vpnProvider.stats;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
@@ -97,7 +98,7 @@ class NodesVpnSection extends StatelessWidget {
                     ],
                   ),
                   child: Icon(
-                    _statusIcon(vpnProvider.status),
+                    _statusIcon(vpnProvider.status, degraded: isDegraded),
                     color: Colors.white,
                     size: 28.sp,
                   ),
@@ -108,7 +109,8 @@ class NodesVpnSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       NodesStatusChip(
-                        text: _statusLabel(vpnProvider.status, l10n),
+                        text: _statusLabel(vpnProvider.status, l10n,
+                            degraded: isDegraded),
                         color: statusColor,
                       ),
                       SizedBox(height: 10.h),
@@ -347,10 +349,11 @@ String _connectionHeaderHint({
         selectedProfile: selectedProfile,
       );
       if (providerLabel != null) {
-        return '$providerLabel · ${_statusLabel(vpnProvider.status, l10n)}';
+        return '$providerLabel · ${_statusLabel(vpnProvider.status, l10n, degraded: vpnProvider.isDegraded)}';
       }
     }
-    return _statusLabel(vpnProvider.status, l10n);
+    return _statusLabel(vpnProvider.status, l10n,
+        degraded: vpnProvider.isDegraded);
   }
 
   final routeSummary = _availableRoutesHint(
@@ -433,10 +436,13 @@ String? _egressHint(VpnProvider vpnProvider, AppLocalizations l10n) {
   return localizeVpnStatusMessage(raw, l10n);
 }
 
-Color _statusColor(VpnStatus status) {
+Color _statusColor(VpnStatus status, {bool degraded = false}) {
   switch (status) {
     case VpnStatus.connected:
-      return Colors.green;
+      // Degraded == "tunnel is up but native checkTunnelHealth couldn't
+      // verify the upstream". Render in orange so the user notices, instead
+      // of the usual green that implies traffic is flowing.
+      return degraded ? Colors.orange : Colors.green;
     case VpnStatus.connecting:
     case VpnStatus.disconnecting:
       return Colors.orange;
@@ -445,10 +451,10 @@ Color _statusColor(VpnStatus status) {
   }
 }
 
-IconData _statusIcon(VpnStatus status) {
+IconData _statusIcon(VpnStatus status, {bool degraded = false}) {
   switch (status) {
     case VpnStatus.connected:
-      return Icons.check_circle;
+      return degraded ? Icons.warning_amber_rounded : Icons.check_circle;
     case VpnStatus.connecting:
     case VpnStatus.disconnecting:
       return Icons.sync;
@@ -457,10 +463,14 @@ IconData _statusIcon(VpnStatus status) {
   }
 }
 
-String _statusLabel(VpnStatus status, AppLocalizations l10n) {
+String _statusLabel(
+  VpnStatus status,
+  AppLocalizations l10n, {
+  bool degraded = false,
+}) {
   switch (status) {
     case VpnStatus.connected:
-      return l10n.connected;
+      return degraded ? l10n.connectedDegraded : l10n.connected;
     case VpnStatus.connecting:
       return l10n.connecting;
     case VpnStatus.disconnecting:

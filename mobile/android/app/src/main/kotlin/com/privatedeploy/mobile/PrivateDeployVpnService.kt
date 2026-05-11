@@ -775,7 +775,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
         )
         TunnelHealth.Unreachable -> TunnelHealthOutcome(
             notificationText = "VPN connected (egress unverified)",
-            statusMessage = null,
+            // Previously null, which let dart treat the tunnel as fully healthy
+            // and surface a green "VPN 连接成功" snackbar even when nothing
+            // actually routes (e.g. cellular carrier silently dropping the
+            // upstream IP). Reported 2026-05-12 on cellular-only S23. Surface
+            // an explicit "unverified" warning so the connect-snackbar can
+            // downgrade to orange and the UI badge can flag the degraded
+            // session. The watchdog still keeps the tunnel up — this is just
+            // for honest status reporting, not for tearing down the session.
+            statusMessage = "Tunnel is up but egress could not be verified. " +
+                "Browsing may not work — try a different node or network.",
         )
     }
 

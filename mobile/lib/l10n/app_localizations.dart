@@ -380,6 +380,12 @@ abstract class AppLocalizations {
   /// **'Connected'**
   String get connected;
 
+  /// No description provided for @connectedDegraded.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected · upstream blocked'**
+  String get connectedDegraded;
+
   /// No description provided for @connecting.
   ///
   /// In en, this message translates to:

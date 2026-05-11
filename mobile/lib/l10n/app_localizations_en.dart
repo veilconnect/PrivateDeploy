@@ -165,6 +165,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connected => 'Connected';
 
   @override
+  String get connectedDegraded => 'Connected · upstream blocked';
+
+  @override
   String get connecting => 'Connecting...';
 
   @override

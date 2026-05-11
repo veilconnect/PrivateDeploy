@@ -52,6 +52,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
   VpnStatus _status = VpnStatus.disconnected;
+  // Refines `_status == connected` with whether the native upstream probe
+  // succeeded. Tracked separately from `_error` because `_error` doubles as
+  // a generic failure-reason field; we want a single boolean for "is the
+  // active session actually working" that the UI can switch on without
+  // string-matching.
+  VpnHealth _health = VpnHealth.healthy;
   String? _activeProfile;
   TrafficStats _stats = TrafficStats.zero();
   bool _isLoading = false;
@@ -94,6 +100,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   int _upstreamDegradedRestartAttempts = 0;
 
   VpnStatus get status => _status;
+  VpnHealth get health => _health;
+  bool get isDegraded =>
+      _status == VpnStatus.connected && _health == VpnHealth.degraded;
   String? get activeProfile => _activeProfile;
   TrafficStats get stats => _stats;
   bool get isLoading => _isLoading;
@@ -1071,6 +1080,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     if (_status == VpnStatus.connected) {
       _startStatsPolling();
+      // Connected + non-empty statusMessage = native checkTunnelHealth came
+      // back UpstreamDegraded or Unreachable. Track separately so the UI can
+      // render an honest "degraded" badge instead of a green checkmark while
+      // routing is actually broken (bug filed 2026-05-12: cellular-only
+      // session showed "VPN 连接成功" snackbar even though nothing routed).
+      _health = (message != null && message.isNotEmpty)
+          ? VpnHealth.degraded
+          : VpnHealth.healthy;
       // When the tunnel comes back up after an underlying-network handover
       // (e.g. Wi-Fi ↔ cellular), the cached egress IP from the previous
       // underlying network is stale. The "（上次探测）" suffix would otherwise
@@ -1088,6 +1105,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _deferredStartupDiagnosticsTimer?.cancel();
       _deferredStartupDiagnosticsTimer = null;
       _diagnosticsEgressIp = null;
+      _health = VpnHealth.healthy;
       _handleUpstreamDegradedSignal(degraded: false);
       // Don't reset _upstreamDegradedRestartAttempts here. The watchdog's own
       // restartVpn() forces a connected→disconnected transition; resetting on

@@ -56,6 +56,7 @@
 
   "connection": "Connect",
   "connected": "Connected",
+  "connectedDegraded": "Connected · upstream blocked",
   "connecting": "Connecting...",
   "disconnecting": "Disconnecting...",
   "disconnected": "Disconnected",
