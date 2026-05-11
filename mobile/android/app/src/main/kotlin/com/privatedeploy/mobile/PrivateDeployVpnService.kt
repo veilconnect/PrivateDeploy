@@ -57,7 +57,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val MAX_RECENT_LOGS = 250
         private const val UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS = 300L
         private const val MIN_UNDERLYING_NETWORK_RESTART_INTERVAL_MS = 4000L
-        private const val RESTART_MAX_ATTEMPTS = 2
+        // Bumped from 2 → 4. With exponential backoff (1.5 / 3 / 6 / 12 s ≈
+        // 22.5 s total) we cover network-validation jitter on Chinese
+        // carriers without giving up prematurely during a fast Wi-Fi ↔
+        // cellular oscillation. 2 attempts at 1.5 + 3 = 4.5 s left zero
+        // headroom if the new transport took >5 s to settle and the
+        // gate-fix below means a future NetworkCallback can still recover,
+        // but recovery is cheaper than a user-visible disconnect blink.
+        private const val RESTART_MAX_ATTEMPTS = 4
         private const val RESTART_RETRY_BASE_DELAY_MS = 1500L
         private const val START_MAX_ATTEMPTS = 2
         private const val START_RETRY_BASE_DELAY_MS = 1500L
@@ -1268,7 +1275,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // of which physical network the VPN is actually riding.
         publishUnderlyingNetwork("change/$reason", connectivityManager)
 
-        if (!isRunning || activeConfig.isNullOrBlank()) {
+        // Gate on user-intent (activeConfig is set by startVpn() and never
+        // cleared except on app process death), not on isRunning. Otherwise a
+        // previous handover-restart that hit RESTART_MAX_ATTEMPTS leaves
+        // isRunning = false and *every* subsequent NetworkCallback short-
+        // circuits here, stranding the user on a dead tunnel that only a
+        // manual reconnect can revive. The whole point of NetworkCallback-
+        // driven restart is to *recover* from such failures.
+        if (activeConfig.isNullOrBlank()) {
             return
         }
 
@@ -1283,7 +1297,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingUnderlyingNetworkRestart = Runnable {
             pendingUnderlyingNetworkRestart = null
-            if (!isRunning || activeConfig.isNullOrBlank() || restartInProgress) {
+            if (activeConfig.isNullOrBlank() || restartInProgress) {
                 return@Runnable
             }
             lastUnderlyingRestartAtMs = SystemClock.elapsedRealtime()
