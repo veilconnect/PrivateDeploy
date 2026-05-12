@@ -1244,7 +1244,17 @@ class CloudProvider extends CloudProviderBase {
   }
 
   bool _shouldRecoverNodeRecord(VultrNodeRecord? record) {
-    return record == null || record.ssPort <= 0 || record.ssPassword.isEmpty;
+    if (record == null || record.ssPort <= 0 || record.ssPassword.isEmpty) {
+      return true;
+    }
+    // Re-run recovery when vlessRelayPort is missing: nodes created before
+    // the M1 install script (or before the ufw-limit regex fix) saved
+    // records with vlessRelayPort=0, which disables the CDN deploy button
+    // even when the node actually has a working relay listener. One extra
+    // user-data fetch per refresh is cheap; it overwrites with the same
+    // record for genuinely legacy nodes and unblocks M1 nodes the first
+    // time the regex matches.
+    return record.vlessRelayPort <= 0;
   }
 
   Future<VultrNodeRecord?> _recoverNodeRecordFromUserData({

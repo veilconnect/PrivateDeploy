@@ -28,6 +28,11 @@ var (
 	recoveredTrojanPort       = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"listen_port":\s*(\d+)`)
 	recoveredTrojanPassword   = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"password":\s*"([^"]+)"`)
 	recoveredTrojanServerName = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"server_name":\s*"([^"]+)"`)
+
+	// VLESS relay (CDN-front) port. The M1 install script always pairs the
+	// relay-port ufw rule with the "VLESS-Relay (CDN)" comment, which makes
+	// it a stable signal that survives port-number changes.
+	recoveredVLESSRelayPort = regexp.MustCompile(`ufw\s+limit\s+(\d+)/tcp\s+comment\s+'VLESS-Relay`)
 )
 
 func (p *Provider) getInstanceUserData(ctx context.Context, instanceID string) (string, error) {
@@ -133,6 +138,17 @@ func recoverNodeRecordFromUserData(script string, base nodeRecord) (nodeRecord, 
 		changed = true
 	}
 	if setString(&record.VLESSServerName, firstMatchGroup(recoveredVLESSServerName, script, 1)) {
+		changed = true
+	}
+
+	// Optional VLESS relay port (CDN-front). Only present on M1-and-newer
+	// install scripts. Without this, the mobile CDN screen sees relay_port
+	// = 0 for any node whose local nodeRecord file was lost (fresh device,
+	// CLI-created node, etc.) and disables the "部署 Worker" button with
+	// a misleading "CDN unavailable (re-deploy)" hint even though the node
+	// itself does have a relay listener and the worker would have wired up
+	// just fine.
+	if setInt(&record.VLESSRelayPort, parseInt(firstMatchGroup(recoveredVLESSRelayPort, script, 1))) {
 		changed = true
 	}
 

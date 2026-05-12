@@ -753,15 +753,35 @@ class _NodesSection extends StatelessWidget {
             n.nodeInfo!.vlessUuid.isNotEmpty)
         .toList(growable: false);
 
+    final hasUnrecoverable = nodes.any((n) => (n.nodeInfo?.vlessRelayPort ?? 0) <= 0);
     return Card(
       child: Padding(
         padding: EdgeInsets.all(14.w),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              isZh ? '你的节点' : 'Your nodes',
-              style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isZh ? '你的节点' : 'Your nodes',
+                    style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  tooltip: isZh ? '刷新节点列表' : 'Refresh nodes',
+                  icon: Icon(Icons.refresh, size: 20.w,
+                      color: hasUnrecoverable ? Colors.orange : null),
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.maybeOf(context);
+                    await cloud.loadInstances();
+                    messenger?.showSnackBar(SnackBar(
+                      content: Text(isZh ? '节点列表已刷新' : 'Nodes refreshed'),
+                      duration: const Duration(seconds: 2),
+                    ));
+                  },
+                ),
+              ],
             ),
             SizedBox(height: 4.h),
             Text(

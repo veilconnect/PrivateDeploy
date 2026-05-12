@@ -190,8 +190,16 @@ final RegExp _trojanServerName = RegExp(
 // The relay block UFW comment is unique and one-line, so this matches it
 // fast and unambiguously. Falls back to nothing when M1 isn't wired
 // (legacy nodes or future deploys with the relay block disabled).
+//
+// Matches both `ufw allow` and `ufw limit`: the install script emits
+// `ufw limit` (rate-limited via iptables' recent module — see
+// deploy.go:130), but older revisions and any future change back to
+// `allow` should still recover. Bug found 2026-05-12: app saw
+// vlessRelayPort=0 for CLI-created nodes because this regex was
+// `allow`-only, the install script emitted `limit`, and the M1 deploy
+// path therefore looked unsupported in the UI.
 final RegExp _vlessRelayPort = RegExp(
-  r"ufw allow (\d+)/tcp comment 'VLESS-Relay",
+  r"ufw\s+(?:allow|limit)\s+(\d+)/tcp\s+comment\s+'VLESS-Relay",
 );
 
 String _firstNonEmptyGroups(RegExpMatch match, List<int> indexes) {
