@@ -53,10 +53,17 @@ class _SharePassphraseDialogState extends State<_SharePassphraseDialog> {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(widget.title),
+      // Scrollable content + autovalidate-on-interaction so the second
+      // password field stays tappable when the IME pushes the dialog up.
+      // Without the scroll view, AlertDialog clips the inactive field
+      // behind the keyboard's touch-dead inset, and taps in that band are
+      // eaten by the IME instead of focusing the field.
+      scrollable: true,
       content: SizedBox(
         width: 480.w,
         child: Form(
           key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
