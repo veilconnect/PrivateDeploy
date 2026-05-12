@@ -171,7 +171,7 @@ class NodesVpnSection extends StatelessWidget {
                       icon: Icons.public_outlined,
                       label: l10n.currentEgressIp,
                       value: _egressValue(vpnProvider, l10n),
-                      hint: _egressHint(vpnProvider, l10n),
+                      hint: _egressHint(vpnProvider, cloudProvider, l10n),
                       color: const Color(0xFF155EEF),
                     ),
                   ),
@@ -412,12 +412,31 @@ String _egressValue(VpnProvider vpnProvider, AppLocalizations l10n) {
   return l10n.egressProbeBusy;
 }
 
-String? _egressHint(VpnProvider vpnProvider, AppLocalizations l10n) {
+String? _egressHint(
+  VpnProvider vpnProvider,
+  CloudProvider cloudProvider,
+  AppLocalizations l10n,
+) {
   if (!vpnProvider.isConnected) {
     return null;
   }
   final currentIp = vpnProvider.diagnosticsEgressIp;
   if (currentIp != null) {
+    // Reverse-lookup the egress IP against known cloud nodes. If it matches
+    // a node OTHER than the user's currently-selected profile, sing-box's
+    // urltest pool has silently routed through a failover member. Surface
+    // that mismatch — otherwise the header still says "Cloud: vultr" while
+    // traffic exits through node-260510061907 and the user has no idea
+    // which node they're actually going through. Empirically confirmed on
+    // 2026-05-12 when stale vultr ports caused this exact mis-labeling.
+    final actualNode = cloudProvider.findCloudInstanceByEgressIp(currentIp);
+    final activeProfileIp =
+        cloudProvider.resolveEgressIpForProfileName(vpnProvider.activeProfile);
+    if (actualNode != null &&
+        activeProfileIp != null &&
+        activeProfileIp != currentIp) {
+      return l10n.egressViaFailover(actualNode.label);
+    }
     return null;
   }
   // Probe failed or is pending but VPN is up — explicitly reassure the user

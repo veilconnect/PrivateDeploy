@@ -196,6 +196,28 @@ class CloudProvider extends CloudProviderBase {
     return _preferredPublicIp(record?.ipv4, record?.ipv6);
   }
 
+  /// Reverse of [resolveEgressIpForProfileName]: given an observed egress IP
+  /// (e.g. what api.ipify returned through the tunnel), find which known
+  /// cloud node owns it. Used to surface "via X" labels when sing-box's
+  /// urltest pool routes through a non-primary node — the connection header
+  /// would otherwise still show the user-selected profile name even though
+  /// traffic is actually exiting through a failover member.
+  ///
+  /// Returns null if no known node matches (e.g. the user is going through
+  /// a Cloudflare worker so the egress is a CF edge IP), in which case the
+  /// caller should just show the raw IP without a "via" label.
+  CloudInstance? findCloudInstanceByEgressIp(String? egressIp) {
+    if (egressIp == null) return null;
+    final trimmed = egressIp.trim();
+    if (trimmed.isEmpty) return null;
+    for (final inst in _instances) {
+      if (inst.ipv4 == trimmed || inst.ipv6 == trimmed) {
+        return inst;
+      }
+    }
+    return null;
+  }
+
   @visibleForTesting
   static String normalizeInstanceLabel(String? raw, {DateTime? now}) {
     return normalizeCloudInstanceLabel(raw, now: now);

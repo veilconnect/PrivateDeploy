@@ -2198,6 +2198,12 @@ abstract class AppLocalizations {
   /// **'VPN is still forwarding traffic; the egress probe just hasn\'t reconfirmed yet.'**
   String get egressProbeStillRoutingHint;
 
+  /// No description provided for @egressViaFailover.
+  ///
+  /// In en, this message translates to:
+  /// **'via {node} (urltest failover)'**
+  String egressViaFailover(Object node);
+
   /// No description provided for @latestRoute.
   ///
   /// In en, this message translates to:

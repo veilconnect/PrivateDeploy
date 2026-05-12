@@ -1160,6 +1160,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get egressProbeStillRoutingHint => 'VPN 仍在转发流量，只是出口探测暂未刷新。';
 
   @override
+  String egressViaFailover(Object node) {
+    return '经 $node 中转（urltest 自动切换）';
+  }
+
+  @override
   String get latestRoute => '最近命中规则';
 
   @override

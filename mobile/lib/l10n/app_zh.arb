@@ -402,6 +402,8 @@
   "egressLastSeen": "{ip}（上次探测）",
   "@egressLastSeen": { "placeholders": { "ip": {} } },
   "egressProbeStillRoutingHint": "VPN 仍在转发流量，只是出口探测暂未刷新。",
+  "egressViaFailover": "经 {node} 中转（urltest 自动切换）",
+  "@egressViaFailover": { "placeholders": { "node": {} } },
   "latestRoute": "最近命中规则",
   "directRoute": "直连",
   "proxyRoute": "代理 · {tag}",

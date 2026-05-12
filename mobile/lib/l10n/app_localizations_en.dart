@@ -1205,6 +1205,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'VPN is still forwarding traffic; the egress probe just hasn\'t reconfirmed yet.';
 
   @override
+  String egressViaFailover(Object node) {
+    return 'via $node (urltest failover)';
+  }
+
+  @override
   String get latestRoute => 'Latest Route Match';
 
   @override
