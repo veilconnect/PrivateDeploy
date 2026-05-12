@@ -15,6 +15,89 @@ import 'nodes_cloud_actions.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
 
+/// Context-free auto-failover used by `VpnProvider`'s upstream-degraded
+/// watchdog. Picks the next ready cloud node not in [triedProfileNames],
+/// switches to it, and returns true if a switch was actually attempted.
+///
+/// Why this lives alongside the UI handlers: it shares profile-activation
+/// and config-generation steps with `useCloudNodeAndConnect`, just without
+/// the BuildContext-bound snackbars. Keeping them together makes the
+/// invariants (skip already-tried, generate fresh config, swap profile,
+/// trigger connect) reviewable in one place.
+Future<bool> autoFailoverToNextCloudNode({
+  required CloudProvider cloudProvider,
+  required ProfileProvider profileProvider,
+  required VpnProvider vpnProvider,
+  required Set<String> triedProfileNames,
+}) async {
+  final candidates = connectableCloudInstances(cloudProvider)
+      .where((inst) => !triedProfileNames.contains(cloudProfileName(inst)))
+      .toList();
+  if (candidates.isEmpty) {
+    return false;
+  }
+
+  for (final instance in candidates) {
+    final profileName = cloudProfileName(instance);
+    final config = cloudProvider.generateNodeConfig(instance);
+    if (config == null) {
+      continue;
+    }
+
+    final existing = profileProvider.profiles
+        .where((profile) => profile.name == profileName)
+        .firstOrNull;
+
+    var ok = true;
+    if (existing == null) {
+      ok = await profileProvider.createProfile(
+        name: profileName,
+        content: config,
+        allowReservedPrefix: true,
+      );
+      if (ok) {
+        final created = profileProvider.profiles
+            .where((profile) => profile.name == profileName)
+            .firstOrNull;
+        if (created != null) {
+          ok = await profileProvider.activateProfile(created.id);
+        } else {
+          ok = false;
+        }
+      }
+    } else {
+      ok = await profileProvider.saveProfileContent(existing.id, config);
+      if (ok) {
+        ok = await profileProvider.activateProfile(existing.id);
+      }
+    }
+    if (!ok) {
+      continue;
+    }
+
+    // Disconnect the current degraded tunnel before bringing the new node
+    // up. VpnProvider.connect() doesn't auto-stop the existing session and
+    // the native side rejects startVpn() while isRunning=true.
+    if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
+    final connected = await vpnProvider.connect(
+      configJson: config,
+      profileName: profileName,
+      stabilityCheckDuration: const Duration(seconds: 6),
+      statusPollInterval: const Duration(milliseconds: 500),
+    );
+    if (connected && !vpnProvider.isDegraded) {
+      // Healthy on the new node — failover succeeded.
+      return true;
+    }
+    // Otherwise the new node is also degraded; loop will try the next.
+    // Note: connect() resets _upstreamDegradedRestartAttempts to 0, so the
+    // new node gets its own restart budget too.
+  }
+  return false;
+}
+
 Future<void> useCloudNodeAndConnect({
   required BuildContext context,
   required CloudInstance instance,

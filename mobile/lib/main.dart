@@ -14,6 +14,7 @@ import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
 import 'features/cloud/cloud_node_config_builder.dart' show CdnEndpoint;
 import 'features/cloud/cloud_provider.dart';
+import 'features/nodes/nodes_vpn_actions.dart' show autoFailoverToNextCloudNode;
 import 'features/cdn/cdn_provider.dart';
 
 void main() async {
@@ -41,11 +42,27 @@ class PrivateDeployApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
-        ChangeNotifierProxyProvider<CloudProvider, VpnProvider>(
+        ChangeNotifierProxyProvider2<CloudProvider, ProfileProvider,
+            VpnProvider>(
           create: (_) => VpnProvider(),
-          update: (_, cloudProvider, vpnProvider) {
+          update: (_, cloudProvider, profileProvider, vpnProvider) {
             vpnProvider?.setFallbackEgressIpResolver(
               cloudProvider.resolveEgressIpForProfileName,
+            );
+            // Auto-failover: when the same-node restart budget for an
+            // UpstreamDegraded condition is exhausted, cycle through the
+            // remaining ready cloud nodes instead of leaving the user
+            // stranded on a broken tunnel. The handler is context-free so
+            // the watchdog (which runs without a BuildContext) can invoke
+            // it directly. Profile state and cloud node discovery come
+            // from the providers we just wired in.
+            vpnProvider?.setOnDegradedExhausted(
+              (triedProfileNames) => autoFailoverToNextCloudNode(
+                cloudProvider: cloudProvider,
+                profileProvider: profileProvider,
+                vpnProvider: vpnProvider,
+                triedProfileNames: triedProfileNames,
+              ),
             );
             return vpnProvider!;
           },

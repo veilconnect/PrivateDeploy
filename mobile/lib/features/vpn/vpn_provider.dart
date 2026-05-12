@@ -83,6 +83,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   final Duration _androidStartupRetryDelay;
   final Duration _androidStartupFallbackProbeDelay;
   String? Function(String? activeProfile)? _resolveFallbackEgressIp;
+  // Set when the user wires up an auto-failover handler (typically in
+  // main.dart, which has access to CloudProvider + ProfileProvider). The
+  // watchdog calls this once its same-node restart budget is exhausted,
+  // letting the UI layer cycle through remaining ready cloud nodes
+  // instead of leaving the user stranded on a degraded tunnel.
+  Future<bool> Function(Set<String> triedProfileNames)? _onDegradedExhausted;
+  // Profiles we've already tried during the current auto-failover
+  // episode. Cleared on user-initiated connect/disconnect — a new manual
+  // session starts with an empty history.
+  final Set<String> _failoverTriedProfiles = {};
+  bool _failoverInFlight = false;
   String? _diagnosticsEgressIp;
   String? _diagnosticsError;
   bool _isRefreshingDiagnostics = false;
@@ -149,6 +160,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     String? Function(String? activeProfile)? resolver,
   ) {
     _resolveFallbackEgressIp = resolver;
+  }
+
+  /// Register the auto-failover handler. The watchdog calls this when the
+  /// same-node restart budget for an UpstreamDegraded condition is exhausted.
+  /// The handler should pick another ready cloud node that's not in
+  /// `triedProfileNames`, switch to it, and return `true` if a switch was
+  /// initiated. Returning `false` (or no handler set) leaves the tunnel in
+  /// the orange degraded state — the original give-up behaviour.
+  void setOnDegradedExhausted(
+    Future<bool> Function(Set<String> triedProfileNames)? handler,
+  ) {
+    _onDegradedExhausted = handler;
   }
 
   Future<void> initialize() async {
@@ -264,6 +287,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _diagnosticsError = null;
     _diagnosticsUpdatedAt = null;
     _upstreamDegradedRestartAttempts = 0;
+    // Failover history is scoped to a single auto-failover episode. A new
+    // connect() call (either user-initiated or from the failover handler
+    // itself) starts fresh — except when the failover handler is the one
+    // calling us, in which case it preserves the tried set by keeping
+    // _failoverInFlight true (the watchdog re-entry guard).
+    if (!_failoverInFlight) {
+      _failoverTriedProfiles.clear();
+    }
     _safeNotifyListeners();
 
     try {
@@ -327,6 +358,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _isLoading = true;
     _error = null;
     _status = VpnStatus.disconnecting;
+    // Same scoping rule as connect(): clear the auto-failover memory on a
+    // user-initiated stop, but preserve it while the failover handler is
+    // doing its own disconnect+connect dance.
+    if (!_failoverInFlight) {
+      _failoverTriedProfiles.clear();
+    }
     _safeNotifyListeners();
 
     try {
@@ -1176,10 +1213,47 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return;
     }
     if (_upstreamDegradedRestartAttempts >= maxUpstreamDegradedRestartAttempts) {
+      // Same-node restart budget is exhausted. Before giving up, ask the
+      // failover handler (wired by main.dart against CloudProvider) to try
+      // another ready cloud node. The current active profile counts as
+      // "already tried" — record it so the handler skips it. If no handler
+      // is registered, no cloud alternatives exist, or the handler returns
+      // false, fall through to the original "leave degraded" behaviour.
+      final activeName = _activeProfile;
+      if (activeName != null && activeName.isNotEmpty) {
+        _failoverTriedProfiles.add(activeName);
+      }
+      if (_onDegradedExhausted != null && !_failoverInFlight) {
+        _failoverInFlight = true;
+        AppLogger.info(
+          '[VpnProvider] Upstream-degraded budget exhausted on '
+          '"${activeName ?? '(unknown)'}"; invoking failover handler with '
+          'tried=$_failoverTriedProfiles',
+        );
+        try {
+          final switched =
+              await _onDegradedExhausted!(Set.of(_failoverTriedProfiles));
+          if (switched) {
+            // The handler initiated a switch (disconnect+connect to a new
+            // node). The new connection runs its own startup verification;
+            // if it lands Healthy, _health resets, the new active profile
+            // is recorded by connect(), and this watchdog cycle is done.
+            // Reset the same-node restart counter so the new node gets its
+            // own fresh budget.
+            _upstreamDegradedRestartAttempts = 0;
+            return;
+          }
+        } catch (e) {
+          AppLogger.warning('[VpnProvider] Failover handler threw: $e');
+        } finally {
+          _failoverInFlight = false;
+        }
+      }
       AppLogger.warning(
         '[VpnProvider] Upstream-degraded watchdog: budget exhausted '
-        '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}); '
-        'leaving the tunnel up so the user can choose to switch nodes.',
+        '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
+        'and no working failover candidate; leaving the tunnel up so the '
+        'user can choose to switch nodes manually.',
       );
       return;
     }
