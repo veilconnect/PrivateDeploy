@@ -32,7 +32,13 @@ var (
 	// VLESS relay (CDN-front) port. The M1 install script always pairs the
 	// relay-port ufw rule with the "VLESS-Relay (CDN)" comment, which makes
 	// it a stable signal that survives port-number changes.
-	recoveredVLESSRelayPort = regexp.MustCompile(`ufw\s+limit\s+(\d+)/tcp\s+comment\s+'VLESS-Relay`)
+	//
+	// Matches both `ufw allow` and `ufw limit`: the script flipped from
+	// allow to limit (iptables recent-module rate-limit) in a later
+	// revision, so nodes deployed during the `allow` window would silently
+	// fail recovery if we only matched `limit`. Mirrors the Dart-side fix
+	// (see mobile/lib/features/cloud/vultr_user_data_recovery.dart).
+	recoveredVLESSRelayPort = regexp.MustCompile(`ufw\s+(?:allow|limit)\s+(\d+)/tcp\s+comment\s+'VLESS-Relay`)
 )
 
 func (p *Provider) getInstanceUserData(ctx context.Context, instanceID string) (string, error) {
