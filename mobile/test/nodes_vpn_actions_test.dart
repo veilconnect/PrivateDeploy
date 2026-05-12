@@ -268,7 +268,8 @@ void main() {
           vpnProvider: vpnProvider,
           profileProvider: _FakeProfileProvider(
             activeProfile: _profile(name: 'Cloud: ${primary.label}'),
-            activeConfigJson: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+            activeConfigJson:
+                '{"outbounds":[{"type":"direct","tag":"direct"}]}',
           ),
           cloudProvider: _FakeCloudProvider(
             instances: [primary, backup],
@@ -305,7 +306,8 @@ void main() {
           vpnProvider: vpnProvider,
           profileProvider: _FakeProfileProvider(
             activeProfile: _profile(name: 'Cloud: ${primary.label}'),
-            activeConfigJson: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+            activeConfigJson:
+                '{"outbounds":[{"type":"direct","tag":"direct"}]}',
           ),
           cloudProvider: _FakeCloudProvider(
             instances: [primary, backup],
@@ -581,6 +583,9 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   @override
   bool get isConnected => _status == VpnStatus.connected;
+
+  @override
+  bool get isDegraded => false;
 
   @override
   bool get isSupported => true;

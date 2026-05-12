@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
+import 'package:privatedeploy_mobile/features/cloud/cloud_backup.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
@@ -22,11 +24,13 @@ Future<void> pumpNodesTestApp(
   ProfileProvider? profileProvider,
   VpnProvider? vpnProvider,
   AppSettingsProvider? appSettingsProvider,
+  CdnProvider? cdnProvider,
 }) async {
   await tester.binding.setSurfaceSize(surfaceSize);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final resolvedAppSettingsProvider =
       appSettingsProvider ?? TestAppSettingsProvider();
+  final resolvedCdnProvider = cdnProvider ?? TestCdnProvider();
 
   final app = MaterialApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -51,6 +55,9 @@ Future<void> pumpNodesTestApp(
             ChangeNotifierProvider<VpnProvider>.value(value: vpnProvider),
           ChangeNotifierProvider<AppSettingsProvider>.value(
             value: resolvedAppSettingsProvider,
+          ),
+          ChangeNotifierProvider<CdnProvider>.value(
+            value: resolvedCdnProvider,
           ),
         ];
         return MultiProvider(providers: providers, child: app);
@@ -92,6 +99,36 @@ class TestAppSettingsProvider extends ChangeNotifier
   Future<void> resetVpnRoutingSettings() async {
     _vpnRoutingSettings = VpnRoutingSettings.defaults;
     notifyListeners();
+  }
+}
+
+class TestCdnProvider extends CdnProvider {
+  TestCdnProvider({
+    this.statusOverride = CdnStatus.disabled,
+    this.exportSnapshotResult,
+    Map<String, CdnDeployment>? deployments,
+  }) : _deployments = deployments ?? const {};
+
+  final CdnStatus statusOverride;
+  final CdnBackup? exportSnapshotResult;
+  final Map<String, CdnDeployment> _deployments;
+  CdnBackup? restoredSnapshot;
+
+  @override
+  CdnStatus get status => statusOverride;
+
+  @override
+  bool get isConfigured => statusOverride != CdnStatus.disabled;
+
+  @override
+  CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
+
+  @override
+  Future<CdnBackup?> exportSnapshot() async => exportSnapshotResult;
+
+  @override
+  Future<void> restoreSnapshot(CdnBackup snap) async {
+    restoredSnapshot = snap;
   }
 }
 
@@ -254,6 +291,42 @@ class TestCloudProvider extends ChangeNotifier
 
   @override
   List<CloudInstance> get allInstances => instances;
+
+  @override
+  String? resolveEgressIpForProfileName(String? profileName) {
+    final label = _cloudLabelFromProfileName(profileName);
+    if (label == null) {
+      return null;
+    }
+    final instance =
+        instances.where((candidate) => candidate.label == label).firstOrNull;
+    return instance?.ipv4 ?? instance?.ipv6;
+  }
+
+  @override
+  CloudInstance? findCloudInstanceByEgressIp(String? egressIp) {
+    final trimmed = egressIp?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    for (final instance in instances) {
+      if (instance.ipv4 == trimmed || instance.ipv6 == trimmed) {
+        return instance;
+      }
+    }
+    return null;
+  }
+
+  String? _cloudLabelFromProfileName(String? profileName) {
+    final trimmed = profileName?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    const prefix = 'Cloud: ';
+    return trimmed.startsWith(prefix)
+        ? trimmed.substring(prefix.length).trim()
+        : trimmed;
+  }
 
   int refreshCalls = 0;
   int loadInstancesCalls = 0;
@@ -578,6 +651,7 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
     VpnStatus? statusAfterInitialize,
     this.statusAfterLoadStatus,
     this.error,
+    this.activeProfile,
     this.isSupported = true,
     this.isLoading = false,
     this.unsupportedReason,
@@ -600,6 +674,9 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   final String? error;
+
+  @override
+  final String? activeProfile;
 
   @override
   final bool isSupported;
@@ -646,6 +723,9 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   bool get isConnected => _status == VpnStatus.connected;
+
+  @override
+  bool get isDegraded => false;
 
   @override
   List<VpnRouteDecision> get recentRouteDecisions =>

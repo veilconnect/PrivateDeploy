@@ -53,10 +53,29 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend assets for Go embed
+        run: cd frontend && pnpm run build-only
+
       - name: Go tests with coverage (root)
         run: |
           mkdir -p output/coverage
-          go test -coverprofile=output/coverage/go-root.out -covermode=atomic ./...
+          ROOT_PACKAGES="$(go list ./... | grep -Ev '^privatedeploy/tmp($|/)')"
+          go test -coverprofile=output/coverage/go-root.out -covermode=atomic $ROOT_PACKAGES
           go tool cover -func=output/coverage/go-root.out | tail -1
 
       - name: Go tests with coverage (api)
@@ -77,21 +96,6 @@ jobs:
 
       - name: Go vulnerability check (api)
         run: cd api && govulncheck ./...
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Frontend type-check
         run: cd frontend && pnpm run type-check

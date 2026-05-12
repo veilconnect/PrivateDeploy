@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
@@ -315,8 +316,11 @@ Future<void> _pumpDialogHarness(
   );
 
   if (provider != null) {
-    child = ChangeNotifierProvider<CloudProvider>.value(
-      value: provider,
+    child = MultiProvider(
+      providers: [
+        ChangeNotifierProvider<CloudProvider>.value(value: provider),
+        ChangeNotifierProvider<CdnProvider>.value(value: CdnProvider()),
+      ],
       child: child,
     );
   }

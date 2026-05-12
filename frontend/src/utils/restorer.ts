@@ -14,7 +14,7 @@ export const restoreProfile = (config: Recordable) => {
     route: {
       rule_set: [],
       rules: [],
-      auto_detect_interface: true,
+      auto_detect_interface: false,
       find_process: false,
       default_interface: '',
       final: '',

@@ -3,7 +3,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/core/security/encrypted_share.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_profile_actions.dart';
-import 'package:privatedeploy_mobile/features/vpn/vpn_models.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
@@ -550,19 +549,20 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   _FakeVpnProvider({
     required this.status,
     this.activeProfileName,
-    this.disconnectResult = true,
   });
 
   @override
   VpnStatus status;
 
   final String? activeProfileName;
-  final bool disconnectResult;
   int disconnectCalls = 0;
   int clearErrorCalls = 0;
 
   @override
   bool get isConnected => status == VpnStatus.connected;
+
+  @override
+  bool get isDegraded => false;
 
   @override
   String? get activeProfile => activeProfileName;
@@ -573,10 +573,8 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   @override
   Future<bool> disconnect() async {
     disconnectCalls += 1;
-    if (disconnectResult) {
-      status = VpnStatus.disconnected;
-    }
-    return disconnectResult;
+    status = VpnStatus.disconnected;
+    return true;
   }
 
   @override

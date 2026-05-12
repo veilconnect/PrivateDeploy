@@ -307,7 +307,7 @@ export const DefaultRoute = (): IRoute => ({
     },
   ],
   rule_set: [],
-  auto_detect_interface: true,
+  auto_detect_interface: false,
   default_interface: '',
   final: DefaultOutboundIds.Fallback,
   find_process: false,

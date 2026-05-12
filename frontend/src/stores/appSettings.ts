@@ -61,11 +61,11 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     height: 0,
     exitOnClose: false,
     closeKernelOnExit: true,
-    autoSetSystemProxy: false,
+    autoSetSystemProxy: true,
     systemProxyPolicyInitialized: false,
     systemProxyBackup: '',
     systemProxyManaged: false,
-    autoStartKernel: false,
+    autoStartKernel: true,
     userAgent: APP_TITLE + '/' + APP_VERSION,
     startupDelay: 30,
     connections: DefaultConnections(),
@@ -91,6 +91,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     addGroupToMenu: false,
     rollingRelease: true,
     builtinPresetsVersion: 0,
+    userSettingsMigration: 0,
     debugOutline: false,
     debugNoAnimation: false,
     pages: ['Workbench'],
@@ -188,6 +189,15 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     }
     if (app.value.builtinPresetsVersion === undefined) {
       app.value.builtinPresetsVersion = 0
+    }
+    // 2.0.1: flip autoStartKernel + autoSetSystemProxy defaults from false→true
+    // for existing installs whose user.yaml still carries the old values. Tracked
+    // by userSettingsMigration so we only do this once; users who later prefer
+    // false can flip the toggle back and it persists.
+    if (!app.value.userSettingsMigration || app.value.userSettingsMigration < 1) {
+      app.value.autoStartKernel = true
+      app.value.autoSetSystemProxy = true
+      app.value.userSettingsMigration = 1
     }
     if (app.value.webviewGpuPolicy === undefined) {
       app.value.webviewGpuPolicy = WebviewGpuPolicy.Never

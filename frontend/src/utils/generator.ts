@@ -222,7 +222,7 @@ const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound
   const rulesetsStore = useRulesetsStore()
 
   const extra: Recordable = {}
-  if (!route.auto_detect_interface) {
+  if (!route.auto_detect_interface && route.default_interface) {
     extra.default_interface = route.default_interface
   }
   return {

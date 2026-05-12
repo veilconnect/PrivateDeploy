@@ -9,6 +9,13 @@ bash scripts/check_versions.sh
 COVERAGE_DIR="$ROOT_DIR/output/coverage"
 mkdir -p "$COVERAGE_DIR"
 
+# The root Go package embeds frontend/dist, which is intentionally gitignored.
+# Build the static assets first so a clean checkout can run the Go tests.
+(
+  cd frontend
+  pnpm run build-only
+)
+
 # ── Go tests with coverage (root) ─────────────────────────────────
 ROOT_PACKAGES="$(go list ./... | grep -Ev '^privatedeploy/tmp($|/)')"
 go test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES

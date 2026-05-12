@@ -149,7 +149,7 @@ export const ensureLinkAggregation = (profile: IProfile, cloudSubscriptionCount:
     detail.listen.tcp_multi_path = enableMultipath
   })
 
-  profile.route.auto_detect_interface = true
+  profile.route.auto_detect_interface = false
 }
 
 // ─── Load Balance Support ────────────────────────────────────────────────────

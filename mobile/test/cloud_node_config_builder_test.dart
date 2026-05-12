@@ -20,7 +20,8 @@ void main() {
       expect(buildCloudNodeConfig(instance), isNull);
     });
 
-    test('appends CDN-fronted vless+ws outbound when worker host and relay '
+    test(
+        'appends CDN-fronted vless+ws outbound when worker host and relay '
         'port are present', () {
       final instance = CloudInstance(
         id: 'node-cdn',
@@ -52,7 +53,9 @@ void main() {
 
       final raw = buildCloudNodeConfig(
         instance,
-        cdnHost: 'pd-relay-lax.acme.workers.dev',
+        cdnEndpoint: const CdnEndpoint(
+          host: 'pd-relay-lax.acme.workers.dev',
+        ),
       );
       expect(raw, isNotNull);
 
@@ -115,7 +118,9 @@ void main() {
 
       final raw = buildCloudNodeConfig(
         instance,
-        cdnHost: 'pd-relay-old.acme.workers.dev',
+        cdnEndpoint: const CdnEndpoint(
+          host: 'pd-relay-old.acme.workers.dev',
+        ),
       );
       expect(raw, isNotNull);
 
@@ -419,7 +424,8 @@ void main() {
         rules.any(
           (rule) =>
               rule['server'] == 'dns-remote-google' &&
-              (rule['domain_suffix'] as List<dynamic>?)?.contains('youtube.com') ==
+              (rule['domain_suffix'] as List<dynamic>?)
+                      ?.contains('youtube.com') ==
                   true,
         ),
         isTrue,
@@ -665,8 +671,7 @@ void main() {
       expect(selector['outbounds'], ['lax-1-VLESS']);
       expect(outbounds.where((o) => o['tag'] == 'auto'), isEmpty);
       expect(outbounds.where((o) => o['tag'] == 'tyo-2-VLESS'), isEmpty,
-          reason:
-              'manual protocol pin must keep config narrow; failover only '
+          reason: 'manual protocol pin must keep config narrow; failover only '
               'applies in auto mode');
     });
 
@@ -767,9 +772,11 @@ void main() {
       // Must be IP-literal: hostname-based probes deadlock when DNS itself
       // routes through the urltest pool and every initial member is down.
       final hostMatch = RegExp(r'^https?://([^/:]+)').firstMatch(url);
-      expect(hostMatch, isNotNull, reason: 'urltest url must include host: $url');
+      expect(hostMatch, isNotNull,
+          reason: 'urltest url must include host: $url');
       final host = hostMatch!.group(1)!;
-      final isIpLiteral = RegExp(r'^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(host);
+      final isIpLiteral =
+          RegExp(r'^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(host);
       expect(isIpLiteral, isTrue,
           reason: 'urltest probe must be an IP-literal so it never depends '
               'on DNS resolution: got $host');

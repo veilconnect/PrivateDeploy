@@ -864,7 +864,7 @@ func (a *App) testNodeDirectSpeedSingleOutbound(outbound json.RawMessage, timeou
 		"outbounds": []json.RawMessage{outbound},
 		"route": map[string]interface{}{
 			"final":                 firstOutbound.Tag,
-			"auto_detect_interface": true,
+			"auto_detect_interface": false,
 		},
 		"dns": map[string]interface{}{
 			"servers": []map[string]interface{}{

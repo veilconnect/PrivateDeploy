@@ -4,8 +4,9 @@ import { useI18n } from 'vue-i18n'
 
 import { BrowserOpenURL, ClipboardSetText } from '@/bridge'
 import { useCdnStore } from '@/stores'
-import type { CdnDeployment } from '@/types/cloud'
 import { confirm, message } from '@/utils'
+
+import type { CdnDeployment } from '@/types/cloud'
 
 const { t } = useI18n()
 const cdnStore = useCdnStore()

@@ -599,7 +599,7 @@ export const buildBuiltinProfiles = () => {
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultOutboundIds.Direct),
         ],
         rule_set: routeRuleSets,
-        auto_detect_interface: true,
+        auto_detect_interface: false,
         default_interface: '',
         final: finalOutbound,
         find_process: false,

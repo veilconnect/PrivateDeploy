@@ -56,6 +56,14 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
+# Default-checked "Launch app" option on the finish page. Without this the user
+# completes the installer, sees a static "done" screen, and frequently does not
+# realize the app needs to be launched — leaving 7890 / 20122 untouched and the
+# system in the "installed but unused" state that drives early uninstalls.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "$(^Name)"
+!define MUI_FINISHPAGE_RUN_CHECKED
+
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
@@ -90,6 +98,11 @@ Function .onInit
 
    ; Force kill if still running
    nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+   ; The bundled sing-box kernel runs as a separate process. If we leave the
+   ; old kernel alive across an upgrade it keeps holding the in-memory config
+   ; from the previous version, so the freshly-installed app writes a new
+   ; config.json to disk that nothing ever reads.
+   nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'
    ; Brief wait for process to fully exit and release file locks
    Sleep 500
 
@@ -139,6 +152,7 @@ Section "uninstall"
         Sleep 2000
     ${EndIf}
     nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+    nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'
     Sleep 500
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath

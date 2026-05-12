@@ -382,14 +382,15 @@ onMounted(() => {
 
       <Empty v-else class="mt-20">
         <template #description>
-          <div class="flex flex-col items-center gap-8">
-            <div>{{ t('workbench.emptyNodes') }}</div>
-            <div class="flex gap-8">
-              <Button @click="openSettingsTab('cloud')" type="link">
-                {{ t('router.subscriptions') }}
+          <div class="flex flex-col items-center gap-12">
+            <div class="text-16 font-bold">{{ t('workbench.emptyNodes') }}</div>
+            <div class="text-12 text-secondary max-w-360 text-center">{{ t('workbench.emptyNodesHint') }}</div>
+            <div class="flex gap-12 mt-4">
+              <Button @click="openSettingsTab('cloud')" type="primary" icon="link">
+                {{ t('workbench.emptyImport') }}
               </Button>
-              <Button @click="router.push({ name: 'Wizard' })" type="link">
-                {{ t('workbench.openWizard') }}
+              <Button @click="router.push({ name: 'Wizard' })" type="primary" icon="play">
+                {{ t('workbench.emptyDeploy') }}
               </Button>
             </div>
           </div>

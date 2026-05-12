@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -499,8 +500,11 @@ Future<void> _pumpCloudActionHarness(
   addTearDown(tester.view.reset);
 
   await tester.pumpWidget(
-    ChangeNotifierProvider<CloudProvider>.value(
-      value: cloudProvider,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<CloudProvider>.value(value: cloudProvider),
+        ChangeNotifierProvider<CdnProvider>.value(value: CdnProvider()),
+      ],
       child: ScreenUtilInit(
         designSize: const Size(375, 812),
         minTextAdapt: true,
@@ -671,6 +675,7 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   String? createdRegion;
   String? createdPlan;
   String? createdLabel;
+  String? lastCreatedInstanceId;
   int loadRegionsCalls = 0;
   int loadPlansCalls = 0;
   final Map<String, CloudLatencyCheck> storedChecks = {};
@@ -749,6 +754,7 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     createdRegion = region;
     createdPlan = plan;
     createdLabel = label;
+    lastCreatedInstanceId = label;
     return createInstanceResult;
   }
 
@@ -822,12 +828,14 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     _benchmarkAbort = false;
     notifyListeners();
   }
+
   @override
   void markBenchmarkAllEnd() {
     _benchmarkAll = false;
     _benchmarkAbort = false;
     notifyListeners();
   }
+
   @override
   void requestBenchmarkAllAbort() {
     if (!_benchmarkAll) return;
@@ -884,6 +892,9 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   @override
   bool get isConnected => status == VpnStatus.connected;
+
+  @override
+  bool get isDegraded => false;
 
   @override
   bool get isLoading => false;

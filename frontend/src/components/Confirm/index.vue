@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { marked } from 'marked'
-import { h, onMounted, ref, render, type VNode } from 'vue'
+import { defineAsyncComponent, h, onMounted, ref, render, type VNode } from 'vue'
 
 import useI18n from '@/lang'
 import { APP_TITLE, APP_VERSION, sampleID } from '@/utils'
 
-import CodeViewer from '@/components/CodeViewer/index.vue'
 import Divider from '@/components/Divider/index.vue'
 import Table from '@/components/Table/index.vue'
 import Tag from '@/components/Tag/index.vue'
@@ -34,6 +33,7 @@ const emits = defineEmits(['confirm', 'cancel', 'finish'])
 
 const content = ref<string | Record<string, any>>('')
 const domContainers: (() => void)[] = []
+const CodeViewer = defineAsyncComponent(() => import('@/components/CodeViewer/index.vue'))
 
 const { t } = useI18n.global
 

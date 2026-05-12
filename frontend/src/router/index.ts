@@ -1,5 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
+import { useCloudStore } from '@/stores/cloud'
+
 import routes from './routes'
 
 const router = createRouter({
@@ -16,8 +18,6 @@ router.beforeEach(async (to, _from, next) => {
   wizardChecked = true
 
   try {
-    // Lazy-import to avoid circular dependency
-    const { useCloudStore } = await import('@/stores')
     const cloudStore = useCloudStore()
 
     // Load config if not yet loaded
