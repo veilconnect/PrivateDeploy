@@ -962,6 +962,36 @@ abstract class AppLocalizations {
   /// **'Failed to create'**
   String get failedToCreate;
 
+  /// No description provided for @deployCdnWorkerAfterCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Deploy CDN Worker after the node is ready'**
+  String get deployCdnWorkerAfterCreate;
+
+  /// No description provided for @deployCdnWorkerAfterCreateHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-publishes a Cloudflare Worker bound to this node\'s relay port. You can always deploy or replace it later under Settings → CDN.'**
+  String get deployCdnWorkerAfterCreateHint;
+
+  /// No description provided for @cdnAutoDeployTimedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Node created, but didn\'t see a relay port within 10 min — deploy the CDN Worker manually under Settings → CDN.'**
+  String get cdnAutoDeployTimedOut;
+
+  /// No description provided for @cdnAutoDeployDone.
+  ///
+  /// In en, this message translates to:
+  /// **'CDN Worker deployed for {node}'**
+  String cdnAutoDeployDone(Object node);
+
+  /// No description provided for @cdnAutoDeployFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Node created but CDN Worker deploy failed — retry from Settings → CDN.'**
+  String get cdnAutoDeployFailed;
+
   /// No description provided for @nodeNotReadyForSpeedTest.
   ///
   /// In en, this message translates to:

@@ -1601,6 +1601,14 @@ class CloudProvider extends CloudProviderBase {
     return latencyMs + reliabilityPenalty;
   }
 
+  // Populated by the most recent successful [createInstance] call so the
+  // caller can chain follow-up actions (e.g. deploy a CDN worker) without
+  // having to rediscover the new node via label matching. Cleared at the
+  // start of each call. Not part of the bool return because that would
+  // ripple through every mock CloudProvider in tests.
+  String? _lastCreatedInstanceId;
+  String? get lastCreatedInstanceId => _lastCreatedInstanceId;
+
   Future<bool> createInstance({
     required String region,
     required String plan,
@@ -1612,6 +1620,7 @@ class CloudProvider extends CloudProviderBase {
 
     _isLoading = true;
     _error = null;
+    _lastCreatedInstanceId = null;
     notifyListeners();
 
     try {
@@ -1627,6 +1636,7 @@ class CloudProvider extends CloudProviderBase {
         );
         await _loadNodeRecords();
         await loadInstances(notify: false);
+        _lastCreatedInstanceId = deployment.record.instanceId;
         return true;
       }
 
@@ -1709,6 +1719,7 @@ class CloudProvider extends CloudProviderBase {
       });
       await _loadNodeRecords();
       await loadInstances(notify: false);
+      _lastCreatedInstanceId = instanceId;
       return true;
     } catch (e) {
       _error = 'Failed to create instance: ${cloudProviderMessageFromError(e)}';

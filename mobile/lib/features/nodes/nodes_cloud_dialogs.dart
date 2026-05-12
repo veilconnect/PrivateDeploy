@@ -5,6 +5,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
@@ -32,6 +33,11 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   late final TextEditingController _labelController;
   String? _selectedRegion;
   String? _selectedPlan;
+  // Default true so the common case (CDN already set up) saves the user
+  // a second trip. When CDN isn't verified the checkbox is hidden and
+  // this stays false. Only the user un-checking it sets it to false
+  // while CDN is verified.
+  bool _autoDeployCdn = true;
 
   List<CloudPlan> _availablePlans(CloudProvider provider, String? region) {
     return provider.plans
@@ -240,6 +246,29 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                     : (value) => setState(() => _selectedPlan = value),
               ),
             ],
+            // CDN-worker auto-deploy opt-out. Only shown when CDN is fully
+            // configured (token verified) — otherwise the option is
+            // meaningless and would just confuse new users. SSH-provisioned
+            // nodes don't get a CF worker either (M1 is cloud-provider-
+            // specific), so we hide it on SSH too.
+            if (!isSsh &&
+                context.watch<CdnProvider>().status ==
+                    CdnStatus.verified) ...[
+              SizedBox(height: 16.h),
+              CheckboxListTile(
+                value: _autoDeployCdn,
+                onChanged: (v) =>
+                    setState(() => _autoDeployCdn = v ?? false),
+                title: Text(l10n.deployCdnWorkerAfterCreate),
+                subtitle: Text(
+                  l10n.deployCdnWorkerAfterCreateHint,
+                  style: TextStyle(fontSize: 11.sp),
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
+            ],
           ],
         ),
       ),
@@ -281,6 +310,7 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                       region: isSsh ? '' : _selectedRegion!,
                       plan: isSsh ? '' : _selectedPlan!,
                       usesSavedSshAccess: isSsh,
+                      autoDeployCdnWorker: !isSsh && _autoDeployCdn,
                     ),
                   );
                 },

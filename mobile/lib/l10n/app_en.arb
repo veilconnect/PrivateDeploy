@@ -170,6 +170,12 @@
 
   "nodeDeploying": "Node deploying... It takes 3-5 minutes.",
   "failedToCreate": "Failed to create",
+  "deployCdnWorkerAfterCreate": "Deploy CDN Worker after the node is ready",
+  "deployCdnWorkerAfterCreateHint": "Auto-publishes a Cloudflare Worker bound to this node's relay port. You can always deploy or replace it later under Settings → CDN.",
+  "cdnAutoDeployTimedOut": "Node created, but didn't see a relay port within 10 min — deploy the CDN Worker manually under Settings → CDN.",
+  "cdnAutoDeployDone": "CDN Worker deployed for {node}",
+  "@cdnAutoDeployDone": { "placeholders": { "node": {} } },
+  "cdnAutoDeployFailed": "Node created but CDN Worker deploy failed — retry from Settings → CDN.",
   "nodeNotReadyForSpeedTest": "Node is not ready for speed testing",
   "failedToConnectSpeedTestTunnel": "Failed to connect speed test tunnel",
   "noReadyNodeForTesting": "No ready cloud node is available for testing",

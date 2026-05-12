@@ -496,6 +496,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get failedToCreate => 'Failed to create';
 
   @override
+  String get deployCdnWorkerAfterCreate =>
+      'Deploy CDN Worker after the node is ready';
+
+  @override
+  String get deployCdnWorkerAfterCreateHint =>
+      'Auto-publishes a Cloudflare Worker bound to this node\'s relay port. You can always deploy or replace it later under Settings → CDN.';
+
+  @override
+  String get cdnAutoDeployTimedOut =>
+      'Node created, but didn\'t see a relay port within 10 min — deploy the CDN Worker manually under Settings → CDN.';
+
+  @override
+  String cdnAutoDeployDone(Object node) {
+    return 'CDN Worker deployed for $node';
+  }
+
+  @override
+  String get cdnAutoDeployFailed =>
+      'Node created but CDN Worker deploy failed — retry from Settings → CDN.';
+
+  @override
   String get nodeNotReadyForSpeedTest => 'Node is not ready for speed testing';
 
   @override

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_throughput_probe.dart';
@@ -139,6 +140,88 @@ Future<void> showCreateCloudNodeFlow({
         ? l10nDeploy.nodeDeploying
         : cloudProvider.error ?? l10nDeploy.failedToCreate,
     backgroundColor: success ? Colors.green : Colors.red,
+  );
+
+  // Chain a CDN Worker deploy onto the new node if the user kept the
+  // checkbox in the create dialog. We deliberately do this AFTER the
+  // create-success snackbar so a CDN failure can show its own follow-up
+  // toast instead of replacing the primary "creating…" message. Errors
+  // are non-fatal: if the Worker deploy fails, the node still exists and
+  // the user can retry from Settings → CDN.
+  if (success &&
+      request.autoDeployCdnWorker &&
+      cloudProvider.lastCreatedInstanceId != null) {
+    await _autoDeployCdnWorkerAfterCreate(
+      context: context,
+      cloudProvider: cloudProvider,
+      instanceId: cloudProvider.lastCreatedInstanceId!,
+    );
+  }
+}
+
+/// Polls CloudProvider until the newly-created instance shows a valid
+/// `vlessRelayPort` (the M1 install script needs to finish before the
+/// CDN Worker can target it), then calls cdnProvider.deployWorkerForNode.
+/// Bounded — gives up after a reasonable window so the user isn't left
+/// waiting indefinitely if the VPS install hangs.
+Future<void> _autoDeployCdnWorkerAfterCreate({
+  required BuildContext context,
+  required CloudProvider cloudProvider,
+  required String instanceId,
+}) async {
+  final cdnProvider = context.read<CdnProvider>();
+  if (cdnProvider.status != CdnStatus.verified) {
+    return;
+  }
+  final l10n = AppLocalizations.of(context)!;
+
+  // Wait for relay port to materialise. The M1 install script (~3–5 min
+  // on first boot) writes nodeInfo.vlessRelayPort once it finishes. Poll
+  // every 10 s for up to 10 minutes — the createInstance flow already
+  // waited for service-ready before returning, so this is mostly a
+  // safety net for edge cases where the record lookup is racy.
+  CloudInstance? readyInstance;
+  for (var i = 0; i < 60 && context.mounted; i++) {
+    final inst = cloudProvider.allInstances
+        .where((c) => c.id == instanceId)
+        .firstOrNull;
+    if (inst != null && (inst.nodeInfo?.vlessRelayPort ?? 0) > 0) {
+      readyInstance = inst;
+      break;
+    }
+    await Future<void>.delayed(const Duration(seconds: 10));
+    // Refresh so newly-discovered relay ports become visible.
+    if (i % 3 == 0) {
+      await cloudProvider.loadInstances(notify: false);
+    }
+  }
+  if (!context.mounted) {
+    return;
+  }
+  if (readyInstance == null) {
+    showNodesActionSnackBar(
+      context,
+      message: l10n.cdnAutoDeployTimedOut,
+      backgroundColor: Colors.orange,
+    );
+    return;
+  }
+
+  final ok = await cdnProvider.deployWorkerForNode(
+    nodeId: readyInstance.id,
+    nodeLabel: readyInstance.label,
+    backendHost: readyInstance.ipv4 ?? '',
+    backendPort: readyInstance.nodeInfo!.vlessRelayPort,
+  );
+  if (!context.mounted) {
+    return;
+  }
+  showNodesActionSnackBar(
+    context,
+    message: ok
+        ? l10n.cdnAutoDeployDone(readyInstance.label)
+        : (cdnProvider.lastError ?? l10n.cdnAutoDeployFailed),
+    backgroundColor: ok ? Colors.green : Colors.orange,
   );
 }
 

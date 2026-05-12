@@ -159,6 +159,12 @@
 
   "nodeDeploying": "节点部署中...需要 3-5 分钟。",
   "failedToCreate": "创建失败",
+  "deployCdnWorkerAfterCreate": "节点就绪后自动部署 CDN Worker",
+  "deployCdnWorkerAfterCreateHint": "在该节点 relay 端口上发布 Cloudflare Worker。之后可在 设置 → CDN 加速 重新部署或替换。",
+  "cdnAutoDeployTimedOut": "节点已创建，但 10 分钟内未拿到 relay 端口 —— 请在 设置 → CDN 加速 手动部署。",
+  "cdnAutoDeployDone": "已为 {node} 部署 CDN Worker",
+  "@cdnAutoDeployDone": { "placeholders": { "node": {} } },
+  "cdnAutoDeployFailed": "节点已创建，但 CDN Worker 部署失败 —— 请在 设置 → CDN 加速 重试。",
   "nodeNotReadyForSpeedTest": "节点尚未就绪，无法测速",
   "failedToConnectSpeedTestTunnel": "速度测试隧道连接失败",
   "noReadyNodeForTesting": "没有可用于测试的就绪云节点",

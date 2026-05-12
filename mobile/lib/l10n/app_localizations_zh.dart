@@ -482,6 +482,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get failedToCreate => '创建失败';
 
   @override
+  String get deployCdnWorkerAfterCreate => '节点就绪后自动部署 CDN Worker';
+
+  @override
+  String get deployCdnWorkerAfterCreateHint =>
+      '在该节点 relay 端口上发布 Cloudflare Worker。之后可在 设置 → CDN 加速 重新部署或替换。';
+
+  @override
+  String get cdnAutoDeployTimedOut =>
+      '节点已创建，但 10 分钟内未拿到 relay 端口 —— 请在 设置 → CDN 加速 手动部署。';
+
+  @override
+  String cdnAutoDeployDone(Object node) {
+    return '已为 $node 部署 CDN Worker';
+  }
+
+  @override
+  String get cdnAutoDeployFailed =>
+      '节点已创建，但 CDN Worker 部署失败 —— 请在 设置 → CDN 加速 重试。';
+
+  @override
   String get nodeNotReadyForSpeedTest => '节点尚未就绪，无法测速';
 
   @override
