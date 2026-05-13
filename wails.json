@@ -13,6 +13,9 @@
     "email": "team@privatedeploy.dev"
   },
   "info": {
+    "companyName": "PrivateDeploy",
+    "productName": "PrivateDeploy",
+    "productVersion": "2.0.1",
     "copyright": "Copyright",
     "comments": "https://github.com/PrivateDeploy/PrivateDeploy"
   }
