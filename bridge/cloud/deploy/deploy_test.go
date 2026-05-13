@@ -289,3 +289,30 @@ func TestGenerateMultiProtocolScript_ChownsSingBoxConfigsBeforeStart(t *testing.
 		t.Fatalf("expected trojan chown to happen before %q", trojanStart)
 	}
 }
+
+func TestGenerateMultiProtocolScript_AllowsNonRootSingBoxToBindPrivilegedPorts(t *testing.T) {
+	script := GenerateMultiProtocolScript(MultiProtocolParams{
+		SSPort:           24443,
+		SSPassword:       "ss-pass",
+		HysteriaPort:     443,
+		HysteriaPassword: "hy-pass",
+		HysteriaServer:   "www.cloudflare.com",
+		VLESSPort:        8443,
+		VLESSUUID:        GenerateUUID(),
+		VLESSPrivateKey:  "private-key",
+		VLESSPublicKey:   "public-key",
+		VLESSShortID:     "1234abcd",
+		VLESSServer:      "www.cloudflare.com",
+		TrojanPort:       443,
+		TrojanPassword:   "trojan-pass",
+		TrojanServer:     "www.cloudflare.com",
+		VLESSRelayPort:   24444,
+	})
+
+	if got := strings.Count(script, "AmbientCapabilities=CAP_NET_BIND_SERVICE"); got != 4 {
+		t.Fatalf("expected all sing-box systemd units to allow low-port bind, got %d", got)
+	}
+	if got := strings.Count(script, "CapabilityBoundingSet=CAP_NET_BIND_SERVICE"); got != 4 {
+		t.Fatalf("expected all sing-box systemd units to bound low-port bind capability, got %d", got)
+	}
+}
