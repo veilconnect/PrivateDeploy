@@ -17,6 +17,13 @@ WORKBENCH_DEPLOY_X="${WORKBENCH_DEPLOY_X:-522}"
 WORKBENCH_DEPLOY_Y="${WORKBENCH_DEPLOY_Y:-245}"
 CREATE_DEPLOY_X="${CREATE_DEPLOY_X:-220}"
 CREATE_DEPLOY_Y="${CREATE_DEPLOY_Y:-352}"
+PLAN_SELECT_REL_X="${PLAN_SELECT_REL_X:-500}"
+PLAN_SELECT_REL_Y="${PLAN_SELECT_REL_Y:-407}"
+CREATE_DEPLOY_REL_X="${CREATE_DEPLOY_REL_X:-346}"
+CREATE_DEPLOY_REL_Y="${CREATE_DEPLOY_REL_Y:-451}"
+CLEAN_VULTR_API_KEY_FILE="${CLEAN_VULTR_API_KEY_FILE:-0}"
+COLLECT_REMOTE_DIAGNOSTICS="${COLLECT_REMOTE_DIAGNOSTICS:-1}"
+COLLECT_REMOTE_DIAGNOSTICS_ON_SUCCESS="${COLLECT_REMOTE_DIAGNOSTICS_ON_SUCCESS:-0}"
 VULTR_API_BASE="https://api.vultr.com/v2"
 CURL_COMMON_ARGS=(
   --connect-timeout 10
@@ -139,6 +146,7 @@ on_exit() {
   if [[ -n "${INSTANCE_ID}" && "${DESTROYED}" != "1" ]]; then
     destroy_instance || true
   fi
+  scrub_sensitive_files
   if [[ "${exit_code}" -ne 0 ]]; then
     echo "Smoke test failed. Artifacts: ${RUN_DIR}" >&2
     echo "App base kept at: ${APP_BASE}" >&2
@@ -275,6 +283,83 @@ fetch_live_instance_ids() {
   vultr_request GET "/instances" | jq -r '.instances[].id' | sort -u > "${out_file}"
 }
 
+scrub_sensitive_files() {
+  rm -f "${APP_BASE}/data/cloud/"*config.json 2>/dev/null || true
+  if [[ -d "${APP_BASE}/secrets" ]]; then
+    find "${APP_BASE}/secrets" -type f -delete 2>/dev/null || true
+  fi
+  if [[ "${CLEAN_VULTR_API_KEY_FILE}" == "1" ]]; then
+    rm -f "${API_KEY_FILE}" 2>/dev/null || true
+  fi
+}
+
+collect_instance_diagnostics() {
+  if [[ "${COLLECT_REMOTE_DIAGNOSTICS}" != "1" || -z "${INSTANCE_ID}" || -z "${INSTANCE_IP}" ]]; then
+    return 0
+  fi
+  if ! command -v sshpass >/dev/null 2>&1; then
+    echo "sshpass unavailable; skipping instance diagnostics" > "${RUN_DIR}/instance-diagnostics.txt"
+    return 0
+  fi
+
+  local pass_file="${RUN_DIR}/instance-password.tmp"
+  : > "${pass_file}"
+  chmod 600 "${pass_file}"
+  if ! vultr_request GET "/instances/${INSTANCE_ID}" | jq -r '.instance.default_password // ""' > "${pass_file}"; then
+    rm -f "${pass_file}"
+    echo "failed to fetch instance password for diagnostics" > "${RUN_DIR}/instance-diagnostics.txt"
+    return 0
+  fi
+  if ! grep -q '[^[:space:]]' "${pass_file}"; then
+    rm -f "${pass_file}"
+    echo "instance password unavailable for diagnostics" > "${RUN_DIR}/instance-diagnostics.txt"
+    return 0
+  fi
+
+  sshpass -f "${pass_file}" ssh \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile="${RUN_DIR}/known_hosts" \
+    -o ConnectTimeout=10 \
+    "root@${INSTANCE_IP}" \
+    'echo "=== hostname ===";
+     hostname || true;
+     echo "=== uptime ===";
+     uptime || true;
+     echo "=== systemd ===";
+     systemctl status ss-server hysteria-server vless-server trojan-server vless-relay-server --no-pager --lines=20 || true;
+     echo "=== listening ports ===";
+     ss -tlnup || true;
+     echo "=== firewall ===";
+     ufw status numbered || true;
+     echo "=== cloud-init tail ===";
+     tail -160 /var/log/cloud-init-output.log || true;
+     echo "=== journals ===";
+     journalctl -u hysteria-server -u vless-server -u trojan-server -u vless-relay-server -n 180 --no-pager || true' \
+    > "${RUN_DIR}/instance-diagnostics.txt" 2>&1 || true
+  rm -f "${pass_file}"
+}
+
+select_first_plan() {
+  local window_x window_y
+  read -r window_x window_y < <(window_origin)
+  local plan_x=$(( window_x + PLAN_SELECT_REL_X ))
+  local plan_y=$(( window_y + PLAN_SELECT_REL_Y ))
+  click_absolute "${plan_x}" "${plan_y}"
+  sleep 0.5
+  xdotool windowactivate --sync "${WINDOW_ID}"
+  xdotool key Down
+  sleep 0.15
+  xdotool key Return
+  sleep 2
+
+  import -window root "${RUN_DIR}/cloud-plan-selected.png"
+  import -window "${WINDOW_ID}" "${RUN_DIR}/cloud-plan-selected-window.png"
+  capture_window_crop "${RUN_DIR}/cloud-plan-selected.png" "${RUN_DIR}/cloud-plan-selected-crop.png"
+
+  CREATE_DEPLOY_X=$(( window_x + CREATE_DEPLOY_REL_X ))
+  CREATE_DEPLOY_Y=$(( window_y + CREATE_DEPLOY_REL_Y ))
+}
+
 echo "Artifacts: ${RUN_DIR}"
 echo "App base:   ${APP_BASE}"
 
@@ -397,14 +482,8 @@ if grep -q "TestAllCloudRegions called" "${RUN_DIR}/app.err"; then
     sleep 1
   done
 fi
-ocr_word_hits "${RUN_DIR}/cloud.png" "Deploy" "${RUN_DIR}/cloud-ocr.json"
-CREATE_COORDS="$(pick_hit_center "${RUN_DIR}/cloud-ocr.json" bottom-over-250 || true)"
-if [[ -z "${CREATE_COORDS}" ]]; then
-  echo "Failed to locate Create Route button in ${RUN_DIR}/cloud.png" >&2
-  exit 1
-fi
-CREATE_DEPLOY_X="${CREATE_COORDS%% *}"
-CREATE_DEPLOY_Y="${CREATE_COORDS##* }"
+
+select_first_plan
 
 CLICK_ATTEMPTS_FILE="${RUN_DIR}/click-attempts.txt"
 : > "${CLICK_ATTEMPTS_FILE}"
@@ -547,10 +626,15 @@ while IFS= read -r port; do
     echo "${port} OPEN" >> "${PORT_RESULTS_FILE}"
   else
     echo "${port} CLOSED" >> "${PORT_RESULTS_FILE}"
+    collect_instance_diagnostics
     echo "Port ${port} did not open on ${INSTANCE_IP}" >&2
     exit 1
   fi
 done < "${PORTS_FILE}"
+
+if [[ "${COLLECT_REMOTE_DIAGNOSTICS_ON_SUCCESS}" == "1" ]]; then
+  collect_instance_diagnostics
+fi
 
 destroy_instance
 
