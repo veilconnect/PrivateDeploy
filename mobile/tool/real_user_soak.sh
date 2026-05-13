@@ -15,16 +15,12 @@ RUN_LOG="$OUTDIR/run.log"
 RESULTS="$OUTDIR/results.txt"
 
 VULTR_API_KEY="${VULTR_API_KEY:-}"
-if [ -z "$VULTR_API_KEY" ]; then
-  echo "VULTR_API_KEY is required" >&2
-  exit 1
-fi
 
 mkdir -p "$OUTDIR"
 : > "$RUN_LOG"
 : > "$RESULTS"
 
-WORKSPACE_PATTERN='content-desc="(Workspace|工作区)"|text="(Workspace|工作区)"'
+WORKSPACE_PATTERN='content-desc="(Workspace|工作区|未连接|已连接|Connected|连接)"|text="(Workspace|工作区|未连接|已连接|Connected|连接)"'
 CONNECT_PATTERN='content-desc="(Connect|连接)"|text="(Connect|连接)"'
 DISCONNECT_PATTERN='content-desc="(Disconnect|断开)"|text="(Disconnect|断开)"'
 CONNECTED_PATTERN='content-desc="(Connected|已连接)"|text="(Connected|已连接)"'
@@ -65,7 +61,7 @@ record_kv() {
 }
 
 screenshot() {
-  adb -s "$DEVICE" exec-out screencap -p > "$OUTDIR/$1.png" 2>/dev/null || true
+  timeout 12 adb -s "$DEVICE" exec-out screencap -p > "$OUTDIR/$1.png" 2>/dev/null || true
 }
 
 tap() {
@@ -95,8 +91,8 @@ unlock_device() {
 }
 
 dump_ui() {
-  adb -s "$DEVICE" shell uiautomator dump "$UI_XML" >/dev/null 2>&1
-  adb -s "$DEVICE" shell cat "$UI_XML" 2>/dev/null || true
+  timeout 15 adb -s "$DEVICE" shell uiautomator dump "$UI_XML" >/dev/null 2>&1 || true
+  timeout 8 adb -s "$DEVICE" shell cat "$UI_XML" 2>/dev/null || true
 }
 
 bounds_center() {
@@ -106,6 +102,11 @@ bounds_center() {
 find_bounds() {
   local pattern="$1"
   dump_ui | tr '>' '\n' | grep -E "$pattern" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1
+}
+
+find_button_bounds() {
+  local pattern="$1"
+  dump_ui | tr '>' '\n' | grep 'class="android.widget.Button"' | grep -E "$pattern" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1
 }
 
 find_nth_bounds() {
@@ -127,6 +128,23 @@ wait_for_bounds() {
   local i=0
   for ((i = 0; i < attempts; i++)); do
     bounds=$(find_bounds "$pattern" || true)
+    if [ -n "$bounds" ]; then
+      echo "$bounds"
+      return 0
+    fi
+    sleep "$delay"
+  done
+  return 1
+}
+
+wait_for_button_bounds() {
+  local pattern="$1"
+  local attempts="${2:-15}"
+  local delay="${3:-1}"
+  local bounds=""
+  local i=0
+  for ((i = 0; i < attempts; i++)); do
+    bounds=$(find_button_bounds "$pattern" || true)
     if [ -n "$bounds" ]; then
       echo "$bounds"
       return 0
@@ -187,7 +205,7 @@ app_is_running() {
 }
 
 vpn_transport_active() {
-  adb -s "$DEVICE" shell dumpsys connectivity 2>/dev/null | grep -q 'Transports: VPN'
+  adb -s "$DEVICE" shell dumpsys connectivity 2>/dev/null | grep -Eq 'NetworkAgentInfo\{.*Transports: VPN'
 }
 
 vpn_iface_up() {
@@ -273,6 +291,13 @@ cloud_access_ready() {
   dump_ui | grep -q '云节点'
 }
 
+local_profile_ready() {
+  local ui=""
+  ui=$(dump_ui)
+  echo "$ui" | grep -Eq '(本地配置|Local configurations|Local config)' && \
+    echo "$ui" | grep -Eq '(已选中|Selected)'
+}
+
 wait_for_api_key_save_success() {
   local attempts="${1:-45}"
   local i=0
@@ -296,10 +321,19 @@ wait_for_api_key_save_success() {
 
 set_vultr_api_key() {
   ensure_app_workspace 10
+  if local_profile_ready; then
+    log "Local VPN profile already selected, skipping API key re-entry"
+    screenshot "02_local_profile_selected"
+    return 0
+  fi
   if cloud_access_ready; then
     log "Cloud access already configured, skipping API key re-entry"
     screenshot "02_api_key_already_configured"
     return 0
+  fi
+  if [ -z "$VULTR_API_KEY" ]; then
+    log "VULTR_API_KEY is required when no local profile or cloud access is configured"
+    return 1
   fi
 
   local api_action=""
@@ -344,7 +378,7 @@ connect_vpn() {
   adb -s "$DEVICE" logcat -c >/dev/null 2>&1 || true
 
   local connect_bounds=""
-  connect_bounds=$(wait_for_bounds "$CONNECT_PATTERN" 10 1 || true)
+  connect_bounds=$(wait_for_button_bounds "$CONNECT_PATTERN" 10 1 || true)
   if [ -z "$connect_bounds" ]; then
     log "Connect button not found"
     return 1
@@ -380,7 +414,7 @@ connect_vpn() {
 disconnect_vpn_if_needed() {
   ensure_app_workspace 6 || true
   local disconnect_bounds=""
-  disconnect_bounds=$(find_bounds "$DISCONNECT_PATTERN" || true)
+  disconnect_bounds=$(find_button_bounds "$DISCONNECT_PATTERN" || true)
   if [ -n "$disconnect_bounds" ]; then
     tap_bounds "$disconnect_bounds"
     sleep 4
@@ -457,8 +491,8 @@ check_connected_in_app() {
   sleep 3
   ensure_app_workspace 5 || return 1
   screenshot "app_check_$1"
-  if [ -n "$(find_bounds "$DISCONNECT_PATTERN" || true)" ] || \
-     [ -n "$(find_bounds "$RESTART_PATTERN" || true)" ] || \
+  if [ -n "$(find_button_bounds "$DISCONNECT_PATTERN" || true)" ] || \
+     [ -n "$(find_button_bounds "$RESTART_PATTERN" || true)" ] || \
      [ -n "$(find_bounds "$CONNECTED_PATTERN" || true)" ] || \
      vpn_transport_active || vpn_iface_up || vpn_egress_logged; then
     return 0

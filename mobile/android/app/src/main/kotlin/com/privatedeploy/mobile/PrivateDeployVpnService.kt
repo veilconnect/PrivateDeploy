@@ -278,9 +278,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return
         }
 
+        val runtimeConfig = try {
+            prepareConfigForRuntime(config)
+        } catch (e: Exception) {
+            broadcastError("Invalid config: not valid JSON - ${e.message}")
+            return
+        }
+
         // Pre-validate config JSON structure before passing to Go runtime
         try {
-            val json = JSONObject(config)
+            val json = JSONObject(runtimeConfig)
             if (!json.has("outbounds")) {
                 broadcastError("Invalid config: missing \"outbounds\" section")
                 return
@@ -295,7 +302,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return
         }
 
-        activeConfig = config
+        activeConfig = runtimeConfig
         clearRecentLogs()
         startForeground(NOTIFICATION_ID, createNotification("VPN is connecting"))
         broadcastStatus("connecting", null)
@@ -324,8 +331,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         broadcastStatus("connecting", null)
                     }
                     val core = ensureVpnCore()
-                    if (attempt == 1) {
-                        core.start(config)
+                    if (attempt == 1 || !isRunning) {
+                        core.start(runtimeConfig)
                     } else {
                         // The first attempt's start() succeeded internally even
                         // when the egress probe later failed (otherwise we'd be
@@ -793,12 +800,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
             broadcastError("VPN config is empty")
             return
         }
+        val runtimeConfig = try {
+            prepareConfigForRuntime(config)
+        } catch (e: Exception) {
+            broadcastError("Invalid config: not valid JSON - ${e.message}")
+            return
+        }
 
         thread(name = "PrivateDeploy-VPN-UpdateConfig") {
             try {
                 val core = ensureVpnCore()
-                core.updateConfig(config)
-                activeConfig = config
+                core.updateConfig(runtimeConfig)
+                activeConfig = runtimeConfig
                 Log.i(TAG, "VPN config updated")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update VPN config", e)
@@ -827,6 +840,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         runtimeRoot.mkdirs()
         workingDir.mkdirs()
         tempDir.mkdirs()
+        installBundledRuleSets(File(runtimeRoot, "rulesets"))
 
         val created = Gomobile.newVPNService().apply {
             setPlatform(this@PrivateDeployVpnService)
@@ -838,6 +852,57 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
         vpnCore = created
         return created
+    }
+
+    private fun prepareConfigForRuntime(config: String): String {
+        val runtimeRoot = File(noBackupFilesDir ?: filesDir, "vpncore")
+        val ruleSetDir = File(runtimeRoot, "rulesets")
+        installBundledRuleSets(ruleSetDir)
+
+        val json = JSONObject(config)
+        val route = json.optJSONObject("route") ?: return config
+        val ruleSets = route.optJSONArray("rule_set") ?: return config
+        var changed = false
+
+        for (index in 0 until ruleSets.length()) {
+            val ruleSet = ruleSets.optJSONObject(index) ?: continue
+            if (ruleSet.optString("type") != "local") {
+                continue
+            }
+            val path = ruleSet.optString("path")
+            if (path.isBlank() || File(path).isAbsolute) {
+                continue
+            }
+
+            val target = File(ruleSetDir, File(path).name)
+            if (!target.exists()) {
+                continue
+            }
+            ruleSet.put("path", target.absolutePath)
+            changed = true
+        }
+
+        return if (changed) json.toString() else config
+    }
+
+    private fun installBundledRuleSets(ruleSetDir: File) {
+        try {
+            ruleSetDir.mkdirs()
+            val assetNames = assets.list("rulesets").orEmpty()
+            for (assetName in assetNames) {
+                if (!assetName.endsWith(".json")) {
+                    continue
+                }
+                val target = File(ruleSetDir, assetName)
+                assets.open("rulesets/$assetName").use { input ->
+                    target.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to install bundled rule sets", e)
+        }
     }
 
     private fun cleanupTunnel() {
