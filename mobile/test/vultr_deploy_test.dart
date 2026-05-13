@@ -51,6 +51,7 @@ void main() {
       expect(bundle.userData, contains('VLESS-Reality Server (sing-box)'));
       expect(bundle.userData, contains('Trojan Server (sing-box)'));
       expect(bundle.userData, contains('PublicKey:'));
+      expect(bundle.userData, contains('sing-box-1.12.12-linux-amd64.tar.gz'));
     });
 
     test('multi-protocol bundle provisions VLESS relay block', () async {
@@ -61,16 +62,40 @@ void main() {
 
       final relayPort = bundle.nodeRecord['vlessRelayPort'] as int;
       expect(relayPort, greaterThan(0),
-          reason: 'multi-protocol bundle must allocate a relay port for CDN front');
+          reason:
+              'multi-protocol bundle must allocate a relay port for CDN front');
 
       // UFW rule lets CF Worker reach the relay listener.
-      expect(bundle.userData, contains("ufw allow $relayPort/tcp comment 'VLESS-Relay (CDN)'"));
+      expect(bundle.userData,
+          contains("ufw allow $relayPort/tcp comment 'VLESS-Relay (CDN)'"));
       // sing-box outbound config must include the relay listen_port.
       expect(bundle.userData, contains('"listen_port": $relayPort'));
       // systemd unit for the relay sing-box instance must be installed and enabled.
       expect(bundle.userData,
           contains('/etc/systemd/system/vless-relay-server.service'));
       expect(bundle.userData, contains(' vless-relay-server'));
+    });
+
+    test('edge443 services can bind privileged ports as non-root', () async {
+      final bundle = await VultrDeploymentBuilder.build(
+        planRam: 1024,
+        portProfile: 'edge443',
+      );
+
+      expect(bundle.nodeRecord['hyPort'], 443);
+      expect(bundle.nodeRecord['trojanPort'], 443);
+      expect(
+        RegExp(r'^AmbientCapabilities=CAP_NET_BIND_SERVICE$', multiLine: true)
+            .allMatches(bundle.userData)
+            .length,
+        4,
+      );
+      expect(
+        RegExp(r'^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$', multiLine: true)
+            .allMatches(bundle.userData)
+            .length,
+        4,
+      );
     });
   });
 }

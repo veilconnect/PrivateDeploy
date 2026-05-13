@@ -7,7 +7,7 @@ import 'package:cryptography/cryptography.dart';
 import 'vultr_client.dart';
 
 const int lightweightPlanRamThresholdMb = 600;
-const String defaultSingBoxVersion = '1.11.0';
+const String defaultSingBoxVersion = '1.12.12';
 const String defaultHysteriaServerName = 'www.bing.com';
 const String defaultHysteriaMasqueradeUrl = 'https://www.bing.com';
 const String defaultVlessServerName = 'www.microsoft.com';
@@ -172,9 +172,8 @@ class VultrDeploymentBuilder {
     // (zero-port) deploys produce the same multi-protocol output as before
     // so we can ship this template change without forcing a re-deploy of
     // every existing node.
-    final relayBlock = vlessRelayPort > 0
-        ? _vlessRelayBlock(vlessRelayPort, vlessUuid)
-        : '';
+    final relayBlock =
+        vlessRelayPort > 0 ? _vlessRelayBlock(vlessRelayPort, vlessUuid) : '';
     final relayUfw = vlessRelayPort > 0
         ? "ufw allow $vlessRelayPort/tcp comment 'VLESS-Relay (CDN)'\n"
         : '';
@@ -240,6 +239,8 @@ Restart=always
 RestartSec=5
 User=privatedeploy
 Group=privatedeploy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
@@ -444,6 +445,8 @@ Restart=always
 RestartSec=5
 User=privatedeploy
 Group=privatedeploy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
@@ -468,6 +471,8 @@ Restart=always
 RestartSec=5
 User=privatedeploy
 Group=privatedeploy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
@@ -492,6 +497,8 @@ Restart=always
 RestartSec=5
 User=privatedeploy
 Group=privatedeploy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/etc/privatedeploy
 NoNewPrivileges=true
