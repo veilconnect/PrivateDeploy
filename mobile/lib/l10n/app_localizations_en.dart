@@ -1227,7 +1227,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String egressViaFailover(Object node) {
-    return 'via $node (urltest failover)';
+    return 'Automatically switched to $node';
   }
 
   @override

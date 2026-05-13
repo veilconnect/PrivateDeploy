@@ -428,7 +428,7 @@
   "egressLastSeen": "{ip} (last seen)",
   "@egressLastSeen": { "placeholders": { "ip": {} } },
   "egressProbeStillRoutingHint": "VPN is still forwarding traffic; the egress probe just hasn't reconfirmed yet.",
-  "egressViaFailover": "via {node} (urltest failover)",
+  "egressViaFailover": "Automatically switched to {node}",
   "@egressViaFailover": { "placeholders": { "node": {} } },
   "latestRoute": "Latest Route Match",
   "directRoute": "Direct",

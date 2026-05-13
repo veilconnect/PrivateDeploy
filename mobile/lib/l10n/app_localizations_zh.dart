@@ -1181,7 +1181,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String egressViaFailover(Object node) {
-    return '经 $node 中转（urltest 自动切换）';
+    return '已自动切换到 $node 节点';
   }
 
   @override

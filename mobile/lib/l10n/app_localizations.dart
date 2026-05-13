@@ -2231,7 +2231,7 @@ abstract class AppLocalizations {
   /// No description provided for @egressViaFailover.
   ///
   /// In en, this message translates to:
-  /// **'via {node} (urltest failover)'**
+  /// **'Automatically switched to {node}'**
   String egressViaFailover(Object node);
 
   /// No description provided for @latestRoute.
