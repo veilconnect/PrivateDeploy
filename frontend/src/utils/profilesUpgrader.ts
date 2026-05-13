@@ -387,7 +387,7 @@ export const transformProfileV194 = (config: Recordable) => {
       _server.server_port = url.port
     } else if (server.address.startsWith('quic://')) {
       const url = new URL(server.address)
-      server.type = DnsServer.Quic
+      _server.type = DnsServer.Quic
       _server.server = url.hostname
       _server.server_port = url.port
     } else if (server.address.startsWith('https://')) {
