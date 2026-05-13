@@ -166,6 +166,8 @@ export const useCoreBranch = (isAlpha = false) => {
       const { body } = await HttpGet<Record<string, any>>(releaseUrl, {
         Authorization: getGitHubApiAuthorization(),
       })
+      if (body.message) throw body.message
+
       const release = isAlpha ? body.find((v: any) => v.prerelease === true) : body
       if (!release) throw 'Not Found'
       const { name, tag_name } = release
