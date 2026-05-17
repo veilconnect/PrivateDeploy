@@ -98,6 +98,7 @@ Function .onInit
 
    ; Force kill if still running
    nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+   nsExec::ExecToLog 'taskkill /F /IM privatedeploy-tray.exe'
    ; The bundled sing-box kernel runs as a separate process. If we leave the
    ; old kernel alive across an upgrade it keeps holding the in-memory config
    ; from the previous version, so the freshly-installed app writes a new
@@ -131,6 +132,7 @@ Section
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
+    File "runtime-data\privatedeploy-tray.exe"
     File /r "runtime-data\data"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -152,6 +154,7 @@ Section "uninstall"
         Sleep 2000
     ${EndIf}
     nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+    nsExec::ExecToLog 'taskkill /F /IM privatedeploy-tray.exe'
     nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'
     Sleep 500
 

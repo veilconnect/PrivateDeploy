@@ -43,3 +43,12 @@ func TestTrayRightClickDoesNotExitOnDarwin(t *testing.T) {
 		t.Fatal("expected tray right-click to leave macOS menu behavior unchanged")
 	}
 }
+
+func TestTraySidecarNameUsesWindowsExecutableExtension(t *testing.T) {
+	if got := traySidecarName("windows"); got != "privatedeploy-tray.exe" {
+		t.Fatalf("windows sidecar name = %q", got)
+	}
+	if got := traySidecarName("linux"); got != "privatedeploy-tray" {
+		t.Fatalf("linux sidecar name = %q", got)
+	}
+}

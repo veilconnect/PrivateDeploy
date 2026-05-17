@@ -96,8 +96,17 @@ EOF
 
 echo "  ✅ Windows runtime data 已准备就绪"
 
-# 3. 使用 Wails 构建 Windows 可执行文件并生成 NSIS 安装程序
-echo "==> 第 3 步: 构建 Windows 可执行文件和 NSIS 安装程序"
+# 3. 构建托盘 sidecar。NSIS 模板会把它安装到主程序旁边。
+echo "==> 第 3 步: 构建 Windows 托盘 sidecar"
+GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
+  go build \
+  -trimpath -buildvcs=false \
+  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
+  -o "${RUNTIME_DATA_DIR}/privatedeploy-tray.exe" \
+  ./cmd/privatedeploy-tray/
+
+# 4. 使用 Wails 构建 Windows 可执行文件并生成 NSIS 安装程序
+echo "==> 第 4 步: 构建 Windows 可执行文件和 NSIS 安装程序"
 
 # amd64 版本（带 NSIS 安装程序）
 echo "==> 构建 Windows amd64 + NSIS 安装程序"

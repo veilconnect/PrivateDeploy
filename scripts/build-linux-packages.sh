@@ -128,6 +128,13 @@ GOOS=linux GOARCH=amd64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
   -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -o "$APP_DISPLAY_NAME"
 
+echo "==> 第 3b 步: 构建 Linux 托盘 sidecar"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+  -trimpath -buildvcs=false \
+  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
+  -o "build/bin/privatedeploy-tray" \
+  ./cmd/privatedeploy-tray/
+
 # 4. 创建临时打包目录
 STAGING_DIR="/tmp/${APP_NAME}-packaging"
 rm -rf "$STAGING_DIR"
@@ -137,6 +144,8 @@ mkdir -p "$STAGING_DIR"/{usr/bin,usr/lib/${APP_NAME},usr/share/applications,usr/
 echo "==> 第 4 步: 准备打包文件（排除敏感配置）"
 cp "build/bin/$APP_DISPLAY_NAME" "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
 chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
+cp "build/bin/privatedeploy-tray" "$STAGING_DIR/usr/lib/$APP_NAME/privatedeploy-tray"
+chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/privatedeploy-tray"
 ln -s "../lib/$APP_NAME/$APP_NAME" "$STAGING_DIR/usr/bin/$APP_NAME"
 
 # 只复制必要的数据文件（不含敏感配置）

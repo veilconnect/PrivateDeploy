@@ -82,14 +82,15 @@ func (t *trayProc) spawn(icon []byte) error {
 	if err != nil {
 		return err
 	}
+	sidecarName := traySidecarName(Env.OS)
 	// Look for the sidecar in three places, in order:
 	//   1. Same dir as the main binary (deb install: /usr/lib/privatedeploy/)
 	//   2. ../lib/privatedeploy/ relative to main binary (AppImage: usr/bin
 	//      → usr/lib/privatedeploy/privatedeploy-tray)
 	//   3. PATH (dev fallback after `go build ./cmd/privatedeploy-tray`)
 	candidates := []string{
-		filepath.Join(filepath.Dir(exePath), "privatedeploy-tray"),
-		filepath.Join(filepath.Dir(exePath), "..", "lib", "privatedeploy", "privatedeploy-tray"),
+		filepath.Join(filepath.Dir(exePath), sidecarName),
+		filepath.Join(filepath.Dir(exePath), "..", "lib", "privatedeploy", sidecarName),
 	}
 	var sidecar string
 	for _, c := range candidates {
@@ -99,10 +100,10 @@ func (t *trayProc) spawn(icon []byte) error {
 		}
 	}
 	if sidecar == "" {
-		if p, err := exec.LookPath("privatedeploy-tray"); err == nil {
+		if p, err := exec.LookPath(sidecarName); err == nil {
 			sidecar = p
 		} else {
-			return fmt.Errorf("privatedeploy-tray not found next to %q (searched %v): %w", exePath, candidates, err)
+			return fmt.Errorf("%s not found next to %q (searched %v): %w", sidecarName, exePath, candidates, err)
 		}
 	}
 
@@ -137,6 +138,13 @@ func (t *trayProc) spawn(icon []byte) error {
 
 	go t.reader(stdout)
 	return nil
+}
+
+func traySidecarName(osName string) string {
+	if osName == "windows" {
+		return "privatedeploy-tray.exe"
+	}
+	return "privatedeploy-tray"
 }
 
 func (t *trayProc) reader(r io.ReadCloser) {
