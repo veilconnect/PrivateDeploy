@@ -85,16 +85,44 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
 ShowInstDetails show # This will always show the installation details.
 
+!define PRIVATEDEPLOY_INSTALLER_QUIT_ARG "--privatedeploy-installer-quit"
+
+Function PrivateDeployRequestGracefulShutdown
+   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+   Pop $0
+   Pop $1
+   ${If} $0 == 0
+       DetailPrint "Requesting running ${INFO_PRODUCTNAME} to exit"
+       IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 graceful_shutdown_done
+           ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" ${PRIVATEDEPLOY_INSTALLER_QUIT_ARG}'
+           ; The frontend gets up to 10s to stop the kernel; the backend tray
+           ; fallback exits after 12s if the frontend cannot complete shutdown.
+           Sleep 15000
+       graceful_shutdown_done:
+   ${EndIf}
+FunctionEnd
+
+Function un.PrivateDeployRequestGracefulShutdown
+   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+   Pop $0
+   Pop $1
+   ${If} $0 == 0
+       DetailPrint "Requesting running ${INFO_PRODUCTNAME} to exit"
+       IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 un_graceful_shutdown_done
+           ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" ${PRIVATEDEPLOY_INSTALLER_QUIT_ARG}'
+           Sleep 15000
+       un_graceful_shutdown_done:
+   ${EndIf}
+FunctionEnd
+
 Function .onInit
    !insertmacro wails.checkArchitecture
 
    ; --- Close running instance ---
-   FindWindow $0 "" "${INFO_PRODUCTNAME}"
-   ${If} $0 != 0
-       ; Try graceful WM_CLOSE first
-       SendMessage $0 ${WM_CLOSE} 0 0
-       Sleep 2000
-   ${EndIf}
+   ; WM_CLOSE now intentionally hides the desktop app to the tray on Windows.
+   ; Ask the running instance to perform the same full-exit flow as the tray
+   ; Exit command first, then keep taskkill as a last-resort file-lock cleanup.
+   Call PrivateDeployRequestGracefulShutdown
 
    ; Force kill if still running
    nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
@@ -148,11 +176,7 @@ Section "uninstall"
     !insertmacro wails.setShellContext
 
     ; Close running instance before uninstalling
-    FindWindow $0 "" "${INFO_PRODUCTNAME}"
-    ${If} $0 != 0
-        SendMessage $0 ${WM_CLOSE} 0 0
-        Sleep 2000
-    ${EndIf}
+    Call un.PrivateDeployRequestGracefulShutdown
     nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
     nsExec::ExecToLog 'taskkill /F /IM privatedeploy-tray.exe'
     nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'

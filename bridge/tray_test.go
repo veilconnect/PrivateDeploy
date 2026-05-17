@@ -77,3 +77,21 @@ func TestTrayExitMenuUsesBackendGracefulExit(t *testing.T) {
 		t.Fatal("expected tray exit menu to use backend graceful exit")
 	}
 }
+
+func TestRequestGracefulExitUsesTrayExitFlow(t *testing.T) {
+	origTray := tray
+	t.Cleanup(func() { tray = origTray })
+
+	called := false
+	tray = &trayProc{
+		exitApp: func() {
+			called = true
+		},
+	}
+
+	RequestGracefulExit(&App{})
+
+	if !called {
+		t.Fatal("expected app graceful exit request to use tray exit flow")
+	}
+}

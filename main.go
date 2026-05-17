@@ -4,8 +4,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"io/fs"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -37,6 +37,8 @@ var icon []byte
 //go:embed frontend/dist/imgs/tray_normal_dark.png
 var linuxTrayIcon []byte
 
+const installerQuitArg = "--privatedeploy-installer-quit"
+
 func main() {
 	configureOptionalFileLogging()
 	cleanStaleWebView2Locks()
@@ -52,6 +54,7 @@ func main() {
 	linuxSkipCreateApp := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_SKIP_CREATE_APP") == "1"
 	openInspectorOnStartup := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_OPEN_INSPECTOR_ON_STARTUP") == "1"
 	skipRollingRelease := os.Getenv("PRIVATEDEPLOY_SKIP_ROLLING_RELEASE") == "1"
+	installerQuitLaunch := isInstallerQuitRequest(os.Args)
 
 	appIcon := icon
 	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
@@ -75,7 +78,7 @@ func main() {
 		return bridge.NewApp()
 	}()
 	trayStart := func() {}
-	if !linuxMinimalShell && os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
+	if !installerQuitLaunch && !linuxMinimalShell && os.Getenv("PRIVATEDEPLOY_DISABLE_TRAY") != "1" {
 		trayStart, _ = bridge.CreateTray(app, appIcon)
 	}
 
@@ -92,6 +95,11 @@ func main() {
 			return bridge.Env.AppName
 		}(),
 		OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+			if isInstallerQuitRequest(data.Args) {
+				log.Printf("[Startup] received installer quit request")
+				bridge.RequestGracefulExit(app)
+				return
+			}
 			runtime.Show(app.Ctx)
 			runtime.EventsEmit(app.Ctx, "onLaunchApp", data.Args)
 		},
@@ -263,6 +271,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
 		os.Exit(1)
 	}
+}
+
+func isInstallerQuitRequest(args []string) bool {
+	for _, arg := range args {
+		if arg == installerQuitArg {
+			return true
+		}
+	}
+	return false
 }
 
 // webView2LockNames are the Chromium/WebView2 lock files that can persist

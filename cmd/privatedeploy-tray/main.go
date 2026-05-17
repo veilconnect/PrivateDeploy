@@ -89,13 +89,13 @@ func handleCmd(c trayipc.Cmd) {
 		}
 	case "quit":
 		systray.Quit()
-		os.Exit(0)
 	}
 }
 
 func reader() {
 	scan := bufio.NewScanner(os.Stdin)
 	scan.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	defer systray.Quit()
 	for scan.Scan() {
 		line := scan.Bytes()
 		var c trayipc.Cmd

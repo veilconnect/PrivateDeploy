@@ -189,6 +189,21 @@ func (t *trayProc) handleTrayRightClick() {
 	t.requestGracefulExit()
 }
 
+func RequestGracefulExit(a *App) {
+	tray.mu.Lock()
+	if tray.app == nil {
+		tray.app = a
+	}
+	if tray.exitApp == nil && a != nil {
+		tray.exitApp = func() {
+			runtime.EventsEmit(a.Ctx, "onExitApp")
+		}
+	}
+	tray.mu.Unlock()
+
+	tray.requestGracefulExit()
+}
+
 func (t *trayProc) requestGracefulExit() {
 	if !t.exiting.CompareAndSwap(false, true) {
 		return

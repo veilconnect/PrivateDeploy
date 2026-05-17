@@ -194,6 +194,28 @@ func TestCleanWebView2LocksIn_FileTargetIsNoop(t *testing.T) {
 	}
 }
 
+func TestIsInstallerQuitRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "empty args", args: nil, want: false},
+		{name: "regular launch", args: []string{"PrivateDeploy.exe"}, want: false},
+		{name: "installer quit flag only", args: []string{installerQuitArg}, want: true},
+		{name: "installer quit flag after exe path", args: []string{"PrivateDeploy.exe", installerQuitArg}, want: true},
+		{name: "similar flag is ignored", args: []string{"PrivateDeploy.exe", installerQuitArg + "=1"}, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isInstallerQuitRequest(tc.args); got != tc.want {
+				t.Fatalf("isInstallerQuitRequest(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWebView2UserDataCandidates_HonorsExplicitEnv(t *testing.T) {
 	t.Setenv("WEBVIEW2_USER_DATA_FOLDER", filepath.Join(t.TempDir(), "explicit-wv2"))
 	got := webView2UserDataCandidates()
