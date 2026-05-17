@@ -29,6 +29,7 @@ type trayProc struct {
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
 	app      *App
+	exitApp  func()
 	idSeq    atomic.Uint64
 	handlers sync.Map // id → func()
 }
@@ -41,6 +42,9 @@ var tray = &trayProc{}
 // unchanged.
 func CreateTray(a *App, icon []byte) (trayStart, trayEnd func()) {
 	tray.app = a
+	tray.exitApp = func() {
+		runtime.EventsEmit(a.Ctx, "onExitApp")
+	}
 
 	if err := tray.spawn(icon); err != nil {
 		log.Printf("[Tray] sidecar spawn failed: %v — running without tray", err)
@@ -55,7 +59,7 @@ func CreateTray(a *App, icon []byte) (trayStart, trayEnd func()) {
 		// Fallback menu items in case the frontend never calls UpdateTrayMenus
 		tray.addItemLocked("__show", "Show", "Show", false, func() { a.ShowMainWindow() })
 		tray.addItemLocked("__restart", "Restart", "Restart", false, func() { a.RestartApp() })
-		tray.addItemLocked("__exit", "Exit", "Exit", false, func() { a.ExitApp() })
+		tray.addItemLocked("__exit", "Exit", "Exit", false, func() { tray.requestGracefulExit() })
 	}
 
 	stop := func() {
@@ -157,7 +161,29 @@ func (t *trayProc) reader(r io.ReadCloser) {
 					t.app.ShowMainWindow()
 				}
 			}
+		case "tray_rclick":
+			// Linux and Windows close the window to tray by default. A right
+			// click on the tray icon requests the frontend's full-exit flow so
+			// it can stop the kernel before the process exits.
+			t.handleTrayRightClick()
 		}
+	}
+}
+
+func (t *trayProc) handleTrayRightClick() {
+	if Env.OS == "darwin" {
+		return
+	}
+	t.requestGracefulExit()
+}
+
+func (t *trayProc) requestGracefulExit() {
+	if t.exitApp != nil {
+		t.exitApp()
+		return
+	}
+	if t.app != nil {
+		runtime.EventsEmit(t.app.Ctx, "onExitApp")
 	}
 }
 
