@@ -55,6 +55,9 @@ func main() {
 	openInspectorOnStartup := bridge.Env.OS == "linux" && os.Getenv("PRIVATEDEPLOY_OPEN_INSPECTOR_ON_STARTUP") == "1"
 	skipRollingRelease := os.Getenv("PRIVATEDEPLOY_SKIP_ROLLING_RELEASE") == "1"
 	installerQuitLaunch := isInstallerQuitRequest(os.Args)
+	if installerQuitLaunch && handleInstallerQuitRequest(os.Args[1:]) {
+		return
+	}
 
 	appIcon := icon
 	if bridge.Env.OS == "linux" && len(linuxTrayIcon) > 0 {
