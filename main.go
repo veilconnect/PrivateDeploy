@@ -245,6 +245,10 @@ func main() {
 			}()
 		},
 		OnBeforeClose: func(ctx context.Context) (prevent bool) {
+			if bridge.Env.OS == "windows" || bridge.Env.OS == "linux" {
+				runtime.WindowHide(ctx)
+				return true
+			}
 			runtime.EventsEmit(ctx, "onBeforeExitApp")
 			return true
 		},

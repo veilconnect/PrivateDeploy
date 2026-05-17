@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineComponent, h, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, ref } from 'vue'
 
 import {
   WindowSetAlwaysOnTop,
@@ -24,12 +24,12 @@ const kernelApiStore = useKernelApiStore()
 const envStore = useEnvStore()
 const appStore = useAppStore()
 
-const isWindows = envStore.env.os === 'windows'
-const isDarwin = envStore.env.os === 'darwin'
+const isWindows = computed(() => envStore.env.os === 'windows')
+const isDarwin = computed(() => envStore.env.os === 'darwin')
 
 const TitleBar = defineComponent((_, { slots }) => {
   return () => {
-    if (!isWindows && !isDarwin) {
+    if (!isWindows.value && !isDarwin.value) {
       return h('div', { style: 'display: none' })
     }
     return h(
@@ -38,7 +38,7 @@ const TitleBar = defineComponent((_, { slots }) => {
         class: 'flex items-center py-8 gap-8 px-12',
         style: '--wails-draggable: drag',
       },
-      [isWindows && slots.logo?.(), slots.title?.(), isWindows && slots.actions?.()],
+      [isWindows.value && slots.logo?.(), slots.title?.(), isWindows.value && slots.actions?.()],
     )
   }
 })
@@ -51,7 +51,7 @@ const pinWindow = () => {
 const closeWindow = async () => {
   // Windows/Linux: always close-to-tray; users quit via tray "Exit" or the
   // title-bar menu's "Exit App". macOS keeps the legacy exitOnClose setting.
-  const respectExitOnClose = isDarwin
+  const respectExitOnClose = isDarwin.value
   if (respectExitOnClose && appSettingsStore.app.exitOnClose) {
     exitApp()
   } else {
