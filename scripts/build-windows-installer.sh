@@ -101,7 +101,7 @@ echo "==> 第 3 步: 构建 Windows 托盘 sidecar"
 GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
   go build \
   -trimpath -buildvcs=false \
-  -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
+  -ldflags "-H windowsgui -X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -o "${RUNTIME_DATA_DIR}/privatedeploy-tray.exe" \
   ./cmd/privatedeploy-tray/
 

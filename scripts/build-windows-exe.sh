@@ -89,6 +89,13 @@ build_windows() {
       -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
       -o "$APP_NAME.exe"
 
+    GOOS=windows GOARCH=$arch PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
+      go build \
+      -trimpath -buildvcs=false \
+      -ldflags "-H windowsgui -X privatedeploy/bridge.AppVersion=v${VERSION}" \
+      -o "build/bin/privatedeploy-tray.exe" \
+      ./cmd/privatedeploy-tray/
+
     # 临时移除不需要打包的文件
     BACKUP_DIR=$(mktemp -d)
 
@@ -132,6 +139,7 @@ build_windows() {
 
     # 复制可执行文件
     cp "build/bin/${APP_NAME}.exe" "$PACKAGE_DIR/"
+    cp "build/bin/privatedeploy-tray.exe" "$PACKAGE_DIR/"
 
     # 复制必要的资源文件
     mkdir -p "$PACKAGE_DIR/data/.cache"
@@ -168,6 +176,7 @@ DATAEOF
 
     # 清理
     rm "${APP_NAME}.exe"
+    rm -f "privatedeploy-tray.exe"
     rm -rf "$PACKAGE_DIR"
 
     # 恢复所有文件
