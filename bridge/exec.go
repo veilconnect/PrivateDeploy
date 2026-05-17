@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -145,6 +146,88 @@ func (a *App) KillProcess(pid int, timeout int) FlagResult {
 	}
 
 	return FlagResult{true, "Success"}
+}
+
+// KillOrphanCores terminates any leftover sing-box processes whose executable
+// lives under this app's BasePath. Returns a comma-separated list of PIDs that
+// were killed (empty string if none).
+//
+// On Windows, bbolt's exclusive lock on cache.db survives an ungraceful app
+// shutdown (installer overwrite, taskkill /F, power loss). The next launch
+// then bounces five times on "initialize cache-file" errors before giving up
+// because RemoveFile cannot delete a file with FILE_SHARE_NONE open. We clear
+// the lock by killing the holder before spawning a new core.
+func (a *App) KillOrphanCores() FlagResult {
+	basePath := strings.TrimSpace(Env.BasePath)
+	if basePath == "" {
+		return FlagResult{false, "base path not initialized"}
+	}
+	basePath = filepath.Clean(basePath)
+
+	procs, err := process.Processes()
+	if err != nil {
+		return FlagResult{false, err.Error()}
+	}
+
+	selfPid := int32(os.Getpid())
+	killed := make([]string, 0, 2)
+
+	for _, p := range procs {
+		if p == nil || p.Pid == selfPid {
+			continue
+		}
+
+		name, err := p.Name()
+		if err != nil || !strings.HasPrefix(strings.ToLower(name), "sing-box") {
+			continue
+		}
+
+		exe, err := p.Exe()
+		// Skip if we can't confirm ownership — better to leave a process
+		// alive than to kill an unrelated sing-box.
+		if err != nil || exe == "" || !pathHasPrefix(exe, basePath) {
+			continue
+		}
+
+		proc, err := os.FindProcess(int(p.Pid))
+		if err != nil {
+			log.Printf("KillOrphanCores: FindProcess(%d) failed: %v", p.Pid, err)
+			continue
+		}
+
+		log.Printf("KillOrphanCores: terminating orphan sing-box pid=%d exe=%s", p.Pid, exe)
+		if err := SendExitSignal(proc); err != nil {
+			log.Printf("KillOrphanCores: SendExitSignal(%d): %v", p.Pid, err)
+		}
+		if err := waitForProcessExitWithTimeout(proc, 3); err != nil {
+			log.Printf("KillOrphanCores: wait/kill(%d): %v", p.Pid, err)
+		}
+		killed = append(killed, strconv.Itoa(int(p.Pid)))
+	}
+
+	return FlagResult{true, strings.Join(killed, ",")}
+}
+
+// pathHasPrefix reports whether p lies under base, treating paths
+// case-insensitively on Windows and normalizing mixed separators that
+// gopsutil sometimes returns.
+func pathHasPrefix(p, base string) bool {
+	cp := filepath.Clean(p)
+	cb := filepath.Clean(base)
+	sep := "/"
+	if Env.OS == "windows" {
+		cp = strings.ReplaceAll(strings.ToLower(cp), `\`, "/")
+		cb = strings.ReplaceAll(strings.ToLower(cb), `\`, "/")
+	} else {
+		sep = string(filepath.Separator)
+	}
+	if cp == cb {
+		return true
+	}
+	if !strings.HasSuffix(cb, sep) {
+		cb += sep
+	}
+	return strings.HasPrefix(cp, cb)
 }
 
 func waitForProcessExitWithTimeout(process *os.Process, timeoutSeconds int) error {

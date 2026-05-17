@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -30,11 +31,14 @@ type trayProc struct {
 	stdin    io.WriteCloser
 	app      *App
 	exitApp  func()
+	exiting  atomic.Bool
 	idSeq    atomic.Uint64
 	handlers sync.Map // id → func()
 }
 
 var tray = &trayProc{}
+
+const trayExitFallbackDelay = 12 * time.Second
 
 // CreateTray spawns the sidecar and returns a (start, stop) pair. The start
 // function performs the initial menu population once the sidecar reports
@@ -186,12 +190,26 @@ func (t *trayProc) handleTrayRightClick() {
 }
 
 func (t *trayProc) requestGracefulExit() {
-	if t.exitApp != nil {
-		t.exitApp()
+	if !t.exiting.CompareAndSwap(false, true) {
 		return
 	}
-	if t.app != nil {
+	if t.exitApp != nil {
+		t.exitApp()
+	} else if t.app != nil {
 		runtime.EventsEmit(t.app.Ctx, "onExitApp")
+	}
+	if t.app != nil {
+		go t.forceExitIfFrontendDidNot()
+	}
+}
+
+func (t *trayProc) forceExitIfFrontendDidNot() {
+	time.Sleep(trayExitFallbackDelay)
+	if t.app != nil {
+		if res := t.app.KillOrphanCores(); !res.Flag || res.Data != "" {
+			log.Printf("[Tray] exit fallback KillOrphanCores: ok=%v data=%q", res.Flag, res.Data)
+		}
+		t.app.ExitApp()
 	}
 }
 
@@ -256,6 +274,9 @@ func (t *trayProc) createMenuItemLocked(m MenuItem, a *App, parentID string) {
 	case "item":
 		event := m.Event
 		click := func() { go runtime.EventsEmit(a.Ctx, "onMenuItemClick", event) }
+		if strings.HasSuffix(event, "tray.exit") {
+			click = func() { t.requestGracefulExit() }
+		}
 		var id string
 		if parentID == "" {
 			id = t.addItemLocked("", m.Text, m.Tooltip, m.Checked, click)
