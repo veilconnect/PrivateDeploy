@@ -81,7 +81,7 @@ build_windows() {
         export CXX=i686-w64-mingw32-g++
     fi
 
-    GOOS=windows GOARCH=$arch PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 \
+    GOOS=windows GOARCH=$arch PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 PRIVATEDEPLOY_DISABLE_TRAY=1 \
       bash "$(dirname "$0")/with_clean_runtime_data.sh" \
       wails build \
       -m -s -trimpath \
