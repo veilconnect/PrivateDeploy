@@ -1,6 +1,8 @@
 build/bin
+build/windows/installer/runtime-data/
 frontend/dist
 .pnpm-store/
+.codex-tmp/
 
 .DS_Store
 
