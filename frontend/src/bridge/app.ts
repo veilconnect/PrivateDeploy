@@ -68,6 +68,10 @@ export const DestroyCloudInstance = async (instanceId: string): Promise<void> =>
   await App.DestroyCloudInstanceTyped(instanceId)
 }
 
+export const RepairCloudInstance = async (instanceId: string): Promise<Record<string, any>> => {
+  return await App.RepairCloudInstanceTyped(instanceId) as Record<string, any>
+}
+
 export const ListCloudRegions = async (): Promise<CloudRegion[]> => {
   return await App.ListCloudRegionsTyped() as CloudRegion[]
 }

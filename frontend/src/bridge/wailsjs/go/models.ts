@@ -1,13 +1,13 @@
 export namespace bridge {
-
+	
 	export class CloudProviderInfo {
 	    name: string;
 	    displayName: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CloudProviderInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -23,11 +23,11 @@ export namespace bridge {
 	    adminElevationSupported: boolean;
 	    configurableWebviewGpuPolicy: boolean;
 	    kernelGrantPermissionSupported: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PlatformCapabilities(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.traySupported = source["traySupported"];
@@ -47,11 +47,11 @@ export namespace bridge {
 	    os: string;
 	    arch: string;
 	    capabilities: PlatformCapabilities;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EnvResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.appName = source["appName"];
@@ -61,7 +61,7 @@ export namespace bridge {
 	        this.arch = source["arch"];
 	        this.capabilities = this.convertValues(source["capabilities"], PlatformCapabilities);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -84,11 +84,11 @@ export namespace bridge {
 	    StopOutputKeyword: string;
 	    Convert: boolean;
 	    Env: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExecOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.StopOutputKeyword = source["StopOutputKeyword"];
@@ -99,11 +99,11 @@ export namespace bridge {
 	export class FlagResult {
 	    flag: boolean;
 	    data: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FlagResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.flag = source["flag"];
@@ -115,11 +115,11 @@ export namespace bridge {
 	    status: number;
 	    headers: Record<string, Array<string>>;
 	    body: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HTTPResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.flag = source["flag"];
@@ -130,11 +130,11 @@ export namespace bridge {
 	}
 	export class IOOptions {
 	    Mode: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IOOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Mode = source["Mode"];
@@ -148,11 +148,11 @@ export namespace bridge {
 	    children: MenuItem[];
 	    hidden: boolean;
 	    checked: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MenuItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.type = source["type"];
@@ -163,7 +163,7 @@ export namespace bridge {
 	        this.hidden = source["hidden"];
 	        this.checked = source["checked"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -186,11 +186,11 @@ export namespace bridge {
 	    id: string;
 	    success: boolean;
 	    error?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MultiDeployResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -201,18 +201,18 @@ export namespace bridge {
 	export class NotifyOptions {
 	    AppName: string;
 	    Beep: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new NotifyOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.AppName = source["AppName"];
 	        this.Beep = source["Beep"];
 	    }
 	}
-
+	
 	export class RequestOptions {
 	    Proxy: string;
 	    Insecure: boolean;
@@ -220,11 +220,11 @@ export namespace bridge {
 	    Timeout: number;
 	    CancelId: string;
 	    FileField: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RequestOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Proxy = source["Proxy"];
@@ -243,11 +243,11 @@ export namespace bridge {
 	    UploadPath: string;
 	    UploadRoute: string;
 	    MaxUploadSize: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServerOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Cert = source["Cert"];
@@ -263,11 +263,11 @@ export namespace bridge {
 	    icon: string;
 	    title: string;
 	    tooltip: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrayContent(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.icon = source["icon"];
@@ -279,16 +279,16 @@ export namespace bridge {
 }
 
 export namespace cdn {
-
+	
 	export class CustomDomain {
 	    zoneId?: string;
 	    zoneName?: string;
 	    subdomain?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CustomDomain(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.zoneId = source["zoneId"];
@@ -311,11 +311,11 @@ export namespace cdn {
 	    zoneId?: string;
 	    routeId?: string;
 	    dnsRecordId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Deployment(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.nodeId = source["nodeId"];
@@ -332,7 +332,7 @@ export namespace cdn {
 	        this.routeId = source["routeId"];
 	        this.dnsRecordId = source["dnsRecordId"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -360,11 +360,11 @@ export namespace cdn {
 	    workersDevExample?: string;
 	    deployments: Record<string, Deployment>;
 	    customDomain?: CustomDomain;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new State(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.status = source["status"];
@@ -376,7 +376,7 @@ export namespace cdn {
 	        this.deployments = this.convertValues(source["deployments"], Deployment, true);
 	        this.customDomain = this.convertValues(source["customDomain"], CustomDomain);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -399,11 +399,11 @@ export namespace cdn {
 	    id: string;
 	    name: string;
 	    status?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Zone(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -415,7 +415,7 @@ export namespace cdn {
 }
 
 export namespace cloud {
-
+	
 	export class CreateInstanceOptions {
 	    label: string;
 	    region: string;
@@ -424,11 +424,11 @@ export namespace cloud {
 	    sshKeyId: string;
 	    host?: string;
 	    extra?: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateInstanceOptions(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
@@ -471,11 +471,11 @@ export namespace cloud {
 	    trojanServerName?: string;
 	    trojanInsecure?: boolean;
 	    vlessRelayPort?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Instance(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -508,7 +508,7 @@ export namespace cloud {
 	        this.trojanInsecure = source["trojanInsecure"];
 	        this.vlessRelayPort = source["vlessRelayPort"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -538,11 +538,11 @@ export namespace cloud {
 	    hourlyCost?: number;
 	    type?: string;
 	    locations?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Plan(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -563,11 +563,11 @@ export namespace cloud {
 	    defaultRegion: string;
 	    defaultPlan: string;
 	    extra?: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProviderConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider = source["provider"];
@@ -582,11 +582,11 @@ export namespace cloud {
 	    city: string;
 	    country: string;
 	    continent: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Region(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -599,16 +599,16 @@ export namespace cloud {
 }
 
 export namespace ssh {
-
+	
 	export class ServerInfo {
 	    os: string;
 	    arch: string;
 	    memoryMB: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServerInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.os = source["os"];

@@ -33,9 +33,6 @@ Future<bool> autoFailoverToNextCloudNode({
   final candidates = connectableCloudInstances(cloudProvider)
       .where((inst) => !triedProfileNames.contains(cloudProfileName(inst)))
       .toList();
-  if (candidates.isEmpty) {
-    return false;
-  }
 
   for (final instance in candidates) {
     final profileName = cloudProfileName(instance);
@@ -95,6 +92,37 @@ Future<bool> autoFailoverToNextCloudNode({
     // Note: connect() resets _upstreamDegradedRestartAttempts to 0, so the
     // new node gets its own restart budget too.
   }
+
+  // If cloud access is unavailable (for example Android secure storage was
+  // reset and API keys cannot be decrypted), the app may still have usable
+  // cached Cloud profiles in Hive. Try those before giving up so a saved
+  // backup route can recover the user without needing provider metadata.
+  final savedCandidates = profileProvider.profiles
+      .where(isUsableSavedCloudProfile)
+      .where((profile) => !triedProfileNames.contains(profile.name))
+      .toList();
+  for (final profile in savedCandidates) {
+    final config = profile.content?.trim();
+    if (config == null || config.isEmpty) {
+      continue;
+    }
+    final activated = await profileProvider.activateProfile(profile.id);
+    if (!activated) {
+      continue;
+    }
+    if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
+    final connected = await vpnProvider.connect(
+      configJson: config,
+      profileName: profile.name,
+      stabilityCheckDuration: const Duration(seconds: 6),
+      statusPollInterval: const Duration(milliseconds: 500),
+    );
+    if (connected && !vpnProvider.isDegraded) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -147,7 +175,8 @@ Future<void> useCloudNodeAndConnect({
   if (!success) {
     showNodesActionSnackBar(
       context,
-      message: profileProvider.error ?? AppLocalizations.of(context)!.failedToActivateNode,
+      message: profileProvider.error ??
+          AppLocalizations.of(context)!.failedToActivateNode,
       backgroundColor: Colors.red,
     );
     return;
@@ -184,7 +213,8 @@ Future<void> activateProfileAndConnect({
   if (!success) {
     showNodesActionSnackBar(
       context,
-      message: profileProvider.error ?? AppLocalizations.of(context)!.failedToActivate,
+      message: profileProvider.error ??
+          AppLocalizations.of(context)!.failedToActivate,
       backgroundColor: Colors.red,
     );
     return;
@@ -225,12 +255,12 @@ Future<void> handleNodesConnect({
   );
 
   // Cold-start / first-node-unreachable fallback: if the primary attempt
-  // left the VPN disconnected (egress probe failed, node unreachable on the
-  // current network, etc.), cycle through the remaining ready cloud nodes.
-  // Tests show the initial node is often a stale favourite that no longer
-  // reaches the user's network; auto-rotating salvages the connect button
-  // instead of making the user manually tap "使用并切换".
-  if (vpnProvider.status == VpnStatus.connected) {
+  // left the VPN disconnected, or connected in the explicit upstream-blocked
+  // state, cycle through the remaining ready cloud nodes. A startup probe
+  // timeout is intentionally excluded: that signal can be transient during
+  // Wi-Fi/cellular hand-offs and should not force a node switch.
+  if (vpnProvider.status == VpnStatus.connected &&
+      !_shouldTryBackupAfterConnect(vpnProvider)) {
     return;
   }
 
@@ -275,7 +305,10 @@ Future<void> handleNodesConnect({
   for (var i = 0; i < remaining.length; i += 1) {
     final next = remaining[i];
     if (!context.mounted) return;
-    if (vpnProvider.status == VpnStatus.connected) return;
+    if (vpnProvider.status == VpnStatus.connected &&
+        !_shouldTryBackupAfterConnect(vpnProvider)) {
+      return;
+    }
     tried.add(cloudProfileName(next));
     if (context.mounted) {
       showNodesActionSnackBar(
@@ -296,7 +329,10 @@ Future<void> handleNodesConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
     );
-    if (vpnProvider.status == VpnStatus.connected) return;
+    if (vpnProvider.status == VpnStatus.connected &&
+        !_shouldTryBackupAfterConnect(vpnProvider)) {
+      return;
+    }
     // Record this failure too so the next cold-start auto-fastest can
     // deprioritise it.
     cloudProvider.saveLatencyCheck(
@@ -310,8 +346,31 @@ Future<void> handleNodesConnect({
     );
   }
 
+  if (vpnProvider.status != VpnStatus.connected ||
+      _shouldTryBackupAfterConnect(vpnProvider)) {
+    final switched = await autoFailoverToNextCloudNode(
+      cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+      triedProfileNames: tried,
+    );
+    if (switched ||
+        (vpnProvider.status == VpnStatus.connected &&
+            !_shouldTryBackupAfterConnect(vpnProvider))) {
+      return;
+    }
+  }
+
   if (!context.mounted) return;
-  if (vpnProvider.status != VpnStatus.connected) {
+  if (vpnProvider.status != VpnStatus.connected ||
+      _shouldTryBackupAfterConnect(vpnProvider)) {
+    if (vpnProvider.status == VpnStatus.connected &&
+        _shouldTryBackupAfterConnect(vpnProvider)) {
+      await vpnProvider.stopDegradedSession(
+        reason: vpnProvider.error ?? vpnProvider.diagnosticsError,
+      );
+      if (!context.mounted) return;
+    }
     showNodesActionSnackBar(
       context,
       message: AppLocalizations.of(context)!.allNodesFailedCheckNetwork,
@@ -319,6 +378,14 @@ Future<void> handleNodesConnect({
       replaceCurrent: true,
     );
   }
+}
+
+bool _shouldTryBackupAfterConnect(VpnProvider vpnProvider) {
+  if (vpnProvider.status != VpnStatus.connected || !vpnProvider.isDegraded) {
+    return false;
+  }
+  final warning = vpnProvider.error ?? vpnProvider.diagnosticsError;
+  return warning != VpnProvider.startupProbeInconclusiveMessage;
 }
 
 Future<void> handleNodesDisconnect({
@@ -376,8 +443,8 @@ Future<void> connectSelectedProfile({
   if (cloudProvider.isBenchmarkingAll) {
     cloudProvider.requestBenchmarkAllAbort();
     final deadline = DateTime.now().add(const Duration(seconds: 8));
-    while (cloudProvider.isBenchmarkingAll &&
-        DateTime.now().isBefore(deadline)) {
+    while (
+        cloudProvider.isBenchmarkingAll && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 150));
     }
     if (vpnProvider.status == VpnStatus.connected) {
@@ -398,15 +465,16 @@ Future<void> connectSelectedProfile({
 
   final activeProfile = profileProvider.activeProfile;
   final readyCloudNodes = connectableCloudInstances(cloudProvider);
-  final activeCloudInstance = activeProfile != null &&
-          isCloudManagedProfile(activeProfile)
-      ? readyCloudNodes
-          .where((inst) => cloudProfileName(inst) == activeProfile.name)
-          .firstOrNull
-      : null;
+  final activeCloudInstance =
+      activeProfile != null && isCloudManagedProfile(activeProfile)
+          ? readyCloudNodes
+              .where((inst) => cloudProfileName(inst) == activeProfile.name)
+              .firstOrNull
+          : null;
 
   if (activeCloudInstance != null) {
-    final refreshedConfig = cloudProvider.generateNodeConfig(activeCloudInstance);
+    final refreshedConfig =
+        cloudProvider.generateNodeConfig(activeCloudInstance);
     if (refreshedConfig != null) {
       final refreshed = await profileProvider.saveProfileContent(
         activeProfile!.id,
@@ -429,7 +497,8 @@ Future<void> connectSelectedProfile({
 
   if (autoSelectFastestCloudNode &&
       (activeProfile == null ||
-          (isCloudManagedProfile(activeProfile) && activeCloudInstance == null))) {
+          (isCloudManagedProfile(activeProfile) &&
+              activeCloudInstance == null))) {
     final usedFastestNode = await _useFastestReadyCloudNode(
       context: context,
       cloudProvider: cloudProvider,
@@ -539,9 +608,8 @@ Future<void> connectSelectedProfile({
         : (vpnProvider.error == null
             ? l10nResult.failedToConnectVpn
             : localizeVpnStatusMessage(vpnProvider.error, l10nResult)),
-    backgroundColor: connected
-        ? (degraded ? Colors.orange : Colors.green)
-        : Colors.red,
+    backgroundColor:
+        connected ? (degraded ? Colors.orange : Colors.green) : Colors.red,
   );
 }
 
@@ -610,7 +678,8 @@ Future<bool> _useFastestReadyCloudNode({
   if (selectedInstance == null) {
     showNodesActionSnackBar(
       context,
-      message: selection.error ?? AppLocalizations.of(context)!.noReadyCloudNode,
+      message:
+          selection.error ?? AppLocalizations.of(context)!.noReadyCloudNode,
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );

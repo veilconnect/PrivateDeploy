@@ -52,7 +52,12 @@ class NodesVpnSection extends StatelessWidget {
     final savedProfileCount = profileProvider.profiles
         .where((profile) => !isCloudManagedProfile(profile))
         .length;
-    final availableRouteCount = readyCloudNodes.length + savedProfileCount;
+    final cloudRouteCount = availableCloudRouteCount(
+      readyCloudNodes: readyCloudNodes,
+      profiles: profileProvider.profiles,
+      selectedProfile: selectedProfile,
+    );
+    final availableRouteCount = cloudRouteCount + savedProfileCount;
     final profileValue = selectedProfile?.name ?? l10n.disconnected;
     final profileHint = _connectionHeaderHint(
       l10n: l10n,
@@ -60,7 +65,7 @@ class NodesVpnSection extends StatelessWidget {
       cloudProvider: cloudProvider,
       selectedProfile: selectedProfile,
       savedProfileCount: savedProfileCount,
-      readyCloudNodeCount: readyCloudNodes.length,
+      readyCloudNodeCount: cloudRouteCount,
     );
     final latestDecision = vpnProvider.recentRouteDecisions.isNotEmpty
         ? vpnProvider.recentRouteDecisions.first
@@ -145,7 +150,7 @@ class NodesVpnSection extends StatelessWidget {
                 value: '$availableRouteCount',
                 hint: _availableRoutesHint(
                   l10n: l10n,
-                  readyCloudNodeCount: readyCloudNodes.length,
+                  readyCloudNodeCount: cloudRouteCount,
                   savedProfileCount: savedProfileCount,
                 ),
                 color: const Color(0xFF1452CC),
@@ -350,6 +355,9 @@ String _connectionHeaderHint({
       );
       if (providerLabel != null) {
         return '$providerLabel · ${_statusLabel(vpnProvider.status, l10n, degraded: vpnProvider.isDegraded)}';
+      }
+      if (isUsableSavedCloudProfile(selectedProfile)) {
+        return '${l10n.cloudNodes} · ${_statusLabel(vpnProvider.status, l10n, degraded: vpnProvider.isDegraded)}';
       }
     }
     return _statusLabel(vpnProvider.status, l10n,

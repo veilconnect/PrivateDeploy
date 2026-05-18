@@ -282,6 +282,56 @@ void main() {
       expect(selector['default'], 'auto');
     });
 
+    test('edge443 nodes probe Trojan 443 before high ports in auto mode', () {
+      final instance = CloudInstance(
+        id: 'node-edge',
+        provider: 'vultr',
+        label: 'edge-1',
+        status: 'active',
+        region: 'nrt',
+        plan: 'vc2-1c-1gb',
+        ipv4: '1.2.3.4',
+        nodeInfo: const NodeInfo(
+          ssPort: 24443,
+          ssPassword: 'ss-pass',
+          hyPort: 443,
+          hyPassword: 'hy-pass',
+          hyServerName: 'example.com',
+          hyInsecure: false,
+          vlessPort: 8443,
+          vlessUuid: 'uuid-123',
+          vlessPublicKey: 'abc+/==',
+          vlessShortId: 'shortid',
+          vlessServerName: 'example.com',
+          trojanPort: 443,
+          trojanPassword: 'trojan-pass',
+          trojanServerName: 'example.com',
+          trojanInsecure: false,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(instance);
+      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds =
+          (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final selector = outbounds.firstWhere((item) => item['tag'] == 'select');
+      final urltest = outbounds.firstWhere((item) => item['tag'] == 'auto');
+
+      expect(selector['outbounds'], [
+        'auto',
+        'edge-1-Trojan',
+        'edge-1-Hy2',
+        'edge-1-VLESS',
+        'edge-1-SS',
+      ]);
+      expect(urltest['outbounds'], [
+        'edge-1-Trojan',
+        'edge-1-Hy2',
+        'edge-1-VLESS',
+        'edge-1-SS',
+      ]);
+    });
+
     test('manual endpoint selection omits auto urltest and unused protocols',
         () {
       final instance = CloudInstance(

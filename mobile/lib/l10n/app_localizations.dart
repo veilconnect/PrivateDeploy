@@ -674,6 +674,12 @@ abstract class AppLocalizations {
   /// **'Node Details'**
   String get nodeDetails;
 
+  /// No description provided for @repairNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Repair / Redeploy'**
+  String get repairNode;
+
   /// No description provided for @deleteNode.
   ///
   /// In en, this message translates to:
@@ -691,6 +697,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{ms} ms latency'**
   String msLatency(Object ms);
+
+  /// No description provided for @repairNodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Repair / Redeploy Node'**
+  String get repairNodeTitle;
+
+  /// No description provided for @repairNodeConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Repair \"{label}\"?\n\nSSH nodes will redeploy on the same server. Cloud provider nodes will create a same-region replacement and keep the old node until you delete it.'**
+  String repairNodeConfirm(Object label);
+
+  /// No description provided for @nodeRepairCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Node repair completed'**
+  String get nodeRepairCompleted;
+
+  /// No description provided for @nodeRedeployStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Replacement node is deploying. The old node was kept.'**
+  String get nodeRedeployStarted;
+
+  /// No description provided for @nodeRepairCleanupNeeded.
+  ///
+  /// In en, this message translates to:
+  /// **'Node repair completed, but local cleanup needs attention'**
+  String get nodeRepairCleanupNeeded;
+
+  /// No description provided for @failedToRepair.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to repair'**
+  String get failedToRepair;
 
   /// No description provided for @deleteNodeTitle.
   ///

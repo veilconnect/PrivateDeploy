@@ -1,5 +1,8 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../shared/utils/logger.dart';
 
 class StorageService {
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
@@ -32,16 +35,38 @@ class StorageService {
     await _prefs.remove(key);
   }
 
-  static Future<void> saveSecureString(String key, String value) async {
-    await _secureStorage.write(key: key, value: value);
+  static Future<bool> saveSecureString(String key, String value) async {
+    try {
+      await _secureStorage.write(key: key, value: value);
+      return true;
+    } on PlatformException catch (error) {
+      AppLogger.warning(
+        '[StorageService] Secure storage write failed for "$key"; falling back to app preferences: ${error.message ?? error.code}',
+      );
+      await _prefs.setString(key, value);
+      return false;
+    }
   }
 
   static Future<String?> getSecureString(String key) async {
-    return _secureStorage.read(key: key);
+    try {
+      return await _secureStorage.read(key: key) ?? _prefs.getString(key);
+    } on PlatformException catch (error) {
+      AppLogger.warning(
+        '[StorageService] Secure storage read failed for "$key"; treating it as unavailable: ${error.message ?? error.code}',
+      );
+      return _prefs.getString(key);
+    }
   }
 
   static Future<void> removeSecure(String key) async {
-    await _secureStorage.delete(key: key);
+    try {
+      await _secureStorage.delete(key: key);
+    } on PlatformException catch (error) {
+      AppLogger.warning(
+        '[StorageService] Secure storage delete failed for "$key": ${error.message ?? error.code}',
+      );
+    }
   }
 
   static Future<void> saveBool(String key, bool value) async {

@@ -24,6 +24,7 @@ class NodesCloudSection extends StatelessWidget {
   final VoidCallback onRetryLoad;
   final VoidCallback onCreateCloudNode;
   final ValueChanged<CloudInstance> onViewDetails;
+  final ValueChanged<CloudInstance>? onRepairCloudNode;
   final ValueChanged<CloudInstance> onDeleteCloudNode;
   final ValueChanged<CloudInstance> onUseCloudNode;
   final ValueChanged<CloudInstance> onTestCloudNodeLatency;
@@ -42,6 +43,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.onRetryLoad,
     required this.onCreateCloudNode,
     required this.onViewDetails,
+    this.onRepairCloudNode,
     required this.onDeleteCloudNode,
     required this.onUseCloudNode,
     required this.onTestCloudNodeLatency,
@@ -59,6 +61,14 @@ class NodesCloudSection extends StatelessWidget {
     final readyCloudNodes = visibleCloudInstances
         .where((instance) => cloudProvider.generateNodeConfig(instance) != null)
         .toList();
+    final savedCloudRouteCount = availableCloudRouteCount(
+      readyCloudNodes: readyCloudNodes,
+      profiles: profileProvider.profiles,
+      selectedProfile: profileProvider.activeProfile,
+    );
+    final sectionCloudCount = visibleCloudInstances.isEmpty
+        ? savedCloudRouteCount
+        : visibleCloudInstances.length;
     final orderedCloudInstances = List<CloudInstance>.from(
       visibleCloudInstances,
     )..sort(
@@ -92,7 +102,7 @@ class NodesCloudSection extends StatelessWidget {
           NodesSectionHeader(
             title: l10n.cloudNodes,
             subtitle: headerSubtitle,
-            count: visibleCloudInstances.length,
+            count: sectionCloudCount,
           ),
           SizedBox(height: 10.h),
           _CloudToolbar(
@@ -129,7 +139,7 @@ class NodesCloudSection extends StatelessWidget {
           NodesSectionHeader(
             title: l10n.cloudNodes,
             subtitle: headerSubtitle,
-            count: 0,
+            count: sectionCloudCount,
           ),
           SizedBox(height: 10.h),
           _CloudToolbar(
@@ -157,7 +167,7 @@ class NodesCloudSection extends StatelessWidget {
         NodesSectionHeader(
           title: l10n.cloudNodes,
           subtitle: headerSubtitle,
-          count: visibleCloudInstances.length,
+          count: sectionCloudCount,
         ),
         SizedBox(height: 10.h),
         _CloudToolbar(
@@ -216,6 +226,8 @@ class NodesCloudSection extends StatelessWidget {
       isSelected: isSelected,
       isConnected: vpnProvider.status == VpnStatus.connected,
       onViewDetails: () => onViewDetails(instance),
+      onRepair:
+          onRepairCloudNode == null ? null : () => onRepairCloudNode!(instance),
       onDelete: () => onDeleteCloudNode(instance),
       onUseNode: () => onUseCloudNode(instance),
       onTestLatency: () => onTestCloudNodeLatency(instance),

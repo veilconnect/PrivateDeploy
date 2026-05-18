@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createCloudInstance: vi.fn(),
   createMultipleCloudInstances: vi.fn(),
   destroyCloudInstance: vi.fn(),
+  repairCloudInstance: vi.fn(),
   testConnectivity: vi.fn(),
   testNodeDirectSpeed: vi.fn(),
   readFile: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('@/bridge', () => ({
   CreateCloudInstance: mocks.createCloudInstance,
   CreateMultipleCloudInstances: mocks.createMultipleCloudInstances,
   DestroyCloudInstance: mocks.destroyCloudInstance,
+  RepairCloudInstance: mocks.repairCloudInstance,
   TestConnectivity: mocks.testConnectivity,
   TestNodeDirectSpeed: mocks.testNodeDirectSpeed,
   ReadFile: mocks.readFile,
@@ -270,6 +272,27 @@ describe('createInstanceSync', () => {
     expect(harness.saveManualNodes).toHaveBeenCalledTimes(1)
     expect(harness.removeSubscriptionForNode).toHaveBeenCalledWith('manual-1')
     expect(harness.destroyingInstance.value).toBe('')
+  })
+
+  it('redeploys a cloud node and keeps the old node until user deletes it', async () => {
+    mocks.repairCloudInstance.mockResolvedValue(
+      readyNode({ instanceId: 'node-2', label: 'Tokyo redeploy' }),
+    )
+    const harness = createHarness({
+      instances: [readyNode()],
+    })
+
+    const result = await harness.api.redeployInstance('node-1')
+
+    expect(mocks.repairCloudInstance).toHaveBeenCalledWith('node-1')
+    expect(result.instanceId).toBe('node-2')
+    expect(harness.instances.value.map((item) => item.instanceId)).toEqual([
+      'node-2',
+      'node-1',
+    ])
+    expect(harness.ensureSubscriptionForNode).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceId: 'node-2' }),
+    )
   })
 
   it('records connectivity probes and updates protocol health', async () => {

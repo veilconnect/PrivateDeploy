@@ -322,6 +322,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get nodeDetails => '节点详情';
 
   @override
+  String get repairNode => '修复/重新部署';
+
+  @override
   String get deleteNode => '删除节点';
 
   @override
@@ -333,6 +336,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String msLatency(Object ms) {
     return '$ms ms 延迟';
   }
+
+  @override
+  String get repairNodeTitle => '修复/重新部署节点';
+
+  @override
+  String repairNodeConfirm(Object label) {
+    return '确定修复「$label」？\n\nSSH 节点会在同一台服务器上重新部署。云服务节点会创建同区域、同套餐的替换节点，旧节点会保留，确认新节点可用后可手动删除。';
+  }
+
+  @override
+  String get nodeRepairCompleted => '节点修复完成';
+
+  @override
+  String get nodeRedeployStarted => '替换节点正在部署，旧节点已保留';
+
+  @override
+  String get nodeRepairCleanupNeeded => '节点修复完成，但本地清理需要关注';
+
+  @override
+  String get failedToRepair => '修复失败';
 
   @override
   String get deleteNodeTitle => '删除节点';

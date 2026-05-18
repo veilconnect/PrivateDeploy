@@ -126,6 +126,74 @@ void main() {
       );
     });
 
+    testWidgets('confirmRepairCloudNode starts replacement deployment',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(
+        repairResult: true,
+        repairCreatedInstanceId: 'fra-node-redeploy',
+      );
+      final profileProvider = _FakeProfileProvider();
+      final vpnProvider = _FakeVpnProvider(status: VpnStatus.disconnected);
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        onRun: (context) => confirmRepairCloudNode(
+          context: context,
+          cloudProvider: cloudProvider,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+          instance: _instance(label: 'fra-node'),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Repair / Redeploy'));
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.repairedInstanceId, 'fra-node');
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(
+        find.text('Replacement node is deploying. The old node was kept.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('confirmRepairCloudNode disconnects active SSH route first',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(repairResult: true);
+      final linkedProfile = _profile(id: 'cloud-ssh', name: 'Cloud: ssh-node');
+      final profileProvider = _FakeProfileProvider(
+        activeProfile: linkedProfile,
+        profileByName: linkedProfile,
+        saveContentResult: true,
+      );
+      final vpnProvider = _FakeVpnProvider(status: VpnStatus.connected);
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        onRun: (context) => confirmRepairCloudNode(
+          context: context,
+          cloudProvider: cloudProvider,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+          instance: _instance(label: 'ssh-node', provider: 'ssh'),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Repair / Redeploy'));
+      await tester.pumpAndSettle();
+
+      expect(cloudProvider.repairedInstanceId, 'ssh-node');
+      expect(vpnProvider.disconnectCalls, 1);
+      expect(profileProvider.savedContentProfileId, 'cloud-ssh');
+      expect(find.text('Node repair completed'), findsOneWidget);
+    });
+
     testWidgets('showCloudApiKeyFlow saves key and refreshes callback',
         (tester) async {
       final cloudProvider = _FakeCloudProvider(
@@ -535,10 +603,11 @@ Future<void> _pumpCloudActionHarness(
 
 CloudInstance _instance({
   required String label,
+  String provider = 'vultr',
 }) {
   return CloudInstance(
     id: label,
-    provider: 'vultr',
+    provider: provider,
     label: label,
     status: 'active',
     region: 'fra',
@@ -589,6 +658,8 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
     this.setApiKeyResult = true,
     this.setSshAccessResult = true,
     this.createInstanceResult = true,
+    this.repairResult = true,
+    this.repairCreatedInstanceId,
     this.apiKey,
     this.error,
     this.hasPersistedActiveProviderSelection = true,
@@ -634,6 +705,8 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   final bool setApiKeyResult;
   final bool setSshAccessResult;
   final bool createInstanceResult;
+  final bool repairResult;
+  final String? repairCreatedInstanceId;
   final CloudLatencyCheck benchmarkLatencyResult;
   final CloudFastestNodeSelection benchmarkSelection;
   CloudProviderId _providerId;
@@ -671,6 +744,7 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   bool get isSshProvider => providerId == CloudProviderId.ssh;
 
   String? deletedInstanceId;
+  String? repairedInstanceId;
   String? savedApiKey;
   String? createdRegion;
   String? createdPlan;
@@ -709,6 +783,13 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   Future<bool> deleteInstance(String id) async {
     deletedInstanceId = id;
     return deleteResult;
+  }
+
+  @override
+  Future<bool> repairInstance(String id) async {
+    repairedInstanceId = id;
+    lastCreatedInstanceId = repairCreatedInstanceId;
+    return repairResult;
   }
 
   @override
@@ -852,6 +933,7 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
     this.activeProfile,
     this.profileByName,
     this.deleteByNameResult = true,
+    this.saveContentResult = true,
   });
 
   @override
@@ -859,7 +941,10 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
 
   final Profile? profileByName;
   final bool deleteByNameResult;
+  final bool saveContentResult;
   String? deletedProfileName;
+  String? savedContentProfileId;
+  String? savedContent;
 
   @override
   Profile? getProfileByName(String name) {
@@ -870,6 +955,13 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
   Future<bool> deleteProfileByName(String name) async {
     deletedProfileName = name;
     return deleteByNameResult;
+  }
+
+  @override
+  Future<bool> saveProfileContent(String id, String content) async {
+    savedContentProfileId = id;
+    savedContent = content;
+    return saveContentResult;
   }
 }
 

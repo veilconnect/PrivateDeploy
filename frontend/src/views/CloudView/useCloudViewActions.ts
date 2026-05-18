@@ -21,6 +21,7 @@ type CloudStoreLike = {
   applyNodeToProfile: (node: CloudNode) => Promise<unknown>
   refreshInstances: (silent?: boolean, force?: boolean) => Promise<unknown>
   rotateIP: (instanceId: string) => Promise<{ instanceId: string }>
+  redeployInstance: (instanceId: string) => Promise<{ instanceId: string }>
   destroyInstance: (instanceId: string) => Promise<unknown>
   testNodeSpeedTest: (instanceId: string) => Promise<unknown>
   testAllNodesSpeed: () => Promise<unknown>
@@ -57,6 +58,7 @@ export const useCloudViewActions = ({
   const batchOperating = ref(false)
   const applyingNodeId = ref('')
   const rotatingNodeId = ref('')
+  const redeployingNodeId = ref('')
   const speedTestAllLoading = ref(false)
   const loadBalanceLoading = ref(false)
   const cdnStore = useCdnStore()
@@ -323,6 +325,32 @@ export const useCloudViewActions = ({
     }
   }
 
+  const handleRepairNode = async (record: CloudNode | Record<string, any>) => {
+    const node = record as CloudNode
+    if (isManualNode(node)) {
+      message.error(translate('cloud.nodes.repairBlocked'))
+      return
+    }
+
+    try {
+      await confirm('common.warning', translate('cloud.nodes.repairConfirm', { label: node.label }))
+    } catch {
+      return
+    }
+
+    redeployingNodeId.value = node.instanceId
+    try {
+      const repaired = await cloudStore.redeployInstance(node.instanceId)
+      const sameNode = repaired.instanceId === node.instanceId
+      message.success(translate(sameNode ? 'cloud.nodes.repairSuccess' : 'cloud.nodes.redeploySuccess'))
+      logInfo('[CloudView] Repair/redeploy submitted. Node:', repaired.instanceId)
+    } catch (error) {
+      handleError(error)
+    } finally {
+      redeployingNodeId.value = ''
+    }
+  }
+
   const handleDestroy = async (record: CloudNode | Record<string, any>) => {
     const node = record as CloudNode
     try {
@@ -441,6 +469,11 @@ ${protocols.join('\n')}
       hidden: (record: ManagedCloudNode) => isManualNode(record) || record.connectivityStatus !== 'blocked',
     },
     {
+      label: translate('cloud.quickActions.repair'),
+      handler: (record: ManagedCloudNode) => handleRepairNode(record),
+      hidden: (record: ManagedCloudNode) => isManualNode(record),
+    },
+    {
       label: translate('cdn.node.deploy'),
       handler: (record: ManagedCloudNode) => handleDeployCdn(record),
       hidden: (record: ManagedCloudNode) =>
@@ -468,6 +501,7 @@ ${protocols.join('\n')}
     handleBatchTestConnectivity,
     handleDeleteCdn,
     handleDeployCdn,
+    handleRepairNode,
     handleDestroy,
     handleRotateIP,
     handleShowRecommendations,
@@ -475,6 +509,7 @@ ${protocols.join('\n')}
     handleToggleLoadBalance,
     handleUseNode,
     loadBalanceLoading,
+    redeployingNodeId,
     rotatingNodeId,
     selectedNodeIds,
     speedTestAllLoading,

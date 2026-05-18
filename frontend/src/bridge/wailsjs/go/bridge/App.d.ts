@@ -83,6 +83,8 @@ export function ImportCloudBackup():Promise<string>;
 
 export function IsStartup():Promise<boolean>;
 
+export function KillOrphanCores():Promise<bridge.FlagResult>;
+
 export function KillProcess(arg1:number,arg2:number):Promise<bridge.FlagResult>;
 
 export function ListCdnZones():Promise<bridge.FlagResult>;
@@ -128,6 +130,10 @@ export function ReadDir(arg1:string):Promise<bridge.FlagResult>;
 export function ReadFile(arg1:string,arg2:bridge.IOOptions):Promise<bridge.FlagResult>;
 
 export function RemoveFile(arg1:string):Promise<bridge.FlagResult>;
+
+export function RepairCloudInstance(arg1:string):Promise<bridge.FlagResult>;
+
+export function RepairCloudInstanceTyped(arg1:string):Promise<cloud.Instance>;
 
 export function Requests(arg1:string,arg2:string,arg3:Record<string, string>,arg4:string,arg5:bridge.RequestOptions):Promise<bridge.HTTPResult>;
 

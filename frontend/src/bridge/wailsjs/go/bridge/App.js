@@ -158,6 +158,10 @@ export function IsStartup() {
   return window['go']['bridge']['App']['IsStartup']();
 }
 
+export function KillOrphanCores() {
+  return window['go']['bridge']['App']['KillOrphanCores']();
+}
+
 export function KillProcess(arg1, arg2) {
   return window['go']['bridge']['App']['KillProcess'](arg1, arg2);
 }
@@ -248,6 +252,14 @@ export function ReadFile(arg1, arg2) {
 
 export function RemoveFile(arg1) {
   return window['go']['bridge']['App']['RemoveFile'](arg1);
+}
+
+export function RepairCloudInstance(arg1) {
+  return window['go']['bridge']['App']['RepairCloudInstance'](arg1);
+}
+
+export function RepairCloudInstanceTyped(arg1) {
+  return window['go']['bridge']['App']['RepairCloudInstanceTyped'](arg1);
 }
 
 export function Requests(arg1, arg2, arg3, arg4, arg5) {

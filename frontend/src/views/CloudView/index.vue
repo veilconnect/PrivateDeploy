@@ -250,12 +250,14 @@ const {
   handleBatchRotateIP,
   handleBatchTestConnectivity,
   handleDestroy,
+  handleRepairNode,
   handleRotateIP,
   handleShowRecommendations,
   handleTestAllSpeed,
   handleToggleLoadBalance,
   handleUseNode,
   loadBalanceLoading,
+  redeployingNodeId,
   rotatingNodeId,
   selectedNodeIds,
   speedTestAllLoading,
@@ -906,6 +908,15 @@ onMounted(() => {
               </Button>
               <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
               <Button @click="handleViewCharts(record as ManagedCloudNode)" type="text" size="small" v-tips="'cloud.charts.view'">📊</Button>
+              <Button
+                v-if="!isManualNode(record)"
+                @click="handleRepairNode(record)"
+                type="text"
+                size="small"
+                :loading="redeployingNodeId === record.instanceId"
+              >
+                {{ redeployingNodeId === record.instanceId ? t('cloud.nodes.repairing') : t('cloud.nodes.repair') }}
+              </Button>
               <Button
                 v-if="!isManualNode(record) && record.connectivityStatus === 'blocked'"
                 @click="handleRotateIP(record)"

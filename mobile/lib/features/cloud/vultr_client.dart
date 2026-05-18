@@ -420,6 +420,7 @@ class VultrCloudClient implements CloudApiClient {
 
 class PortProfileAllocator {
   static const String randomProfile = 'random';
+  static const String edge443Profile = 'edge443';
 
   static int randomPort() => 20000 + Random.secure().nextInt(30000);
 
@@ -436,7 +437,7 @@ class PortProfileAllocator {
   // neither family can collide with the other.
   static List<int> allocatePorts({String profile = randomProfile}) {
     switch (profile) {
-      case 'edge443':
+      case edge443Profile:
         return const [24443, 443, 8443, 443, 24444];
       case 'edge8443':
         return const [28443, 8443, 9443, 8443, 28444];

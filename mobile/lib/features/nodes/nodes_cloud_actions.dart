@@ -7,6 +7,7 @@ import '../../l10n/app_localizations.dart';
 import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../cloud/cloud_provider_id.dart';
 import '../cloud/cloud_throughput_probe.dart';
 import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
@@ -28,9 +29,38 @@ String cloudProfileName(CloudInstance instance) {
 List<CloudInstance> connectableCloudInstances(CloudProvider cloudProvider) {
   return cloudProvider.allInstances
       .where(
-        (instance) => instance.isActive && cloudProvider.generateNodeConfig(instance) != null,
+        (instance) =>
+            instance.isActive &&
+            cloudProvider.generateNodeConfig(instance) != null,
       )
       .toList();
+}
+
+bool isUsableSavedCloudProfile(Profile profile) {
+  return isCloudManagedProfile(profile) &&
+      (profile.content?.trim().isNotEmpty ?? false);
+}
+
+int availableCloudRouteCount({
+  required List<CloudInstance> readyCloudNodes,
+  required List<Profile> profiles,
+  Profile? selectedProfile,
+}) {
+  final linkedReadyProfileNames = readyCloudNodes.map(cloudProfileName).toSet();
+  final savedCloudProfileNames = <String>{
+    for (final profile in profiles)
+      if (isUsableSavedCloudProfile(profile) &&
+          !linkedReadyProfileNames.contains(profile.name))
+        profile.name,
+  };
+
+  if (selectedProfile != null &&
+      isUsableSavedCloudProfile(selectedProfile) &&
+      !linkedReadyProfileNames.contains(selectedProfile.name)) {
+    savedCloudProfileNames.add(selectedProfile.name);
+  }
+
+  return readyCloudNodes.length + savedCloudProfileNames.length;
 }
 
 Future<void> confirmDeleteCloudNode({
@@ -82,6 +112,82 @@ Future<void> confirmDeleteCloudNode({
           ? l10nFeedback.nodeDeleted
           : l10nFeedback.nodeDeletedCleanupNeeded
       : cloudProvider.error ?? l10nFeedback.failedToDelete;
+  showNodesActionSnackBar(
+    context,
+    message: message,
+    backgroundColor: operationSucceeded
+        ? Colors.green
+        : success
+            ? Colors.orange
+            : Colors.red,
+  );
+}
+
+Future<void> confirmRepairCloudNode({
+  required BuildContext context,
+  required CloudProvider cloudProvider,
+  required ProfileProvider profileProvider,
+  required VpnProvider vpnProvider,
+  required CloudInstance instance,
+}) async {
+  final l10n = AppLocalizations.of(context)!;
+  final confirmed = await showNodesConfirmationDialog(
+    context: context,
+    title: l10n.repairNodeTitle,
+    message: l10n.repairNodeConfirm(instance.label),
+    confirmLabel: l10n.repairNode,
+    confirmColor: Colors.orange,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  final owner = CloudProviderId.tryParse(instance.provider);
+  final profileName = cloudProfileName(instance);
+  final linkedProfile = profileProvider.getProfileByName(profileName);
+  final shouldDisconnect = owner == CloudProviderId.ssh &&
+      linkedProfile != null &&
+      profileProvider.activeProfile?.id == linkedProfile.id &&
+      vpnProvider.status != VpnStatus.disconnected;
+
+  var disconnectSuccess = true;
+  if (shouldDisconnect) {
+    disconnectSuccess = await vpnProvider.disconnect();
+  }
+
+  final success = await cloudProvider.repairInstance(instance.id);
+  final replacementId = cloudProvider.lastCreatedInstanceId;
+  final createdReplacement =
+      success && replacementId != null && replacementId != instance.id;
+  var profileUpdateSuccess = true;
+
+  if (success && !createdReplacement && linkedProfile != null) {
+    final refreshed = cloudProvider.allInstances
+        .where((candidate) => candidate.id == instance.id)
+        .firstOrNull;
+    final config = cloudProvider.generateNodeConfig(refreshed ?? instance);
+    if (config != null) {
+      profileUpdateSuccess = await profileProvider.saveProfileContent(
+        linkedProfile.id,
+        config,
+      );
+    }
+  }
+
+  if (!context.mounted) {
+    return;
+  }
+
+  final l10nFeedback = AppLocalizations.of(context)!;
+  final operationSucceeded =
+      success && disconnectSuccess && profileUpdateSuccess;
+  final message = success
+      ? createdReplacement
+          ? l10nFeedback.nodeRedeployStarted
+          : operationSucceeded
+              ? l10nFeedback.nodeRepairCompleted
+              : l10nFeedback.nodeRepairCleanupNeeded
+      : cloudProvider.error ?? l10nFeedback.failedToRepair;
   showNodesActionSnackBar(
     context,
     message: message,
@@ -182,9 +288,8 @@ Future<void> _autoDeployCdnWorkerAfterCreate({
   // safety net for edge cases where the record lookup is racy.
   CloudInstance? readyInstance;
   for (var i = 0; i < 60 && context.mounted; i++) {
-    final inst = cloudProvider.allInstances
-        .where((c) => c.id == instanceId)
-        .firstOrNull;
+    final inst =
+        cloudProvider.allInstances.where((c) => c.id == instanceId).firstOrNull;
     if (inst != null && (inst.nodeInfo?.vlessRelayPort ?? 0) > 0) {
       readyInstance = inst;
       break;
@@ -243,7 +348,8 @@ Future<void> testCloudNodeLatency({
   final config = cloudProvider.generateNodeConfig(instance);
   if (config == null) {
     final updated = latencyResult.copyWith(
-      error: latencyResult.error ?? AppLocalizations.of(context)!.nodeNotReadyForSpeedTest,
+      error: latencyResult.error ??
+          AppLocalizations.of(context)!.nodeNotReadyForSpeedTest,
     );
     cloudProvider.saveLatencyCheck(instance.id, updated);
     if (context.mounted && updated.error != null) {
@@ -391,7 +497,8 @@ Future<void> testAllCloudNodesLatency({
         final l10nProgress = AppLocalizations.of(context)!;
         showNodesActionSnackBar(
           context,
-          message: l10nProgress.benchmarkingNode(instance.label, index + 1, readyNodes.length),
+          message: l10nProgress.benchmarkingNode(
+              instance.label, index + 1, readyNodes.length),
           backgroundColor: Colors.blue,
           replaceCurrent: true,
         );
@@ -476,8 +583,7 @@ Future<void> testAllCloudNodesLatency({
   if (!selection.hasSelection) {
     showNodesActionSnackBar(
       context,
-      message:
-          selection.error ?? l10nResult.noReadyNodeForTesting,
+      message: selection.error ?? l10nResult.noReadyNodeForTesting,
       backgroundColor: Colors.orange,
       replaceCurrent: true,
     );
@@ -490,15 +596,16 @@ Future<void> testAllCloudNodesLatency({
   final throughputSuffix = throughputMbps != null && throughputMbps > 0
       ? ' (${throughputMbps >= 100 ? throughputMbps.toStringAsFixed(0) : throughputMbps >= 10 ? throughputMbps.toStringAsFixed(1) : throughputMbps.toStringAsFixed(2)} Mbps)'
       : '';
-  final latencySuffix = latencyMs != null ? ' \u2022 ${l10nResult.msLatency(latencyMs)}' : '';
+  final latencySuffix =
+      latencyMs != null ? ' \u2022 ${l10nResult.msLatency(latencyMs)}' : '';
   final endpointSuffix =
       endpoint != null && endpoint.isNotEmpty ? ' via $endpoint' : '';
   final restoreSuffix =
       restoreFailed ? ' \u2022 ${l10nResult.restoreConnectionFailed}' : '';
   showNodesActionSnackBar(
     context,
-    message:
-        l10nResult.bestBenchmark(selection.instance!.label, throughputSuffix, '$endpointSuffix$latencySuffix$restoreSuffix'),
+    message: l10nResult.bestBenchmark(selection.instance!.label,
+        throughputSuffix, '$endpointSuffix$latencySuffix$restoreSuffix'),
     backgroundColor: restoreFailed ? Colors.orange : Colors.green,
     replaceCurrent: true,
   );

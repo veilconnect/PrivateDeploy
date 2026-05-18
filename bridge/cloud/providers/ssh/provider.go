@@ -440,6 +440,69 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	return instance, nil
 }
 
+// RepairInstance re-runs the deployment script on the same SSH host and keeps
+// the original PrivateDeploy node ID so saved profiles continue to target it.
+func (p *Provider) RepairInstance(ctx context.Context, instanceID string) (*cloud.Instance, error) {
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return nil, err
+	}
+
+	previous, ok := records[instanceID]
+	if !ok {
+		return nil, cloud.ErrInstanceNotFound
+	}
+
+	host := previous.Host
+	if host == "" {
+		host = previous.IPv4
+	}
+	if host == "" {
+		return nil, fmt.Errorf("SSH host is missing for node %s", instanceID)
+	}
+
+	extra := map[string]string{
+		"host": host,
+	}
+	if previous.Port > 0 {
+		extra["port"] = fmt.Sprintf("%d", previous.Port)
+	}
+
+	deployed, err := p.CreateInstance(ctx, &cloud.CreateInstanceOptions{
+		Label: previous.Label,
+		Extra: extra,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	records, err = p.loadNodeRecords()
+	if err != nil {
+		return nil, err
+	}
+
+	repaired, ok := records[deployed.ID]
+	if !ok {
+		return nil, fmt.Errorf("repaired SSH node record was not saved")
+	}
+	delete(records, deployed.ID)
+	repaired.InstanceID = instanceID
+	repaired.Label = previous.Label
+	repaired.Host = host
+	if previous.CreatedAt != "" {
+		repaired.CreatedAt = previous.CreatedAt
+	}
+	records[instanceID] = repaired
+	if err := p.saveNodeRecords(records); err != nil {
+		return nil, err
+	}
+
+	deployed.ID = instanceID
+	deployed.Label = previous.Label
+	deployed.CreatedAt = parseTime(repaired.CreatedAt)
+	return deployed, nil
+}
+
 // DestroyInstance SSH-connects to stop services, then removes the local record.
 func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error {
 	records, err := p.loadNodeRecords()

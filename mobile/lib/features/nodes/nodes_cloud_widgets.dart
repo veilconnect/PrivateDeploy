@@ -15,6 +15,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
   final bool isSelected;
   final bool isConnected;
   final VoidCallback onViewDetails;
+  final VoidCallback? onRepair;
   final VoidCallback onDelete;
   final VoidCallback? onUseNode;
   final VoidCallback? onTestLatency;
@@ -31,6 +32,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     required this.isSelected,
     required this.isConnected,
     required this.onViewDetails,
+    this.onRepair,
     required this.onDelete,
     this.onUseNode,
     this.onTestLatency,
@@ -153,6 +155,9 @@ class NodesCloudInstanceCard extends StatelessWidget {
                       case 'details':
                         onViewDetails();
                         break;
+                      case 'repair':
+                        onRepair?.call();
+                        break;
                       case 'delete':
                         onDelete();
                         break;
@@ -176,6 +181,22 @@ class NodesCloudInstanceCard extends StatelessWidget {
                           ],
                         ),
                       ),
+                      if (onRepair != null)
+                        PopupMenuItem(
+                          value: 'repair',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.build_circle_outlined),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  menuL10n.repairNode,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       const PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'delete',

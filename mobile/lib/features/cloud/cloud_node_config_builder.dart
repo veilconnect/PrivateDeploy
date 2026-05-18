@@ -294,6 +294,7 @@ String? buildCloudNodeConfig(
     tags: tags,
     cdnEndpoint: cdnEndpoint,
   );
+  _prioritizeEdge443ProtocolOrder(instance, outbounds: outbounds, tags: tags);
 
   if (outbounds.isEmpty) {
     return null;
@@ -335,6 +336,11 @@ String? buildCloudNodeConfig(
         outbounds: scratchOutbounds,
         tags: scratchTags,
         cdnEndpoint: failoverCdnEndpointResolver?.call(fi),
+      );
+      _prioritizeEdge443ProtocolOrder(
+        fi,
+        outbounds: scratchOutbounds,
+        tags: scratchTags,
       );
       for (var i = 0; i < scratchTags.length; i++) {
         final tag = scratchTags[i];
@@ -511,4 +517,36 @@ String? buildCloudNodeConfig(
   };
 
   return const JsonEncoder.withIndent('  ').convert(config);
+}
+
+void _prioritizeEdge443ProtocolOrder(
+  CloudInstance instance, {
+  required List<Map<String, dynamic>> outbounds,
+  required List<String> tags,
+}) {
+  final info = instance.nodeInfo;
+  if (info == null || info.trojanPort != 443) {
+    return;
+  }
+
+  int priority(String tag) {
+    if (tag.endsWith('-CDN')) return 0;
+    if (tag.endsWith('-Trojan')) return 1;
+    if (tag.endsWith('-Hy2')) return 2;
+    if (tag.endsWith('-VLESS')) return 3;
+    if (tag.endsWith('-SS')) return 4;
+    return 5;
+  }
+
+  tags.sort((a, b) {
+    final byPriority = priority(a).compareTo(priority(b));
+    return byPriority != 0 ? byPriority : a.compareTo(b);
+  });
+
+  outbounds.sort((a, b) {
+    final aTag = a['tag']?.toString() ?? '';
+    final bTag = b['tag']?.toString() ?? '';
+    final byPriority = priority(aTag).compareTo(priority(bTag));
+    return byPriority != 0 ? byPriority : aTag.compareTo(bTag);
+  });
 }

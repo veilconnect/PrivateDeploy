@@ -57,7 +57,7 @@ class CloudProvider extends CloudProviderBase {
   String? _error;
   String? _apiKey;
   Map<String, String> _providerExtra = {};
-  final String _selectedProfile = PortProfileAllocator.randomProfile;
+  final String _selectedProfile = PortProfileAllocator.edge443Profile;
   Map<String, VultrNodeRecord> _nodeRecords = {};
   final Map<String, CloudLatencyCheck> _latencyChecks = {};
   final Map<String, String> _preferredEndpointLabels = {};
@@ -236,6 +236,16 @@ class CloudProvider extends CloudProviderBase {
       regions: regions,
       plans: plans,
     );
+  }
+
+  @visibleForTesting
+  static String redeployInstanceLabel(String? raw, {DateTime? now}) {
+    final base = normalizeInstanceLabel(raw, now: now);
+    final ts = now ?? DateTime.now().toUtc();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final suffix =
+        '${two(ts.month)}${two(ts.day)}${two(ts.hour)}${two(ts.minute)}';
+    return '$base-redeploy-$suffix';
   }
 
   @visibleForTesting
@@ -520,8 +530,13 @@ class CloudProvider extends CloudProviderBase {
       final legacy = StorageService.getString(providerId.apiKeyStorageKey);
       if (legacy != null && legacy.trim().isNotEmpty) {
         key = legacy.trim();
-        await StorageService.saveSecureString(providerId.apiKeyStorageKey, key);
-        await StorageService.remove(providerId.apiKeyStorageKey);
+        final savedSecurely = await StorageService.saveSecureString(
+          providerId.apiKeyStorageKey,
+          key,
+        );
+        if (savedSecurely) {
+          await StorageService.remove(providerId.apiKeyStorageKey);
+        }
       }
     }
 
@@ -543,8 +558,13 @@ class CloudProvider extends CloudProviderBase {
       final legacy = StorageService.getString(providerId.configStorageKey);
       if (legacy != null && legacy.trim().isNotEmpty) {
         raw = legacy.trim();
-        await StorageService.saveSecureString(providerId.configStorageKey, raw);
-        await StorageService.remove(providerId.configStorageKey);
+        final savedSecurely = await StorageService.saveSecureString(
+          providerId.configStorageKey,
+          raw,
+        );
+        if (savedSecurely) {
+          await StorageService.remove(providerId.configStorageKey);
+        }
       }
     }
     if (raw == null || raw.isEmpty) {
@@ -587,8 +607,11 @@ class CloudProvider extends CloudProviderBase {
     }
     _apiKey = key.trim();
     _hasApiKey = _apiKey!.isNotEmpty;
-    await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
-    await StorageService.remove(apiKeyStorageKey);
+    final savedSecurely =
+        await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
+    if (savedSecurely) {
+      await StorageService.remove(apiKeyStorageKey);
+    }
   }
 
   Future<void> _saveProviderExtra(Map<String, String> extra) async {
@@ -596,11 +619,13 @@ class CloudProvider extends CloudProviderBase {
       await StorageService.init();
     }
     _providerExtra = Map<String, String>.from(extra);
-    await StorageService.saveSecureString(
+    final savedSecurely = await StorageService.saveSecureString(
       providerId.configStorageKey,
       jsonEncode(_providerExtra),
     );
-    await StorageService.remove(providerId.configStorageKey);
+    if (savedSecurely) {
+      await StorageService.remove(providerId.configStorageKey);
+    }
   }
 
   Future<void> _clearApiKey() async {
@@ -651,8 +676,11 @@ class CloudProvider extends CloudProviderBase {
       final legacy = StorageService.getString(storageKey);
       if (legacy != null && legacy.isNotEmpty) {
         raw = legacy;
-        await StorageService.saveSecureString(storageKey, legacy);
-        await StorageService.remove(storageKey);
+        final savedSecurely =
+            await StorageService.saveSecureString(storageKey, legacy);
+        if (savedSecurely) {
+          await StorageService.remove(storageKey);
+        }
       }
     }
     if (raw == null || raw.isEmpty) {
@@ -695,9 +723,11 @@ class CloudProvider extends CloudProviderBase {
     for (final item in records.entries) {
       payload[item.key] = item.value.toJson();
     }
-    await StorageService.saveSecureString(
+    final savedSecurely = await StorageService.saveSecureString(
         providerId.nodeRecordsStorageKey, jsonEncode(payload));
-    await StorageService.remove(providerId.nodeRecordsStorageKey);
+    if (savedSecurely) {
+      await StorageService.remove(providerId.nodeRecordsStorageKey);
+    }
   }
 
   bool _isStaleProviderRequest(CloudProviderId providerId, int requestEpoch) {
@@ -1624,6 +1654,20 @@ class CloudProvider extends CloudProviderBase {
     required String plan,
     required String label,
   }) async {
+    return _createInstance(
+      region: region,
+      plan: plan,
+      label: label,
+      validateSelection: true,
+    );
+  }
+
+  Future<bool> _createInstance({
+    required String region,
+    required String plan,
+    required String label,
+    required bool validateSelection,
+  }) async {
     if (!await _ensureAuthorizedCloudAccess()) {
       return false;
     }
@@ -1651,15 +1695,17 @@ class CloudProvider extends CloudProviderBase {
       }
 
       final resolvedLabel = normalizeInstanceLabel(label);
-      final selectionError = validateDeploymentSelection(
-        region: region,
-        plan: plan,
-        regions: _regions,
-        plans: _plans,
-      );
-      if (selectionError != null) {
-        _error = selectionError;
-        return false;
+      if (validateSelection) {
+        final selectionError = validateDeploymentSelection(
+          region: region,
+          plan: plan,
+          regions: _regions,
+          plans: _plans,
+        );
+        if (selectionError != null) {
+          _error = selectionError;
+          return false;
+        }
       }
 
       final client = await _cloudClient();
@@ -1734,6 +1780,81 @@ class CloudProvider extends CloudProviderBase {
     } catch (e) {
       _error = 'Failed to create instance: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Create instance error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> repairInstance(String id) async {
+    final instance = _findInstanceById(id);
+    if (instance == null) {
+      _error = 'Failed to repair instance: node not found';
+      notifyListeners();
+      return false;
+    }
+
+    final owner = _findInstanceOwner(id) ??
+        CloudProviderId.tryParse(instance.provider) ??
+        _providerId;
+    if (owner != _providerId) {
+      _error = 'Switch to ${owner.displayName} to repair this node';
+      notifyListeners();
+      return false;
+    }
+
+    if (owner == CloudProviderId.ssh) {
+      return _repairSshInstance(instance);
+    }
+
+    return _createInstance(
+      region: instance.region,
+      plan: instance.plan,
+      label: redeployInstanceLabel(instance.label),
+      validateSelection: false,
+    );
+  }
+
+  Future<bool> _repairSshInstance(CloudInstance instance) async {
+    if (!await _ensureAuthorizedCloudAccess()) {
+      return false;
+    }
+
+    _isLoading = true;
+    _error = null;
+    _lastCreatedInstanceId = null;
+    notifyListeners();
+
+    try {
+      final deployment = await deployNodeViaSsh(
+        extra: _providerExtra,
+        label: normalizeInstanceLabel(instance.label),
+      );
+      final repairedJson = deployment.record.toJson()
+        ..['provider'] = CloudProviderId.ssh.id
+        ..['label'] = instance.label
+        ..['region'] = instance.region.isNotEmpty
+            ? instance.region
+            : deployment.record.region
+        ..['plan'] =
+            instance.plan.isNotEmpty ? instance.plan : deployment.record.plan
+        ..['ipv4'] = instance.ipv4 ?? deployment.record.ipv4
+        ..['ipv6'] = instance.ipv6 ?? deployment.record.ipv6
+        ..['createdAt'] = instance.createdAt?.toUtc().toIso8601String() ??
+            deployment.record.createdAt;
+
+      _nodeRecords[instance.id] = VultrNodeRecord.fromJson(
+        instance.id,
+        repairedJson,
+      );
+      await _saveNodeRecords();
+      await _loadNodeRecords();
+      await loadInstances(notify: false);
+      return true;
+    } catch (e) {
+      _error = 'Failed to repair instance: ${cloudProviderMessageFromError(e)}';
+      AppLogger.error('[CloudProvider] Repair SSH node error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -1839,6 +1960,16 @@ class CloudProvider extends CloudProviderBase {
     if (_instances.any((i) => i.id == id)) return _providerId;
     for (final entry in _otherProviderInstances.entries) {
       if (entry.value.any((i) => i.id == id)) return entry.key;
+    }
+    return null;
+  }
+
+  CloudInstance? _findInstanceById(String id) {
+    final active = _instances.where((i) => i.id == id).firstOrNull;
+    if (active != null) return active;
+    for (final list in _otherProviderInstances.values) {
+      final found = list.where((i) => i.id == id).firstOrNull;
+      if (found != null) return found;
     }
     return null;
   }
@@ -1971,8 +2102,7 @@ class CloudProvider extends CloudProviderBase {
   /// deployed.
   CdnEndpoint? Function(String nodeId)? _cdnEndpointResolver;
 
-  void setCdnEndpointResolver(
-      CdnEndpoint? Function(String nodeId)? resolver) {
+  void setCdnEndpointResolver(CdnEndpoint? Function(String nodeId)? resolver) {
     _cdnEndpointResolver = resolver;
   }
 

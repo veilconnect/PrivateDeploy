@@ -335,9 +335,11 @@ class TestCloudProvider extends ChangeNotifier
   int clearLocalCloudDataCalls = 0;
   int testInstanceLatencyCalls = 0;
   int setActiveProviderCalls = 0;
+  int repairInstanceCalls = 0;
   String? savedApiKey;
   String? importedBackupPayload;
   String? importBackupError;
+  String? repairedInstanceId;
 
   @override
   bool get hasApiKey => _hasApiKey;
@@ -445,6 +447,13 @@ class TestCloudProvider extends ChangeNotifier
     _providerId = target;
     hasPersistedActiveProviderSelection = true;
     notifyListeners();
+    return true;
+  }
+
+  @override
+  Future<bool> repairInstance(String id) async {
+    repairInstanceCalls++;
+    repairedInstanceId = id;
     return true;
   }
 

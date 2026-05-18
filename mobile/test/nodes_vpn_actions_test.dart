@@ -15,6 +15,43 @@ import 'package:provider/provider.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('autoFailoverToNextCloudNode', () {
+    testWidgets(
+        'falls back to saved cloud profiles when cloud access is absent',
+        (tester) async {
+      final backup = _profile(
+        id: 'backup-profile',
+        name: 'Cloud: backup-node',
+        content: '{"outbounds":[{"type":"direct"}]}',
+      );
+      final profileProvider = _FakeProfileProvider(
+        profiles: [
+          _profile(
+            id: 'primary-profile',
+            name: 'Cloud: primary-node',
+            content: '{"outbounds":[{"type":"block"}]}',
+          ),
+          backup,
+        ],
+      );
+      final vpnProvider = _FakeVpnProvider(status: VpnStatus.connected);
+
+      final switched = await autoFailoverToNextCloudNode(
+        cloudProvider: _FakeCloudProvider(),
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+        triedProfileNames: {'Cloud: primary-node'},
+      );
+
+      expect(switched, true);
+      expect(profileProvider.activatedProfileIds, ['backup-profile']);
+      expect(vpnProvider.disconnectCalls, 1);
+      expect(vpnProvider.connectCalls, 1);
+      expect(vpnProvider.lastProfileName, 'Cloud: backup-node');
+      expect(vpnProvider.lastConfigJson, '{"outbounds":[{"type":"direct"}]}');
+    });
+  });
+
   group('connectSelectedProfile', () {
     testWidgets('shows busy message while vpn is already processing',
         (tester) async {
@@ -258,6 +295,8 @@ void main() {
         status: VpnStatus.disconnected,
         connectResult: true,
         disconnectResult: true,
+        isDegraded: true,
+        errorMessage: VpnProvider.startupProbeInconclusiveMessage,
         diagnosticsError: VpnProvider.startupProbeInconclusiveMessage,
       );
 
@@ -284,7 +323,12 @@ void main() {
 
       expect(vpnProvider.connectCalls, 1);
       expect(vpnProvider.disconnectCalls, 0);
-      expect(find.text('VPN connected successfully'), findsOneWidget);
+      expect(
+        find.text(
+          'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets(
@@ -358,6 +402,175 @@ void main() {
         profileProvider.lastRoutingSettings?.mode,
         VpnRoutingMode.global,
       );
+    });
+  });
+
+  group('handleNodesConnect', () {
+    testWidgets(
+        'tries a backup route immediately when the primary is upstream-blocked',
+        (tester) async {
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final primaryProfile = _profile(
+        id: 'primary-profile',
+        name: 'Cloud: ${primary.label}',
+        content: '{"outbounds":[{"type":"direct","tag":"primary"}]}',
+      );
+      final backupProfile = _profile(
+        id: 'backup-profile',
+        name: 'Cloud: ${backup.label}',
+        content: '{"outbounds":[{"type":"direct","tag":"backup"}]}',
+      );
+      final profileProvider = _FakeProfileProvider(
+        activeProfile: primaryProfile,
+        profiles: [primaryProfile, backupProfile],
+      );
+      final cloudProvider = _FakeCloudProvider(instances: [primary, backup]);
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        degradedResults: [true, false],
+        errorResults: [VpnProvider.tunnelUpstreamDegradedMessage, null],
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => handleNodesConnect(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: profileProvider,
+          cloudProvider: cloudProvider,
+          onUseCloudNode: (instance) => useCloudNodeAndConnect(
+            context: context,
+            instance: instance,
+            cloudProvider: cloudProvider,
+            profileProvider: profileProvider,
+            vpnProvider: vpnProvider,
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 2);
+      expect(vpnProvider.disconnectCalls, 1);
+      expect(profileProvider.activatedProfileIds, ['backup-profile']);
+      expect(profileProvider.activeProfile?.name, 'Cloud: backup-node');
+      expect(vpnProvider.lastProfileName, 'Cloud: backup-node');
+      expect(vpnProvider.isDegraded, false);
+    });
+
+    testWidgets('does not rotate nodes for a transient startup probe timeout',
+        (tester) async {
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final primaryProfile = _profile(
+        id: 'primary-profile',
+        name: 'Cloud: ${primary.label}',
+        content: '{"outbounds":[{"type":"direct","tag":"primary"}]}',
+      );
+      final profileProvider = _FakeProfileProvider(
+        activeProfile: primaryProfile,
+        profiles: [
+          primaryProfile,
+          _profile(
+            id: 'backup-profile',
+            name: 'Cloud: ${backup.label}',
+            content: '{"outbounds":[{"type":"direct","tag":"backup"}]}',
+          ),
+        ],
+      );
+      final cloudProvider = _FakeCloudProvider(instances: [primary, backup]);
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        isDegraded: true,
+        errorMessage: VpnProvider.startupProbeInconclusiveMessage,
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => handleNodesConnect(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: profileProvider,
+          cloudProvider: cloudProvider,
+          onUseCloudNode: (instance) => useCloudNodeAndConnect(
+            context: context,
+            instance: instance,
+            cloudProvider: cloudProvider,
+            profileProvider: profileProvider,
+            vpnProvider: vpnProvider,
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 1);
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(profileProvider.activatedProfileIds, isEmpty);
+      expect(profileProvider.activeProfile?.name, 'Cloud: primary-node');
+    });
+
+    testWidgets('stops the tunnel when every candidate is upstream-blocked',
+        (tester) async {
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final primaryProfile = _profile(
+        id: 'primary-profile',
+        name: 'Cloud: ${primary.label}',
+        content: '{"outbounds":[{"type":"direct","tag":"primary"}]}',
+      );
+      final backupProfile = _profile(
+        id: 'backup-profile',
+        name: 'Cloud: ${backup.label}',
+        content: '{"outbounds":[{"type":"direct","tag":"backup"}]}',
+      );
+      final profileProvider = _FakeProfileProvider(
+        activeProfile: primaryProfile,
+        profiles: [primaryProfile, backupProfile],
+      );
+      final cloudProvider = _FakeCloudProvider(instances: [primary, backup]);
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        degradedResults: [true, true],
+        errorResults: [
+          VpnProvider.tunnelUpstreamDegradedMessage,
+          VpnProvider.tunnelUpstreamDegradedMessage,
+        ],
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => handleNodesConnect(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: profileProvider,
+          cloudProvider: cloudProvider,
+          onUseCloudNode: (instance) => useCloudNodeAndConnect(
+            context: context,
+            instance: instance,
+            cloudProvider: cloudProvider,
+            profileProvider: profileProvider,
+            vpnProvider: vpnProvider,
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 2);
+      expect(vpnProvider.disconnectCalls, 1);
+      expect(vpnProvider.stopDegradedSessionCalls, 1);
+      expect(vpnProvider.status, VpnStatus.disconnected);
     });
   });
 }
@@ -439,10 +652,12 @@ const NodeInfo _defaultNodeInfo = NodeInfo(
 Profile _profile({
   String id = 'profile-1',
   required String name,
+  String? content,
 }) {
   return Profile(
     id: id,
     name: name,
+    content: content,
     isActive: false,
     createdAt: DateTime(2026, 3, 29, 12, 30),
     updatedAt: DateTime(2026, 3, 29, 12, 30),
@@ -471,6 +686,7 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
 
   final CloudFastestNodeSelection fastestSelection;
   final CloudFastestNodeSelection cachedSelection;
+  final Map<String, CloudLatencyCheck> savedLatencyChecks = {};
 
   @override
   String? generateNodeConfig(CloudInstance instance) {
@@ -503,19 +719,41 @@ class _FakeCloudProvider extends Fake implements CloudProvider {
 
   @override
   void requestBenchmarkAllAbort() {}
+
+  @override
+  CloudLatencyCheck? latencyCheckFor(String instanceId) {
+    return savedLatencyChecks[instanceId];
+  }
+
+  @override
+  void saveLatencyCheck(
+    String instanceId,
+    CloudLatencyCheck check, {
+    bool notify = true,
+  }) {
+    savedLatencyChecks[instanceId] = check;
+  }
 }
 
 class _FakeProfileProvider extends Fake implements ProfileProvider {
   _FakeProfileProvider({
-    this.activeProfile,
     this.activeConfigJson,
-  });
+    Profile? activeProfile,
+    List<Profile>? profiles,
+  })  : _activeProfile = activeProfile,
+        _profiles = List<Profile>.from(profiles ?? const []) {
+    _activeProfile ??=
+        _profiles.where((profile) => profile.isActive).firstOrNull;
+  }
 
   @override
-  List<Profile> get profiles => const [];
+  List<Profile> get profiles => _profiles;
 
   @override
-  final Profile? activeProfile;
+  Profile? get activeProfile => _activeProfile;
+
+  final List<Profile> _profiles;
+  Profile? _activeProfile;
 
   final String? activeConfigJson;
   VpnRoutingSettings? lastRoutingSettings;
@@ -523,16 +761,56 @@ class _FakeProfileProvider extends Fake implements ProfileProvider {
   @override
   String? get error => null;
 
+  final List<String> activatedProfileIds = [];
+
   @override
   String? getActiveConfigJson({
     VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
   }) {
     lastRoutingSettings = routingSettings;
-    return activeConfigJson;
+    return activeConfigJson ?? _activeProfile?.content;
   }
 
   @override
   Future<bool> saveProfileContent(String profileId, String content) async {
+    final index = _profiles.indexWhere((profile) => profile.id == profileId);
+    if (index != -1) {
+      final updated = _profiles[index].copyWith(content: content);
+      _profiles[index] = updated;
+      if (_activeProfile?.id == profileId) {
+        _activeProfile = updated;
+      }
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> activateProfile(String profileId) async {
+    activatedProfileIds.add(profileId);
+    final index = _profiles.indexWhere((profile) => profile.id == profileId);
+    if (index != -1) {
+      final activated = _profiles[index].copyWith(isActive: true);
+      for (var i = 0; i < _profiles.length; i += 1) {
+        _profiles[i] = _profiles[i].copyWith(isActive: i == index);
+      }
+      _profiles[index] = activated;
+      _activeProfile = activated;
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> createProfile({
+    required String name,
+    String? subscriptionUrl,
+    String? content,
+    bool allowReservedPrefix = false,
+  }) async {
+    _profiles.add(_profile(
+      id: 'profile-${_profiles.length + 1}',
+      name: name,
+      content: content,
+    ));
     return true;
   }
 }
@@ -543,9 +821,17 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     this.isLoading = false,
     this.connectResult = true,
     this.disconnectResult = true,
+    bool isDegraded = false,
+    this.errorMessage,
+    List<bool>? degradedResults,
+    List<String?>? errorResults,
     this.diagnosticsEgressIp,
     this.diagnosticsError,
-  }) : _status = status;
+  })  : _status = status,
+        _isDegraded = isDegraded,
+        _errorMessage = errorMessage,
+        degradedResults = degradedResults ?? const [],
+        errorResults = errorResults ?? const [];
 
   VpnStatus _status;
 
@@ -554,9 +840,18 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   final bool connectResult;
   final bool disconnectResult;
+  @override
+  bool get isDegraded => _status == VpnStatus.connected && _isDegraded;
+
+  bool _isDegraded;
 
   @override
-  String? get error => null;
+  String? get error => _errorMessage;
+
+  final String? errorMessage;
+  String? _errorMessage;
+  final List<bool> degradedResults;
+  final List<String?> errorResults;
 
   @override
   final String? diagnosticsEgressIp;
@@ -575,6 +870,7 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   int connectCalls = 0;
   int disconnectCalls = 0;
+  int stopDegradedSessionCalls = 0;
   String? lastConfigJson;
   String? lastProfileName;
 
@@ -583,9 +879,6 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   @override
   bool get isConnected => _status == VpnStatus.connected;
-
-  @override
-  bool get isDegraded => false;
 
   @override
   bool get isSupported => true;
@@ -603,10 +896,17 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     Duration stabilityCheckDuration = Duration.zero,
     Duration statusPollInterval = const Duration(milliseconds: 250),
   }) async {
+    final resultIndex = connectCalls;
     connectCalls += 1;
     lastConfigJson = configJson;
     lastProfileName = profileName;
     _status = connectResult ? VpnStatus.connected : VpnStatus.disconnected;
+    _isDegraded = resultIndex < degradedResults.length
+        ? degradedResults[resultIndex]
+        : _isDegraded;
+    _errorMessage = resultIndex < errorResults.length
+        ? errorResults[resultIndex]
+        : _errorMessage;
     return connectResult;
   }
 
@@ -614,7 +914,20 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   Future<bool> disconnect() async {
     disconnectCalls += 1;
     _status = disconnectResult ? VpnStatus.disconnected : VpnStatus.connected;
+    if (_status == VpnStatus.disconnected) {
+      _isDegraded = false;
+      _errorMessage = null;
+    }
     return disconnectResult;
+  }
+
+  @override
+  Future<bool> stopDegradedSession({String? reason}) async {
+    stopDegradedSessionCalls += 1;
+    _status = VpnStatus.disconnected;
+    _isDegraded = false;
+    _errorMessage = reason;
+    return true;
   }
 
   @override

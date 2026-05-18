@@ -85,6 +85,8 @@ const createHarness = (options: {
     refreshInstances: vi.fn<(_: boolean, __?: boolean) => Promise<unknown>>().mockResolvedValue(undefined),
     rotateIP: vi.fn<(_: string) => Promise<{ instanceId: string }>>()
       .mockResolvedValue({ instanceId: 'rotated-node' }),
+    redeployInstance: vi.fn<(_: string) => Promise<{ instanceId: string }>>()
+      .mockResolvedValue({ instanceId: 'redeployed-node' }),
     destroyInstance: vi.fn<(_: string) => Promise<unknown>>().mockResolvedValue(undefined),
     testNodeSpeedTest: vi.fn<(_: string) => Promise<unknown>>().mockResolvedValue(undefined),
     testAllNodesSpeed: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
@@ -298,12 +300,15 @@ describe('useCloudViewActions', () => {
       'cloud.quickActions.copyConfig',
       'cloud.quickActions.testConnectivity',
       'cloud.quickActions.rotateIP',
+      'cloud.quickActions.repair',
       'cdn.node.deploy',
       'cdn.node.delete',
       'cloud.quickActions.destroy',
     ])
     expect(menu[3].hidden?.(node({ connectivityStatus: 'reachable' }))).toBe(true)
     expect(menu[3].hidden?.(node({ connectivityStatus: 'blocked' }))).toBe(false)
+    expect(menu[4].hidden?.(node({ provider: 'manual' }))).toBe(true)
+    expect(menu[4].hidden?.(node())).toBe(false)
 
     await menu[1].handler(node({ speedMs: 88 }))
     expect(bridgeMocks.ClipboardSetText).toHaveBeenCalledWith(expect.stringContaining('Node: Tokyo edge'))
@@ -311,6 +316,10 @@ describe('useCloudViewActions', () => {
     await menu[2].handler(node({ speedMs: 88 }))
     expect(harness.cloudStore.testNodeSpeedTest).toHaveBeenCalledWith('node-1')
     expect(utilityMocks.message.success).toHaveBeenCalledWith('cloud.quickActions.testComplete:{"status":"88ms"}')
+
+    await menu[4].handler(node())
+    expect(harness.cloudStore.redeployInstance).toHaveBeenCalledWith('node-1')
+    expect(utilityMocks.message.success).toHaveBeenCalledWith('cloud.nodes.redeploySuccess')
 
     await harness.actions.handleTestAllSpeed()
     expect(harness.cloudStore.testAllNodesSpeed).toHaveBeenCalledTimes(1)

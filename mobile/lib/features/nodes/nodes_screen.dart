@@ -234,6 +234,21 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _repairCloudNode(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    CloudInstance instance,
+  ) {
+    return confirmRepairCloudNode(
+      context: context,
+      cloudProvider: cloudProvider,
+      profileProvider: profileProvider,
+      vpnProvider: vpnProvider,
+      instance: instance,
+    );
+  }
+
   Future<void> _testCloudNodeLatency(
     CloudProvider cloudProvider,
     ProfileProvider profileProvider,
@@ -455,6 +470,12 @@ class _NodesScreenState extends State<NodesScreen> {
                   onCreateCloudNode: () =>
                       _showCreateCloudNodeDialog(cloudProvider),
                   onViewDetails: _openCloudNodeDetails,
+                  onRepairCloudNode: (instance) => _repairCloudNode(
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                    instance,
+                  ),
                   onDeleteCloudNode: (instance) => _deleteCloudNode(
                     cloudProvider,
                     profileProvider,

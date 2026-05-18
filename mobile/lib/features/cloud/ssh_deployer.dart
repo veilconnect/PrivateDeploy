@@ -45,7 +45,8 @@ String sshAccessSummary(Map<String, String> extra) {
   if (host == null || host.isEmpty) {
     return '';
   }
-  final effectiveUser = (username == null || username.isEmpty) ? 'root' : username;
+  final effectiveUser =
+      (username == null || username.isEmpty) ? 'root' : username;
   final effectivePort = (port == null || port.isEmpty) ? '22' : port;
   return '$effectiveUser@$host:$effectivePort';
 }
@@ -103,10 +104,9 @@ Future<SshDeployResult> deployNodeViaSsh({
     final server = await _detectServer(client);
     final bundle = await VultrDeploymentBuilder.build(
       planRam: server.memoryMb,
-      portProfile:
-          normalized['portProfile']?.trim().isNotEmpty == true
-              ? normalized['portProfile']!.trim()
-              : PortProfileAllocator.randomProfile,
+      portProfile: normalized['portProfile']?.trim().isNotEmpty == true
+          ? normalized['portProfile']!.trim()
+          : PortProfileAllocator.edge443Profile,
     );
 
     await _runScript(client, bundle.userData);
@@ -130,7 +130,8 @@ Future<SshDeployResult> deployNodeViaSsh({
     await _waitForTcpPorts(normalized['host']!, tcpPorts);
 
     final host = normalized['host']!;
-    final instanceId = 'cloud-ssh-${host.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '-')}-${DateTime.now().millisecondsSinceEpoch}';
+    final instanceId =
+        'cloud-ssh-${host.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '-')}-${DateTime.now().millisecondsSinceEpoch}';
     final createdAt = DateTime.now().toUtc().toIso8601String();
     final record = VultrNodeRecord(
       instanceId: instanceId,
@@ -153,8 +154,7 @@ Future<SshDeployResult> deployNodeViaSsh({
       trojanServerName: bundle.nodeRecord['trojanServerName']?.toString() ?? '',
       ipv4: host,
       createdAt: createdAt,
-      portProfile:
-          bundle.nodeRecord['portProfile']?.toString() ??
+      portProfile: bundle.nodeRecord['portProfile']?.toString() ??
           PortProfileAllocator.randomProfile,
       planRam: bundle.nodeRecord['planRam'] as int? ?? server.memoryMb,
     );
@@ -192,7 +192,8 @@ Map<String, String> _validatedAccess(Map<String, String> extra) {
 }
 
 Future<_SshServerInfo> _detectServer(SSHClient client) async {
-  const command = r'''sh -lc 'os=""; if [ -f /etc/os-release ]; then . /etc/os-release; os="${ID:-}"; fi; arch="$(uname -m 2>/dev/null || true)"; mem="$(awk '"'"'/MemTotal/ {printf "%d", $2/1024}'"'"' /proc/meminfo 2>/dev/null || true)"; printf "{\"os\":\"%s\",\"arch\":\"%s\",\"memoryMb\":%s}\n" "$os" "$arch" "${mem:-0}"' ''';
+  const command =
+      r'''sh -lc 'os=""; if [ -f /etc/os-release ]; then . /etc/os-release; os="${ID:-}"; fi; arch="$(uname -m 2>/dev/null || true)"; mem="$(awk '"'"'/MemTotal/ {printf "%d", $2/1024}'"'"' /proc/meminfo 2>/dev/null || true)"; printf "{\"os\":\"%s\",\"arch\":\"%s\",\"memoryMb\":%s}\n" "$os" "$arch" "${mem:-0}"' ''';
   final result = await client.runWithResult(command);
   final raw = utf8.decode(result.stdout).trim();
   final stderr = utf8.decode(result.stderr).trim();
@@ -261,7 +262,8 @@ Future<void> _waitForRemoteListeners(
     }
     await Future<void>.delayed(const Duration(seconds: 5));
   }
-  throw StateError('Deployment finished, but the server listeners are still not ready');
+  throw StateError(
+      'Deployment finished, but the server listeners are still not ready');
 }
 
 Future<bool> _remoteListenersReady(
@@ -301,7 +303,8 @@ Future<void> _waitForTcpPorts(String host, List<int> ports) async {
     }
     await Future<void>.delayed(const Duration(seconds: 5));
   }
-  throw StateError('Deployment finished, but the server TCP ports are still closed');
+  throw StateError(
+      'Deployment finished, but the server TCP ports are still closed');
 }
 
 Future<bool> _isPortOpen(String host, int port) async {

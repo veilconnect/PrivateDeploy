@@ -54,6 +54,31 @@ void main() {
       expect(result.map((instance) => instance.label), ['ready-1', 'ready-2']);
     });
 
+    test('availableCloudRouteCount includes saved cloud profiles and dedupes',
+        () {
+      final savedReadyProfile = testProfile(
+        name: 'Cloud: ready-1',
+        content: '{"outbounds":[{"type":"direct"}]}',
+      );
+      final savedOnlyProfile = testProfile(
+        name: 'Cloud: cached-only',
+        content: '{"outbounds":[{"type":"direct"}]}',
+      );
+      final emptyCloudProfile = testProfile(name: 'Cloud: empty');
+
+      final count = availableCloudRouteCount(
+        readyCloudNodes: [readyCloudTestInstance(label: 'ready-1')],
+        profiles: [
+          savedReadyProfile,
+          savedOnlyProfile,
+          emptyCloudProfile,
+          testProfile(name: 'Manual A'),
+        ],
+      );
+
+      expect(count, 2);
+    });
+
     test('validateSingboxConfig rejects invalid payloads', () {
       final AppLocalizationsEn l10n = AppLocalizationsEn();
       expect(
@@ -167,6 +192,73 @@ void main() {
       await tester.pump();
 
       expect(connectTapped, isTrue);
+    });
+
+    testWidgets('counts saved cloud profile when cloud node cache is empty',
+        (tester) async {
+      final activeCloudProfile = testProfile(
+        name: 'Cloud: vultr',
+        content: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        child: NodesVpnSection(
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: TestProfileProvider(
+            profiles: [activeCloudProfile],
+            activeProfile: activeCloudProfile,
+          ),
+          cloudProvider: TestCloudProvider(hasApiKey: false),
+          onConnect: () {},
+          onDisconnect: () {},
+          onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
+        ),
+      );
+
+      expect(find.text('Cloud: vultr'), findsWidgets);
+      expect(find.text('Cloud Routes · Disconnected'), findsOneWidget);
+      expect(find.text('Available Routes'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('1 Cloud Routes · 0 Saved Profiles'), findsOneWidget);
+    });
+
+    testWidgets('does not double-count saved profile for ready cloud node',
+        (tester) async {
+      final activeCloudProfile = testProfile(
+        name: 'Cloud: ready-node',
+        content: '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        child: NodesVpnSection(
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          profileProvider: TestProfileProvider(
+            profiles: [activeCloudProfile],
+            activeProfile: activeCloudProfile,
+          ),
+          cloudProvider: TestCloudProvider(
+            hasApiKey: true,
+            instances: [readyCloudTestInstance(label: 'ready-node')],
+          ),
+          onConnect: () {},
+          onDisconnect: () {},
+          onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
+        ),
+      );
+
+      expect(find.text('Vultr · Disconnected'), findsOneWidget);
+      expect(find.text('1 Cloud Routes · 0 Saved Profiles'), findsWidgets);
+      expect(find.text('2 Cloud Routes · 0 Saved Profiles'), findsNothing);
     });
 
     testWidgets('keeps the disconnected card focused on connect state only',
@@ -366,6 +458,40 @@ void main() {
       );
       expect(find.text('Set Cloud Access'), findsNothing);
       expect(find.text('Import profile'), findsNothing);
+    });
+
+    testWidgets('counts cached cloud profiles when cloud access is absent',
+        (tester) async {
+      final cachedCloudProfile = testProfile(
+        name: 'Cloud: cached-node',
+        content: '{"outbounds":[{"type":"direct"}]}',
+      );
+
+      await pumpNodesTestApp(
+        tester,
+        child: NodesCloudSection(
+          cloudProvider: TestCloudProvider(hasApiKey: false),
+          profileProvider: TestProfileProvider(
+            profiles: [cachedCloudProfile],
+            activeProfile: cachedCloudProfile,
+          ),
+          vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onRetryLoad: () {},
+          onCreateCloudNode: () {},
+          onViewDetails: (_) {},
+          onDeleteCloudNode: (_) {},
+          onUseCloudNode: (_) {},
+          onTestCloudNodeLatency: (_) {},
+          onTestAllCloudNodesLatency: () {},
+          onManageProviderChanged: (_) async {},
+        ),
+      );
+
+      expect(find.text('Cloud Routes'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('Cloud access has not been added yet'), findsOneWidget);
     });
 
     testWidgets('shows ready cloud node and forwards callbacks',

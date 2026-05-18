@@ -64,6 +64,15 @@ void main() {
 
       expect(label, 'node-260326104512');
     });
+
+    test('builds distinguishable redeploy labels', () {
+      final label = CloudProvider.redeployInstanceLabel(
+        'fra-node',
+        now: DateTime.utc(2026, 5, 14, 9, 30),
+      );
+
+      expect(label, 'fra-node-redeploy-05140930');
+    });
   });
 
   group('CloudProvider.validateDeploymentSelection', () {

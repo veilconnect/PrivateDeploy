@@ -11,6 +11,7 @@ import {
   CreateCloudInstance,
   CreateMultipleCloudInstances,
   DestroyCloudInstance,
+  RepairCloudInstance,
   TestConnectivity,
   TestNodeDirectSpeed,
   ReadFile,
@@ -818,6 +819,44 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     }
   }
 
+  const redeployInstance = async (instanceId: string) => {
+    const node = instances.value.find((item) => item.instanceId === instanceId) ||
+                 manualNodes.value.find((item) => item.instanceId === instanceId)
+
+    if (!node) {
+      throw new Error('Node not found for redeploy')
+    }
+
+    const isManual = manualNodes.value.some((n) => n.instanceId === instanceId)
+    if (isManual) {
+      throw new Error('Manual nodes cannot be redeployed automatically. Please edit or re-import the node.')
+    }
+
+    logInfo('[CloudStore] Repair/redeploy requested for node:', node.label)
+    const rawNode = await retryWithBackoff(
+      () => RepairCloudInstance(instanceId),
+      'RepairCloudInstance',
+      { maxAttempts: 1, baseDelay: 1000 }
+    )
+    const repaired = normalizeCloudNode(rawNode, currentProvider.value)
+    if (repaired.instanceId) {
+      await ensureRegionAvailability(repaired.region || '')
+      const cloudNode: ManagedCloudNode = {
+        ...repaired,
+        statusText: repaired.instanceId === instanceId ? 'connected' : 'pending',
+      }
+      instances.value = [
+        cloudNode,
+        ...instances.value.filter((n) => n.instanceId !== repaired.instanceId),
+      ]
+      instancesUpdatedAt.value = Date.now()
+      syncManualNodesIntoInstances()
+      await ensureSubscriptionForNode(cloudNode)
+      startAutoRefresh(true)
+    }
+    return repaired
+  }
+
   const testNodeConnectivity = async (instanceId: string) => {
     const node = instances.value.find((item) => item.instanceId === instanceId) ||
                  manualNodes.value.find((item) => item.instanceId === instanceId)
@@ -1104,6 +1143,7 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
     createMultipleInstances,
     destroyInstance,
     rotateIP,
+    redeployInstance,
     testNodeConnectivity,
     testAllNodesConnectivity,
     testNodeSpeedTest,

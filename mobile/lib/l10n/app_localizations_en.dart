@@ -330,6 +330,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nodeDetails => 'Node Details';
 
   @override
+  String get repairNode => 'Repair / Redeploy';
+
+  @override
   String get deleteNode => 'Delete Node';
 
   @override
@@ -341,6 +344,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String msLatency(Object ms) {
     return '$ms ms latency';
   }
+
+  @override
+  String get repairNodeTitle => 'Repair / Redeploy Node';
+
+  @override
+  String repairNodeConfirm(Object label) {
+    return 'Repair \"$label\"?\n\nSSH nodes will redeploy on the same server. Cloud provider nodes will create a same-region replacement and keep the old node until you delete it.';
+  }
+
+  @override
+  String get nodeRepairCompleted => 'Node repair completed';
+
+  @override
+  String get nodeRedeployStarted =>
+      'Replacement node is deploying. The old node was kept.';
+
+  @override
+  String get nodeRepairCleanupNeeded =>
+      'Node repair completed, but local cleanup needs attention';
+
+  @override
+  String get failedToRepair => 'Failed to repair';
 
   @override
   String get deleteNodeTitle => 'Delete Node';

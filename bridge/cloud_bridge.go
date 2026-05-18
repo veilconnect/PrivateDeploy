@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
@@ -304,6 +305,62 @@ func (a *App) DestroyCloudInstance(instanceID string) FlagResult {
 
 	log.Printf("[CloudBridge] Destroyed instance %s", instanceID)
 	return FlagResult{Flag: true, Data: "Instance destroyed successfully"}
+}
+
+func (a *App) RepairCloudInstanceTyped(instanceID string) (*cloud.Instance, error) {
+	log.Printf("[CloudBridge] RepairCloudInstanceTyped called for instance: %s", instanceID)
+
+	provider, err := a.CloudManager.GetActiveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	type instanceRepairer interface {
+		RepairInstance(ctx context.Context, instanceID string) (*cloud.Instance, error)
+	}
+	if repairer, ok := provider.(instanceRepairer); ok {
+		return repairer.RepairInstance(context.Background(), instanceID)
+	}
+
+	instance, err := provider.GetInstance(context.Background(), instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	label := instance.Label
+	if label == "" {
+		label = "node"
+	}
+	replacementLabel := fmt.Sprintf(
+		"%s-redeploy-%s",
+		label,
+		time.Now().UTC().Format("01021504"),
+	)
+
+	return provider.CreateInstance(context.Background(), &cloud.CreateInstanceOptions{
+		Label:  replacementLabel,
+		Region: instance.Region,
+		Plan:   instance.Plan,
+		OSID:   instance.OSID,
+	})
+}
+
+// RepairCloudInstance repairs/redeploys an instance on the active provider.
+func (a *App) RepairCloudInstance(instanceID string) FlagResult {
+	instance, err := a.RepairCloudInstanceTyped(instanceID)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to repair instance: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	data, err := json.Marshal(instance)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: Failed to marshal repaired instance: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+
+	log.Printf("[CloudBridge] Repair/redeploy submitted for instance %s", instanceID)
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 func (a *App) ListCloudRegionsTyped() ([]cloud.Region, error) {
