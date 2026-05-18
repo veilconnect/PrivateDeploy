@@ -357,6 +357,7 @@ export default {
     accountStatus: {
       lockedTitle: '云账号已锁定',
       lockedHint: '当前账号被云厂商冻结，无法创建新节点。请登录云厂商控制台解除限制后再刷新。',
+      lockedSoftHint: '可以通过复用现有配置继续部署，但受限制资源（如安全组等）将无法新增。请到云厂商控制台释放配额。',
       warningTitle: '云账号存在风险提示',
       warningHint: '部署仍允许，但云厂商已对该账号发出风险提示。请到云厂商控制台查看详情。',
     },

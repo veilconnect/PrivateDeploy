@@ -192,7 +192,11 @@ const accountLocked = computed(
 const accountBannerKind = computed<'locked' | 'warning' | null>(() => {
   const status = cloudStore.accountStatus
   if (!status) return null
-  if (!status.canDeploy) return 'locked'
+  // state="locked" with canDeploy=true happens when the provider has a soft
+  // quota the bridge can still work around (e.g. Vultr firewall-group cap with
+  // a reusable PrivateDeploy group). We still want the locked banner so the
+  // user sees what's actually constrained, not a silent green.
+  if (!status.canDeploy || status.state === 'locked') return 'locked'
   if (status.state === 'warning') return 'warning'
   return null
 })
@@ -540,9 +544,11 @@ onMounted(() => {
           </div>
           <div class="account-banner__hint">
             {{
-              accountBannerKind === 'locked'
-                ? t('cloud.accountStatus.lockedHint')
-                : t('cloud.accountStatus.warningHint')
+              accountBannerKind === 'warning'
+                ? t('cloud.accountStatus.warningHint')
+                : accountLocked
+                  ? t('cloud.accountStatus.lockedHint')
+                  : t('cloud.accountStatus.lockedSoftHint')
             }}
           </div>
         </div>

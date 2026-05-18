@@ -17,7 +17,6 @@ import {
   ListCloudPlans,
   ListCloudAvailability,
 } from '@/bridge'
-import type { CloudProviderAccountStatus } from '@/bridge/app'
 import { deepClone } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
@@ -26,6 +25,7 @@ import { isOnline, saveToOfflineCache, loadFromOfflineCache } from '@/utils/offl
 
 import { CACHE_TTL } from './constants'
 
+import type { CloudProviderAccountStatus } from '@/bridge/app'
 import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
 import type { Ref, ShallowRef } from 'vue'
 

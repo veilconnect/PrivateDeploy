@@ -356,6 +356,7 @@ export default {
     accountStatus: {
       lockedTitle: 'Provider account is locked',
       lockedHint: 'New deployments are disabled until the upstream account is restored. Sign in to the provider console to resolve the lock, then refresh.',
+      lockedSoftHint: 'Deployments may still succeed by reusing an existing configuration, but no new upstream resources of the constrained kind can be created until you free up headroom in the provider console.',
       warningTitle: 'Provider account warning',
       warningHint: 'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.',
     },
