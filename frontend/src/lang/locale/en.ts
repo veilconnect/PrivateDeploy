@@ -325,6 +325,10 @@ export default {
       title: 'Cloud Provider',
       label: 'Provider',
       switched: 'Cloud provider switched successfully',
+      categoryAuto: 'Automated deployment',
+      categoryAutoHint: 'PrivateDeploy provisions the VPS and installs the proxy stack using your API key.',
+      categoryByo: 'Bring your own server',
+      categoryByoHint: 'PrivateDeploy connects to an existing VPS over SSH and installs the proxy stack there. Provisioning the VPS itself is up to you.',
     },
     credentials: {
       title: 'Cloud Credentials',

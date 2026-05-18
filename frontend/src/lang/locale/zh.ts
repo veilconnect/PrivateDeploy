@@ -326,6 +326,10 @@ export default {
       title: '云服务商',
       label: '服务商',
       switched: '云服务商切换成功',
+      categoryAuto: '自动部署',
+      categoryAutoHint: 'PrivateDeploy 使用你的 API Key 自动创建 VPS 并安装代理协议。',
+      categoryByo: '自带服务器',
+      categoryByoHint: 'PrivateDeploy 通过 SSH 接入你已有的 VPS 并在上面部署协议栈，VPS 本身需自行准备。',
     },
     credentials: {
       title: '云凭据',

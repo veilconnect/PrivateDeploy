@@ -101,12 +101,28 @@ const handleMultiDeploySubmit = async () => {
   return true
 }
 
+const providerCategoryKey = (providerName: string): 'auto' | 'byo' =>
+  providerName === 'ssh' ? 'byo' : 'auto'
+
 const providerOptions = computed(() =>
-  cloudStore.availableProviders.map((provider) => ({
-    label: provider.displayName,
-    value: provider.name,
-  })),
+  cloudStore.availableProviders.map((provider) => {
+    const category = providerCategoryKey(provider.name)
+    const categoryLabel = t(
+      category === 'auto' ? 'cloud.provider.categoryAuto' : 'cloud.provider.categoryByo',
+    )
+    return {
+      label: `${provider.displayName} · ${categoryLabel}`,
+      value: provider.name,
+    }
+  }),
 )
+
+const currentProviderCategoryHint = computed(() => {
+  const category = providerCategoryKey(cloudStore.currentProvider)
+  return t(
+    category === 'auto' ? 'cloud.provider.categoryAutoHint' : 'cloud.provider.categoryByoHint',
+  )
+})
 
 const regionOptions = computed(() =>
   buildRegionOptions(cloudStore.regions, latencyResults.value, cloudStore.currentProvider, t),
@@ -451,6 +467,7 @@ onMounted(() => {
             aria-labelledby="cloud-provider-label"
           />
         </div>
+        <div class="text-12 text-secondary">{{ currentProviderCategoryHint }}</div>
         <div v-if="!isSSHProvider" class="flex flex-col gap-8">
           <Input
             v-model="cloudStore.config.apiKey"
