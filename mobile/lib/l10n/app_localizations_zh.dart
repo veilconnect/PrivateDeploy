@@ -566,6 +566,23 @@ class AppLocalizationsZh extends AppLocalizations {
   String get restoreConnectionFailed => '恢复之前的连接失败';
 
   @override
+  String get accountStatusLockedTitle => '云账号已锁定';
+
+  @override
+  String get accountStatusLockedHint =>
+      '当前账号被云厂商冻结，无法创建新节点。请登录云厂商控制台解除限制后再重新打开此对话框。';
+
+  @override
+  String get accountStatusLockedSoftHint =>
+      '可以通过复用现有配置继续部署，但受限制资源（如安全组等）将无法新增。请到云厂商控制台释放配额。';
+
+  @override
+  String get accountStatusWarningTitle => '云账号存在风险提示';
+
+  @override
+  String get accountStatusWarningHint => '部署仍允许，但云厂商已对该账号发出风险提示。请到云厂商控制台查看详情。';
+
+  @override
   String get deployNodeTitle => '创建线路';
 
   @override

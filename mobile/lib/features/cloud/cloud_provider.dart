@@ -56,6 +56,7 @@ class CloudProvider extends CloudProviderBase {
   bool _isLoadingPlans = false;
   String? _error;
   String? _apiKey;
+  CloudAccountStatus? _accountStatus;
   Map<String, String> _providerExtra = {};
   final String _selectedProfile = PortProfileAllocator.edge443Profile;
   Map<String, VultrNodeRecord> _nodeRecords = {};
@@ -107,6 +108,38 @@ class CloudProvider extends CloudProviderBase {
   String? get error => _error;
   Map<String, String> get providerExtra => Map.unmodifiable(_providerExtra);
   bool get isSshProvider => _providerId == CloudProviderId.ssh;
+
+  /// Most-recent upstream account-status probe for the active provider.
+  /// `null` means we haven't probed yet (or the provider doesn't expose
+  /// account status — SSH). UI banners gate on this; the deploy button is
+  /// only blocked when [accountStatus?.canDeploy] is `false`.
+  CloudAccountStatus? get accountStatus => _accountStatus;
+
+  /// Probes the active provider's account-status endpoint and stores the
+  /// result so callers can render the locked/warning banner. Fire-and-forget
+  /// safe: any failure is captured as state=unknown so the UI fails open.
+  Future<CloudAccountStatus?> refreshAccountStatus() async {
+    if (isSshProvider) {
+      _accountStatus = null;
+      return null;
+    }
+    if (!_hasApiKey || (_apiKey ?? '').trim().isEmpty) {
+      _accountStatus = null;
+      return null;
+    }
+    try {
+      final client = await _cloudClient();
+      final status = await client.getAccountStatus();
+      _accountStatus = status;
+      notifyListeners();
+      return status;
+    } catch (e) {
+      _accountStatus = CloudAccountStatus.unknown(
+          'Account-status probe failed: ${cloudProviderMessageFromError(e)}');
+      notifyListeners();
+      return _accountStatus;
+    }
+  }
 
   void markBenchmarkAllStart() {
     _benchmarkAllRunning = true;
@@ -446,6 +479,7 @@ class CloudProvider extends CloudProviderBase {
     _hasApiKey = false;
     _configLoaded = false;
     _error = null;
+    _accountStatus = null;
 
     await _loadNodeRecords();
     _restoreInstancesFromCache();
@@ -830,6 +864,11 @@ class CloudProvider extends CloudProviderBase {
       await refreshCloudConfig(notify: false);
       await loadRegions(notify: false);
       await loadPlans(notify: false);
+      // Best-effort: probe the upstream account status so the UI can degrade
+      // immediately after a valid key lands, instead of waiting for the first
+      // deploy attempt. Failures are non-fatal — refreshAccountStatus stores
+      // an unknown state and the deploy button stays enabled.
+      unawaited(refreshAccountStatus());
       return true;
     } catch (e) {
       if (!shouldKeepCloudApiKeyOnError(e)) {

@@ -587,6 +587,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get restoreConnectionFailed => 'Previous connection restore failed';
 
   @override
+  String get accountStatusLockedTitle => 'Provider account is locked';
+
+  @override
+  String get accountStatusLockedHint =>
+      'New deployments are disabled until the upstream account is restored. Open the provider console to resolve the lock, then reopen this dialog.';
+
+  @override
+  String get accountStatusLockedSoftHint =>
+      'Deployments may still succeed by reusing an existing configuration, but no new constrained resources can be created until you free up headroom in the provider console.';
+
+  @override
+  String get accountStatusWarningTitle => 'Provider account warning';
+
+  @override
+  String get accountStatusWarningHint =>
+      'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.';
+
+  @override
   String get deployNodeTitle => 'Create Route';
 
   @override

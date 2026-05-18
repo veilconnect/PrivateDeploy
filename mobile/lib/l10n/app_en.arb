@@ -199,6 +199,11 @@
   "@bestBenchmark": { "placeholders": { "label": {}, "metric": {}, "endpoint": {} } },
   "restoreConnectionFailed": "Previous connection restore failed",
 
+  "accountStatusLockedTitle": "Provider account is locked",
+  "accountStatusLockedHint": "New deployments are disabled until the upstream account is restored. Open the provider console to resolve the lock, then reopen this dialog.",
+  "accountStatusLockedSoftHint": "Deployments may still succeed by reusing an existing configuration, but no new constrained resources can be created until you free up headroom in the provider console.",
+  "accountStatusWarningTitle": "Provider account warning",
+  "accountStatusWarningHint": "Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.",
   "deployNodeTitle": "Create Route",
   "loadingRegionsPlans": "Loading regions and plans...",
   "deploymentUnavailable": "Deployment options are unavailable right now.",

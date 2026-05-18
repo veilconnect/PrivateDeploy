@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 
 import 'cloud_api_client.dart';
+import 'cloud_models.dart';
 
 /// Thin REST wrapper around the DigitalOcean v2 API, matching the shape
 /// of [VultrCloudClient] so callers don't need to branch on provider.
@@ -338,6 +339,39 @@ class DigitalOceanCloudClient implements CloudApiClient {
     return const {};
   }
 
+  /// Maps DigitalOcean's /v2/account `status` field into the provider-agnostic
+  /// [CloudAccountStatus] envelope. Mirrors the desktop Go side
+  /// (`bridge/cloud/providers/digitalocean/account.go`). Fails open on
+  /// transient errors so a Cloudflare blip doesn't lock the user out of the
+  /// deploy button.
+  @override
+  Future<CloudAccountStatus> getAccountStatus() async {
+    Map<String, dynamic> payload;
+    try {
+      payload = await validateApiKey();
+    } on StateError catch (err) {
+      final lower = err.message.toLowerCase();
+      if (lower.contains('unauthorized') ||
+          lower.contains('forbidden') ||
+          lower.contains('401') ||
+          lower.contains('403')) {
+        return CloudAccountStatus.invalidKey('DigitalOcean rejected the API key');
+      }
+      return CloudAccountStatus.unknown(err.message);
+    } catch (err) {
+      return CloudAccountStatus.unknown('DigitalOcean account probe failed: $err');
+    }
+
+    final account = payload['account'];
+    if (account is! Map) {
+      return CloudAccountStatus.unknown(
+          'DigitalOcean account payload missing the `account` envelope');
+    }
+    final rawStatus = (account['status']?.toString() ?? '').trim();
+    final message = (account['status_message']?.toString() ?? '').trim();
+    return mapDigitalOceanAccountStatus(rawStatus, message);
+  }
+
   /// DO doesn't expose a `getPlanById` equivalent. We look the slug up in
   /// the full /sizes listing. The response is already Vultr-shaped by
   /// [listPlans], so callers can read plan.ram / plan.vcpu_count / ... the
@@ -531,5 +565,51 @@ class DigitalOceanCloudClient implements CloudApiClient {
       }
     }
     return null;
+  }
+}
+
+/// Pure mapper from the DigitalOcean `/v2/account.status` string to the
+/// provider-agnostic [CloudAccountStatus] envelope. Split out for unit-testing
+/// without a real HTTP client. Mirrors the desktop Go implementation
+/// (`mapDigitalOceanAccountStatus` in
+/// `bridge/cloud/providers/digitalocean/account.go`) — keep the two in sync.
+CloudAccountStatus mapDigitalOceanAccountStatus(String rawStatus, String message) {
+  final state = rawStatus.trim().toLowerCase();
+  final now = DateTime.now().toUtc();
+  switch (state) {
+    case 'active':
+      return CloudAccountStatus(
+        state: CloudAccountState.active,
+        message: message,
+        canDeploy: true,
+        checkedAt: now,
+      );
+    case 'warning':
+      return CloudAccountStatus(
+        state: CloudAccountState.warning,
+        message: message.isEmpty
+            ? 'DigitalOcean account has an unresolved warning'
+            : message,
+        canDeploy: true,
+        checkedAt: now,
+      );
+    case 'locked':
+      return CloudAccountStatus(
+        state: CloudAccountState.locked,
+        message: message.isEmpty
+            ? 'DigitalOcean has locked this account; new resources cannot be created until it is restored'
+            : message,
+        canDeploy: false,
+        checkedAt: now,
+      );
+    default:
+      return CloudAccountStatus(
+        state: CloudAccountState.unknown,
+        message: message.isEmpty
+            ? 'Unrecognized DigitalOcean account status: "$rawStatus"'
+            : message,
+        canDeploy: true,
+        checkedAt: now,
+      );
   }
 }

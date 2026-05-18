@@ -78,12 +78,15 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
         provider.isLoadingRegions || provider.isLoadingPlans;
     final missingRegions = provider.regions.isEmpty;
     final missingPlans = provider.plans.isEmpty;
+    final accountStatus = provider.accountStatus;
+    final accountBlocksDeploy = accountStatus?.canDeploy == false;
     final canDeploy = isSsh
         ? provider.hasStoredApiKey
         : !missingRegions &&
             !missingPlans &&
             _selectedRegion != null &&
-            _selectedPlan != null;
+            _selectedPlan != null &&
+            !accountBlocksDeploy;
 
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
@@ -114,6 +117,8 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                 ),
               ),
             ),
+            if (!isSsh && accountStatus != null)
+              _AccountStatusBanner(status: accountStatus),
             if (!isSsh && (missingRegions || missingPlans))
               Container(
                 width: double.infinity,
@@ -318,6 +323,83 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               Text(isLoadingOptions && !canDeploy ? l10n.loading : l10n.deploy),
         ),
       ],
+    );
+  }
+}
+
+/// Inline account-status callout for the deploy dialog. Mirrors the desktop
+/// CloudView banner: locked → red, warning → amber, active/unknown → hidden.
+/// Soft-locked (state=locked, canDeploy=true) keeps the red title but the
+/// caller leaves the deploy button enabled — Vultr's "cap reached but reusable
+/// PrivateDeploy group exists" path.
+class _AccountStatusBanner extends StatelessWidget {
+  const _AccountStatusBanner({required this.status});
+
+  final CloudAccountStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLocked = status.state == CloudAccountState.locked ||
+        status.state == CloudAccountState.invalidKey;
+    final isWarning = status.state == CloudAccountState.warning;
+    if (!isLocked && !isWarning) {
+      return const SizedBox.shrink();
+    }
+
+    final l10n = AppLocalizations.of(context)!;
+    final isSoftLocked = isLocked && status.canDeploy;
+    final color = isLocked ? Colors.red : Colors.orange;
+
+    final String title;
+    if (isWarning) {
+      title = l10n.accountStatusWarningTitle;
+    } else {
+      title = l10n.accountStatusLockedTitle;
+    }
+
+    final String hint;
+    if (isWarning) {
+      hint = l10n.accountStatusWarningHint;
+    } else if (isSoftLocked) {
+      hint = l10n.accountStatusLockedSoftHint;
+    } else {
+      hint = l10n.accountStatusLockedHint;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(bottom: 12.h),
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+        borderRadius: BorderRadius.circular(12.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13.sp,
+              fontWeight: FontWeight.w600,
+              color: color[800],
+            ),
+          ),
+          if (status.message.isNotEmpty) ...[
+            SizedBox(height: 4.h),
+            Text(
+              status.message,
+              style: TextStyle(fontSize: 12.sp, color: color[800]),
+            ),
+          ],
+          SizedBox(height: 4.h),
+          Text(
+            hint,
+            style: TextStyle(fontSize: 12.sp, color: color[700]),
+          ),
+        ],
+      ),
     );
   }
 }

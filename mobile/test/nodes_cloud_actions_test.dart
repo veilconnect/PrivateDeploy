@@ -701,6 +701,9 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   @override
   bool isLoadingPlans;
 
+  @override
+  CloudAccountStatus? get accountStatus => null;
+
   final bool deleteResult;
   final bool setApiKeyResult;
   final bool setSshAccessResult;

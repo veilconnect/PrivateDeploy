@@ -370,5 +370,8 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   bool get benchmarkAbortRequested => false;
 
   @override
+  CloudAccountStatus? get accountStatus => null;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

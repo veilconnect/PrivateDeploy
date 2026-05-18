@@ -1,3 +1,72 @@
+/// Upstream account-status state surfaced by the cloud provider's API. The
+/// values are kept identical to the desktop `cloud.AccountStatus.State` field
+/// so a future shared schema can deserialize either side.
+enum CloudAccountState {
+  active,
+  warning,
+  locked,
+  invalidKey,
+  unknown,
+}
+
+CloudAccountState cloudAccountStateFromString(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'active':
+      return CloudAccountState.active;
+    case 'warning':
+      return CloudAccountState.warning;
+    case 'locked':
+      return CloudAccountState.locked;
+    case 'invalid_key':
+    case 'invalidkey':
+      return CloudAccountState.invalidKey;
+    default:
+      return CloudAccountState.unknown;
+  }
+}
+
+/// Provider-agnostic account-status envelope. Mirrors
+/// `bridge/cloud/interface.go.AccountStatus` so the desktop and mobile clients
+/// agree on the same five states; see that file for the contract.
+///
+/// canDeploy doubles as the UI's "block deploy button?" signal — providers
+/// surface a soft-locked state by returning state=locked, canDeploy=true (e.g.
+/// Vultr firewall cap reached but a reusable group exists).
+class CloudAccountStatus {
+  final CloudAccountState state;
+  final String message;
+  final bool canDeploy;
+  final DateTime checkedAt;
+
+  const CloudAccountStatus({
+    required this.state,
+    required this.message,
+    required this.canDeploy,
+    required this.checkedAt,
+  });
+
+  factory CloudAccountStatus.active() => CloudAccountStatus(
+        state: CloudAccountState.active,
+        message: '',
+        canDeploy: true,
+        checkedAt: DateTime.now().toUtc(),
+      );
+
+  factory CloudAccountStatus.unknown(String message) => CloudAccountStatus(
+        state: CloudAccountState.unknown,
+        message: message,
+        canDeploy: true,
+        checkedAt: DateTime.now().toUtc(),
+      );
+
+  factory CloudAccountStatus.invalidKey(String message) => CloudAccountStatus(
+        state: CloudAccountState.invalidKey,
+        message: message,
+        canDeploy: false,
+        checkedAt: DateTime.now().toUtc(),
+      );
+}
+
 class CloudInstance {
   final String id;
   final String provider;

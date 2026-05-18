@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 
 import '../../services/native_http_service.dart';
 import 'cloud_api_client.dart';
+import 'cloud_models.dart';
 
 class VultrCloudClient implements CloudApiClient {
   static const String baseUrl = 'https://api.vultr.com/v2';
@@ -90,6 +91,46 @@ class VultrCloudClient implements CloudApiClient {
 
   Future<Map<String, dynamic>> validateApiKey() {
     return _requestJson('GET', '/account', timeout: _validationTimeout);
+  }
+
+  /// Probes Vultr-specific quotas that block deploys. Today only the firewall-
+  /// group cap is checked because that's the failure mode currently seen in
+  /// production (DigitalOcean's account.status field has no equivalent on
+  /// Vultr's account endpoint). Mirrors the desktop Go implementation in
+  /// `bridge/cloud/providers/vultr/account.go` — keep the two in sync.
+  @override
+  Future<CloudAccountStatus> getAccountStatus() async {
+    Map<String, dynamic> payload;
+    try {
+      payload = await _requestJson('GET', '/firewalls',
+          timeout: _validationTimeout);
+    } on DioException catch (err) {
+      final status = err.response?.statusCode ?? 0;
+      if (status == 401 || status == 403) {
+        return CloudAccountStatus.invalidKey('Vultr rejected the API key');
+      }
+      return CloudAccountStatus.unknown(
+          'Vultr firewall-quota probe failed: ${err.message}');
+    } catch (err) {
+      return CloudAccountStatus.unknown(
+          'Vultr firewall-quota probe failed: $err');
+    }
+
+    final groups = (payload['firewall_groups'] as List?) ?? const [];
+    var total = 0;
+    var reusable = 0;
+    for (final raw in groups) {
+      if (raw is! Map) continue;
+      total += 1;
+      final description = raw['description']?.toString() ?? '';
+      if (!description.contains('PrivateDeploy')) continue;
+      final ruleCount = (raw['rule_count'] as num?)?.toInt() ?? 0;
+      final maxRuleCount = (raw['max_rule_count'] as num?)?.toInt() ?? 0;
+      if (maxRuleCount == 0 || ruleCount < maxRuleCount) {
+        reusable += 1;
+      }
+    }
+    return classifyVultrFirewallQuota(total, reusable);
   }
 
   Future<Map<String, dynamic>> getPlanById(String planId) async {
@@ -493,4 +534,50 @@ docker run -d --name ss-server --restart=always \
 echo "shadowsocks-deployed"
 ''';
   }
+}
+
+/// Vultr account-level cap on the total number of firewall groups. Hitting it
+/// causes /firewalls POST to return HTTP 400 "Maximum firewall groups
+/// exceeded". Kept in sync with `vultrFirewallGroupCap` in the desktop Go
+/// implementation.
+const int vultrFirewallGroupCap = 50;
+
+/// Count at which the UI starts surfacing a yellow banner. Identical to the
+/// desktop threshold so users see the same warning on either platform.
+const int vultrFirewallWarnThreshold = 45;
+
+/// Pure mapper from firewall-group counts to [CloudAccountStatus]. Split out
+/// so unit tests can verify the boundary behaviour without stubbing the HTTP
+/// client. Mirrors `classifyVultrFirewallQuota` in the desktop Go side.
+CloudAccountStatus classifyVultrFirewallQuota(int total, int reusable) {
+  final now = DateTime.now().toUtc();
+  if (total >= vultrFirewallGroupCap) {
+    final canDeploy = reusable > 0;
+    final message = canDeploy
+        ? 'Vultr firewall-group cap reached ($total/$vultrFirewallGroupCap). '
+            'Deploys will reuse an existing PrivateDeploy group, but no new '
+            'groups can be created until you delete unused ones in the Vultr '
+            'console.'
+        : 'Vultr firewall-group cap reached ($total/$vultrFirewallGroupCap). '
+            'New groups will be rejected; delete unused groups in the Vultr '
+            'console to recover deploy headroom.';
+    return CloudAccountStatus(
+      state: CloudAccountState.locked,
+      message: message,
+      canDeploy: canDeploy,
+      checkedAt: now,
+    );
+  }
+  if (total >= vultrFirewallWarnThreshold) {
+    return CloudAccountStatus(
+      state: CloudAccountState.warning,
+      message:
+          'Vultr firewall groups are approaching the per-account cap '
+          '($total/$vultrFirewallGroupCap). Consider deleting unused groups '
+          'in the Vultr console before the next deploy.',
+      canDeploy: true,
+      checkedAt: now,
+    );
+  }
+  return CloudAccountStatus.active();
 }

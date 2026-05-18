@@ -287,6 +287,9 @@ class TestCloudProvider extends ChangeNotifier
   bool get benchmarkAbortRequested => false;
 
   @override
+  CloudAccountStatus? get accountStatus => null;
+
+  @override
   List<CloudInstance> instances;
 
   @override

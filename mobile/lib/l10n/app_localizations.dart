@@ -1106,6 +1106,36 @@ abstract class AppLocalizations {
   /// **'Previous connection restore failed'**
   String get restoreConnectionFailed;
 
+  /// No description provided for @accountStatusLockedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider account is locked'**
+  String get accountStatusLockedTitle;
+
+  /// No description provided for @accountStatusLockedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'New deployments are disabled until the upstream account is restored. Open the provider console to resolve the lock, then reopen this dialog.'**
+  String get accountStatusLockedHint;
+
+  /// No description provided for @accountStatusLockedSoftHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Deployments may still succeed by reusing an existing configuration, but no new constrained resources can be created until you free up headroom in the provider console.'**
+  String get accountStatusLockedSoftHint;
+
+  /// No description provided for @accountStatusWarningTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider account warning'**
+  String get accountStatusWarningTitle;
+
+  /// No description provided for @accountStatusWarningHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.'**
+  String get accountStatusWarningHint;
+
   /// No description provided for @deployNodeTitle.
   ///
   /// In en, this message translates to:

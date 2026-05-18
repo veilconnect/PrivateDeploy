@@ -1,3 +1,5 @@
+import 'cloud_models.dart';
+
 /// Common REST surface shared by every provider-specific client
 /// ([VultrCloudClient], [DigitalOceanCloudClient], …). CloudProvider talks
 /// to providers only through this interface, so adding a new provider is a
@@ -37,4 +39,12 @@ abstract class CloudApiClient {
     required int osId,
     required String userData,
   });
+
+  /// Probes the upstream account state so the UI can degrade — block the
+  /// deploy button when state == locked && canDeploy == false, render a
+  /// banner for warning / soft-locked, etc. Default implementation returns
+  /// [CloudAccountStatus.active] so providers that don't expose a quota or
+  /// account-lock endpoint are treated as always-deployable (fail-open).
+  Future<CloudAccountStatus> getAccountStatus() async =>
+      CloudAccountStatus.active();
 }
