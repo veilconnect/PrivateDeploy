@@ -133,9 +133,30 @@ E flutter : Could not create root isolate.
 
 ### iOS
 
-- `Runner/VpnPlugin.swift` 和 `VPNExtension/PacketTunnelProvider.swift` 已接入
-- 若未嵌入 `VPNCore.framework`，应用会显示原生 VPN 不可用，而不是假装可连
-- 需要正确配置 App Group、Network Extension 和签名能力
+iOS 是 **beta / 构建依赖型** 平台：Swift 插件和 PacketTunnel 扩展骨架都已就位，但所有原生 VPN 入口都被 `#if canImport(VPNCore)` 包裹，没有 `VPNCore.framework` 嵌入时只会返回明确的 unsupported 错误（不会假装能连）。要让 iOS 上的 VPN 真正可用，需要按 [`IOS_INTEGRATION.md`](IOS_INTEGRATION.md) 走一遍 gomobile framework 构建并配置签名与权能：
+
+1. **gomobile 编译 VPNCore.framework**
+
+   ```bash
+   cd mobile/gomobile
+   ./build-ios.sh
+   ```
+
+   产物会写到 `mobile/ios/VPNCore.framework`，把它拖入 Xcode 的 Runner target,并选 *Embed & Sign*。
+
+2. **App Group**：在主 App 与 `VPNExtension` 两个 target 都启用 `App Groups`，并加入 `group.com.privatedeploy.mobile`（或自定义后改 `Info.plist` 里的 `PrivateDeployVPNAppGroup`）。
+
+3. **Network Extension**：为两个 target 都启用 `Network Extensions → Packet Tunnel`。
+
+4. **签名能力**：使用一个开启了 `Network Extensions` 权能的 Apple Developer 账号，否则 `NETunnelProviderManager.saveToPreferences` 会失败。
+
+5. 在主 App `Info.plist` 中确认 `PrivateDeployVPNExtensionBundleIdentifier` 指向 `VPNExtension` 的实际 bundle id。
+
+iOS 平台未覆盖的功能（对齐桌面）：
+
+- 没有 `accountStatus` 探测：桌面端的 DigitalOcean locked / Vultr 防火墙 50/50 配额预检尚未在 iOS 复刻；iOS 侧仍只在调用 `validateApiKey` 时通过 HTTP 错误反馈
+- 没有 `RepairCloudInstance`：桌面端的就地修复/重新部署仅有桌面 Wails RPC，iOS 仅有删除+重建的常规流程
+- VPN 系统状态 stream 在没有 `VPNCore.framework` 时仅返回静态的 unsupported 事件，不会主动推送状态变化
 
 ## 测试
 

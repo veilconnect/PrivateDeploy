@@ -1,6 +1,8 @@
 # PrivateDeploy
 
-PrivateDeploy provisions hardened multi-protocol VPS proxies and ships clients on every surface that talks to them: a Vue 3 + Wails desktop app, a Flutter mobile app (Android + iOS) with a native sing-box network service, and a standalone Go HTTP API for headless / multi-device use. A single user-data bundle brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – across Vultr, DigitalOcean, SSH-reachable hosts, and a static catalog (Contabo, Oracle).
+PrivateDeploy provisions hardened multi-protocol VPS proxies and ships clients on every surface that talks to them: a Vue 3 + Wails desktop app, a Flutter mobile app, and a standalone Go HTTP API for headless / multi-device use. A single user-data bundle brings up four protocols on one VPS – Shadowsocks, Hysteria2, VLESS-Reality, and Trojan – across Vultr, DigitalOcean, and SSH-reachable hosts (a static catalog for Contabo / Oracle / Hetzner / Linode / Scaleway / UpCloud is present in the source tree but not exposed in shipped UIs).
+
+> **Mobile platform status.** Android ships a working native network service end-to-end. iOS has the Swift plugin (`Runner/VpnPlugin.swift`) and the Packet Tunnel extension (`VPNExtension/PacketTunnelProvider.swift`) wired up, but every native VPN method is gated on `#if canImport(VPNCore)` and returns a clear "unsupported" error when the gomobile-built `VPNCore.framework` is not embedded into the iOS build. iOS therefore requires you to follow [`mobile/IOS_INTEGRATION.md`](mobile/IOS_INTEGRATION.md) (gomobile framework build + App Group + Network Extension entitlements) before VPN control works. Treat iOS as **beta / build-required**, not as a turnkey surface.
 
 For a one-page topology diagram and module map, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
