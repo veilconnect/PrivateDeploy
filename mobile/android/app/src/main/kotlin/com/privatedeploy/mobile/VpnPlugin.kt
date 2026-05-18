@@ -38,7 +38,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         private const val METHOD_CHANNEL = "com.privatedeploy.vpn/native"
         private const val EVENT_CHANNEL = "com.privatedeploy.vpn/events"
         private const val VPN_REQUEST_CODE = 100
-        private const val START_TIMEOUT_MS = 30000L
+        private const val START_TIMEOUT_MS = 90000L
     }
 
     private lateinit var methodChannel: MethodChannel

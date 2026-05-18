@@ -344,54 +344,43 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
 
-                    // Eager broadcast: tell dart "connected" the moment libbox
-                    // reports the tunnel is up, BEFORE we run the egress
-                    // health probe. The probe can take up to ~15s when it
-                    // has to chase a slow DNS resolution through a tunnel
-                    // whose upstream is in fact dead, and dart's
-                    // VpnPlugin.START_TIMEOUT_MS is only 30s — so blocking
-                    // the "connected" broadcast on the probe burns most of
-                    // dart's budget and risks a failPendingStart() →
-                    // ACTION_STOP that destroys the service mid-probe.
-                    // Decoupling means dart resolves its connect() future
-                    // promptly, and we then refine the user-facing state
-                    // (notification + follow-up broadcast) once the probe
-                    // returns.
                     updateForegroundNotification("VPN connected (verifying)")
-                    broadcastStatus("connected", null)
-                    succeeded = true
 
                     val health = checkTunnelHealth()
-                    val outcome = describeTunnelHealth(health)
-                    updateForegroundNotification(outcome.notificationText)
-                    if (outcome.statusMessage != null) {
-                        // Re-broadcast connected with the diagnostic message
-                        // so dart's listener (eventSink) can render the
-                        // degraded warning banner. dart treats "connected"
-                        // status as idempotent, so this just refines state
-                        // rather than re-resolving the connect() future.
-                        broadcastStatus("connected", outcome.statusMessage)
-                    }
                     when (health) {
-                        TunnelHealth.Healthy ->
+                        TunnelHealth.Healthy -> {
+                            val outcome = describeTunnelHealth(health)
+                            updateForegroundNotification(outcome.notificationText)
+                            broadcastStatus("connected", outcome.statusMessage)
+                            succeeded = true
                             Log.i(TAG, "VPN started successfully on attempt $attempt")
-                        TunnelHealth.UpstreamDegraded ->
+                        }
+                        TunnelHealth.UpstreamDegraded -> {
+                            val outcome = describeTunnelHealth(health)
+                            updateForegroundNotification(outcome.notificationText)
+                            broadcastStatus("connected", outcome.statusMessage)
+                            succeeded = true
                             Log.w(
                                 TAG,
                                 "VPN start attempt $attempt: tunnel up but upstream " +
                                     "unreachable; the configured node looks blocked " +
                                     "from this network — user should switch nodes",
                             )
-                        TunnelHealth.Unreachable ->
+                        }
+                        TunnelHealth.Unreachable -> {
+                            lastError = IllegalStateException(startupConnectivityFailureMessage())
                             Log.w(
                                 TAG,
                                 "VPN start attempt $attempt: probe couldn't reach any " +
-                                    "endpoint but libbox reports the tunnel is up — " +
-                                    "keeping the session; dart-side probe will keep " +
-                                    "refreshing the egress IP",
+                                    "endpoint through the tunnel; treating this as a " +
+                                    "failed start so the app does not leave a blackholed " +
+                                    "TUN route installed",
                             )
+                        }
                     }
-                    break
+                    if (succeeded) {
+                        break
+                    }
                 } catch (e: Throwable) {
                     Log.w(
                         TAG,
@@ -505,7 +494,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // endpoints at all, possibly transient) earns a retry.
                     val acceptNow = when (health) {
                         TunnelHealth.Healthy, TunnelHealth.UpstreamDegraded -> true
-                        TunnelHealth.Unreachable -> attempt == RESTART_MAX_ATTEMPTS
+                        TunnelHealth.Unreachable -> false
                     }
                     if (acceptNow) {
                         val outcome = describeTunnelHealth(health)
@@ -522,16 +511,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                         "underlying network probably can't reach the " +
                                         "configured node — user needs to switch nodes.",
                                 )
-                            TunnelHealth.Unreachable ->
-                                // Same rationale as startVpn: don't tear down a working
-                                // tunnel just because the verifier couldn't reach our
-                                // probe endpoints — the user should keep their session.
-                                Log.w(
-                                    TAG,
-                                    "VPN restart attempt $attempt/$RESTART_MAX_ATTEMPTS: probe " +
-                                        "failed but accepting libbox state so the user keeps " +
-                                        "the tunnel; dart-side probe will refresh the egress IP.",
-                                )
+                            TunnelHealth.Unreachable -> Unit
                         }
                         succeeded = true
                         break
@@ -572,12 +552,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
             if (!succeeded) {
                 Log.e(TAG, "Failed to restart VPN after $RESTART_MAX_ATTEMPTS attempts", lastError)
+                try {
+                    vpnCore?.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping VPN runtime after restart failure", e)
+                }
+                cleanupTunnel()
                 isRunning = false
-                // Keep the service alive (don't stopSelf). The NetworkCallback
-                // will fire again on the next transport change and can attempt
-                // another restart once the network settles. If the user taps
-                // connect manually, startVpn() will re-initialize the core.
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 broadcastError(lastError?.message ?: "Failed to restart VPN")
+                stopSelf()
                 return@thread
             }
 
@@ -776,20 +760,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         )
         TunnelHealth.UpstreamDegraded -> TunnelHealthOutcome(
             notificationText = "VPN connected · upstream blocked, switch nodes",
-            statusMessage = "Tunnel is up, but the configured upstream node is unreachable " +
-                "from your current network. The carrier may be blocking it — try switching " +
-                "to a different node.",
+            statusMessage = "Tunnel is up, but this node's upstream can't be reached " +
+                "from your current network. Try Wi-Fi or switching to a different node " +
+                "— cellular carriers sometimes block VPS IPs.",
         )
         TunnelHealth.Unreachable -> TunnelHealthOutcome(
-            notificationText = "VPN connected (egress unverified)",
-            // Previously null, which let dart treat the tunnel as fully healthy
-            // and surface a green "VPN 连接成功" snackbar even when nothing
-            // actually routes (e.g. cellular carrier silently dropping the
-            // upstream IP). Reported 2026-05-12 on cellular-only S23. Surface
-            // an explicit "unverified" warning so the connect-snackbar can
-            // downgrade to orange and the UI badge can flag the degraded
-            // session. The watchdog still keeps the tunnel up — this is just
-            // for honest status reporting, not for tearing down the session.
+            notificationText = "VPN egress unreachable",
             statusMessage = "Tunnel is up but egress could not be verified. " +
                 "Browsing may not work — try a different node or network.",
         )

@@ -59,18 +59,19 @@ internal object NativeEgressProbe {
         EgressProbeEndpoint("https://www.qq.com/favicon.ico"),
     )
 
-    // Endpoints that only resolve when packets genuinely exit through the
-    // configured upstream node — they're geofenced behind the regional network filtering
-    // (no domestic-direct shortcut can reach them) and respond with a tiny
-    // empty 204 so the probe stays cheap. Used by the service's post-connect
-    // verifier to detect "tun0 is up but the upstream socket is dead"
-    // scenarios — typically a mobile network blocking the VPS IP after a
-    // Wi-Fi → cellular handover. /generate_204 is Google's canonical captive
-    // portal probe; Android itself uses it, so it's stable and globally
-    // mirrored across Google's edges.
+    // Endpoints that should only work when packets genuinely exit through the
+    // configured upstream node. These must return a public IP, not merely a
+    // 204/no-body reachability response: in the wild, Google's generate_204
+    // can occasionally complete while the configured VPS socket is still
+    // timing out, which made the service mark a broken tunnel Healthy. Keeping
+    // this list IP-bearing aligns the startup health decision with the
+    // Flutter diagnostics card and avoids a green "connected" state when the
+    // app still cannot confirm egress.
     val TUNNEL_REQUIRED_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
-        EgressProbeEndpoint("https://www.gstatic.com/generate_204"),
-        EgressProbeEndpoint("https://www.google.com/generate_204"),
+        EgressProbeEndpoint("https://api.ipify.org?format=json"),
+        EgressProbeEndpoint("https://api64.ipify.org?format=json"),
+        EgressProbeEndpoint("https://ifconfig.me/ip"),
+        EgressProbeEndpoint("https://icanhazip.com"),
     )
 
     /**

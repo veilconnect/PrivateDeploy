@@ -126,9 +126,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (_error == null) {
       return;
     }
+    final wasStartupProbeWarning = _isStartupProbeWarning(_error);
     _error = null;
+    if (wasStartupProbeWarning && !_isStartupProbeWarning(_diagnosticsError)) {
+      _health = VpnHealth.healthy;
+    }
     notifyListeners();
   }
+
   bool get isConnected => _status == VpnStatus.connected;
   bool get isSupported => _isSupported;
   String? get unsupportedReason => _unsupportedReason;
@@ -251,10 +256,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       } else {
         final running = await _nativeService.isRunning();
         _status = running ? VpnStatus.connected : VpnStatus.disconnected;
-        _error = running ? null : _nativeService.lastError;
         if (running) {
+          if (!_hasStartupProbeWarning) {
+            _error = null;
+            _health = VpnHealth.healthy;
+          } else {
+            _health = VpnHealth.degraded;
+          }
           _startStatsPolling();
         } else {
+          _error = _nativeService.lastError;
+          _health = VpnHealth.healthy;
           _stopStatsPolling();
         }
       }
@@ -344,6 +356,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     } finally {
       _isLoading = false;
+      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
+        _handleUpstreamDegradedSignal(degraded: true);
+      }
       _safeNotifyListeners();
     }
   }
@@ -383,6 +398,54 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     } catch (e) {
       _error = 'Failed to stop VPN: ${e.toString()}';
       AppLogger.error('[VpnProvider] Stop error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
+        _handleUpstreamDegradedSignal(degraded: true);
+      }
+      _safeNotifyListeners();
+    }
+  }
+
+  Future<bool> stopDegradedSession({String? reason}) async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      _safeNotifyListeners();
+      return false;
+    }
+
+    final preservedReason = _normalizeVpnError(
+          reason ?? _error ?? _diagnosticsError,
+        ) ??
+        startupConnectivityFailureMessage;
+
+    _cancelStartupVerification();
+    _upstreamDegradedWatchdog?.cancel();
+    _upstreamDegradedWatchdog = null;
+    _isLoading = true;
+    _safeNotifyListeners();
+
+    try {
+      final success = await _nativeService.stopVpn();
+      if (success) {
+        await _waitForNativeDisconnect();
+        _status = VpnStatus.disconnected;
+        _activeProfile = null;
+        _lastKnownEgressIp = null;
+        _lastKnownEgressIpAt = null;
+        _diagnosticsEgressIp = null;
+        _health = VpnHealth.healthy;
+        _stopStatsPolling();
+        _error = preservedReason;
+      } else {
+        _error = _normalizeVpnError(_nativeService.lastError) ??
+            'Failed to stop unreachable VPN session';
+      }
+      return success;
+    } catch (e) {
+      _error = 'Failed to stop unreachable VPN session: ${e.toString()}';
+      AppLogger.error('[VpnProvider] Stop degraded session error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -432,6 +495,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     } finally {
       _isLoading = false;
+      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
+        _handleUpstreamDegradedSignal(degraded: true);
+      }
       _safeNotifyListeners();
     }
   }
@@ -562,10 +628,21 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (normalized == null || normalized.isEmpty) {
       return;
     }
+    final hadStartupProbeWarning = _hasStartupProbeWarning;
     _diagnosticsEgressIp = normalized;
     _diagnosticsError = null;
     _lastKnownEgressIp = normalized;
     _lastKnownEgressIpAt = DateTime.now();
+    if (hadStartupProbeWarning && _isStartupProbeWarning(_error)) {
+      _error = null;
+    }
+    final hasNonStartupError =
+        _error != null && !_isStartupProbeWarning(_error);
+    if (hadStartupProbeWarning &&
+        _status == VpnStatus.connected &&
+        !hasNonStartupError) {
+      _health = VpnHealth.healthy;
+    }
   }
 
   void _startStatsPolling() {
@@ -682,22 +759,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
       // Android startup probes are advisory only. We have observed false
       // negatives here even when the node is healthy and browsing works, so
-      // keep the tunnel up and retry once shortly after connection before we
-      // surface any warning through diagnostics.
-      _diagnosticsEgressIp = null;
-      _diagnosticsError = null;
-      _diagnosticsUpdatedAt = null;
-      // Preserve any diagnostic message the native VpnService already
-      // broadcast (e.g. "upstream blocked, switch nodes" from
-      // checkTunnelHealth) — clearing it here would hide the orange banner
-      // that tells the user the chosen node can't reach offshore traffic
-      // even though the tunnel itself is up. Only clear if _error is the
-      // generic startup-failure placeholder, which is what gets set when
-      // dart's own cloudflare-fronted probe times out from CN — that one
-      // is genuinely advisory and shouldn't clutter the UI.
-      if (_error == startupConnectivityFailureMessage) {
-        _error = null;
-      }
+      // keep the tunnel up, but show the session as degraded until a retry
+      // confirms the public egress IP. The UI must not show a green success
+      // state while the app still has no route-level proof.
+      _markStartupProbeInconclusive();
       _scheduleDeferredStartupEgressConfirmation(generation: generation);
       AppLogger.info(
         '[VpnProvider] Android startup probe was inconclusive; deferring diagnostics retry while keeping VPN connected',
@@ -907,18 +972,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         }
 
         _diagnosticsEgressIp = null;
-        _diagnosticsError = startupProbeInconclusiveMessage;
-        _diagnosticsUpdatedAt = DateTime.now();
-        // Same rationale as the synchronous branch in
-        // _verifyStartupEgressConnectivity: don't wipe an _error message
-        // that came from the native VpnService (e.g. UpstreamDegraded
-        // "switch nodes" warning) just because dart's own Cloudflare-fronted
-        // probe couldn't confirm an egress IP — that probe failure is
-        // expected from CN. Only reset _error if it's the placeholder
-        // startup-failure string, which is genuinely advisory.
-        if (_error == startupConnectivityFailureMessage) {
-          _error = null;
-        }
+        _markStartupProbeInconclusive();
         _safeNotifyListeners();
         AppLogger.warning(
           '[VpnProvider] Android startup probe could not confirm egress after deferred retry; keeping VPN connected',
@@ -929,6 +983,27 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
   bool _isActiveStartupVerification(int generation) {
     return !_disposed && generation == _startupVerificationGeneration;
+  }
+
+  bool get _hasStartupProbeWarning =>
+      _isStartupProbeWarning(_error) ||
+      _isStartupProbeWarning(_diagnosticsError);
+
+  bool _isStartupProbeWarning(String? message) {
+    return message == startupProbeInconclusiveMessage ||
+        message == startupConnectivityFailureMessage;
+  }
+
+  void _markStartupProbeInconclusive() {
+    _diagnosticsEgressIp = null;
+    _diagnosticsError = startupProbeInconclusiveMessage;
+    _diagnosticsUpdatedAt = DateTime.now();
+    if (_error == null || _isStartupProbeWarning(_error)) {
+      _error = startupProbeInconclusiveMessage;
+    }
+    if (_status == VpnStatus.connected) {
+      _health = VpnHealth.degraded;
+    }
   }
 
   Future<void> _failStartupVerification({
@@ -1111,7 +1186,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     } else if (nativeStatus.status != 'error' &&
         nativeStatus.status != 'revoked' &&
         !preserveConflictMessage &&
-        !preserveStartupFailureMessage) {
+        !preserveStartupFailureMessage &&
+        !(_status == VpnStatus.connected && _isStartupProbeWarning(_error))) {
       _error = null;
     }
 
@@ -1122,7 +1198,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // render an honest "degraded" badge instead of a green checkmark while
       // routing is actually broken (bug filed 2026-05-12: cellular-only
       // session showed "VPN 连接成功" snackbar even though nothing routed).
-      _health = (message != null && message.isNotEmpty)
+      final hasNativeDegradedMessage = message != null && message.isNotEmpty;
+      _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;
       // When the tunnel comes back up after an underlying-network handover
@@ -1131,11 +1208,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // stick around indefinitely. Trigger a one-shot probe to refresh it.
       // Skipped on the very first connect transition (initial connect already
       // probes inside _runStartupVerification).
-      if (previousStatus == VpnStatus.connecting && _lastKnownEgressIp != null) {
+      if (previousStatus == VpnStatus.connecting &&
+          _lastKnownEgressIp != null) {
         unawaited(_refreshConnectedDiagnosticsEgressIp());
       }
       _handleUpstreamDegradedSignal(
-        degraded: message != null && message.isNotEmpty,
+        degraded: hasNativeDegradedMessage,
       );
     } else {
       _stopStatsPolling();
@@ -1194,6 +1272,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _upstreamDegradedWatchdog = null;
       return;
     }
+    if (_isLoading) {
+      return;
+    }
     if (_upstreamDegradedWatchdog?.isActive ?? false) {
       return;
     }
@@ -1205,14 +1286,15 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
   Future<void> _runUpstreamDegradedRestart() async {
     _upstreamDegradedWatchdog = null;
-    if (_disposed || _status != VpnStatus.connected) {
+    if (_disposed || _isLoading || _status != VpnStatus.connected) {
       return;
     }
     if (_error == null || _error!.isEmpty) {
       // The signal cleared on its own between scheduling and firing.
       return;
     }
-    if (_upstreamDegradedRestartAttempts >= maxUpstreamDegradedRestartAttempts) {
+    if (_upstreamDegradedRestartAttempts >=
+        maxUpstreamDegradedRestartAttempts) {
       // Same-node restart budget is exhausted. Before giving up, ask the
       // failover handler (wired by main.dart against CloudProvider) to try
       // another ready cloud node. The current active profile counts as
@@ -1252,8 +1334,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       AppLogger.warning(
         '[VpnProvider] Upstream-degraded watchdog: budget exhausted '
         '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
-        'and no working failover candidate; leaving the tunnel up so the '
-        'user can choose to switch nodes manually.',
+        'and no working failover candidate; stopping the unreachable tunnel '
+        'so device traffic does not stay routed into a dead TUN interface.',
+      );
+      await stopDegradedSession(
+        reason: _error ?? _diagnosticsError ?? tunnelUpstreamDegradedMessage,
       );
       return;
     }

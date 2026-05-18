@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -612,14 +614,14 @@ void main() {
     });
 
     test(
-        'connect keeps Android VPN up and defers warning when startup egress probe is inconclusive',
+        'connect keeps Android VPN up and marks degraded when startup egress probe is inconclusive',
         () async {
       var stopVpnCalls = 0;
 
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
         softFailStartupConnectivityProbe: true,
-        androidStartupRetryDelay: const Duration(milliseconds: 1),
+        androidStartupRetryDelay: const Duration(milliseconds: 30),
       );
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -660,10 +662,25 @@ void main() {
       expect(stopVpnCalls, 0);
       expect(vpnProvider.status, VpnStatus.connected);
       expect(vpnProvider.activeProfile, 'Good Android Node');
-      expect(vpnProvider.error, isNull);
-      expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.isDegraded, true);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await vpnProvider.loadStatus();
+
+      expect(vpnProvider.isDegraded, true);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(
         vpnProvider.diagnosticsError,
@@ -719,6 +736,7 @@ void main() {
       expect(vpnProvider.activeProfile, 'Fast Fallback Node');
       expect(vpnProvider.diagnosticsEgressIp, '198.51.100.24');
       expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.isDegraded, false);
       expect(
         stopwatch.elapsed,
         lessThan(const Duration(milliseconds: 200)),
@@ -726,14 +744,14 @@ void main() {
     });
 
     test(
-        'restart keeps Android VPN up and defers warning when startup egress probe is inconclusive',
+        'restart keeps Android VPN up and marks degraded when startup egress probe is inconclusive',
         () async {
       var stopVpnCalls = 0;
 
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
         softFailStartupConnectivityProbe: true,
-        androidStartupRetryDelay: const Duration(milliseconds: 1),
+        androidStartupRetryDelay: const Duration(milliseconds: 30),
       );
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -770,10 +788,17 @@ void main() {
       expect(success, true);
       expect(stopVpnCalls, 0);
       expect(vpnProvider.status, VpnStatus.connected);
-      expect(vpnProvider.error, isNull);
-      expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.isDegraded, true);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(
         vpnProvider.diagnosticsError,
@@ -789,7 +814,7 @@ void main() {
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
         softFailStartupConnectivityProbe: true,
-        androidStartupRetryDelay: const Duration(milliseconds: 1),
+        androidStartupRetryDelay: const Duration(milliseconds: 30),
       );
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -833,13 +858,23 @@ void main() {
 
       expect(success, true);
       expect(vpnProvider.status, VpnStatus.connected);
-      expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.isDegraded, true);
+      expect(
+        vpnProvider.error,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.startupProbeInconclusiveMessage,
+      );
       expect(vpnProvider.diagnosticsEgressIp, isNull);
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(vpnProvider.diagnosticsEgressIp, '203.0.113.42');
       expect(vpnProvider.diagnosticsError, isNull);
+      expect(vpnProvider.error, isNull);
+      expect(vpnProvider.isDegraded, false);
     });
 
     test(
@@ -1316,11 +1351,15 @@ void main() {
         'attempt counter persists across watchdog-driven '
         'connected→disconnected→connected cycles', () async {
       var restartCalls = 0;
+      var stopCalls = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(methodChannel, (call) async {
         switch (call.method) {
           case 'restartVpn':
             restartCalls += 1;
+            return true;
+          case 'stopVpn':
+            stopCalls += 1;
             return true;
           default:
             return null;
@@ -1343,18 +1382,49 @@ void main() {
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
       expect(restartCalls, 2);
 
-      // Cap reached — third fire must be a no-op so the user can switch
-      // nodes instead of looping restarts forever.
+      // Cap reached — third fire must stop the blackholed tunnel instead of
+      // looping restarts forever.
       vpnProvider.debugApplyNativeStatus(disconnected());
       vpnProvider.debugApplyNativeStatus(connectedDegraded());
       await vpnProvider.debugFireUpstreamDegradedWatchdog();
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
       expect(restartCalls, 2);
+      expect(stopCalls, 1);
+      expect(vpnProvider.status, VpnStatus.disconnected);
     });
 
-    test(
-        'user-initiated restart() resets the watchdog budget',
-        () async {
+    test('does not restart while a connect attempt is still pending', () async {
+      final startCompleter = Completer<bool>();
+      var restartCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return startCompleter.future;
+          case 'restartVpn':
+            restartCalls += 1;
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final connectFuture = vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Cloud: primary-node',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(vpnProvider.isLoading, true);
+
+      vpnProvider.debugApplyNativeStatus(connectedDegraded());
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+
+      expect(restartCalls, 0);
+      startCompleter.complete(false);
+      expect(await connectFuture, false);
+    });
+
+    test('user-initiated restart() resets the watchdog budget', () async {
       var restartCalls = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(methodChannel, (call) async {
