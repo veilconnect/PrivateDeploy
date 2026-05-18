@@ -139,19 +139,50 @@ E flutter : Could not create root isolate.
 
 ## 测试
 
+### Unit + Widget 测试
+
 ```bash
 cd mobile
 /home/user/flutter/bin/flutter analyze
 /home/user/flutter/bin/flutter test
 ```
 
-当前测试主要覆盖：
+当前 `test/` 主要覆盖：
 
-- network provider 状态流转
-- Profile 存储与配置归一化
-- Vultr client 请求和错误处理
-- 订阅解析器
-- 云备份与恢复逻辑
+- `vpn_provider_test.dart` — VPN 状态流转、startup probe degraded 路径、`stopDegradedSession`
+- `nodes_vpn_actions_test.dart` — `connectSelectedProfile` / `handleNodesConnect` / `autoFailoverToNextCloudNode` 全部分支
+  - 含 Hive 保存档失败转移、upstream-degraded 节点轮询、startup probe inconclusive 不重试节点
+- `nodes_cloud_actions_test.dart` — `confirmRepairCloudNode` 节点修复确认 + 活跃 SSH 路由先断开
+- `cloud_provider_test.dart` — `redeployInstanceLabel` 唯一化 + `selectFastestConnectableInstance` 缓存
+- `cloud_node_config_builder_test.dart` — sing-box 出站构造 + CDN-fronted vless+ws 变体
+- `vultr_client_test.dart` / `digitalocean_client_test.dart` — REST 客户端的请求 shape 和错误归一化
+- `profile_provider_test.dart` / `cloud_backup_test.dart` — Profile 存储与配置归一化、云备份恢复
+- `subscription_parser_test.dart` — 订阅解析器
+
+### Integration 测试
+
+需要连接的 Android/iOS 设备或模拟器。运行：
+
+```bash
+cd mobile
+/home/user/flutter/bin/flutter test integration_test/<file>.dart -d <device-id>
+```
+
+当前 `integration_test/` 覆盖：
+
+- `smoke_test.dart` — 首页核心控件、API Key 对话框、设置导航、Profile 创建、空节点连接反馈
+- `apikey_test.dart` — API Key 对话框保存后正确加载实例列表（`TestCloudProvider` 替身）
+- `settings_navigation_flow_test.dart` — 设置页路由与返回
+- `phone_interop_test.dart` — 设备互操作
+- `vpn_dead_node_failure_test.dart` — 导入死节点订阅 → 连接失败 → 返回断开态并显示失败提示
+
+### 未覆盖范围
+
+以下场景目前不在自动化测试范围内，需要本地手测或后续构建专门的 mock 基础设施：
+
+- **完整 connect 成功路径**：sing-box 端真实建立隧道、egress IP 校验。需要本地起 mock 代理服务器作 `PD_TEST_SUBSCRIPTION_URL` 上游。
+- **真实云部署**：Vultr/DigitalOcean 创建实例的端到端流程，目前依赖手动验证（成本和耗时不适合 CI）。
+- **iOS 真机集成测试**：`integration_test/` 目前只在 Android 设备上验证过；iOS 需要在嵌入 `VPNCore.framework` 后由本地 Xcode 跑。
 
 ## 已知改进方向
 
