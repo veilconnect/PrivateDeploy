@@ -835,6 +835,13 @@ onMounted(() => {
               <div>
                 <div class="font-bold text-14">{{ record.label }}</div>
                 <div class="text-12 text-secondary mt-2">{{ planMap.get(record.plan) || record.plan }}</div>
+                <div
+                  v-if="record.lastDeployWarning"
+                  class="text-12 mt-4 deploy-warning"
+                  :title="record.lastDeployWarning"
+                >
+                  ⚠ {{ t('cloud.nodes.deployWarning') }}
+                </div>
               </div>
             </template>
             <template #region="{ record }">
@@ -1157,6 +1164,12 @@ onMounted(() => {
 <style lang="less" scoped>
 .cloud-view {
   padding: 16px;
+}
+
+.deploy-warning {
+  color: var(--warning-color, #f39c12);
+  font-weight: 500;
+  cursor: help;
 }
 
 .account-banner {

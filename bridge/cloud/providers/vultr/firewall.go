@@ -13,19 +13,24 @@ import (
 )
 
 // configureInstanceFirewall sets up Vultr firewall rules for the instance.
-func (p *Provider) configureInstanceFirewall(ctx context.Context, instanceID string, ports deploy.PortAssignment, label string) {
+// Returns a non-nil error on any failure so the caller can attach a residual
+// LastDeployWarning to the instance; previously these errors were dropped to
+// stderr, leaving an unprotected node behind a silent-green UI.
+func (p *Provider) configureInstanceFirewall(ctx context.Context, instanceID string, ports deploy.PortAssignment, label string) error {
 	firewallID, err := p.ensureFirewallGroup(ctx, requiredFirewallRuleCount(ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, ports.VLESSRelayPort))
 	if err != nil {
 		fmt.Printf("[VultrProvider] Warning: failed to ensure firewall group: %v\n", err)
-		return
+		return fmt.Errorf("failed to ensure firewall group: %w", err)
 	}
 	if err := p.ensureFirewallRules(ctx, firewallID, ports.SSPort, ports.HysteriaPort, ports.VLESSPort, ports.TrojanPort, ports.VLESSRelayPort, label); err != nil {
 		fmt.Printf("[VultrProvider] Warning: failed to configure firewall rules: %v\n", err)
-		return
+		return fmt.Errorf("failed to configure firewall rules: %w", err)
 	}
 	if err := p.attachFirewallToInstance(ctx, instanceID, firewallID); err != nil {
 		fmt.Printf("[VultrProvider] Warning: failed to attach firewall: %v\n", err)
+		return fmt.Errorf("failed to attach firewall: %w", err)
 	}
+	return nil
 }
 
 // ensureFirewallGroup gets or creates a firewall group for PrivateDeploy.

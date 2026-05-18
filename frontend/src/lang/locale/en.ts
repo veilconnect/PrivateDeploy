@@ -365,6 +365,7 @@ export default {
       loading: 'Fetching node status...',
       loadingHint: 'Initial deployment typically finishes within 2-5 minutes. Status refreshes automatically.',
       empty: 'No cloud nodes have been deployed yet.',
+      deployWarning: 'Deploy completed with a residual issue — hover for details.',
       copy: 'Copy',
       copyLink: 'Copy All Links',
       destroy: 'Destroy',

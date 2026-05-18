@@ -216,10 +216,16 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, err
 	}
 
+	var firewallWarning string
 	instance, err := p.waitForInstance(ctx, instanceID, 15*time.Minute)
 	if err == nil {
 		record = p.updateRecordFromInstance(instanceID, instance, record)
-		p.configureInstanceFirewall(ctx, instanceID, creds.ports, opts.Label)
+		if fwErr := p.configureInstanceFirewall(ctx, instanceID, creds.ports, opts.Label); fwErr != nil {
+			firewallWarning = fmt.Sprintf(
+				"Vultr firewall not attached: %v. Instance is running but only protected by OS-level rules. Free up firewall-group capacity in the Vultr console and redeploy to recover.",
+				fwErr,
+			)
+		}
 		p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
 	} else {
 		instance = payload.Instance
@@ -228,6 +234,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	cloudInst := toCloudInstance(instance, record)
 	cloudInst.Region = payload.Instance.Region
 	cloudInst.Status = payload.Instance.Status
+	cloudInst.LastDeployWarning = firewallWarning
 	return &cloudInst, nil
 }
 

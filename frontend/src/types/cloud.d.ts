@@ -48,6 +48,11 @@ export interface CloudPlan {
 export interface CloudNode {
   instanceId: string
   replacedInstanceId?: string
+  // Non-fatal post-deploy concern carried from the provider. Today only the
+  // Vultr provider populates it, when configureInstanceFirewall fails (e.g.
+  // firewall-group cap exhausted) — the instance is running but unprotected
+  // at the cloud firewall layer. Cleared on the next refreshInstances cycle.
+  lastDeployWarning?: string
   provider?: CloudProvider  // Which cloud provider this instance belongs to
   label: string
   status?: string

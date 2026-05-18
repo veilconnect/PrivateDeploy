@@ -158,6 +158,11 @@ export const normalizeCloudNode = (
     node.ReplacedInstanceID ||
     node.replaced_instance_id ||
     ''
+  node.lastDeployWarning =
+    node.lastDeployWarning ||
+    node.LastDeployWarning ||
+    node.last_deploy_warning ||
+    ''
   node.label = node.label || node.name || node.Label || node.instanceId
   node.provider = node.provider || providerFallback
 

@@ -366,6 +366,7 @@ export default {
       loading: '正在获取节点状态...',
       loadingHint: '首次部署通常需要 2-5 分钟，请保持窗口打开，我们会自动刷新状态。',
       empty: '还没有通过云部署创建的节点。',
+      deployWarning: '部署完成但有遗留问题 — 鼠标悬停查看详情。',
       copy: '复制',
       copyLink: '复制全部链接',
       destroy: '删除',

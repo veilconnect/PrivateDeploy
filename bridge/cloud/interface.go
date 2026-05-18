@@ -126,6 +126,13 @@ type Instance struct {
 	// migrated to this live instance during refresh reconciliation.
 	ReplacedInstanceID string `json:"replacedInstanceId,omitempty"`
 
+	// LastDeployWarning carries a non-fatal post-create concern — for example,
+	// a firewall-attach failure that left the instance running but unprotected
+	// at the Vultr/DO firewall layer. Empty when the deploy finished cleanly.
+	// Surfaced in the UI so the operator sees the residual issue instead of a
+	// silent green node.
+	LastDeployWarning string `json:"lastDeployWarning,omitempty"`
+
 	// Multi-protocol proxy configuration
 	SSPort             int    `json:"ssPort,omitempty"`             // Shadowsocks port
 	SSPassword         string `json:"ssPassword,omitempty"`         // Shadowsocks password
