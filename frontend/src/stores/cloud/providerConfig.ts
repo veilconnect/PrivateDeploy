@@ -12,10 +12,12 @@ import {
   ListCloudProviders,
   GetCloudProvider,
   SetCloudProvider,
+  GetCloudProviderAccountStatus,
   ListCloudRegions,
   ListCloudPlans,
   ListCloudAvailability,
 } from '@/bridge'
+import type { CloudProviderAccountStatus } from '@/bridge/app'
 import { deepClone } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
 import { logError, logInfo } from '@/utils/logger'
@@ -42,6 +44,7 @@ export type ProviderConfigDeps = {
   plansUpdatedAt: Ref<number | null>
   instances: ShallowRef<any[]>
   instancesUpdatedAt: Ref<number | null>
+  accountStatus: Ref<CloudProviderAccountStatus | null>
   startAutoRefresh: (refreshImmediately?: boolean) => void
   stopAutoRefresh: () => void
   refreshInstances: (silent?: boolean, force?: boolean) => Promise<void>
@@ -61,6 +64,7 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     loadingPlans,
     regionsUpdatedAt,
     plansUpdatedAt,
+    accountStatus,
     startAutoRefresh,
     stopAutoRefresh,
     refreshInstances,
@@ -279,6 +283,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         provider: provider,
         extra: {},
       })
+      // The previous provider's account status is no longer relevant. Null it
+      // out so the UI doesn't show a stale "locked" banner for the wrong slot
+      // until refreshAccountStatus repopulates below.
+      accountStatus.value = null
       stopAutoRefresh()
 
       if (typeof SetCloudProvider !== 'function') {
@@ -319,6 +327,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         console.log('[CloudStore] After fetching, regions count:', regions.value.length, 'plans count:', plans.value.length)
         await refreshInstances(true, true)
       }
+
+      if (config.apiKey) {
+        void refreshAccountStatus(provider)
+      }
     } catch (error) {
       logError('[CloudStore] Failed to switch provider:', error)
       throw error
@@ -340,6 +352,40 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     }
   }
 
+  /**
+   * Probe the upstream account status for [provider] (default: current provider)
+   * and store the result so the UI can degrade — disable the deploy button when
+   * the account is locked, show a banner when it carries an unresolved warning,
+   * and surface invalid-key errors before the user wastes a deploy click.
+   *
+   * Failures are non-fatal: callers that don't care about the return value can
+   * fire-and-forget, and a probe error leaves [accountStatus] as null so the UI
+   * falls back to the "supported, unknown" (fail-open) behaviour.
+   */
+  const refreshAccountStatus = async (
+    provider?: CloudProvider,
+  ): Promise<CloudProviderAccountStatus | null> => {
+    const target = provider ?? currentProvider.value
+    if (!target) return null
+    try {
+      if (typeof GetCloudProviderAccountStatus !== 'function') {
+        accountStatus.value = null
+        return null
+      }
+      const status = await GetCloudProviderAccountStatus(target)
+      if (currentProvider.value === target) {
+        accountStatus.value = status
+      }
+      return status
+    } catch (error) {
+      logError('[CloudStore] Failed to probe account status:', error)
+      if (currentProvider.value === target) {
+        accountStatus.value = null
+      }
+      return null
+    }
+  }
+
   return {
     loadConfig,
     saveConfig,
@@ -349,6 +395,7 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
     loadProviders,
     switchProvider,
     getCurrentProvider,
+    refreshAccountStatus,
     isRegionsCacheValid,
     isPlansCacheValid,
   }

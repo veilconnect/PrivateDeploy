@@ -169,8 +169,27 @@ const lastInstancesUpdateExact = computed(() => {
   return formatDate(cloudStore.instancesUpdatedAt, 'YYYY-MM-DD HH:mm:ss')
 })
 
+const accountLocked = computed(
+  () => cloudStore.accountStatus?.canDeploy === false,
+)
+
+const accountBannerKind = computed<'locked' | 'warning' | null>(() => {
+  const status = cloudStore.accountStatus
+  if (!status) return null
+  if (!status.canDeploy) return 'locked'
+  if (status.state === 'warning') return 'warning'
+  return null
+})
+
+const accountBannerMessage = computed(() => cloudStore.accountStatus?.message ?? '')
+
 const disableDeploy = computed(
-  () => !hasApiKey.value || !form.region || !form.plan || !form.label.trim(),
+  () =>
+    !hasApiKey.value ||
+    !form.region ||
+    !form.plan ||
+    !form.label.trim() ||
+    accountLocked.value,
 )
 
 const handleError = (error: unknown) => {
@@ -403,6 +422,9 @@ onMounted(() => {
   cdnStore.ensureLoaded().catch((err) => {
     logError('[CloudView] failed to load CDN state:', err)
   })
+  if (cloudStore.config.apiKey && !isSSHProvider.value) {
+    void cloudStore.refreshAccountStatus()
+  }
 })
 </script>
 
@@ -481,6 +503,32 @@ onMounted(() => {
 
     <Card v-if="!isSSHProvider" :title="t('cloud.create.title')" class="min-w-0">
       <div class="flex flex-col gap-12 py-8">
+        <div
+          v-if="accountBannerKind"
+          :class="[
+            'account-banner',
+            accountBannerKind === 'locked' ? 'account-banner--locked' : 'account-banner--warning',
+          ]"
+          role="alert"
+        >
+          <div class="account-banner__title">
+            {{
+              accountBannerKind === 'locked'
+                ? t('cloud.accountStatus.lockedTitle')
+                : t('cloud.accountStatus.warningTitle')
+            }}
+          </div>
+          <div v-if="accountBannerMessage" class="account-banner__body">
+            {{ accountBannerMessage }}
+          </div>
+          <div class="account-banner__hint">
+            {{
+              accountBannerKind === 'locked'
+                ? t('cloud.accountStatus.lockedHint')
+                : t('cloud.accountStatus.warningHint')
+            }}
+          </div>
+        </div>
         <div class="flex flex-wrap items-center gap-8">
           <div class="min-w-180 flex-1">
             <Select
@@ -1086,6 +1134,41 @@ onMounted(() => {
 <style lang="less" scoped>
 .cloud-view {
   padding: 16px;
+}
+
+.account-banner {
+  border-radius: 6px;
+  padding: 10px 14px;
+  border-width: 1px;
+  border-style: solid;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
+
+  &--locked {
+    border-color: var(--danger-color, #e74c3c);
+    background-color: rgba(231, 76, 60, 0.08);
+    color: var(--danger-color, #e74c3c);
+  }
+
+  &--warning {
+    border-color: var(--warning-color, #f39c12);
+    background-color: rgba(243, 156, 18, 0.08);
+    color: var(--warning-color, #f39c12);
+  }
+
+  &__title {
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  &__body,
+  &__hint {
+    font-size: 12px;
+    color: inherit;
+    opacity: 0.92;
+  }
 }
 
 .text-secondary {

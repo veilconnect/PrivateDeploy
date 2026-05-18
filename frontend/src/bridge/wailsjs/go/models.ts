@@ -1,13 +1,54 @@
 export namespace bridge {
-	
+
+	export class CloudAccountStatus {
+	    provider: string;
+	    supported: boolean;
+	    state: string;
+	    message?: string;
+	    canDeploy: boolean;
+	    // Go type: time
+	    checkedAt: any;
+
+	    static createFrom(source: any = {}) {
+	        return new CloudAccountStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.supported = source["supported"];
+	        this.state = source["state"];
+	        this.message = source["message"];
+	        this.canDeploy = source["canDeploy"];
+	        this.checkedAt = this.convertValues(source["checkedAt"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CloudProviderInfo {
 	    name: string;
 	    displayName: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CloudProviderInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];

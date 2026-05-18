@@ -350,6 +350,12 @@ export default {
       deployingHint: '已提交部署请求，通常需要 2-5 分钟，我们会自动刷新状态并在就绪后应用节点。',
       deployingProgress: '正在创建节点，大约 2-5 分钟内会在“概览”页可用，请稍候。',
     },
+    accountStatus: {
+      lockedTitle: '云账号已锁定',
+      lockedHint: '当前账号被云厂商冻结，无法创建新节点。请登录云厂商控制台解除限制后再刷新。',
+      warningTitle: '云账号存在风险提示',
+      warningHint: '部署仍允许，但云厂商已对该账号发出风险提示。请到云厂商控制台查看详情。',
+    },
     nodes: {
       title: '已部署节点',
       loading: '正在获取节点状态...',

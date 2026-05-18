@@ -91,6 +91,7 @@ const createHarness = () => {
   const plansUpdatedAt = ref<number | null>(null)
   const instances = shallowRef<any[]>([])
   const instancesUpdatedAt = ref<number | null>(null)
+  const accountStatus = ref<any | null>(null)
   const startAutoRefresh = vi.fn()
   const stopAutoRefresh = vi.fn()
   const refreshInstances = vi.fn().mockResolvedValue(undefined)
@@ -110,6 +111,7 @@ const createHarness = () => {
     plansUpdatedAt,
     instances,
     instancesUpdatedAt,
+    accountStatus,
     startAutoRefresh,
     stopAutoRefresh,
     refreshInstances,

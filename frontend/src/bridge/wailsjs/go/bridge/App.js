@@ -126,6 +126,14 @@ export function GetCloudProvider() {
   return window['go']['bridge']['App']['GetCloudProvider']();
 }
 
+export function GetCloudProviderAccountStatus(arg1) {
+  return window['go']['bridge']['App']['GetCloudProviderAccountStatus'](arg1);
+}
+
+export function GetCloudProviderAccountStatusTyped(arg1) {
+  return window['go']['bridge']['App']['GetCloudProviderAccountStatusTyped'](arg1);
+}
+
 export function GetCloudProviderTyped() {
   return window['go']['bridge']['App']['GetCloudProviderTyped']();
 }

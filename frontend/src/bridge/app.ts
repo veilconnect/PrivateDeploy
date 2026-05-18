@@ -56,6 +56,21 @@ export const SetCloudProvider = async (provider: CloudProvider): Promise<{ name:
   return await App.SetCloudProviderTyped(provider) as { name: string; displayName: string }
 }
 
+export type CloudProviderAccountStatus = {
+  provider: string
+  supported: boolean
+  state: 'active' | 'warning' | 'locked' | 'invalid_key' | 'unknown'
+  message?: string
+  canDeploy: boolean
+  checkedAt: string
+}
+
+export const GetCloudProviderAccountStatus = async (
+  provider: CloudProvider,
+): Promise<CloudProviderAccountStatus> => {
+  return (await App.GetCloudProviderAccountStatusTyped(provider)) as unknown as CloudProviderAccountStatus
+}
+
 export const ListCloudInstances = async (): Promise<Array<Record<string, any>>> => {
   return await App.ListCloudInstancesTyped()
 }

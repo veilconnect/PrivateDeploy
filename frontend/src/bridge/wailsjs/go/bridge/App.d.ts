@@ -67,6 +67,10 @@ export function GetCloudConfigTyped():Promise<cloud.ProviderConfig>;
 
 export function GetCloudProvider():Promise<bridge.FlagResult>;
 
+export function GetCloudProviderAccountStatus(arg1:string):Promise<bridge.FlagResult>;
+
+export function GetCloudProviderAccountStatusTyped(arg1:string):Promise<bridge.CloudAccountStatus>;
+
 export function GetCloudProviderTyped():Promise<bridge.CloudProviderInfo>;
 
 export function GetEnv():Promise<bridge.EnvResult>;

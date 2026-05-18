@@ -349,6 +349,12 @@ export default {
       deployingHint: 'Deployment started. It typically completes in about 2-5 minutes; we will refresh automatically and apply the node once it is ready.',
       deployingProgress: 'Provisioning in progress… expect 2-5 minutes before the node shows up in Overview and becomes usable.',
     },
+    accountStatus: {
+      lockedTitle: 'Provider account is locked',
+      lockedHint: 'New deployments are disabled until the upstream account is restored. Sign in to the provider console to resolve the lock, then refresh.',
+      warningTitle: 'Provider account warning',
+      warningHint: 'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.',
+    },
     nodes: {
       title: 'Deployed Nodes',
       loading: 'Fetching node status...',

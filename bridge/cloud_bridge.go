@@ -256,7 +256,92 @@ func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud
 		return nil, err
 	}
 
+	if reporter, ok := provider.(cloud.AccountStatusReporter); ok {
+		probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if status, statusErr := reporter.GetAccountStatus(probeCtx); statusErr == nil && status != nil && !status.CanDeploy {
+			msg := status.Message
+			if msg == "" {
+				msg = fmt.Sprintf("provider account is in state %q and cannot deploy", status.State)
+			}
+			log.Printf("[CloudBridge] Refusing deploy: provider=%s state=%s", provider.Name(), status.State)
+			return nil, fmt.Errorf("cannot deploy on %s: %s", provider.DisplayName(), msg)
+		}
+	}
+
 	return provider.CreateInstance(context.Background(), &opts)
+}
+
+// CloudAccountStatus is the wire envelope returned by GetCloudProviderAccountStatus.
+// Providers that do not implement [cloud.AccountStatusReporter] are reported as
+// state="active" so the UI never blocks them on a missing capability.
+type CloudAccountStatus struct {
+	Provider  string    `json:"provider"`
+	Supported bool      `json:"supported"`
+	State     string    `json:"state"`
+	Message   string    `json:"message,omitempty"`
+	CanDeploy bool      `json:"canDeploy"`
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
+func (a *App) GetCloudProviderAccountStatusTyped(providerName string) (*CloudAccountStatus, error) {
+	log.Printf("[CloudBridge] GetCloudProviderAccountStatusTyped called for %s", providerName)
+
+	provider, err := a.CloudManager.GetProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	reporter, ok := provider.(cloud.AccountStatusReporter)
+	if !ok {
+		return &CloudAccountStatus{
+			Provider:  provider.Name(),
+			Supported: false,
+			State:     "active",
+			CanDeploy: true,
+			CheckedAt: time.Now().UTC(),
+		}, nil
+	}
+
+	probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	status, err := reporter.GetAccountStatus(probeCtx)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil {
+		return &CloudAccountStatus{
+			Provider:  provider.Name(),
+			Supported: true,
+			State:     "unknown",
+			CanDeploy: true,
+			CheckedAt: time.Now().UTC(),
+		}, nil
+	}
+	return &CloudAccountStatus{
+		Provider:  provider.Name(),
+		Supported: true,
+		State:     status.State,
+		Message:   status.Message,
+		CanDeploy: status.CanDeploy,
+		CheckedAt: status.CheckedAt,
+	}, nil
+}
+
+// GetCloudProviderAccountStatus returns the upstream account status for the
+// named provider. Used by the UI to grey-out provider chips and disable the
+// deploy button when an account is locked or has an invalid key.
+func (a *App) GetCloudProviderAccountStatus(providerName string) FlagResult {
+	status, err := a.GetCloudProviderAccountStatusTyped(providerName)
+	if err != nil {
+		log.Printf("[CloudBridge] ERROR: account status probe failed: %v", err)
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		return FlagResult{Flag: false, Data: err.Error()}
+	}
+	return FlagResult{Flag: true, Data: string(data)}
 }
 
 // CreateCloudInstance creates a new instance on the active provider

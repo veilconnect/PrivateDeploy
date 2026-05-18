@@ -21,6 +21,7 @@ import { useProfilesStore } from './profiles'
 import { useSubscribesStore } from './subscribes'
 
 import type { ManagedCloudNode, NodeHistoryMap } from './cloud/types'
+import type { CloudProviderAccountStatus } from '@/bridge/app'
 import type { CloudProvider, CloudConfig, CloudRegion, CloudPlan } from '@/types/cloud'
 
 // Re-export types for backward compatibility
@@ -271,6 +272,8 @@ export const useCloudStore = defineStore('cloud', () => {
 
   // ─── Provider Config ─────────────────────────────────────────────────────────
 
+  const accountStatus = ref<CloudProviderAccountStatus | null>(null)
+
   const providerConfigModule = createProviderConfig({
     availableProviders,
     currentProvider,
@@ -286,6 +289,7 @@ export const useCloudStore = defineStore('cloud', () => {
     plansUpdatedAt,
     instances,
     instancesUpdatedAt,
+    accountStatus,
     startAutoRefresh,
     stopAutoRefresh,
     refreshInstances,
@@ -300,6 +304,7 @@ export const useCloudStore = defineStore('cloud', () => {
     loadProviders,
     switchProvider,
     getCurrentProvider,
+    refreshAccountStatus,
     isRegionsCacheValid,
     isPlansCacheValid,
   } = providerConfigModule
@@ -348,9 +353,11 @@ export const useCloudStore = defineStore('cloud', () => {
     // Multi-cloud
     availableProviders,
     currentProvider,
+    accountStatus,
     loadProviders,
     switchProvider,
     getCurrentProvider,
+    refreshAccountStatus,
     // Config
     config,
     configLoaded,

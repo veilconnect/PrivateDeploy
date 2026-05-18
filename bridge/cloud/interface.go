@@ -39,6 +39,34 @@ type LatencyTester interface {
 	GetFastestRegion(ctx context.Context) (*RegionLatency, error)
 }
 
+// AccountStatusReporter is implemented by providers that can probe the upstream
+// billing/verification state of the configured account. Providers that do not
+// implement this interface are treated as always-deployable by the UI.
+type AccountStatusReporter interface {
+	GetAccountStatus(ctx context.Context) (*AccountStatus, error)
+}
+
+// AccountStatus describes the upstream account state for a configured cloud
+// provider. The "active" state is the only one that unconditionally permits
+// new deployments. Values are intentionally provider-agnostic so the UI can
+// degrade uniformly across providers.
+//
+// State values:
+//   - "active"      — normal, deploys permitted.
+//   - "warning"     — account is usable but has an unresolved upstream warning
+//     (e.g. billing reminder); deploys permitted with a UI banner.
+//   - "locked"      — upstream has frozen new resource creation; deploys must be
+//     refused at the bridge layer.
+//   - "invalid_key" — API key is missing or rejected by the provider.
+//   - "unknown"     — upstream probe failed for a transient reason; deploys are
+//     permitted (fail-open) so an API hiccup does not freeze the UI.
+type AccountStatus struct {
+	State     string    `json:"state"`
+	Message   string    `json:"message,omitempty"`
+	CanDeploy bool      `json:"canDeploy"`
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
 // ProviderConfig holds provider-specific configuration
 type ProviderConfig struct {
 	Provider      string            `json:"provider"`         // "vultr", "digitalocean", etc.
