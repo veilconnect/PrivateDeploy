@@ -1,4 +1,4 @@
-import { RemoveFile } from '@/bridge'
+import { KillOrphanCores, RemoveFile } from '@/bridge'
 import { CoreCacheFilePath } from '@/constant/kernel'
 import { message } from '@/utils'
 
@@ -31,6 +31,19 @@ export const runKernelStartAttempts = async ({
   const maxAttempts = 5
   const backoffDelays = [0, 500, 1000, 2000, 3000]
 
+  // Orphan sing-box from a prior crash/installer-overwrite will hold an
+  // exclusive lock on cache.db (Windows: FILE_SHARE_NONE), which blocks the
+  // next sing-box's bbolt init *and* defeats RemoveFile because the file
+  // cannot be deleted while held. Clear leftovers under our BasePath first.
+  try {
+    const killed = await KillOrphanCores()
+    if (killed.length > 0) {
+      log(`[KernelApi] Killed orphan sing-box pids: ${killed.join(', ')}`)
+    }
+  } catch (orphanErr) {
+    log(`[KernelApi] KillOrphanCores failed: ${String(orphanErr ?? '')}`)
+  }
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1 && backoffDelays[attempt - 1] > 0) {
       log(`[KernelApi] Waiting ${backoffDelays[attempt - 1]}ms before retry ${attempt}/${maxAttempts}`)
@@ -54,9 +67,16 @@ export const runKernelStartAttempts = async ({
       const cacheError =
         messageText.includes('initialize cache-file') || messageText.includes('cache-file')
       if (cacheError && attempt < maxAttempts) {
-        await RemoveFile(CoreCacheFilePath).catch(() => undefined)
+        try {
+          await RemoveFile(CoreCacheFilePath)
+          log(`[KernelApi] Cache file removed: ${CoreCacheFilePath}`)
+        } catch (removeErr) {
+          log(
+            `[KernelApi] Failed to remove cache file ${CoreCacheFilePath}: ${String(removeErr ?? '')}`,
+          )
+        }
         message.warn('kernel.errors.cacheResetting')
-        log('[KernelApi] Cache file removed, retrying...')
+        log('[KernelApi] Retrying after cache reset...')
         continue
       }
 

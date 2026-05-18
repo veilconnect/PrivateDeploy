@@ -80,3 +80,15 @@ export const KillProcess = async (pid: number, timeout = 10) => {
   }
   return data
 }
+
+export const KillOrphanCores = async (): Promise<number[]> => {
+  const { flag, data } = await App.KillOrphanCores()
+  if (!flag) {
+    throw data
+  }
+  if (!data) return []
+  return data
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+}

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   pruneMissingKernelCloudSubscriptions: vi.fn(),
   reassignKernelProfilePorts: vi.fn(),
   removeFile: vi.fn(),
+  killOrphanCores: vi.fn(),
   runCoreProcess: vi.fn(),
   writeConfig: vi.fn(),
   log: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/bridge', () => ({
   RemoveFile: mocks.removeFile,
+  KillOrphanCores: mocks.killOrphanCores,
 }))
 
 vi.mock('@/utils', () => ({
@@ -46,6 +48,7 @@ describe('kernel api start runner', () => {
     mocks.pruneMissingKernelCloudSubscriptions.mockResolvedValue({ changed: false, removed: [] })
     mocks.reassignKernelProfilePorts.mockResolvedValue({ changed: false, ports: {} })
     mocks.removeFile.mockResolvedValue(undefined)
+    mocks.killOrphanCores.mockResolvedValue([])
     mocks.runCoreProcess.mockResolvedValue(1234)
     mocks.writeConfig.mockResolvedValue(undefined)
   })
@@ -113,6 +116,34 @@ describe('kernel api start runner', () => {
 
     expect(mocks.pruneMissingKernelCloudSubscriptions).toHaveBeenCalledWith(profile)
     expect(mocks.log).toHaveBeenCalledWith('[KernelApi] Removed missing cloud subscriptions: cloud-a')
+  })
+
+  it('logs killed orphan sing-box pids before the first attempt', async () => {
+    mocks.killOrphanCores.mockResolvedValueOnce([20172, 21000])
+
+    await expect(run()).resolves.toEqual({
+      missingCloudSubscriptionsPruned: false,
+      portsAdjusted: false,
+    })
+
+    expect(mocks.killOrphanCores).toHaveBeenCalledTimes(1)
+    expect(mocks.log).toHaveBeenCalledWith(
+      '[KernelApi] Killed orphan sing-box pids: 20172, 21000',
+    )
+  })
+
+  it('continues startup when orphan cleanup throws', async () => {
+    mocks.killOrphanCores.mockRejectedValueOnce('cleanup busted')
+
+    await expect(run()).resolves.toEqual({
+      missingCloudSubscriptionsPruned: false,
+      portsAdjusted: false,
+    })
+
+    expect(mocks.log).toHaveBeenCalledWith(
+      '[KernelApi] KillOrphanCores failed: cleanup busted',
+    )
+    expect(mocks.runCoreProcess).toHaveBeenCalledTimes(1)
   })
 
   it('throws immediately for unrecoverable startup errors', async () => {
