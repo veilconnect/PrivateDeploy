@@ -332,6 +332,12 @@ abstract class AppLocalizations {
   /// **'Tunnel is up, but this node\'s upstream can\'t be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.'**
   String get tunnelUpstreamDegradedMessageLocalized;
 
+  /// No description provided for @tunnelDirectRouteDegradedMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.'**
+  String get tunnelDirectRouteDegradedMessageLocalized;
+
   /// No description provided for @cellularHelpTitle.
   ///
   /// In en, this message translates to:

@@ -139,6 +139,10 @@ class AppLocalizationsZh extends AppLocalizations {
       '隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi 或更换其他节点 —— 蜂窝运营商有时会屏蔽 VPS 的 IP。';
 
   @override
+  String get tunnelDirectRouteDegradedMessageLocalized =>
+      '隧道已连接、上游节点也已响应，但本地直连路径（用于访问国内站点）还在稳定中。部分流量可能在最长 1 分钟内卡顿 —— 在 Wi-Fi 与蜂窝之间切换后常见。';
+
+  @override
   String get cellularHelpTitle => '手机数据网络问题';
 
   @override

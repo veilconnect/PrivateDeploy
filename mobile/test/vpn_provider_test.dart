@@ -1424,6 +1424,42 @@ void main() {
       expect(await connectFuture, false);
     });
 
+    test(
+        'DirectRouteDegraded message marks UI degraded but does NOT arm '
+        'the upstream watchdog (post-handover settle window self-resolves)',
+        () async {
+      var restartCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            restartCalls += 1;
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: true,
+        status: 'connected',
+        message: VpnProvider.tunnelDirectRouteDegradedMessage,
+        connectedAt: 1,
+        uptime: 5,
+      ));
+
+      // UI should reflect degraded health so the user gets an honest badge.
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.isDegraded, true);
+
+      // But firing the watchdog after the configured delay must be a no-op:
+      // direct-route degradation is transient handover settling, not a dead
+      // node, so we don't burn the same-node restart budget on it.
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(restartCalls, 0);
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 0);
+    });
+
     test('user-initiated restart() resets the watchdog budget', () async {
       var restartCalls = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

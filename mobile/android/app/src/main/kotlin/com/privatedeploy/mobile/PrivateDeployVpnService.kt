@@ -88,6 +88,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // worst-case wall time is roughly REPEATS × this constant + one more.
         private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 2500
 
+        // How often the post-connect health monitor re-runs checkTunnelHealth().
+        // Long enough to keep the periodic network cost negligible (~one HTTP
+        // sweep every 30 s) and to ride out short post-handover blips without
+        // flapping the UI, short enough that a real persistent direct-route
+        // failure surfaces within one cycle.
+        private const val HEALTH_MONITOR_INTERVAL_MS = 30_000L
+
         // Number of consecutive TUNNEL_REQUIRED successes required to call the
         // upstream Healthy. Carriers (notably mobile carrier / Telecom / Unicom)
         // routinely let the first SYN or two from a flagged VPS slip through
@@ -367,6 +374,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                     "from this network — user should switch nodes",
                             )
                         }
+                        TunnelHealth.DirectRouteDegraded -> {
+                            val outcome = describeTunnelHealth(health)
+                            updateForegroundNotification(outcome.notificationText)
+                            broadcastStatus("connected", outcome.statusMessage)
+                            succeeded = true
+                            Log.w(
+                                TAG,
+                                "VPN start attempt $attempt: upstream OK but direct " +
+                                    "route still settling; accepting with degraded " +
+                                    "indicator — periodic monitor will clear it once " +
+                                    "domestic probes start passing",
+                            )
+                        }
                         TunnelHealth.Unreachable -> {
                             lastError = IllegalStateException(startupConnectivityFailureMessage())
                             Log.w(
@@ -379,6 +399,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         }
                     }
                     if (succeeded) {
+                        startHealthMonitor()
                         break
                     }
                 } catch (e: Throwable) {
@@ -426,6 +447,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             "through the selected node. The node may be unreachable or misconfigured."
 
     private fun stopVpn() {
+        stopHealthMonitor()
         broadcastStatus("disconnecting", null)
         thread(name = "PrivateDeploy-VPN-Stop") {
             try {
@@ -493,7 +515,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // attempt; only Unreachable (probe verifier hit no
                     // endpoints at all, possibly transient) earns a retry.
                     val acceptNow = when (health) {
-                        TunnelHealth.Healthy, TunnelHealth.UpstreamDegraded -> true
+                        TunnelHealth.Healthy,
+                        TunnelHealth.UpstreamDegraded,
+                        TunnelHealth.DirectRouteDegraded -> true
                         TunnelHealth.Unreachable -> false
                     }
                     if (acceptNow) {
@@ -511,9 +535,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                         "underlying network probably can't reach the " +
                                         "configured node — user needs to switch nodes.",
                                 )
+                            TunnelHealth.DirectRouteDegraded ->
+                                Log.w(
+                                    TAG,
+                                    "VPN restart attempt $attempt: upstream OK but direct " +
+                                        "route still settling after handover; UI will show " +
+                                        "stabilizing indicator until the periodic monitor " +
+                                        "clears it.",
+                                )
                             TunnelHealth.Unreachable -> Unit
                         }
                         succeeded = true
+                        startHealthMonitor()
                         break
                     }
 
@@ -552,6 +585,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
             if (!succeeded) {
                 Log.e(TAG, "Failed to restart VPN after $RESTART_MAX_ATTEMPTS attempts", lastError)
+                stopHealthMonitor()
                 try {
                     vpnCore?.stop()
                 } catch (e: Exception) {
@@ -663,17 +697,24 @@ class PrivateDeployVpnService : VpnService(), Platform {
      *   until they switch nodes.
      * - [Unreachable]: nothing responded. tun0 itself may be a black hole.
      */
-    private enum class TunnelHealth { Healthy, UpstreamDegraded, Unreachable }
+    private enum class TunnelHealth {
+        Healthy,
+        UpstreamDegraded,
+        DirectRouteDegraded,
+        Unreachable,
+    }
 
     /**
-     * Probes the post-connect tunnel state. Tries an offshore-only endpoint
-     * first to confirm the upstream socket is alive, then falls back to a
-     * domestic-friendly endpoint to distinguish "node is blocked" from
-     * "tunnel is dead". Replaces the previous boolean verifier, which only
-     * tested domestic endpoints and consequently reported success even when
-     * the upstream VPS was completely unreachable — the regression that
-     * caused the post-WiFi-disconnect "VPN connected but YouTube doesn't
-     * load" report on Samsung SM-S9260 / mobile carrier.
+     * Probes the post-connect tunnel state. Verifies both routing classes the
+     * tunnel must handle: the offshore proxy path (TUNNEL_REQUIRED) and the
+     * domestic-direct path (REACHABILITY). Both must pass for Healthy — a
+     * passing proxy path with a broken direct path (the 30-90 s settle window
+     * after a Wi-Fi ↔ cellular handover) used to slip past as "Healthy" because
+     * the verifier returned as soon as TUNNEL_REQUIRED succeeded, leaving the
+     * UI green while baidu/qq tabs spun for another minute. We now keep the
+     * cheaper fail-fast ordering (offshore first, since that's the failure mode
+     * users hit most often) but also require one domestic-direct success before
+     * declaring Healthy.
      */
     private fun checkTunnelHealth(): TunnelHealth {
         val connectivityManager =
@@ -714,18 +755,37 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 }
             }
         }
-        if (upstreamHealthy) {
-            Log.i(TAG, "Tunnel upstream verified via $lastUpstreamSource")
-            return TunnelHealth.Healthy
-        }
 
+        // Always probe domestic-direct once. When upstream passed we still need
+        // this to catch the post-handover settle window; when upstream failed
+        // we still need this to distinguish "node blocked" from "tunnel dead".
         val domesticResult = NativeEgressProbe.probe(
             connectivityManager,
             endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
             timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
             allowDomesticFallback = false,
         )
-        if (domesticResult.reachable) {
+
+        if (upstreamHealthy && domesticResult.reachable) {
+            Log.i(
+                TAG,
+                "Tunnel fully verified (upstream=$lastUpstreamSource, " +
+                    "domestic=${domesticResult.source})",
+            )
+            return TunnelHealth.Healthy
+        }
+
+        if (upstreamHealthy && !domesticResult.reachable) {
+            Log.w(
+                TAG,
+                "Tunnel upstream OK via $lastUpstreamSource but domestic-direct probe " +
+                    "failed (${domesticResult.error}); direct route is still stabilising — " +
+                    "common 30-90 s window right after a Wi-Fi ↔ cellular handover",
+            )
+            return TunnelHealth.DirectRouteDegraded
+        }
+
+        if (!upstreamHealthy && domesticResult.reachable) {
             Log.w(
                 TAG,
                 "Tunnel forwards domestic traffic via ${domesticResult.source} but upstream " +
@@ -763,6 +823,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
             statusMessage = "Tunnel is up, but this node's upstream can't be reached " +
                 "from your current network. Try Wi-Fi or switching to a different node " +
                 "— cellular carriers sometimes block VPS IPs.",
+        )
+        TunnelHealth.DirectRouteDegraded -> TunnelHealthOutcome(
+            notificationText = "VPN connected · stabilizing direct routes",
+            statusMessage = "Tunnel is up and the upstream node responds, but the " +
+                "direct-route path (used for domestic sites) is still settling. " +
+                "Some traffic may stall for up to a minute — common right after " +
+                "switching between Wi-Fi and cellular.",
         )
         TunnelHealth.Unreachable -> TunnelHealthOutcome(
             notificationText = "VPN egress unreachable",
@@ -1080,12 +1147,80 @@ class PrivateDeployVpnService : VpnService(), Platform {
     override fun onDestroy() {
         pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingUnderlyingNetworkRestart = null
+        stopHealthMonitor()
         unregisterUnderlyingNetworkMonitor()
         if (serviceInstance === this) {
             serviceInstance = null
         }
         super.onDestroy()
         Log.d(TAG, "VPN Service destroyed")
+    }
+
+    // ─── Periodic post-connect health monitor ───────────────────────────────
+    //
+    // checkTunnelHealth() only ran once at startVpn/restartVpn success. After
+    // a Wi-Fi ↔ cellular handover the upstream proxy path tends to recover
+    // within a few seconds (urltest re-probes its members) but the
+    // domestic-direct path can stay broken for 30-90 s while DHCP/routes
+    // settle and sing-box's outbound dialers shake off stale TCP state.
+    // During that window the UI used to show 已连接 (green) even though
+    // baidu/qq/etc tabs spun. This monitor re-runs the same dual-path probe
+    // on a slow cadence and broadcasts state transitions so the UI can drop
+    // to a stabilizing/degraded indicator until both classes pass again.
+    private val healthMonitorHandler = Handler(Looper.getMainLooper())
+    private var healthMonitorRunnable: Runnable? = null
+    @Volatile
+    private var lastBroadcastTunnelHealth: TunnelHealth? = null
+
+    private fun startHealthMonitor() {
+        stopHealthMonitor()
+        // Seed with whatever state the entry probe just produced so a clean
+        // green-to-green stays a no-op broadcast.
+        lastBroadcastTunnelHealth = TunnelHealth.Healthy
+        val runnable = object : Runnable {
+            override fun run() {
+                if (!isRunning) {
+                    return
+                }
+                if (restartInProgress) {
+                    healthMonitorHandler.postDelayed(this, HEALTH_MONITOR_INTERVAL_MS)
+                    return
+                }
+                thread(name = "PrivateDeploy-VPN-HealthCheck", isDaemon = true) {
+                    val health = try {
+                        checkTunnelHealth()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Periodic health probe failed", e)
+                        null
+                    }
+                    if (health != null && health != lastBroadcastTunnelHealth) {
+                        Log.i(
+                            TAG,
+                            "Health monitor: $lastBroadcastTunnelHealth → $health",
+                        )
+                        val outcome = describeTunnelHealth(health)
+                        // Stay in the "connected" status family — we don't
+                        // want to flip the user back into a connecting/error
+                        // banner just because a probe came back ambiguous.
+                        // The statusMessage payload conveys the degraded
+                        // sub-state to the Dart side.
+                        broadcastStatus("connected", outcome.statusMessage)
+                        updateForegroundNotification(outcome.notificationText)
+                        lastBroadcastTunnelHealth = health
+                    }
+                }
+                healthMonitorHandler.postDelayed(this, HEALTH_MONITOR_INTERVAL_MS)
+            }
+        }
+        healthMonitorRunnable = runnable
+        healthMonitorHandler.postDelayed(runnable, HEALTH_MONITOR_INTERVAL_MS)
+        Log.i(TAG, "Started periodic health monitor (interval ${HEALTH_MONITOR_INTERVAL_MS}ms)")
+    }
+
+    private fun stopHealthMonitor() {
+        healthMonitorRunnable?.let(healthMonitorHandler::removeCallbacks)
+        healthMonitorRunnable = null
+        lastBroadcastTunnelHealth = null
     }
 
     override fun onRevoke() {

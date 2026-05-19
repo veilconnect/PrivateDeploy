@@ -32,6 +32,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // bit-identical string. See PrivateDeployVpnService.describeTunnelHealth().
   static const String tunnelUpstreamDegradedMessage =
       "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.";
+  // Mirrors PrivateDeployVpnService.TunnelHealth.DirectRouteDegraded — the
+  // tunnel's offshore-proxy path verified fine, but the domestic-direct path
+  // didn't (e.g. baidu/qq probe timed out). Normally this clears itself within
+  // 30-90 s as Wi-Fi DHCP/routes and sing-box's outbound dialers settle after
+  // a handover, so we surface the degraded UI badge but DO NOT engage the
+  // upstream-degraded watchdog (which would force a node restart / failover).
+  static const String tunnelDirectRouteDegradedMessage =
+      "Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.";
   static const Duration nativeEgressProbeTimeout = Duration(seconds: 3);
   static const Duration startupEgressProbeTimeout = Duration(seconds: 5);
   static const Duration androidStartupRetryDelay = Duration(seconds: 3);
@@ -1194,11 +1202,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (_status == VpnStatus.connected) {
       _startStatsPolling();
       // Connected + non-empty statusMessage = native checkTunnelHealth came
-      // back UpstreamDegraded or Unreachable. Track separately so the UI can
-      // render an honest "degraded" badge instead of a green checkmark while
-      // routing is actually broken (bug filed 2026-05-12: cellular-only
-      // session showed "VPN 连接成功" snackbar even though nothing routed).
+      // back UpstreamDegraded, DirectRouteDegraded, or Unreachable. Track
+      // separately so the UI can render an honest "degraded" badge instead of
+      // a green checkmark while routing is actually broken (bug filed
+      // 2026-05-12: cellular-only session showed "VPN 连接成功" snackbar even
+      // though nothing routed).
       final hasNativeDegradedMessage = message != null && message.isNotEmpty;
+      // DirectRouteDegraded is the transient handover settle window — the
+      // tunnel's proxy path is healthy, only the direct-route path is still
+      // stabilising. Surface the degraded UI but skip the upstream watchdog
+      // (which would force a same-node restart / failover) because the
+      // condition self-resolves once domestic probes start passing on the
+      // next health-monitor cycle (~30 s).
+      final isDirectRouteDegraded =
+          message == tunnelDirectRouteDegradedMessage;
       _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;
@@ -1213,7 +1230,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         unawaited(_refreshConnectedDiagnosticsEgressIp());
       }
       _handleUpstreamDegradedSignal(
-        degraded: hasNativeDegradedMessage,
+        degraded: hasNativeDegradedMessage && !isDirectRouteDegraded,
       );
     } else {
       _stopStatsPolling();
@@ -1291,6 +1308,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
     if (_error == null || _error!.isEmpty) {
       // The signal cleared on its own between scheduling and firing.
+      return;
+    }
+    if (_error == tunnelDirectRouteDegradedMessage) {
+      // DirectRouteDegraded is the post-handover settle window: the proxy
+      // path is healthy and the direct path will clear itself within a
+      // health-monitor cycle. Restarting the tunnel here would only churn
+      // the same-node restart budget without addressing the real condition.
       return;
     }
     if (_upstreamDegradedRestartAttempts >=

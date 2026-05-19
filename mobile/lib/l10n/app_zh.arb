@@ -45,6 +45,7 @@
   "startupConnectivityFailureMessageLocalized": "VPN 隧道已启动，但通过所选节点无法抵达公网 IP 探测端点。该节点可能不可达或配置有误。",
   "startupProbeInconclusiveMessageLocalized": "VPN 已连接，但 Android 在启动期间未能确认公网 IP，流量可能仍然可用。",
   "tunnelUpstreamDegradedMessageLocalized": "隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi 或更换其他节点 —— 蜂窝运营商有时会屏蔽 VPS 的 IP。",
+  "tunnelDirectRouteDegradedMessageLocalized": "隧道已连接、上游节点也已响应，但本地直连路径（用于访问国内站点）还在稳定中。部分流量可能在最长 1 分钟内卡顿 —— 在 Wi-Fi 与蜂窝之间切换后常见。",
   "cellularHelpTitle": "手机数据网络问题",
   "cellularHelpAction": "了解原因",
   "help": "帮助",

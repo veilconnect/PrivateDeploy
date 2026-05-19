@@ -23,6 +23,8 @@ String localizeVpnStatusMessage(String? raw, AppLocalizations l10n) {
       return l10n.startupProbeInconclusiveMessageLocalized;
     case VpnProvider.tunnelUpstreamDegradedMessage:
       return l10n.tunnelUpstreamDegradedMessageLocalized;
+    case VpnProvider.tunnelDirectRouteDegradedMessage:
+      return l10n.tunnelDirectRouteDegradedMessageLocalized;
   }
   return raw;
 }

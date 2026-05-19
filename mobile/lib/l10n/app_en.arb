@@ -47,6 +47,7 @@
   "startupConnectivityFailureMessageLocalized": "VPN tunnel started, but traffic could not reach public IP probe endpoints through the selected node. The node may be unreachable or misconfigured.",
   "startupProbeInconclusiveMessageLocalized": "VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.",
   "tunnelUpstreamDegradedMessageLocalized": "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.",
+  "tunnelDirectRouteDegradedMessageLocalized": "Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.",
   "cellularHelpTitle": "Cellular network issues",
   "cellularHelpAction": "Why?",
   "help": "Help",
