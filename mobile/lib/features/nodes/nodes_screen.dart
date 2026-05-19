@@ -19,6 +19,7 @@ import 'nodes_widgets.dart';
 import '../../l10n/app_localizations.dart';
 import '../profiles/profile_content_screen.dart';
 import '../profiles/profile_provider.dart';
+import '../cdn/cdn_settings_screen.dart';
 import '../settings/settings_screen.dart';
 import '../vpn/vpn_provider.dart';
 
@@ -361,6 +362,14 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  void _openCdnSettings() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => const CdnSettingsScreen(),
+      ),
+    );
+  }
+
   Future<void> _switchManagedCloudProvider(
     CloudProvider cloudProvider,
     CloudProviderId providerId,
@@ -412,6 +421,11 @@ class _NodesScreenState extends State<NodesScreen> {
                 listBottomPadding,
               ),
               children: [
+                if (vpnProvider.needsCdnGuidance)
+                  _CdnGuidanceBanner(
+                    onConfigure: _openCdnSettings,
+                    onDismiss: vpnProvider.dismissCdnGuidance,
+                  ),
                 NodesVpnSection(
                   vpnProvider: vpnProvider,
                   profileProvider: profileProvider,
@@ -566,6 +580,84 @@ class _NodesScreenState extends State<NodesScreen> {
           profile: profile,
           content: content ?? '',
         ),
+      ),
+    );
+  }
+}
+
+/// Surfaced at the top of the nodes screen when [VpnProvider.needsCdnGuidance]
+/// is set — i.e. the native side reported that every start attempt failed
+/// while cellular was the active underlying transport. That's the
+/// China-Mobile-RST-to-Vultr-IP scenario the CDN-acceleration feature
+/// targets; we point the user at the settings entry rather than leaving
+/// them with a generic "VPN failed to start" toast.
+class _CdnGuidanceBanner extends StatelessWidget {
+  const _CdnGuidanceBanner({
+    required this.onConfigure,
+    required this.onDismiss,
+  });
+
+  final VoidCallback onConfigure;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: EdgeInsets.only(bottom: 12.h),
+      padding: EdgeInsets.fromLTRB(16.w, 12.h, 12.w, 12.h),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: scheme.error.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded,
+              color: scheme.error, size: 22.sp),
+          SizedBox(width: 12.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.cdnGuidanceTitle,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onErrorContainer,
+                    fontSize: 15.sp,
+                  ),
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  l10n.cdnGuidanceBody,
+                  style: TextStyle(
+                    color: scheme.onErrorContainer,
+                    fontSize: 13.sp,
+                    height: 1.35,
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                Row(
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: onConfigure,
+                      icon: const Icon(Icons.cloud_outlined, size: 18),
+                      label: Text(l10n.cdnGuidanceConfigure),
+                    ),
+                    SizedBox(width: 8.w),
+                    TextButton(
+                      onPressed: onDismiss,
+                      child: Text(l10n.cdnGuidanceDismiss),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

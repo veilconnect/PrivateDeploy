@@ -436,15 +436,43 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 cleanupTunnel()
                 isRunning = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                broadcastError(lastError?.message ?: "Failed to start VPN")
+                broadcastError(failedStartErrorMessage(lastError))
                 stopSelf()
             }
         }
     }
 
+    /**
+     * Returns the error message to broadcast when every start attempt failed.
+     * When the active underlying transport is cellular AND every probe came
+     * back unreachable, the most likely cause is the carrier SYN-dropping
+     * the configured node's IP — the exact scenario CDN acceleration
+     * exists to solve. Surfacing a distinct, machine-readable string lets
+     * the Dart side raise the "需要 CDN 加速" guidance banner without
+     * keyword-matching free-form error text.
+     */
+    private fun failedStartErrorMessage(lastError: Throwable?): String {
+        val originalMessage = lastError?.message ?: "Failed to start VPN"
+        if (originalMessage != startupConnectivityFailureMessage()) {
+            return originalMessage
+        }
+        val onCellular =
+            lastObservedUnderlyingNetworkType == INTERFACE_TYPE_CELLULAR
+        return if (onCellular) cellularCarrierSynBlockMessage() else originalMessage
+    }
+
     private fun startupConnectivityFailureMessage(): String =
         "VPN tunnel started, but traffic could not reach public IP probe endpoints " +
             "through the selected node. The node may be unreachable or misconfigured."
+
+    // Distinct from startupConnectivityFailureMessage so the Dart side can
+    // string-match on it and surface the "carrier blocked, need CDN" banner.
+    // See VpnProvider.cellularCarrierSynBlockMessage — both strings must
+    // match exactly for the banner to fire.
+    private fun cellularCarrierSynBlockMessage(): String =
+        "Cellular carrier appears to be SYN-dropping the configured node's IP — " +
+            "the tunnel started but no probe endpoint responded through it. " +
+            "Enable CDN acceleration to route via a Cloudflare edge IP instead."
 
     private fun stopVpn() {
         stopHealthMonitor()

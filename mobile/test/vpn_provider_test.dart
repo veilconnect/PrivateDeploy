@@ -1425,6 +1425,48 @@ void main() {
     });
 
     test(
+        'cellular connectivity failure error sets needsCdnGuidance until a healthy '
+        'connect (or explicit dismiss) clears it', () async {
+      expect(vpnProvider.needsCdnGuidance, false);
+
+      // Native side reports the carrier-connectivity failure flavor of start failure.
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: false,
+        status: 'error',
+        message: VpnProvider.cellularCarrierSynBlockMessage,
+        connectedAt: 0,
+        uptime: 0,
+      ));
+      expect(vpnProvider.needsCdnGuidance, true,
+          reason: 'banner must rise on carrier-connectivity failure error broadcast');
+
+      // A healthy connected transition resolves the situation — the user
+      // (or auto-CDN-deploy) made the tunnel work, banner goes away.
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: true,
+        status: 'connected',
+        message: null,
+        connectedAt: 1,
+        uptime: 5,
+      ));
+      expect(vpnProvider.needsCdnGuidance, false,
+          reason: 'banner must drop after healthy connect');
+
+      // Raise it again and check explicit dismiss path.
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: false,
+        status: 'error',
+        message: VpnProvider.cellularCarrierSynBlockMessage,
+        connectedAt: 0,
+        uptime: 0,
+      ));
+      expect(vpnProvider.needsCdnGuidance, true);
+      vpnProvider.dismissCdnGuidance();
+      expect(vpnProvider.needsCdnGuidance, false,
+          reason: 'dismissCdnGuidance() must clear the flag');
+    });
+
+    test(
         'DirectRouteDegraded message marks UI degraded but does NOT arm '
         'the upstream watchdog (post-handover settle window self-resolves)',
         () async {

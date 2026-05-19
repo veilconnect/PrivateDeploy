@@ -143,6 +143,19 @@ class AppLocalizationsZh extends AppLocalizations {
       '隧道已连接、上游节点也已响应，但本地直连路径（用于访问国内站点）还在稳定中。部分流量可能在最长 1 分钟内卡顿 —— 在 Wi-Fi 与蜂窝之间切换后常见。';
 
   @override
+  String get cdnGuidanceTitle => '蜂窝运营商似乎正在屏蔽该节点';
+
+  @override
+  String get cdnGuidanceBody =>
+      '在蜂窝数据下尝试连接当前节点全部失败。部分运营商（特别是移动网络）会丢弃发往已知 VPS IP 的包。开启 CDN 加速可改走 Cloudflare 边缘 IP，运营商不会过滤这条路径。';
+
+  @override
+  String get cdnGuidanceConfigure => '设置 CDN 加速';
+
+  @override
+  String get cdnGuidanceDismiss => '暂不';
+
+  @override
   String get cellularHelpTitle => '手机数据网络问题';
 
   @override

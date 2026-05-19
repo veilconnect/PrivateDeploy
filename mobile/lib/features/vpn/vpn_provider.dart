@@ -32,6 +32,15 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // bit-identical string. See PrivateDeployVpnService.describeTunnelHealth().
   static const String tunnelUpstreamDegradedMessage =
       "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.";
+  // Mirrors PrivateDeployVpnService.cellularCarrierSynBlockMessage() — the
+  // native side emits this exact string when every start attempt failed AND
+  // the active underlying transport was cellular. That's the classic
+  // China-Mobile-RST-to-Vultr-IP scenario (see CDN-ACCELERATION-DESIGN.md).
+  // The Dart side flips `_needsCdnGuidance` true on this message so the
+  // nodes screen can surface the "需要 CDN 加速" banner without
+  // free-form-string scraping.
+  static const String cellularCarrierSynBlockMessage =
+      "Cellular carrier appears to be SYN-dropping the configured node's IP — the tunnel started but no probe endpoint responded through it. Enable CDN acceleration to route via a Cloudflare edge IP instead.";
   // Mirrors PrivateDeployVpnService.TunnelHealth.DirectRouteDegraded — the
   // tunnel's offshore-proxy path verified fine, but the domestic-direct path
   // didn't (e.g. baidu/qq probe timed out). Normally this clears itself within
@@ -117,15 +126,28 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   DateTime? _lastKnownEgressIpAt;
   Timer? _upstreamDegradedWatchdog;
   int _upstreamDegradedRestartAttempts = 0;
+  // Set by _applyNativeStatus when the native side emits the
+  // cellularCarrierSynBlockMessage error — i.e. every start attempt failed
+  // while the underlying was cellular. UI uses it to surface the "需要 CDN
+  // 加速" guidance banner. Cleared on successful connect, disconnect, or
+  // explicit dismissal.
+  bool _needsCdnGuidance = false;
 
   VpnStatus get status => _status;
   VpnHealth get health => _health;
   bool get isDegraded =>
       _status == VpnStatus.connected && _health == VpnHealth.degraded;
+  bool get needsCdnGuidance => _needsCdnGuidance;
   String? get activeProfile => _activeProfile;
   TrafficStats get stats => _stats;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  void dismissCdnGuidance() {
+    if (!_needsCdnGuidance) return;
+    _needsCdnGuidance = false;
+    _safeNotifyListeners();
+  }
 
   /// Clears any sticky error banner. Call this when the cause of the error
   /// has been resolved (e.g. the offending profile was deleted, or the user
@@ -1199,6 +1221,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _error = null;
     }
 
+    // Cellular-carrier connectivity failure: every start attempt failed AND the
+    // active underlying was cellular. Raise the guidance banner so the
+    // user gets a clear path forward instead of staring at a generic
+    // error. Cleared by the user via dismissCdnGuidance(), by a later
+    // healthy connect transition (see below), or when CDN auto-deploy
+    // succeeds (gate ①).
+    if (_error == cellularCarrierSynBlockMessage) {
+      _needsCdnGuidance = true;
+    }
+
     if (_status == VpnStatus.connected) {
       _startStatsPolling();
       // Connected + non-empty statusMessage = native checkTunnelHealth came
@@ -1219,6 +1251,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;
+      // A healthy connected transition resolves the previous connectivity failure:
+      // either the user manually fixed it (switched networks, deployed
+      // CDN themselves), or auto-failover/auto-CDN-deploy did. Either
+      // way, drop the guidance banner — the problem isn't current
+      // anymore.
+      if (_health == VpnHealth.healthy) {
+        _needsCdnGuidance = false;
+      }
       // When the tunnel comes back up after an underlying-network handover
       // (e.g. Wi-Fi ↔ cellular), the cached egress IP from the previous
       // underlying network is stale. The "（上次探测）" suffix would otherwise

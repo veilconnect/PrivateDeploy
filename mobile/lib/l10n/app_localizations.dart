@@ -338,6 +338,30 @@ abstract class AppLocalizations {
   /// **'Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.'**
   String get tunnelDirectRouteDegradedMessageLocalized;
 
+  /// No description provided for @cdnGuidanceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cellular carrier appears to be blocking this node'**
+  String get cdnGuidanceTitle;
+
+  /// No description provided for @cdnGuidanceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Every attempt to reach the configured node failed while on cellular data. Some carriers (notably mobile carrier) drop packets to known VPS IPs. Set up CDN acceleration to route through a Cloudflare edge IP that carriers don\'t filter.'**
+  String get cdnGuidanceBody;
+
+  /// No description provided for @cdnGuidanceConfigure.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up CDN acceleration'**
+  String get cdnGuidanceConfigure;
+
+  /// No description provided for @cdnGuidanceDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get cdnGuidanceDismiss;
+
   /// No description provided for @cellularHelpTitle.
   ///
   /// In en, this message translates to:

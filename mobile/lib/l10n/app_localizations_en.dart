@@ -144,6 +144,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.';
 
   @override
+  String get cdnGuidanceTitle =>
+      'Cellular carrier appears to be blocking this node';
+
+  @override
+  String get cdnGuidanceBody =>
+      'Every attempt to reach the configured node failed while on cellular data. Some carriers (notably mobile carrier) drop packets to known VPS IPs. Set up CDN acceleration to route through a Cloudflare edge IP that carriers don\'t filter.';
+
+  @override
+  String get cdnGuidanceConfigure => 'Set up CDN acceleration';
+
+  @override
+  String get cdnGuidanceDismiss => 'Not now';
+
+  @override
   String get cellularHelpTitle => 'Cellular network issues';
 
   @override
