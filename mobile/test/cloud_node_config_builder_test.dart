@@ -87,6 +87,70 @@ void main() {
       expect(tls.containsKey('reality'), isFalse);
     });
 
+    test(
+        'CDN variant lands at outbounds index 0 even when trojan is not on 443 '
+        '(so urltest probes the Cloudflare edge before bare-IP variants on '
+        'carrier-filtered networks)', () {
+      final instance = CloudInstance(
+        id: 'lax-1',
+        provider: 'vultr',
+        label: 'lax-1',
+        status: 'active',
+        region: 'lax',
+        plan: 'vc2-1c-1gb',
+        ipv4: '8.8.8.8',
+        nodeInfo: NodeInfo(
+          ssPort: 12345,
+          ssPassword: 'pw',
+          hyPort: 23456,
+          hyPassword: 'hpw',
+          hyServerName: 'hy.example.com',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-cdn',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: 'example.com',
+          // Trojan on a non-443 port — _prioritizeEdge443ProtocolOrder is
+          // a no-op for this instance, so any CDN-first guarantee has to
+          // come from _putCdnFirst (the fix this test pins).
+          trojanPort: 8443,
+          trojanPassword: 'tpw',
+          trojanServerName: 'tj.example.com',
+          trojanInsecure: null,
+          vlessRelayPort: 47100,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'pd-relay-lax.acme.workers.dev',
+          pathSecret: 'cafe1234cafe1234cafe1234cafe1234',
+        ),
+      );
+      expect(raw, isNotNull);
+
+      final config = jsonDecode(raw!) as Map<String, dynamic>;
+      final outbounds = (config['outbounds'] as List).cast<Map>();
+      // First-non-special outbound (skip dns/direct/block/selector tags) is
+      // the urltest selector itself. The selector lists members in the
+      // exact order they were added to the outbounds list, so checking
+      // the array order is enough — sing-box's urltest probes them
+      // in-order until tolerance is satisfied.
+      final urltest = outbounds.firstWhere(
+        (o) => o['type'] == 'urltest',
+        orElse: () => <String, Object?>{},
+      );
+      expect(urltest, isNotEmpty,
+          reason: 'auto config must include an urltest selector');
+      final members = (urltest['outbounds'] as List).cast<String>();
+      expect(members.isNotEmpty, isTrue,
+          reason: 'urltest must enumerate node protocol members');
+      expect(members.first, 'lax-1-CDN',
+          reason: 'CDN variant must lead the urltest pool when present');
+    });
+
     test('omits CDN variant when relay port is zero (older deploys)', () {
       final instance = CloudInstance(
         id: 'old-node',

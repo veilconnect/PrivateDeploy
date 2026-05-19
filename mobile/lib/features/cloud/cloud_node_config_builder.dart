@@ -295,6 +295,16 @@ String? buildCloudNodeConfig(
     cdnEndpoint: cdnEndpoint,
   );
   _prioritizeEdge443ProtocolOrder(instance, outbounds: outbounds, tags: tags);
+  // Always promote `<label>-CDN` to the front when present, independent of
+  // the edge443 rule. urltest probes pool members in order until one passes,
+  // so a member that's positioned first is the one users converge to fastest
+  // when everything else is timing out. On carrier-filtered networks
+  // (notably mobile carrier cellular) every bare-VPS-IP probe burns ~8 s
+  // before failing — if CDN sits at position 3, that's 24 s of dead air
+  // before failover. Putting CDN first means the urltest selector tries
+  // the Cloudflare-edge path immediately; if the bare IPs happen to work
+  // (Wi-Fi), the 200 ms tolerance still lets a faster direct member win.
+  _putCdnFirst(outbounds: outbounds, tags: tags);
 
   if (outbounds.isEmpty) {
     return null;
@@ -337,6 +347,7 @@ String? buildCloudNodeConfig(
         tags: scratchTags,
         cdnEndpoint: failoverCdnEndpointResolver?.call(fi),
       );
+      _putCdnFirst(outbounds: scratchOutbounds, tags: scratchTags);
       _prioritizeEdge443ProtocolOrder(
         fi,
         outbounds: scratchOutbounds,
@@ -517,6 +528,36 @@ String? buildCloudNodeConfig(
   };
 
   return const JsonEncoder.withIndent('  ').convert(config);
+}
+
+/// Moves any `<label>-CDN` tag to index 0 of both [outbounds] and [tags],
+/// preserving relative order of the rest. No-op if no CDN tag is present.
+///
+/// Runs ahead of [_prioritizeEdge443ProtocolOrder], so the edge443 sort
+/// (which itself puts CDN at priority 0) still produces an identical
+/// outcome when trojan is on 443. The change only matters when trojan
+/// isn't on 443 — in that case [_prioritizeEdge443ProtocolOrder] is a
+/// no-op and the original SS-first ordering would have made urltest burn
+/// the carrier's per-IP timeout budget on bare-VPS probes before reaching
+/// the Cloudflare-edge fallback.
+void _putCdnFirst({
+  required List<Map<String, dynamic>> outbounds,
+  required List<String> tags,
+}) {
+  final cdnTagIndex = tags.indexWhere((t) => t.endsWith('-CDN'));
+  if (cdnTagIndex <= 0) {
+    return;
+  }
+  final cdnTag = tags.removeAt(cdnTagIndex);
+  tags.insert(0, cdnTag);
+
+  final cdnOutboundIndex = outbounds.indexWhere(
+    (o) => o['tag']?.toString().endsWith('-CDN') ?? false,
+  );
+  if (cdnOutboundIndex > 0) {
+    final cdnOutbound = outbounds.removeAt(cdnOutboundIndex);
+    outbounds.insert(0, cdnOutbound);
+  }
 }
 
 void _prioritizeEdge443ProtocolOrder(
