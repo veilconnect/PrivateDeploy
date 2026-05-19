@@ -123,7 +123,7 @@ prepare_runtime_data
 echo "==> 第 3 步: 构建 Linux 可执行文件"
 GOOS=linux GOARCH=amd64 bash "$(dirname "$0")/with_clean_runtime_data.sh" \
   wails build \
-  -m -s -trimpath -skipbindings \
+  -m -trimpath -skipbindings \
   -devtools -tags webkit2_41 \
   -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -o "$APP_DISPLAY_NAME"

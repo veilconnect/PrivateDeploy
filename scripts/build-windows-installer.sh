@@ -113,7 +113,7 @@ echo "==> 构建 Windows amd64 + NSIS 安装程序"
 GOOS=windows GOARCH=amd64 PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 PRIVATEDEPLOY_DISABLE_TRAY=1 \
   bash "$(dirname "$0")/with_clean_runtime_data.sh" \
   wails build \
-  -m -s -trimpath \
+  -m -trimpath \
   -tags webkit2_41 \
   -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
   -nsis \
