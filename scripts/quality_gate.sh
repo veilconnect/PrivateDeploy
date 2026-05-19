@@ -38,6 +38,29 @@ go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1
   pnpm run test:coverage
 )
 
+# ── CDN front keep-alive smoke (M1 worker) ───────────────────────
+# Hits relay-f2cfd6.example.test via DoH + TLS + WS-with-wrong-secret to
+# confirm the standby CDN-acceleration path doesn't silently rot between
+# releases. The tests t.Skip when DoH itself can't resolve (offline dev
+# box), so this stays green when there's no network — only fails when the
+# network IS up but the Worker / custom domain has gone away. Warning-
+# only, doesn't block the gate, because Cloudflare hiccups shouldn't
+# stop a local quality run; release validation should still eyeball this
+# line. Set PRIVATEDEPLOY_SKIP_CDN_SMOKE=1 to bypass entirely.
+CDN_SMOKE_STATUS="skipped"
+if [ "${PRIVATEDEPLOY_SKIP_CDN_SMOKE:-0}" != "1" ]; then
+  echo ""
+  echo "── CDN front smoke (M1 worker keep-alive) ──"
+  if go test -tags=smoke -timeout=60s -count=1 -run TestProbeSmoke ./bridge/cdn/...; then
+    CDN_SMOKE_STATUS="passed"
+  else
+    CDN_SMOKE_STATUS="FAILED"
+    echo "⚠ CDN front smoke FAILED — M1 worker may be down or"
+    echo "  relay-f2cfd6.example.test config drifted. See"
+    echo "  docs/cdn-acceleration/SMOKE-TEST.md for manual recovery."
+  fi
+fi
+
 # ── Coverage summary ──────────────────────────────────────────────
 GO_ROOT_PCT="$(go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1 | awk '{print $NF}')"
 GO_API_PCT="$(cd api && go tool cover -func="$COVERAGE_DIR/go-api.out" | tail -1 | awk '{print $NF}')"
@@ -55,7 +78,8 @@ fi
 
 echo ""
 echo "======== Coverage Summary ========"
-echo "  Go (root): $GO_ROOT_PCT"
-echo "  Go (api):  $GO_API_PCT"
-echo "  Frontend:  $FRONTEND_TOTAL"
+echo "  Go (root):       $GO_ROOT_PCT"
+echo "  Go (api):        $GO_API_PCT"
+echo "  Frontend:        $FRONTEND_TOTAL"
+echo "  CDN front smoke: $CDN_SMOKE_STATUS"
 echo "=================================="
