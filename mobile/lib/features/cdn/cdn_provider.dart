@@ -77,6 +77,20 @@ class CdnProvider with ChangeNotifier {
   bool get isZonesLoading => _zonesLoading;
   bool get isSavingCustomDomain => _isSavingCustomDomain;
 
+  /// Diagnostic-only: hit the deployed Worker with the stored
+  /// pathSecret and report whether the WS upgrade returns 101. Returns
+  /// null if no deployment / no customHost. Used by the auto-CDN
+  /// handler's trace path to distinguish "secret matches but probe
+  /// still fails" from "secret doesn't match the deployed Worker".
+  Future<bool?> debugTestCdnWorkerReachable(String nodeId) async {
+    final dep = _deployments[nodeId];
+    if (dep == null) return null;
+    final host = dep.customHost ?? dep.workerHost;
+    final secret = dep.pathSecret;
+    if (host.isEmpty || secret == null || secret.isEmpty) return null;
+    return _customHostRelayReachable(host, secret);
+  }
+
   /// True when every precondition for [deployWorkerForNode] is in place
   /// without going to the network: token verified, account scoped, and
   /// at least one routable destination (workers.dev subdomain or a bound
@@ -1145,8 +1159,18 @@ class CdnProvider with ChangeNotifier {
         443,
         timeout: const Duration(seconds: 8),
       );
-      secure = await SecureSocket.secure(raw, host: host)
-          .timeout(const Duration(seconds: 8));
+      // ALPN must be HTTP/1.1 only. CF Worker WebSocket upgrades use the
+      // HTTP/1.1 Upgrade mechanism; over HTTP/2 the runtime strips the
+      // Upgrade + Connection headers (they're hop-by-hop in HTTP/2) and
+      // the Worker returns 404 even though every other handshake field
+      // is correct. Without an explicit supportedProtocols list Dart's
+      // TLS client may send no ALPN extension, leaving CF free to pick
+      // h2 — and we'd silently misread a healthy Worker as broken.
+      secure = await SecureSocket.secure(
+        raw,
+        host: host,
+        supportedProtocols: const ['http/1.1'],
+      ).timeout(const Duration(seconds: 8));
       // RFC 6455 Sec-WebSocket-Key: 16 random bytes, base64.
       final keyBytes = Uint8List(16);
       final rng = Random.secure();

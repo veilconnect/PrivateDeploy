@@ -225,6 +225,14 @@ Map<String, String> _appendInstanceOutbounds(
       'tls': {
         'enabled': true,
         'server_name': cdnHost,
+        // ALPN must be HTTP/1.1 only. CF Worker WebSocket upgrades use the
+        // HTTP/1.1 Upgrade mechanism; over HTTP/2 the runtime strips
+        // `Upgrade` + `Connection` headers (they're hop-by-hop), the Worker
+        // sees no upgrade, and it returns 404 — silently breaking every WS
+        // dial through the Worker even though every other field is correct.
+        // Chrome uTLS otherwise advertises h2 first, so CF picks h2 and
+        // we hit exactly that 404 path.
+        'alpn': ['http/1.1'],
         'utls': {
           'enabled': true,
           'fingerprint': 'chrome',
