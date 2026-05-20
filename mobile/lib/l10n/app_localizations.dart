@@ -362,6 +362,12 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get cdnGuidanceDismiss;
 
+  /// No description provided for @cellularCarrierSynBlockMessageLocalized.
+  ///
+  /// In en, this message translates to:
+  /// **'Cellular carrier appears to be blocking the configured node\'s IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.'**
+  String get cellularCarrierSynBlockMessageLocalized;
+
   /// No description provided for @cellularHelpTitle.
   ///
   /// In en, this message translates to:

@@ -158,6 +158,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cdnGuidanceDismiss => 'Not now';
 
   @override
+  String get cellularCarrierSynBlockMessageLocalized =>
+      'Cellular carrier appears to be blocking the configured node\'s IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.';
+
+  @override
   String get cellularHelpTitle => 'Cellular network issues';
 
   @override

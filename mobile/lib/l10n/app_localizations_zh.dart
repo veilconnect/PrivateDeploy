@@ -156,6 +156,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cdnGuidanceDismiss => '暂不';
 
   @override
+  String get cellularCarrierSynBlockMessageLocalized =>
+      '蜂窝运营商似乎正在屏蔽该节点的 IP —— 隧道已建立，但没有任何外网流量返回。请在设置中开启 CDN 加速，改走 Cloudflare 边缘 IP。';
+
+  @override
   String get cellularHelpTitle => '手机数据网络问题';
 
   @override

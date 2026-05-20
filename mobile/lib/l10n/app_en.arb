@@ -52,6 +52,7 @@
   "cdnGuidanceBody": "Every attempt to reach the configured node failed while on cellular data. Some carriers (notably mobile carrier) drop packets to known VPS IPs. Set up CDN acceleration to route through a Cloudflare edge IP that carriers don't filter.",
   "cdnGuidanceConfigure": "Set up CDN acceleration",
   "cdnGuidanceDismiss": "Not now",
+  "cellularCarrierSynBlockMessageLocalized": "Cellular carrier appears to be blocking the configured node's IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.",
   "cellularHelpTitle": "Cellular network issues",
   "cellularHelpAction": "Why?",
   "help": "Help",

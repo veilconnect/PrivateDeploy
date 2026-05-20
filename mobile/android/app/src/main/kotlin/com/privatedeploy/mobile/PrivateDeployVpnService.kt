@@ -363,7 +363,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             Log.i(TAG, "VPN started successfully on attempt $attempt")
                         }
                         TunnelHealth.UpstreamDegraded -> {
-                            val outcome = describeTunnelHealth(health)
+                            val outcome = degradedOutcomeForCurrentTransport(health)
                             updateForegroundNotification(outcome.notificationText)
                             broadcastStatus("connected", outcome.statusMessage)
                             succeeded = true
@@ -440,6 +440,38 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 stopSelf()
             }
         }
+    }
+
+    /**
+     * Refines [describeTunnelHealth]'s `UpstreamDegraded` outcome with the
+     * active underlying transport. When the user is on cellular AND the
+     * upstream probe failed, the most likely cause is the carrier
+     * SYN-dropping the configured node's IP — the exact scenario CDN
+     * acceleration solves. Emit the connectivity failure-flavored message so the
+     * Dart side raises the "需要 CDN 加速" guidance banner. On Wi-Fi
+     * (which rarely filters VPS IPs), keep the original "switch nodes"
+     * message — the carrier-block diagnosis would be misleading there.
+     *
+     * Healthy / DirectRouteDegraded / Unreachable outcomes pass through
+     * unchanged.
+     */
+    private fun degradedOutcomeForCurrentTransport(
+        health: TunnelHealth,
+    ): TunnelHealthOutcome {
+        val baseOutcome = describeTunnelHealth(health)
+        if (health != TunnelHealth.UpstreamDegraded) {
+            return baseOutcome
+        }
+        val onCellular =
+            lastObservedUnderlyingNetworkType == INTERFACE_TYPE_CELLULAR
+        if (!onCellular) {
+            return baseOutcome
+        }
+        return TunnelHealthOutcome(
+            notificationText =
+                "VPN connected · carrier blocking node, enable CDN",
+            statusMessage = cellularCarrierSynBlockMessage(),
+        )
     }
 
     /**
@@ -549,7 +581,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         TunnelHealth.Unreachable -> false
                     }
                     if (acceptNow) {
-                        val outcome = describeTunnelHealth(health)
+                        val outcome = degradedOutcomeForCurrentTransport(health)
                         updateForegroundNotification(outcome.notificationText)
                         broadcastStatus("connected", outcome.statusMessage)
                         when (health) {
