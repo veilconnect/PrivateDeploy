@@ -382,6 +382,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                 // and let direct cellular traffic continue
                                 // working until the user (or auto-deploy) sets
                                 // CDN up.
+                                //
+                                // Tear down the tun NOW (not at end of loop)
+                                // and break: attempt 2 against the same node
+                                // on the same underlying network would just
+                                // re-create the black-hole tun for the
+                                // backoff+retry window.
                                 lastError = IllegalStateException(
                                     cellularCarrierSynBlockMessage(),
                                 )
@@ -391,8 +397,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                         "UpstreamDegraded — refusing to install " +
                                         "a black-hole tun. User likely needs " +
                                         "CDN acceleration; banner + auto-deploy " +
-                                        "will fire on the Dart side.",
+                                        "will fire on the Dart side. Tearing " +
+                                        "down tun immediately and skipping retry.",
                                 )
+                                try {
+                                    vpnCore?.stop()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "stop() during synblock refuse failed", e)
+                                }
+                                cleanupTunnel()
+                                isRunning = false
+                                break
                             } else {
                                 val outcome =
                                     degradedOutcomeForCurrentTransport(health)
