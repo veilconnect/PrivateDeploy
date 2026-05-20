@@ -1425,6 +1425,78 @@ void main() {
     });
 
     test(
+        'cellular connectivity failure invokes the auto-CDN-deploy handler exactly '
+        'once per profile name and clears the guidance banner on success',
+        () async {
+      // Connect first so the provider has an active profile name to
+      // pass into the handler.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'isRunning':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 1,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {'ip': '8.8.8.8', 'source': 'android_native'};
+          default:
+            return null;
+        }
+      });
+      await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Cloud: blocked-node',
+      );
+      // Connect leaves _activeProfile set so the handler can be invoked.
+      expect(vpnProvider.activeProfile, 'Cloud: blocked-node');
+
+      final invocations = <String?>[];
+      var handlerResult = true;
+      vpnProvider.setOnAutoCdnDeployRequest((activeProfileName) async {
+        invocations.add(activeProfileName);
+        return handlerResult;
+      });
+
+      // First connectivity failure broadcast: handler must fire.
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: false,
+        status: 'error',
+        message: VpnProvider.cellularCarrierSynBlockMessage,
+        connectedAt: 0,
+        uptime: 0,
+      ));
+      // Yield so the inflight Future inside _maybeAttemptAutoCdnDeploy
+      // completes.
+      await Future<void>.delayed(Duration.zero);
+      expect(invocations, ['Cloud: blocked-node'],
+          reason: 'auto-CDN handler must fire on connectivity failure');
+      expect(vpnProvider.needsCdnGuidance, false,
+          reason: 'handler returning true clears the banner');
+
+      // Repeat broadcast on the same profile must NOT re-fire — the
+      // attempt was already recorded for this episode.
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: false,
+        status: 'error',
+        message: VpnProvider.cellularCarrierSynBlockMessage,
+        connectedAt: 0,
+        uptime: 0,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(invocations, ['Cloud: blocked-node'],
+          reason:
+              'second connectivity failure on same profile must not re-invoke the handler');
+    });
+
+    test(
         'cellular connectivity failure error sets needsCdnGuidance until a healthy '
         'connect (or explicit dismiss) clears it', () async {
       expect(vpnProvider.needsCdnGuidance, false);

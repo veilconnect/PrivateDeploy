@@ -77,6 +77,22 @@ class CdnProvider with ChangeNotifier {
   bool get isZonesLoading => _zonesLoading;
   bool get isSavingCustomDomain => _isSavingCustomDomain;
 
+  /// True when every precondition for [deployWorkerForNode] is in place
+  /// without going to the network: token verified, account scoped, and
+  /// at least one routable destination (workers.dev subdomain or a bound
+  /// custom domain). Used by the VPN auto-deploy gate in main.dart to
+  /// decide whether to attempt automatic recovery after a cellular
+  /// connectivity failure; mirrors the same checks deployWorkerForNode runs
+  /// internally so the caller can fail fast without firing an HTTP
+  /// request that's going to bounce on missing-prerequisite errors.
+  bool canAutoDeployForNode() {
+    if (_status != CdnStatus.verified) return false;
+    if ((_accountId ?? '').isEmpty) return false;
+    final hasSubdomain = (_workersSubdomain ?? '').isNotEmpty;
+    final hasCustomDomain = _customDomain != null;
+    return hasSubdomain || hasCustomDomain;
+  }
+
   /// Build the workers.dev URL fragment we display in the UI as
   /// "<your-name>.<subdomain>.workers.dev". Returns null if not yet known.
   String? get workersDevExample {

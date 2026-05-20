@@ -149,6 +149,54 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _safeNotifyListeners();
   }
 
+  // Gate ① — auto-deploy CDN Worker when carrier connectivity failure is detected.
+  // Wired in main.dart against CdnProvider + CloudProvider. Receives the
+  // current active profile name so the handler can resolve it to a cloud
+  // instance, decide if auto-deploy is feasible (CF creds + node has
+  // vlessRelayPort + no existing deployment), and if so call
+  // CdnProvider.deployWorkerForNode + trigger VPN restart. Returns true
+  // when the deploy completed and a reconnect was kicked; false (with
+  // banner left up) otherwise so the user can still set CDN up manually.
+  Future<bool> Function(String? activeProfileName)? _onAutoCdnDeployRequest;
+  bool _autoCdnDeployInFlight = false;
+  // Profile names we've already attempted auto-deploy on during this
+  // failover episode, so we don't loop on the same node when the CF API
+  // refused (e.g. quota, transient 5xx). Reset on any healthy connect.
+  final Set<String> _autoCdnDeployAttempted = {};
+
+  void setOnAutoCdnDeployRequest(
+    Future<bool> Function(String? activeProfileName) handler,
+  ) {
+    _onAutoCdnDeployRequest = handler;
+  }
+
+  void _maybeAttemptAutoCdnDeploy() {
+    if (_autoCdnDeployInFlight) return;
+    final handler = _onAutoCdnDeployRequest;
+    if (handler == null) return;
+    final activeName = _activeProfile;
+    if (activeName == null || activeName.isEmpty) return;
+    if (_autoCdnDeployAttempted.contains(activeName)) return;
+    _autoCdnDeployAttempted.add(activeName);
+    _autoCdnDeployInFlight = true;
+    () async {
+      try {
+        final ok = await handler(activeName);
+        if (ok) {
+          // Successful deploy + reconnect — drop the banner so the user
+          // doesn't see a stale "需要 CDN 加速" prompt while the new
+          // CDN-fronted profile is healthy.
+          _needsCdnGuidance = false;
+          _safeNotifyListeners();
+        }
+      } catch (e) {
+        AppLogger.warning('[VpnProvider] Auto-CDN-deploy handler threw: $e');
+      } finally {
+        _autoCdnDeployInFlight = false;
+      }
+    }();
+  }
+
   /// Clears any sticky error banner. Call this when the cause of the error
   /// has been resolved (e.g. the offending profile was deleted, or the user
   /// dismissed a transient probe failure).
@@ -1229,6 +1277,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // succeeds (gate ①).
     if (_error == cellularCarrierSynBlockMessage) {
       _needsCdnGuidance = true;
+      // Gate ① — fire the auto-deploy handler so we attempt to recover
+      // without making the user navigate to CDN settings. Banner stays
+      // up until the deploy either succeeds (clears it) or completes
+      // unsuccessfully (user falls back to manual flow).
+      _maybeAttemptAutoCdnDeploy();
     }
 
     if (_status == VpnStatus.connected) {
@@ -1258,6 +1311,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // anymore.
       if (_health == VpnHealth.healthy) {
         _needsCdnGuidance = false;
+        // Reset auto-deploy attempt history so a future connectivity failure (e.g.
+        // user roams to a different blocked node tomorrow) can fire
+        // auto-deploy fresh.
+        _autoCdnDeployAttempted.clear();
       }
       // When the tunnel comes back up after an underlying-network handover
       // (e.g. Wi-Fi ↔ cellular), the cached egress IP from the previous

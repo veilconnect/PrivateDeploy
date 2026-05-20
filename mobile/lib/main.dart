@@ -13,6 +13,7 @@ import 'features/profiles/profile_provider.dart';
 import 'features/settings/app_settings_provider.dart';
 import 'features/vpn/vpn_provider.dart';
 import 'features/cloud/cloud_node_config_builder.dart' show CdnEndpoint;
+import 'features/cloud/cloud_models.dart' show CloudInstance;
 import 'features/cloud/cloud_provider.dart';
 import 'features/nodes/nodes_vpn_actions.dart' show autoFailoverToNextCloudNode;
 import 'features/cdn/cdn_provider.dart';
@@ -68,9 +69,9 @@ class PrivateDeployApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
-        ChangeNotifierProxyProvider<CloudProvider, CdnProvider>(
+        ChangeNotifierProxyProvider2<CloudProvider, VpnProvider, CdnProvider>(
           create: (_) => CdnProvider()..load(),
-          update: (_, cloudProvider, cdnProvider) {
+          update: (_, cloudProvider, vpnProvider, cdnProvider) {
             // Wire the CDN provider's deployment lookup into the cloud
             // provider's outbound builder so generated node configs include
             // a CDN-fronted variant whenever a Worker has been deployed.
@@ -97,6 +98,64 @@ class PrivateDeployApp extends StatelessWidget {
                 host: host,
                 pathSecret: dep.pathSecret,
               );
+            });
+
+            // Gate ① — auto-deploy a Worker for the failing node when the
+            // native side reports cellular connectivity failure. Conditions
+            // intentionally strict so we don't spam CF or surprise users
+            // who haven't opted into CDN acceleration:
+            //   - CdnProvider verified + has accountId
+            //   - workersSubdomain claimed OR a custom domain bound
+            //   - Active profile is cloud-managed (we can find the
+            //     instance behind it)
+            //   - That instance has a vlessRelayPort (Phase-5+ deploy)
+            //   - The instance has NO existing deployment yet (otherwise
+            //     CDN-fronted variant is already in the pool and urltest
+            //     would have picked it — symptom is something else)
+            // On success, trigger VPN restart so the rebuilt profile
+            // (now carrying the new <label>-CDN outbound) gets picked
+            // up. VpnProvider clears _needsCdnGuidance on the next
+            // healthy connected transition.
+            vpnProvider.setOnAutoCdnDeployRequest((activeProfileName) async {
+              final cdn = cdnProvider;
+              if (cdn == null) return false;
+              if (!cdn.canAutoDeployForNode()) return false;
+              if (activeProfileName == null ||
+                  !activeProfileName
+                      .startsWith(ProfileProvider.cloudManagedProfilePrefix)) {
+                return false;
+              }
+              final label = activeProfileName
+                  .substring(ProfileProvider.cloudManagedProfilePrefix.length)
+                  .trim();
+              if (label.isEmpty) return false;
+              CloudInstance? instance;
+              for (final candidate in cloudProvider.allInstances) {
+                if (candidate.label == label) {
+                  instance = candidate;
+                  break;
+                }
+              }
+              if (instance == null) return false;
+              if (!instance.hasIp) return false;
+              final relayPort = instance.nodeInfo?.vlessRelayPort ?? 0;
+              if (relayPort <= 0) return false;
+              if (cdn.deploymentFor(instance.id) != null) return false;
+
+              final deployed = await cdn.deployWorkerForNode(
+                nodeId: instance.id,
+                nodeLabel: instance.label,
+                backendHost: instance.ipv4!,
+                backendPort: relayPort,
+              );
+              if (!deployed) return false;
+
+              // Profile is rebuilt by VpnProvider.restart() because
+              // cdnEndpointResolver now returns a non-null endpoint for
+              // this instance. urltest pool will lead with <label>-CDN
+              // (Gate ②), so the next probe sweep should land Healthy.
+              await vpnProvider.restart();
+              return true;
             });
             return cdnProvider!;
           },
