@@ -286,6 +286,14 @@ String? buildCloudNodeConfig(
     return null;
   }
 
+  // Collect every CDN-front hostname that ends up in the urltest pool so
+  // the DNS module can carve them out from the dns-remote loopback. See
+  // the rule below the cdnHost-collector for the rationale.
+  final cdnHostsForDns = <String>{};
+  if (cdnEndpoint?.host != null && cdnEndpoint!.host.isNotEmpty) {
+    cdnHostsForDns.add(cdnEndpoint.host);
+  }
+
   final outbounds = <Map<String, dynamic>>[];
   final tags = <String>[];
   final endpointTagByLabel = _appendInstanceOutbounds(
@@ -341,11 +349,15 @@ String? buildCloudNodeConfig(
       if (!fi.hasIp || fi.nodeInfo == null) continue;
       final scratchOutbounds = <Map<String, dynamic>>[];
       final scratchTags = <String>[];
+      final fiCdnEndpoint = failoverCdnEndpointResolver?.call(fi);
+      if (fiCdnEndpoint?.host != null && fiCdnEndpoint!.host.isNotEmpty) {
+        cdnHostsForDns.add(fiCdnEndpoint.host);
+      }
       _appendInstanceOutbounds(
         fi,
         outbounds: scratchOutbounds,
         tags: scratchTags,
-        cdnEndpoint: failoverCdnEndpointResolver?.call(fi),
+        cdnEndpoint: fiCdnEndpoint,
       );
       _putCdnFirst(outbounds: scratchOutbounds, tags: scratchTags);
       _prioritizeEdge443ProtocolOrder(
@@ -429,6 +441,19 @@ String? buildCloudNodeConfig(
           ],
           'server': managedDnsBootstrapTag,
         },
+        // CDN-front hosts (custom domain like relay-<hash>.<zone> or the
+        // workers.dev fallback) must NOT resolve via dns-remote — that
+        // resolver routes through the `select` outbound, whose first
+        // member is the CDN outbound itself, which dials this exact host.
+        // Without this carve-out sing-box deadlocks with
+        // `DNS query loopback in transport[dns-remote]` and urltest
+        // never gets a working member. Resolve directly via the
+        // bootstrap DNS over the underlying network instead.
+        if (cdnHostsForDns.isNotEmpty)
+          {
+            'domain': cdnHostsForDns.toList(),
+            'server': managedDnsBootstrapTag,
+          },
         {
           'domain_suffix': managedDnsRemoteFallbackDomainSuffixes,
           'server': managedDnsRemoteFallbackTag,
