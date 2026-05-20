@@ -69,7 +69,7 @@ class PrivateDeployApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
-        ChangeNotifierProxyProvider2<CloudProvider, VpnProvider, CdnProvider>(
+        ChangeNotifierProxyProvider3<CloudProvider, VpnProvider, ProfileProvider, CdnProvider>(
           // lazy: false so CdnProvider's create+update fire on app boot,
           // not lazily on first widget access. Without this, the Gate ①
           // auto-deploy handler in `update` is never wired until the user
@@ -77,7 +77,7 @@ class PrivateDeployApp extends StatelessWidget {
           // that the user shouldn't need to navigate there.
           lazy: false,
           create: (_) => CdnProvider()..load(),
-          update: (_, cloudProvider, vpnProvider, cdnProvider) {
+          update: (_, cloudProvider, vpnProvider, profileProvider, cdnProvider) {
             // Wire the CDN provider's deployment lookup into the cloud
             // provider's outbound builder so generated node configs include
             // a CDN-fronted variant whenever a Worker has been deployed.
@@ -180,33 +180,69 @@ class PrivateDeployApp extends StatelessWidget {
                     '$relayPort (Phase-5+ deploy required)');
                 return false;
               }
-              if (cdn.deploymentFor(instance.id) != null) {
-                trace('skipped: deployment already exists for '
-                    '${instance.id} — Gate ② should be promoting it');
-                return false;
+              // Deployment may already exist from a previous attempt (auto
+              // or manual). DO NOT skip — the saved Hive profile was
+              // generated before the deploy succeeded, so its `?k=<secret>`
+              // path-secret is stale or empty. urltest then dials the
+              // Worker with the wrong secret and Worker returns HTTP 404,
+              // killing the probe. Always rebuild the active profile with
+              // the current deployment's secret + restart.
+              if (cdn.deploymentFor(instance.id) == null) {
+                trace('deploying Worker for ${instance.label} '
+                    '(${instance.ipv4}:$relayPort)...');
+                final deployed = await cdn.deployWorkerForNode(
+                  nodeId: instance.id,
+                  nodeLabel: instance.label,
+                  backendHost: instance.ipv4!,
+                  backendPort: relayPort,
+                );
+                if (!deployed) {
+                  trace('deployWorkerForNode returned false: '
+                      '${cdn.lastError}');
+                  return false;
+                }
+                trace('deploy succeeded for ${instance.label}');
+              } else {
+                trace('deployment already exists for ${instance.id}; '
+                    'rebuilding active profile to pick up current secret');
               }
 
-              trace('deploying Worker for ${instance.label} '
-                  '(${instance.ipv4}:$relayPort)...');
-              final deployed = await cdn.deployWorkerForNode(
-                nodeId: instance.id,
-                nodeLabel: instance.label,
-                backendHost: instance.ipv4!,
-                backendPort: relayPort,
+              // Rebuild the active profile using buildCloudNodeConfig which
+              // now sees the deployment via cdnEndpointResolver, so the new
+              // config carries the correct `?k=<secret>` and the
+              // <label>-CDN outbound is in the urltest pool front (Gate ②).
+              final rebuiltConfig = cloudProvider.generateNodeConfig(instance);
+              if (rebuiltConfig == null) {
+                trace('generateNodeConfig returned null for '
+                    '${instance.label}; abandoning');
+                return false;
+              }
+              final existing = profileProvider.profiles
+                  .where((p) => p.name == activeProfileName)
+                  .firstOrNull;
+              if (existing != null) {
+                final saved = await profileProvider.saveProfileContent(
+                  existing.id,
+                  rebuiltConfig,
+                );
+                if (!saved) {
+                  trace('saveProfileContent failed: '
+                      '${profileProvider.error}');
+                  return false;
+                }
+                final activated =
+                    await profileProvider.activateProfile(existing.id);
+                if (!activated) {
+                  trace('activateProfile failed: ${profileProvider.error}');
+                  return false;
+                }
+              }
+
+              trace('restarting VPN with rebuilt profile (CDN-front first)');
+              await vpnProvider.connect(
+                configJson: rebuiltConfig,
+                profileName: activeProfileName,
               );
-              if (!deployed) {
-                trace('deployWorkerForNode returned false: '
-                    '${cdn.lastError}');
-                return false;
-              }
-
-              trace('deploy succeeded for ${instance.label}; '
-                  'restarting VPN to pick up new -CDN outbound');
-              // Profile is rebuilt by VpnProvider.restart() because
-              // cdnEndpointResolver now returns a non-null endpoint for
-              // this instance. urltest pool will lead with <label>-CDN
-              // (Gate ②), so the next probe sweep should land Healthy.
-              await vpnProvider.restart();
               return true;
             });
             return cdnProvider!;
