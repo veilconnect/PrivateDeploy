@@ -238,6 +238,14 @@ class PrivateDeployApp extends StatelessWidget {
                 }
               }
 
+              // Diagnostic: prove the rebuilt JSON actually carries the
+              // CDN outbound + DNS carve-out. If either is missing the
+              // resolver pipeline broke and we'd silently dial bare IPs.
+              final hasCdnTag = rebuiltConfig.contains('-CDN');
+              final hasDnsCarveout = rebuiltConfig.contains('relay-');
+              trace('rebuilt config: hasCdnTag=$hasCdnTag '
+                  'hasDnsCarveout=$hasDnsCarveout '
+                  'length=${rebuiltConfig.length}');
               trace('restarting VPN with rebuilt profile (CDN-front first)');
               await vpnProvider.connect(
                 configJson: rebuiltConfig,
