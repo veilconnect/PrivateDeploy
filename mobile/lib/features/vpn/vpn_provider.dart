@@ -389,9 +389,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     try {
       final config = configJson ?? '{}';
+      // Set _activeProfile *before* awaiting the native start so a
+      // failure path (e.g. cellular connectivity failure where the native side
+      // refuses to install a black-hole tun) still leaves the profile
+      // name observable to Gate ①'s auto-CDN-deploy handler. The
+      // disconnect path clears it anyway, so the only downside is that
+      // a transient connecting state reports activeProfile != null —
+      // which is the more useful semantic for any caller asking
+      // "which profile is the user trying to use".
+      _activeProfile = profileName;
       final success = await _nativeService.startVpn(config);
 
       if (success) {
+        // Keep the explicit assignment on success too so we stay
+        // resilient if the early-assignment is ever moved.
         _activeProfile = profileName;
         await loadStatus();
         if (_status == VpnStatus.connected) {
