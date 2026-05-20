@@ -57,7 +57,12 @@ export default {
       }
     }
 
-    const upgradeHeader = request.headers.get('Upgrade');
+    // Header value is case-insensitive per RFC 6455 + RFC 7230 §3.2.
+    // sing-box's WS dialer historically emitted "Upgrade: Websocket"
+    // (capitalised W) on some builds, which a strict !== 'websocket'
+    // check 404'd — silently breaking the entire VLESS-over-WS path
+    // even though every other handshake field was correct.
+    const upgradeHeader = request.headers.get('Upgrade')?.toLowerCase();
     if (upgradeHeader !== 'websocket') {
       // Even with the right secret, non-WS requests return a generic 404.
       // No landing page, no app branding — the hostname is functionally
