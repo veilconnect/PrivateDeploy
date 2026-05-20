@@ -117,18 +117,42 @@ class PrivateDeployApp extends StatelessWidget {
             // up. VpnProvider clears _needsCdnGuidance on the next
             // healthy connected transition.
             vpnProvider.setOnAutoCdnDeployRequest((activeProfileName) async {
+              // Use developer.log so the diagnostic trace lands in logcat
+              // in release builds (AppLogger's default DevelopmentFilter
+              // silently drops every record outside debug mode, which is
+              // exactly when we need this to be visible during phone e2e).
+              void trace(String msg) {
+                // ignore: avoid_print
+                print('[AutoCDN] $msg');
+              }
+
+              trace('handler invoked, profile="$activeProfileName"');
               final cdn = cdnProvider;
-              if (cdn == null) return false;
-              if (!cdn.canAutoDeployForNode()) return false;
+              if (cdn == null) {
+                trace('skipped: cdnProvider null');
+                return false;
+              }
+              if (!cdn.canAutoDeployForNode()) {
+                trace('skipped: canAutoDeployForNode=false '
+                    '(status=${cdn.status}, accountId=${cdn.accountId}, '
+                    'workersSub=${cdn.workersSubdomain}, '
+                    'customDomain=${cdn.customDomain?.hostPattern})');
+                return false;
+              }
               if (activeProfileName == null ||
                   !activeProfileName
                       .startsWith(ProfileProvider.cloudManagedProfilePrefix)) {
+                trace('skipped: profile "$activeProfileName" is not '
+                    'cloud-managed');
                 return false;
               }
               final label = activeProfileName
                   .substring(ProfileProvider.cloudManagedProfilePrefix.length)
                   .trim();
-              if (label.isEmpty) return false;
+              if (label.isEmpty) {
+                trace('skipped: empty label');
+                return false;
+              }
               CloudInstance? instance;
               for (final candidate in cloudProvider.allInstances) {
                 if (candidate.label == label) {
@@ -136,20 +160,42 @@ class PrivateDeployApp extends StatelessWidget {
                   break;
                 }
               }
-              if (instance == null) return false;
-              if (!instance.hasIp) return false;
+              if (instance == null) {
+                trace('skipped: no CloudInstance for label "$label"');
+                return false;
+              }
+              if (!instance.hasIp) {
+                trace('skipped: instance ${instance.id} has no IP');
+                return false;
+              }
               final relayPort = instance.nodeInfo?.vlessRelayPort ?? 0;
-              if (relayPort <= 0) return false;
-              if (cdn.deploymentFor(instance.id) != null) return false;
+              if (relayPort <= 0) {
+                trace('skipped: instance ${instance.id} vlessRelayPort='
+                    '$relayPort (Phase-5+ deploy required)');
+                return false;
+              }
+              if (cdn.deploymentFor(instance.id) != null) {
+                trace('skipped: deployment already exists for '
+                    '${instance.id} — Gate ② should be promoting it');
+                return false;
+              }
 
+              trace('deploying Worker for ${instance.label} '
+                  '(${instance.ipv4}:$relayPort)...');
               final deployed = await cdn.deployWorkerForNode(
                 nodeId: instance.id,
                 nodeLabel: instance.label,
                 backendHost: instance.ipv4!,
                 backendPort: relayPort,
               );
-              if (!deployed) return false;
+              if (!deployed) {
+                trace('deployWorkerForNode returned false: '
+                    '${cdn.lastError}');
+                return false;
+              }
 
+              trace('deploy succeeded for ${instance.label}; '
+                  'restarting VPN to pick up new -CDN outbound');
               // Profile is rebuilt by VpnProvider.restart() because
               // cdnEndpointResolver now returns a non-null endpoint for
               // this instance. urltest pool will lead with <label>-CDN

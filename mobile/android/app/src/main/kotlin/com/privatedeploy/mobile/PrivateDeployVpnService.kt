@@ -363,16 +363,49 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             Log.i(TAG, "VPN started successfully on attempt $attempt")
                         }
                         TunnelHealth.UpstreamDegraded -> {
-                            val outcome = degradedOutcomeForCurrentTransport(health)
-                            updateForegroundNotification(outcome.notificationText)
-                            broadcastStatus("connected", outcome.statusMessage)
-                            succeeded = true
-                            Log.w(
-                                TAG,
-                                "VPN start attempt $attempt: tunnel up but upstream " +
-                                    "unreachable; the configured node looks blocked " +
-                                    "from this network — user should switch nodes",
-                            )
+                            val onCellular = lastObservedUnderlyingNetworkType ==
+                                INTERFACE_TYPE_CELLULAR
+                            if (onCellular) {
+                                // Reported 2026-05-20: on mobile carrier cellular,
+                                // every upstream node was SYN-dropped while
+                                // baidu/qq stayed reachable through the direct
+                                // outbound. checkTunnelHealth correctly returned
+                                // UpstreamDegraded — but accepting that as
+                                // `succeeded = true` left tun0 owning 0.0.0.0/0,
+                                // which black-holed *every* offshore request
+                                // from every app on the device. The user had to
+                                // force-stop PrivateDeploy to get back online.
+                                // Treat cellular UpstreamDegraded as a failed
+                                // start: tear down the tun, broadcast the
+                                // connectivity failure error (which fires Gate ③ banner
+                                // + Gate ① auto-CDN-deploy on the Dart side),
+                                // and let direct cellular traffic continue
+                                // working until the user (or auto-deploy) sets
+                                // CDN up.
+                                lastError = IllegalStateException(
+                                    cellularCarrierSynBlockMessage(),
+                                )
+                                Log.w(
+                                    TAG,
+                                    "VPN start attempt $attempt: cellular " +
+                                        "UpstreamDegraded — refusing to install " +
+                                        "a black-hole tun. User likely needs " +
+                                        "CDN acceleration; banner + auto-deploy " +
+                                        "will fire on the Dart side.",
+                                )
+                            } else {
+                                val outcome =
+                                    degradedOutcomeForCurrentTransport(health)
+                                updateForegroundNotification(outcome.notificationText)
+                                broadcastStatus("connected", outcome.statusMessage)
+                                succeeded = true
+                                Log.w(
+                                    TAG,
+                                    "VPN start attempt $attempt: tunnel up but upstream " +
+                                        "unreachable; the configured node looks blocked " +
+                                        "from this network — user should switch nodes",
+                                )
+                            }
                         }
                         TunnelHealth.DirectRouteDegraded -> {
                             val outcome = describeTunnelHealth(health)
@@ -574,10 +607,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // suddenly start passing offshore probes on a second
                     // attempt; only Unreachable (probe verifier hit no
                     // endpoints at all, possibly transient) earns a retry.
+                    // Same regression guard as startVpn: cellular
+                    // UpstreamDegraded must not be accepted, or tun0 ends up
+                    // black-holing every offshore request on the device.
+                    val onCellular = lastObservedUnderlyingNetworkType ==
+                        INTERFACE_TYPE_CELLULAR
                     val acceptNow = when (health) {
                         TunnelHealth.Healthy,
-                        TunnelHealth.UpstreamDegraded,
                         TunnelHealth.DirectRouteDegraded -> true
+                        TunnelHealth.UpstreamDegraded -> !onCellular
                         TunnelHealth.Unreachable -> false
                     }
                     if (acceptNow) {
