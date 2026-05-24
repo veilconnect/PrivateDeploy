@@ -66,7 +66,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // but recovery is cheaper than a user-visible disconnect blink.
         private const val RESTART_MAX_ATTEMPTS = 4
         private const val RESTART_RETRY_BASE_DELAY_MS = 1500L
-        private const val START_MAX_ATTEMPTS = 2
+        // 4 attempts (was 2) because on weak cellular at a new location the
+        // first TLS+WS+VLESS handshake to a CF edge can legitimately need
+        // several seconds, and a single fail-to-probe verdict shouldn't kill
+        // a user-initiated connect. Per-attempt wall time is bounded by the
+        // probe timeout × repeats, so 4 attempts is ~90s worst case before
+        // the connect button flips back to "Failed".
+        private const val START_MAX_ATTEMPTS = 4
         private const val START_RETRY_BASE_DELAY_MS = 1500L
         // Wait up to 12 s for the new transport to reach
         // NET_CAPABILITY_VALIDATED before kicking off start/restart.
@@ -86,7 +92,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // TUNNEL_REQUIRED probes (gstatic /generate_204) followed, only on
         // failure, by one REACHABILITY probe (baidu/qq favicon), so the
         // worst-case wall time is roughly REPEATS × this constant + one more.
-        private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 2500
+        //
+        // 4500ms (was 2500) because on a fresh connect at a new cell — the
+        // user's actual "I just got here, hit Connect" moment — the first
+        // request through the just-built tunnel includes the CF edge TLS
+        // handshake + Worker→VPS dial + the probe URL's own TLS, and a
+        // 2.5s budget systematically pre-rejects healthy tunnels on weak
+        // signal. Healthy fast-network probes still finish in <500ms, so
+        // the larger ceiling only kicks in when the tunnel actually needs
+        // the headroom.
+        private const val EGRESS_VERIFY_PROBE_TIMEOUT_MS = 4500
 
         // How often the post-connect health monitor re-runs checkTunnelHealth().
         // Long enough to keep the periodic network cost negligible (~one HTTP
