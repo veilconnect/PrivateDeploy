@@ -317,6 +317,10 @@ Future<void> _autoDeployCdnWorkerAfterCreate({
     nodeLabel: readyInstance.label,
     backendHost: readyInstance.ipv4 ?? '',
     backendPort: readyInstance.nodeInfo!.vlessRelayPort,
+    // User opted into "deploy CDN after create" via the cloud-node
+    // creation dialog checkbox — it's a direct decision, not a
+    // background recovery, so track it as manual.
+    deployedBy: 'manual',
   );
   if (!context.mounted) {
     return;

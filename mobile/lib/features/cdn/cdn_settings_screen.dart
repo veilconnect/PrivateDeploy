@@ -52,11 +52,46 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
         '&zoneId=all';
   }
 
+  final ScrollController _scrollController = ScrollController();
+  // GlobalKey on the nodes section so a successful verify can scroll it
+  // into view. Without this jump, the section just pops in below the
+  // fold and users have no idea anything changed — leading to repeat
+  // taps on Step 3 looking for a button that's now further down.
+  final GlobalKey _nodesSectionKey = GlobalKey();
+  CdnStatus? _previousStatus;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<CdnProvider>().load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// Fire-once scroll into "your nodes" after the very first time the
+  /// provider flips into a fully-verified state. Ignored on the
+  /// verifiedButIncomplete → verified transition that happens when the
+  /// user binds a custom domain after token verify; that path still
+  /// benefits because the section is what they're already looking at.
+  void _maybeScrollToNodesSection(CdnStatus current) {
+    final wasReady = _previousStatus == CdnStatus.verified;
+    _previousStatus = current;
+    if (current != CdnStatus.verified || wasReady) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _nodesSectionKey.currentContext;
+      if (ctx == null || !mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
     });
   }
 
@@ -67,32 +102,48 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.cdnAccelerationTitle)),
       body: Consumer2<CdnProvider, CloudProvider>(
-        builder: (context, provider, cloud, _) => ListView(
-          padding: EdgeInsets.fromLTRB(16.w, 16.h, 16.w, 24.h),
-          children: [
-            _IntroCard(isZh: isZh),
-            SizedBox(height: 14.h),
-            _StatusCard(provider: provider, isZh: isZh),
-            SizedBox(height: 14.h),
-            _SetupSection(
-              provider: provider,
-              isZh: isZh,
-              cfTokenDashboard: _cfTokenDashboard,
-              cfTokenDeeplink: _cfTokenDeeplinkFor(provider.accountId),
-              docsUrl: _docsUrl,
-            ),
-            if (provider.status == CdnStatus.verified) ...[
+        builder: (context, provider, cloud, _) {
+          _maybeScrollToNodesSection(provider.status);
+          return ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(16.w, 16.h, 16.w, 24.h),
+            children: [
+              _IntroCard(isZh: isZh),
               SizedBox(height: 14.h),
-              _CustomDomainSection(provider: provider, isZh: isZh),
+              _StatusCard(provider: provider, isZh: isZh),
               SizedBox(height: 14.h),
-              _NodesSection(
+              _SetupSection(
                 provider: provider,
-                cloud: cloud,
                 isZh: isZh,
+                cfTokenDashboard: _cfTokenDashboard,
+                cfTokenDeeplink: _cfTokenDeeplinkFor(provider.accountId),
+                docsUrl: _docsUrl,
               ),
+              // verifiedButIncomplete still shows the custom-domain section
+              // because binding a domain is one of the two ways to clear
+              // that state (the other being claiming a workers.dev
+              // subdomain in the Cloudflare dashboard). Nodes section is
+              // hidden until deploy can actually succeed — listing them
+              // with a disabled "Deploy" button just confuses the user.
+              if (provider.status == CdnStatus.verified ||
+                  provider.status == CdnStatus.verifiedButIncomplete) ...[
+                SizedBox(height: 14.h),
+                _CustomDomainSection(provider: provider, isZh: isZh),
+              ],
+              if (provider.status == CdnStatus.verified) ...[
+                SizedBox(height: 14.h),
+                KeyedSubtree(
+                  key: _nodesSectionKey,
+                  child: _NodesSection(
+                    provider: provider,
+                    cloud: cloud,
+                    isZh: isZh,
+                  ),
+                ),
+              ],
             ],
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -164,6 +215,15 @@ class _StatusCard extends StatelessWidget {
           isZh ? '已保存,未验证' : 'Saved, not verified',
           const Color(0xFFB45309),
         ),
+      // Distinct yellow state — token is good but deploy will fail
+      // until either workers.dev subdomain or a custom domain is in
+      // place. We previously rendered this as plain green "Verified"
+      // with a buried orange warning, which let users tap Deploy and
+      // hit a hard error.
+      CdnStatus.verifiedButIncomplete => (
+          isZh ? '已验证 · 待完成' : 'Verified · setup incomplete',
+          const Color(0xFFCA8A04),
+        ),
       CdnStatus.verified => (
           isZh ? '已验证' : 'Verified',
           const Color(0xFF15803D),
@@ -191,7 +251,15 @@ class _StatusCard extends StatelessWidget {
                         fontSize: 14.sp, fontWeight: FontWeight.w700)),
               ],
             ),
-            if (provider.status == CdnStatus.verified) ...[
+            // Account details are useful in both verified and the
+            // verifiedButIncomplete in-progress state — they confirm
+            // *which* account the token is bound to. Showing them only
+            // when fully verified hides the "you're connected to
+            // account X but it's missing a subdomain" narrative that
+            // the warning text below needs as context.
+            if (provider.status == CdnStatus.verified ||
+                provider.status ==
+                    CdnStatus.verifiedButIncomplete) ...[
               SizedBox(height: 12.h),
               if ((provider.accountEmail ?? '').isNotEmpty)
                 _kv(isZh ? '账号' : 'Account', provider.accountEmail!),
@@ -309,7 +377,8 @@ class _SetupSection extends StatelessWidget {
                       'works and to fetch your account and workers.dev '
                       'subdomain. The token is stored in this device\'s '
                       'encrypted storage; it never leaves your phone.',
-              actionLabel: provider.status == CdnStatus.verified
+              actionLabel: (provider.status == CdnStatus.verified ||
+                      provider.status == CdnStatus.verifiedButIncomplete)
                   ? (isZh ? '重新验证 / 更换 token' : 'Re-verify / change token')
                   : (isZh ? '粘贴 token' : 'Paste token'),
               onAction: () => _showTokenDialog(context, isZh: isZh),
@@ -320,17 +389,22 @@ class _SetupSection extends StatelessWidget {
               n: 3,
               title: isZh ? '部署 Relay Worker' : 'Deploy the relay Worker',
               body: isZh
-                  ? 'Token 验证后,下方「你的节点」会列出可部署的 VPS。每个节点点一次「部署 Worker」即可——'
+                  ? 'Token 验证后，下方「你的节点」会列出可部署的 VPS。每个节点点一次「部署 Worker」按钮即可——'
                       '应用会自动把脚本上传到你的 Cloudflare 账号、启用 workers.dev 子域。'
-                      '⚠️ 老节点(没有 relay port)需要先重新部署一次才能用 CDN 加速。'
+                      '⚠️ 老节点(没有 relay port)需要先重新部署一次 VPS 才能用 CDN 加速。'
                   : 'After token verification, your eligible VPS nodes appear '
                       'below in "Your nodes". Tap "Deploy Worker" per node — '
                       'the app uploads the script to your Cloudflare account '
                       'and enables the workers.dev subdomain automatically. '
-                      '⚠️ Older nodes (without relay port) need a re-deploy '
-                      'before CDN can be used.',
-              actionLabel: isZh ? '查看部署文档' : 'View deploy docs',
-              onAction: () => _copyToClipboard(context, docsUrl, isZh: isZh),
+                      '⚠️ Older nodes (without relay port) need a VPS '
+                      're-deploy before CDN can be used.',
+              // Step 3 is satisfied by tapping a per-node "Deploy" button
+              // further down — no top-level action needed. Earlier copy
+              // here was "View deploy docs" which contradicted the body
+              // and confused first-run users into thinking the docs were
+              // the primary path.
+              actionLabel: null,
+              onAction: null,
             ),
             if (provider.status != CdnStatus.disabled) ...[
               SizedBox(height: 8.h),
@@ -358,10 +432,11 @@ class _SetupSection extends StatelessWidget {
     required int n,
     required String title,
     required String body,
-    required String actionLabel,
-    required VoidCallback onAction,
+    String? actionLabel,
+    VoidCallback? onAction,
     bool busy = false,
   }) {
+    final hasAction = actionLabel != null && onAction != null;
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 10.h),
       child: Row(
@@ -396,21 +471,23 @@ class _SetupSection extends StatelessWidget {
                         fontSize: 12.sp,
                         height: 1.5,
                         color: Colors.grey[700])),
-                SizedBox(height: 8.h),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton(
-                    onPressed: busy ? null : onAction,
-                    child: busy
-                        ? SizedBox(
-                            width: 14.w,
-                            height: 14.w,
-                            child: const CircularProgressIndicator(
-                                strokeWidth: 2),
-                          )
-                        : Text(actionLabel),
+                if (hasAction) ...[
+                  SizedBox(height: 8.h),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton(
+                      onPressed: busy ? null : onAction,
+                      child: busy
+                          ? SizedBox(
+                              width: 14.w,
+                              height: 14.w,
+                              child: const CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            )
+                          : Text(actionLabel),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -602,17 +679,47 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
       return '$sub-<node>.${zone.name}';
     })();
 
+    // Collapsed-by-default ExpansionTile. The full custom-domain
+    // editor used to be a ~200px always-visible card pushing the main
+    // "Your nodes" list below the fold, even though most users never
+    // touch this section in their lifetime. As a one-line collapsed
+    // tile with a status summary it stays discoverable for the users
+    // who do need it, without blocking the primary flow for the
+    // majority who don't.
+    final bound = p.customDomain;
+    final headerSubtitle = bound == null
+        ? (isZh
+            ? '可选 · 用 Cloudflare 上的域名替代 workers.dev'
+            : 'Optional · replace workers.dev with a domain on Cloudflare')
+        : (isZh
+            ? '已绑定: ${bound.hostPattern}'
+            : 'Bound: ${bound.hostPattern}');
     return Card(
-      child: Padding(
-        padding: EdgeInsets.all(14.w),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              isZh ? '自定义域名 (可选)' : 'Custom domain (optional)',
-              style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        initiallyExpanded: bound != null,
+        tilePadding: EdgeInsets.symmetric(horizontal: 14.w),
+        childrenPadding: EdgeInsets.fromLTRB(14.w, 0, 14.w, 14.w),
+        title: Text(
+          isZh ? '自定义域名 (可选)' : 'Custom domain (optional)',
+          style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+        ),
+        subtitle: Padding(
+          padding: EdgeInsets.only(top: 2.h),
+          child: Text(
+            headerSubtitle,
+            style: TextStyle(
+              fontSize: 11.sp,
+              color: Colors.grey[700],
             ),
-            SizedBox(height: 6.h),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Text(
               isZh
                   ? '把 Worker 同时绑定到你 Cloudflare 上的某个域名 (例如 '
@@ -727,6 +834,7 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
             ],
           ],
         ),
+        ],
       ),
     );
   }
@@ -846,9 +954,27 @@ class _NodeRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(node.label,
-                      style: TextStyle(
-                          fontSize: 13.sp, fontWeight: FontWeight.w600)),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(node.label,
+                            style: TextStyle(
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                      // Provenance chip — only shown when a deployment
+                      // exists. Lets the user instantly tell apart "I
+                      // pressed Deploy myself" from "the app deployed
+                      // this in the background while I was on cellular".
+                      // Without this, users would re-deploy nodes the
+                      // app had already provisioned via Gate ① during
+                      // the previous session.
+                      if (dep != null) ...[
+                        SizedBox(width: 6.w),
+                        _DeployProvenanceChip(dep: dep, isZh: isZh),
+                      ],
+                    ],
+                  ),
                   SizedBox(height: 2.h),
                   Text(
                       hasRelay
@@ -936,41 +1062,40 @@ class _NodeRow extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         if ((dep.customHost?.isNotEmpty ?? false) &&
-                            dep.customHostStatus == 'pending')
+                            (dep.customHostStatus == 'pending' ||
+                                dep.customHostStatus == 'failed'))
                           Padding(
                             padding: EdgeInsets.only(top: 2.h),
-                            child: Text(
-                              // Probe checks the full CF→Worker→VPS path,
-                              // not just cert. Phrase reflects either
-                              // step still being in progress so the user
-                              // knows it's not stuck on certs alone.
-                              dep.workerHost.isNotEmpty
-                                  ? (isZh
-                                      ? '正在验证 CDN 中转链路…暂用 workers.dev'
-                                      : 'Verifying CDN relay path; using workers.dev')
-                                  : (isZh
-                                      ? '正在验证 CDN 中转链路…'
-                                      : 'Verifying CDN relay path…'),
-                              style: TextStyle(
-                                  fontSize: 10.sp,
-                                  color: const Color(0xFFCA8A04)),
-                            ),
-                          ),
-                        if ((dep.customHost?.isNotEmpty ?? false) &&
-                            dep.customHostStatus == 'failed')
-                          Padding(
-                            padding: EdgeInsets.only(top: 2.h),
-                            child: Text(
-                              dep.workerHost.isNotEmpty
-                                  ? (isZh
-                                      ? 'CDN 中转链路不可用；回退 workers.dev（重新部署可重试）'
-                                      : 'CDN relay path unreachable; fell back to workers.dev (redeploy to retry)')
-                                  : (isZh
-                                      ? 'CDN 中转链路不可用（重新部署可重试）'
-                                      : 'CDN relay path unreachable (redeploy to retry)'),
-                              style: TextStyle(
-                                  fontSize: 10.sp,
-                                  color: const Color(0xFFDC2626)),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    // Probe verdict + status — same
+                                    // semantics as before, just split
+                                    // out so a per-row retry button
+                                    // can live next to it without
+                                    // forcing another redeploy round
+                                    // trip when CF was simply still
+                                    // propagating on the first try.
+                                    _customHostStatusLabel(
+                                      dep: dep,
+                                      isZh: isZh,
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: 10.sp,
+                                      color: dep.customHostStatus == 'failed'
+                                          ? const Color(0xFFDC2626)
+                                          : const Color(0xFFCA8A04),
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: 4.w),
+                                _RetryProbeButton(
+                                  provider: provider,
+                                  nodeId: node.id,
+                                  isZh: isZh,
+                                ),
+                              ],
                             ),
                           ),
                       ],
@@ -1038,6 +1163,156 @@ class _NodeRow extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(isZh ? '已复制' : 'Copied'),
       duration: const Duration(seconds: 1),
+    ));
+  }
+}
+
+/// Compact chip rendering the deploy provenance + age. Shown next to the
+/// node label whenever a CdnDeployment exists for that node, so users
+/// can answer "wait, did I deploy this?" without expanding anything.
+///
+///   - auto + recent  → orange "自动 · 5 分钟前" (CF API was just touched)
+///   - manual + any   → grey  "已部署 · 3 天前"  (user did this themselves)
+///   - null (legacy)  → grey  "已部署 · 3 天前"  (predates the field)
+///
+/// Provenance string is the only signal that flips colour — age is
+/// always grey to avoid screaming "this is a problem" at routine
+/// deployments.
+class _DeployProvenanceChip extends StatelessWidget {
+  const _DeployProvenanceChip({required this.dep, required this.isZh});
+  final CdnDeployment dep;
+  final bool isZh;
+
+  @override
+  Widget build(BuildContext context) {
+    final isAuto = dep.deployedBy == 'auto';
+    final label = isAuto
+        ? (isZh ? '自动' : 'Auto')
+        : (isZh ? '已部署' : 'Deployed');
+    final age = _relativeTime(dep.deployedAt, isZh: isZh);
+    final accent = isAuto ? const Color(0xFFCA8A04) : Colors.grey[600]!;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6.r),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        '$label · $age',
+        style: TextStyle(
+          fontSize: 10.sp,
+          color: accent,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  static String _relativeTime(DateTime t, {required bool isZh}) {
+    final diff = DateTime.now().toUtc().difference(t.toUtc());
+    if (diff.inMinutes < 1) return isZh ? '刚刚' : 'just now';
+    if (diff.inHours < 1) {
+      final m = diff.inMinutes;
+      return isZh ? '$m 分钟前' : '${m}m ago';
+    }
+    if (diff.inDays < 1) {
+      final h = diff.inHours;
+      return isZh ? '$h 小时前' : '${h}h ago';
+    }
+    final d = diff.inDays;
+    return isZh ? '$d 天前' : '${d}d ago';
+  }
+}
+
+/// Pick the explanatory line shown next to the customHost status. Kept
+/// outside the build tree so the row layout stays readable.
+String _customHostStatusLabel({
+  required CdnDeployment dep,
+  required bool isZh,
+}) {
+  final hasWorkerFallback = dep.workerHost.isNotEmpty;
+  switch (dep.customHostStatus) {
+    case 'pending':
+      return hasWorkerFallback
+          ? (isZh
+              ? '正在验证 CDN 中转链路…暂用 workers.dev'
+              : 'Verifying CDN relay path; using workers.dev')
+          : (isZh ? '正在验证 CDN 中转链路…' : 'Verifying CDN relay path…');
+    case 'failed':
+      return hasWorkerFallback
+          ? (isZh
+              ? 'CDN 中转链路不可用；回退 workers.dev'
+              : 'CDN relay path unreachable; fell back to workers.dev')
+          : (isZh ? 'CDN 中转链路不可用' : 'CDN relay path unreachable');
+    default:
+      return '';
+  }
+}
+
+/// Compact icon button next to the pending/failed status row that re-runs
+/// the customHost readiness probe without redeploying the Worker. Solves
+/// the case where the first probe budget (~3.7 min) expired while CF was
+/// still mid-propagation — a single probe retry then clears it, no need
+/// to spam the deploy API.
+class _RetryProbeButton extends StatefulWidget {
+  const _RetryProbeButton({
+    required this.provider,
+    required this.nodeId,
+    required this.isZh,
+  });
+
+  final CdnProvider provider;
+  final String nodeId;
+  final bool isZh;
+
+  @override
+  State<_RetryProbeButton> createState() => _RetryProbeButtonState();
+}
+
+class _RetryProbeButtonState extends State<_RetryProbeButton> {
+  bool _running = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_running) {
+      return SizedBox(
+        width: 18.w,
+        height: 18.w,
+        child: const CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return InkWell(
+      onTap: () => _retry(context),
+      borderRadius: BorderRadius.circular(4.r),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+        child: Text(
+          widget.isZh ? '重试探测' : 'Retry probe',
+          style: TextStyle(
+            fontSize: 10.sp,
+            color: const Color(0xFF1452CC),
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _retry(BuildContext context) async {
+    setState(() => _running = true);
+    final ok = await widget.provider.retryCustomHostProbe(widget.nodeId);
+    if (!mounted) return;
+    setState(() => _running = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+        ok
+            ? (widget.isZh ? 'CDN 中转链路已就绪' : 'CDN relay path is live')
+            : (widget.isZh
+                ? 'CDN 仍不可达，稍后可再试'
+                : "CDN still unreachable; you can try again"),
+      ),
+      duration: const Duration(seconds: 3),
     ));
   }
 }

@@ -107,6 +107,28 @@ class CdnProvider with ChangeNotifier {
     return hasSubdomain || hasCustomDomain;
   }
 
+  /// Whether a CDN deploy is structurally possible given the current
+  /// account state. Differs from [canAutoDeployForNode] in that it also
+  /// returns true for [CdnStatus.verifiedButIncomplete] — that state
+  /// already means "token + account good but no destination" which is
+  /// exactly the prerequisite check, so re-asserting it would short-
+  /// circuit the manual flow and hide the actionable hint from users
+  /// who could fix it (e.g. by binding a custom domain).
+  bool get isReadyForDeploy =>
+      _status == CdnStatus.verified &&
+      (_accountId ?? '').isNotEmpty &&
+      ((_workersSubdomain ?? '').isNotEmpty || _customDomain != null);
+
+  /// Did the provider previously have a saved + validated token? Used by
+  /// failure paths in [verifyAndPersist] to decide whether to fall back
+  /// to [unverified] (keep token on disk, just mark stale) or
+  /// [disabled] (no token was ever known to work). Both verifiedButIncomplete
+  /// and verified count: they only differ on the *destination* prerequisite,
+  /// not on whether the token itself ever passed verify.
+  bool _hadValidTokenBefore(CdnStatus prior) =>
+      prior == CdnStatus.verified ||
+      prior == CdnStatus.verifiedButIncomplete;
+
   /// Build the workers.dev URL fragment we display in the UI as
   /// "<your-name>.<subdomain>.workers.dev". Returns null if not yet known.
   String? get workersDevExample {
@@ -128,11 +150,30 @@ class CdnProvider with ChangeNotifier {
     _accountId = StorageService.getString(_kAccountIdKey);
     _accountEmail = StorageService.getString(_kAccountEmailKey);
     _workersSubdomain = StorageService.getString(_kWorkersSubdomainKey);
-    _status = (_accountId != null && _accountId!.isNotEmpty)
-        ? CdnStatus.verified
-        : CdnStatus.unverified;
-    _loadDeployments();
+    // Load custom domain BEFORE deriving status so the incomplete-vs-
+    // verified split sees the same hasCustomDomain hint that the live
+    // verify path uses.
     _loadCustomDomain();
+    if (_accountId != null && _accountId!.isNotEmpty) {
+      final hasSubdomain = (_workersSubdomain ?? '').isNotEmpty;
+      final hasCustomDomain = _customDomain != null;
+      _status = (hasSubdomain || hasCustomDomain)
+          ? CdnStatus.verified
+          : CdnStatus.verifiedButIncomplete;
+      // Reinstate the hint after a cold start. verifyAndPersist sets
+      // this; load() didn't, which left a yellow "Verified · setup
+      // incomplete" badge with no explanation under it. Same string as
+      // verifyAndPersist on purpose so the user sees a consistent
+      // message across "I just verified" and "I came back tomorrow".
+      _lastError = _status == CdnStatus.verifiedButIncomplete
+          ? 'Token verified, but no workers.dev subdomain claimed yet — '
+              'visit the Workers dashboard once to claim one, or bind a '
+              'custom domain below.'
+          : null;
+    } else {
+      _status = CdnStatus.unverified;
+    }
+    _loadDeployments();
     notifyListeners();
     // Resume readiness probes for any deployment still Pending from a
     // previous app launch. If propagation finished while we were closed,
@@ -238,7 +279,7 @@ class CdnProvider with ChangeNotifier {
       if (!verifyOk) {
         _lastError = _extractCloudflareError(verify.data) ??
             'Token verification failed (HTTP ${verify.statusCode}).';
-        _status = priorStatus == CdnStatus.verified
+        _status = _hadValidTokenBefore(priorStatus)
             ? CdnStatus.unverified
             : CdnStatus.disabled;
         return false;
@@ -250,7 +291,7 @@ class CdnProvider with ChangeNotifier {
           (acc.data is Map) ? (acc.data['result'] as List? ?? const []) : const [];
       if (accounts.isEmpty) {
         _lastError = 'Token has no accessible Cloudflare accounts.';
-        _status = priorStatus == CdnStatus.verified
+        _status = _hadValidTokenBefore(priorStatus)
             ? CdnStatus.unverified
             : CdnStatus.disabled;
         return false;
@@ -259,7 +300,7 @@ class CdnProvider with ChangeNotifier {
       final accountId = (account['id'] as String?) ?? '';
       if (accountId.isEmpty) {
         _lastError = 'Could not parse account id from Cloudflare response.';
-        _status = priorStatus == CdnStatus.verified
+        _status = _hadValidTokenBefore(priorStatus)
             ? CdnStatus.unverified
             : CdnStatus.disabled;
         return false;
@@ -312,21 +353,32 @@ class CdnProvider with ChangeNotifier {
       _accountId = accountId;
       _accountEmail = email;
       _workersSubdomain = workersSub;
-      _status = CdnStatus.verified;
-      _lastError = workersSub.isEmpty
+      // Token is good and the account is reachable, but a deploy needs a
+      // destination — either workers.dev subdomain or a bound custom
+      // domain. Without either the deploy API would return 400 every
+      // time. Promote to [verified] only when the destination exists;
+      // otherwise sit in [verifiedButIncomplete] so the UI can render a
+      // yellow "almost there" state with a clear action item instead of
+      // a misleading green check.
+      final hasCustomDomain = _customDomain != null;
+      _status = (workersSub.isEmpty && !hasCustomDomain)
+          ? CdnStatus.verifiedButIncomplete
+          : CdnStatus.verified;
+      _lastError = workersSub.isEmpty && !hasCustomDomain
           ? 'Token verified, but no workers.dev subdomain claimed yet — '
-              'visit the Workers dashboard once to claim one.'
+              'visit the Workers dashboard once to claim one, or bind a '
+              'custom domain below.'
           : null;
       return true;
     } on DioException catch (e) {
       _lastError = 'Network error verifying token: ${e.message ?? e.type.name}';
-      _status = priorStatus == CdnStatus.verified
+      _status = _hadValidTokenBefore(priorStatus)
           ? CdnStatus.unverified
           : CdnStatus.disabled;
       return false;
     } catch (e) {
       _lastError = 'Unexpected error: $e';
-      _status = priorStatus == CdnStatus.verified
+      _status = _hadValidTokenBefore(priorStatus)
           ? CdnStatus.unverified
           : CdnStatus.disabled;
       return false;
@@ -394,18 +446,28 @@ class CdnProvider with ChangeNotifier {
     _accountId = snap.accountId;
     _accountEmail = snap.accountEmail;
     _workersSubdomain = snap.workersSubdomain;
-    _status = (snap.token != null &&
-            snap.token!.isNotEmpty &&
-            snap.accountId != null &&
-            snap.accountId!.isNotEmpty)
-        ? CdnStatus.verified
-        : (snap.token != null && snap.token!.isNotEmpty
-            ? CdnStatus.unverified
-            : CdnStatus.disabled);
 
     _customDomain = snap.customDomain == null
         ? null
         : CdnCustomDomain.fromJson(snap.customDomain!);
+    // Derive status from what's actually restorable: a token + accountId
+    // is verified-class, but we additionally need a subdomain OR a custom
+    // domain to be deploy-ready. Without either, the snapshot left the
+    // user mid-setup and the UI should keep nagging until one is bound.
+    if (snap.token != null &&
+        snap.token!.isNotEmpty &&
+        snap.accountId != null &&
+        snap.accountId!.isNotEmpty) {
+      final hasSubdomain = (snap.workersSubdomain ?? '').isNotEmpty;
+      final hasCustomDomain = _customDomain != null;
+      _status = (hasSubdomain || hasCustomDomain)
+          ? CdnStatus.verified
+          : CdnStatus.verifiedButIncomplete;
+    } else if (snap.token != null && snap.token!.isNotEmpty) {
+      _status = CdnStatus.unverified;
+    } else {
+      _status = CdnStatus.disabled;
+    }
     await _persistCustomDomain();
 
     final imported = <String, CdnDeployment>{};
@@ -478,6 +540,12 @@ class CdnProvider with ChangeNotifier {
     required String nodeLabel,
     required String backendHost,
     required int backendPort,
+    /// Whether this call originated from a user tap on the manual
+    /// "Deploy Worker" button ('manual') or from Gate ① recovering
+    /// from a cellular connectivity failure ('auto'). Persisted on the resulting
+    /// [CdnDeployment] so the UI can show provenance without forcing
+    /// the user to remember whether they did this on purpose.
+    String deployedBy = 'manual',
   }) async {
     if (_isDeploying) return false;
     if (_status != CdnStatus.verified || (_accountId ?? '').isEmpty) {
@@ -641,6 +709,7 @@ class CdnProvider with ChangeNotifier {
         customHostStatus: customHost != null ? 'pending' : null,
         accountId: _accountId,
         pathSecret: pathSecret,
+        deployedBy: deployedBy,
       );
       await _persistDeployments();
       if (customHost != null) {
@@ -1085,6 +1154,28 @@ class CdnProvider with ChangeNotifier {
     await _markCustomHostStatus(nodeId, host, 'failed');
   }
 
+  /// Re-run the customHost readiness probe for an existing deployment
+  /// without redeploying the Worker. Useful when the deploy itself was
+  /// correct (script uploaded, route bound) but CF was still mid-
+  /// propagation when the original probe budget expired, leaving the
+  /// node parked at status='failed' even though a single later retry
+  /// would clear it. Resets to 'pending' on entry so the UI feedback
+  /// matches what's actually happening.
+  ///
+  /// Returns true if the probe ultimately confirmed reachability;
+  /// false if it timed out again (status stays 'failed') or the
+  /// deployment / customHost vanished mid-probe.
+  Future<bool> retryCustomHostProbe(String nodeId) async {
+    final dep = _deployments[nodeId];
+    if (dep == null) return false;
+    final host = dep.customHost;
+    if (host == null || host.isEmpty) return false;
+    await _markCustomHostStatus(nodeId, host, 'pending');
+    await _probeCustomHostReadiness(nodeId, host);
+    final after = _deployments[nodeId];
+    return after?.customHostStatus == 'active';
+  }
+
   /// Single TLS handshake to host:443. Success = CF edge served a valid
   /// cert for the SNI — necessary but not sufficient for the relay to
   /// work end-to-end.
@@ -1326,6 +1417,7 @@ class CdnProvider with ChangeNotifier {
       customDomainId: dep.customDomainId,
       customHostStatus: status,
       accountId: dep.accountId,
+      deployedBy: dep.deployedBy,
       pathSecret: dep.pathSecret,
     );
     await _persistDeployments();
@@ -1395,7 +1487,23 @@ class CdnProvider with ChangeNotifier {
   }
 }
 
-enum CdnStatus { disabled, unverified, verified }
+/// Lifecycle of the CDN provider's view of the user's Cloudflare account.
+///
+///  - [disabled]              — no token configured (default for new installs)
+///  - [unverified]            — token saved but never successfully verified
+///                              (e.g. saved offline, network down, or token
+///                              was revoked since last verify)
+///  - [verifiedButIncomplete] — token validates and the account is reachable,
+///                              but the prerequisite for actually deploying
+///                              a Worker is missing: no workers.dev subdomain
+///                              claimed AND no custom domain bound. Surfacing
+///                              this distinctly stops the UI from showing a
+///                              cheerful green "Verified" while every deploy
+///                              attempt would silently fail.
+///  - [verified]              — fully ready: token works, account known, and
+///                              there is at least one destination (subdomain
+///                              or custom domain) to publish Workers under.
+enum CdnStatus { disabled, unverified, verifiedButIncomplete, verified }
 
 /// One Cloudflare Worker deployment, scoped to a single cloud node.
 class CdnDeployment {
@@ -1410,6 +1518,7 @@ class CdnDeployment {
     this.customHostStatus,
     this.accountId,
     this.pathSecret,
+    this.deployedBy,
   });
 
   /// The PrivateDeploy cloud node id this Worker fronts (e.g. Vultr instance
@@ -1465,6 +1574,14 @@ class CdnDeployment {
   /// behaviour. Newly deployed Workers always have one.
   final String? pathSecret;
 
+  /// Provenance of this deployment. "manual" when the user tapped Deploy
+  /// from CDN settings; "auto" when Gate ① fired during a cellular
+  /// connectivity failure recovery. Null on records that predate this field so the
+  /// UI can render "已部署" without a provenance subtitle. Surfaced in
+  /// the node row so users can tell apart deployments they explicitly
+  /// created from ones the app provisioned in the background.
+  final String? deployedBy;
+
   Map<String, dynamic> toJson() => {
         'nodeId': nodeId,
         'scriptName': scriptName,
@@ -1479,6 +1596,8 @@ class CdnDeployment {
         if (accountId != null && accountId!.isNotEmpty) 'accountId': accountId,
         if (pathSecret != null && pathSecret!.isNotEmpty)
           'pathSecret': pathSecret,
+        if (deployedBy != null && deployedBy!.isNotEmpty)
+          'deployedBy': deployedBy,
       };
 
   factory CdnDeployment.fromJson(Map json) => CdnDeployment(
@@ -1504,6 +1623,9 @@ class CdnDeployment {
         pathSecret: (json['pathSecret']?.toString().isEmpty ?? true)
             ? null
             : json['pathSecret'].toString(),
+        deployedBy: (json['deployedBy']?.toString().isEmpty ?? true)
+            ? null
+            : json['deployedBy'].toString(),
       );
 
   /// True only when CF has confirmed the customHost is reachable. Use

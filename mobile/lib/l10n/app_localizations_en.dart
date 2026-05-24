@@ -172,6 +172,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cdnGuidanceActionRedeploy => 'Re-deploy Worker';
 
   @override
+  String get cdnGuidanceHowItWorksLink => 'How this works';
+
+  @override
+  String get cdnGuidanceHowItWorksTitle => 'How CDN acceleration works';
+
+  @override
+  String get cdnGuidanceHowItWorksBody =>
+      'Cellular carriers sometimes drop packets to known VPS IPs, so the VPN tunnel can come up but no traffic actually flows.\n\nCDN acceleration routes your client through a Cloudflare edge IP first; a Cloudflare Worker then forwards the encrypted bytes to your VPS. Carriers don\'t filter Cloudflare\'s address ranges.\n\nIt runs on your own free Cloudflare account, end-to-end encryption stays intact — Cloudflare sees only opaque ciphertext, never your VLESS credentials or what sites you visit.';
+
+  @override
+  String get cdnGuidanceHowItWorksClose => 'Got it';
+
+  @override
   String get cellularCarrierSynBlockMessageLocalized =>
       'Cellular carrier appears to be blocking the configured node\'s IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.';
 

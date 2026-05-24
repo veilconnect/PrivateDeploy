@@ -17,6 +17,7 @@ import 'features/cloud/cloud_models.dart' show CloudInstance;
 import 'features/cloud/cloud_provider.dart';
 import 'features/nodes/nodes_vpn_actions.dart' show autoFailoverToNextCloudNode;
 import 'features/cdn/cdn_provider.dart';
+import 'shared/utils/global_messenger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -143,6 +144,17 @@ class PrivateDeployApp extends StatelessWidget {
                     '(status=${cdn.status}, accountId=${cdn.accountId}, '
                     'workersSub=${cdn.workersSubdomain}, '
                     'customDomain=${cdn.customDomain?.hostPattern})');
+                // Surface the actionable next step: this user is on
+                // cellular, the node is being connectivity failureed, but we can't
+                // auto-deploy CDN because they haven't set up CF
+                // credentials yet. The guidance banner on the nodes
+                // screen also fires here, but a SnackBar is more
+                // visible when the user is mid-connect-attempt and
+                // staring at the home screen.
+                showGlobalSnackBar(
+                  '蜂窝网络屏蔽了该节点。请在 CDN 设置中绑定 Cloudflare token 后再试。',
+                  duration: const Duration(seconds: 6),
+                );
                 return false;
               }
               if (activeProfileName == null ||
@@ -190,21 +202,48 @@ class PrivateDeployApp extends StatelessWidget {
               if (cdn.deploymentFor(instance.id) == null) {
                 trace('deploying Worker for ${instance.label} '
                     '(${instance.ipv4}:$relayPort)...');
+                // First-deploy is the path where the app actually
+                // creates a Worker / DNS record / cert on the user's
+                // Cloudflare account on their behalf — call it out
+                // explicitly. "We're touching your Cloudflare in the
+                // background" should never be silent.
+                showGlobalSnackBar(
+                  '检测到蜂窝运营商屏蔽该节点，正在你的 Cloudflare 账号下'
+                  '为 ${instance.label} 部署加速 Worker…',
+                  duration: const Duration(seconds: 4),
+                );
                 final deployed = await cdn.deployWorkerForNode(
                   nodeId: instance.id,
                   nodeLabel: instance.label,
                   backendHost: instance.ipv4!,
                   backendPort: relayPort,
+                  // Provenance: Gate ① path. Surfaced on the CDN
+                  // settings node row so users can tell auto-deployed
+                  // Workers apart from ones they explicitly created.
+                  deployedBy: 'auto',
                 );
                 if (!deployed) {
                   trace('deployWorkerForNode returned false: '
                       '${cdn.lastError}');
+                  showGlobalSnackBar(
+                    'CDN 加速部署失败：${cdn.lastError ?? "未知错误"}。'
+                    '可前往 CDN 设置查看详情。',
+                    duration: const Duration(seconds: 6),
+                  );
                   return false;
                 }
                 trace('deploy succeeded for ${instance.label}');
               } else {
                 trace('deployment already exists for ${instance.id}; '
                     'rebuilding active profile to pick up current secret');
+                // No CF API hit on this branch — just rebuilding the
+                // local profile to pick up the existing deployment's
+                // secret. Still announce it so the user knows the app
+                // is doing recovery work and isn't just hung.
+                showGlobalSnackBar(
+                  '正在切换到 CDN 加速线路…',
+                  duration: const Duration(seconds: 3),
+                );
               }
 
               // Rebuild the active profile using buildCloudNodeConfig which
@@ -243,10 +282,28 @@ class PrivateDeployApp extends StatelessWidget {
               // resolver pipeline broke and we'd silently dial bare IPs.
               final hasCdnTag = rebuiltConfig.contains('-CDN');
               final hasDnsCarveout = rebuiltConfig.contains('relay-');
+              final existingDep = cdn.deploymentFor(instance.id);
+              final secret = existingDep?.pathSecret ?? '';
+              final secretFingerprint = secret.isEmpty
+                  ? '<empty>'
+                  : '${secret.substring(0, 6)}... (len=${secret.length})';
               trace('rebuilt config: hasCdnTag=$hasCdnTag '
                   'hasDnsCarveout=$hasDnsCarveout '
-                  'length=${rebuiltConfig.length}');
+                  'length=${rebuiltConfig.length} '
+                  'depSecret=$secretFingerprint '
+                  'customHost=${existingDep?.customHost} '
+                  'workerHost=${existingDep?.workerHost}');
+              // Probe Worker directly with the stored secret BEFORE
+              // re-trying VPN. If this returns false, the Worker on CF
+              // has a different secret than our local record, so the
+              // saved pathSecret is stale and re-deployment is needed.
+              final reach = await cdn.debugTestCdnWorkerReachable(instance.id);
+              trace('worker reachable with stored secret = $reach');
               trace('restarting VPN with rebuilt profile (CDN-front first)');
+              showGlobalSnackBar(
+                '已启用 CDN 加速，正在重新连接…',
+                duration: const Duration(seconds: 3),
+              );
               await vpnProvider.connect(
                 configJson: rebuiltConfig,
                 profileName: activeProfileName,
@@ -265,6 +322,13 @@ class PrivateDeployApp extends StatelessWidget {
           return MaterialApp(
             title: 'PrivateDeploy',
             debugShowCheckedModeBanner: false,
+            // App-wide messenger so the Gate ① auto-CDN handler — which
+            // runs without a BuildContext — can surface SnackBars to
+            // whoever's looking at the app right now. Without this the
+            // auto-deploy path could only print to logcat, leaving the
+            // user staring at a slowly-reconnecting VPN with no idea
+            // their Cloudflare account was just touched on their behalf.
+            scaffoldMessengerKey: globalScaffoldMessengerKey,
             localizationsDelegates: const [
               AppLocalizations.delegate,
               GlobalMaterialLocalizations.delegate,

@@ -386,6 +386,30 @@ abstract class AppLocalizations {
   /// **'Re-deploy Worker'**
   String get cdnGuidanceActionRedeploy;
 
+  /// No description provided for @cdnGuidanceHowItWorksLink.
+  ///
+  /// In en, this message translates to:
+  /// **'How this works'**
+  String get cdnGuidanceHowItWorksLink;
+
+  /// No description provided for @cdnGuidanceHowItWorksTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How CDN acceleration works'**
+  String get cdnGuidanceHowItWorksTitle;
+
+  /// No description provided for @cdnGuidanceHowItWorksBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Cellular carriers sometimes drop packets to known VPS IPs, so the VPN tunnel can come up but no traffic actually flows.\n\nCDN acceleration routes your client through a Cloudflare edge IP first; a Cloudflare Worker then forwards the encrypted bytes to your VPS. Carriers don\'t filter Cloudflare\'s address ranges.\n\nIt runs on your own free Cloudflare account, end-to-end encryption stays intact — Cloudflare sees only opaque ciphertext, never your VLESS credentials or what sites you visit.'**
+  String get cdnGuidanceHowItWorksBody;
+
+  /// No description provided for @cdnGuidanceHowItWorksClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get cdnGuidanceHowItWorksClose;
+
   /// No description provided for @cellularCarrierSynBlockMessageLocalized.
   ///
   /// In en, this message translates to:

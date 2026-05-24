@@ -699,6 +699,14 @@ class _CdnGuidanceBanner extends StatelessWidget {
                     height: 1.35,
                   ),
                 ),
+                SizedBox(height: 6.h),
+                // One-line plain-English summary of *how* CDN
+                // acceleration works, so a user who's never read the
+                // intro card on the CDN settings page can still
+                // understand what the action button is about to do
+                // — and decide whether to tap it. Without this, the
+                // banner read like a vague "do this magic thing".
+                _HowItWorksLink(scheme: scheme),
                 SizedBox(height: 8.h),
                 Row(
                   children: [
@@ -721,6 +729,64 @@ class _CdnGuidanceBanner extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Inline "how does CDN acceleration work?" line that expands into a
+/// dialog on tap. Lives next to the guidance banner so a confused user
+/// has a one-tap answer to "what's this thing about to do to my
+/// Cloudflare account?" — without having to navigate into CDN settings
+/// just to read the explanation.
+class _HowItWorksLink extends StatelessWidget {
+  const _HowItWorksLink({required this.scheme});
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return InkWell(
+      onTap: () => _showExplainer(context, scheme),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline,
+              size: 14.sp,
+              color: scheme.onErrorContainer.withValues(alpha: 0.75)),
+          SizedBox(width: 4.w),
+          Flexible(
+            child: Text(
+              l10n.cdnGuidanceHowItWorksLink,
+              style: TextStyle(
+                fontSize: 12.sp,
+                color: scheme.onErrorContainer.withValues(alpha: 0.85),
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExplainer(BuildContext context, ColorScheme scheme) {
+    final l10n = AppLocalizations.of(context)!;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.cdnGuidanceHowItWorksTitle),
+        content: SingleChildScrollView(
+          child: Text(
+            l10n.cdnGuidanceHowItWorksBody,
+            style: TextStyle(fontSize: 14.sp, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(l10n.cdnGuidanceHowItWorksClose),
           ),
         ],
       ),

@@ -169,6 +169,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cdnGuidanceActionRedeploy => '重新部署 Worker';
 
   @override
+  String get cdnGuidanceHowItWorksLink => '原理：让流量改善运营商屏蔽';
+
+  @override
+  String get cdnGuidanceHowItWorksTitle => 'CDN 加速是怎么工作的';
+
+  @override
+  String get cdnGuidanceHowItWorksBody =>
+      '蜂窝运营商有时会丢弃发往已知 VPS IP 的包，导致 VPN 隧道建起来但什么都过不去。\n\nCDN 加速让你的客户端先连到 Cloudflare 边缘 IP，由 Cloudflare 的 Worker 把加密数据原样转发到你的 VPS。运营商不会过滤 Cloudflare 的地址段。\n\n用的是你自己的免费 Cloudflare 账号，流量保持端到端加密——Cloudflare 只看到无意义的密文，看不到你的 VLESS 凭据或访问内容。';
+
+  @override
+  String get cdnGuidanceHowItWorksClose => '知道了';
+
+  @override
   String get cellularCarrierSynBlockMessageLocalized =>
       '蜂窝运营商似乎正在屏蔽该节点的 IP —— 隧道已建立，但没有任何外网流量返回。请在设置中开启 CDN 加速，改走 Cloudflare 边缘 IP。';
 
