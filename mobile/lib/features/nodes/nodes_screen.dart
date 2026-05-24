@@ -19,6 +19,7 @@ import 'nodes_widgets.dart';
 import '../../l10n/app_localizations.dart';
 import '../profiles/profile_content_screen.dart';
 import '../profiles/profile_provider.dart';
+import '../cdn/cdn_provider.dart';
 import '../cdn/cdn_settings_screen.dart';
 import '../settings/settings_screen.dart';
 import '../vpn/vpn_provider.dart';
@@ -370,6 +371,39 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  /// Returns true when a CDN Worker is already deployed for whichever
+  /// cloud node the active profile points at. Used to switch the
+  /// guidance banner between "you need to set up CDN" and "CDN is on
+  /// but still failing here" copy — the user already deployed once, so
+  /// telling them to "set up CDN acceleration" again is misleading and
+  /// actionless. Returns false when the active profile is local-only,
+  /// the matching instance can't be found, or no deployment exists.
+  bool _cdnDeployedForActiveProfile({
+    required VpnProvider vpnProvider,
+    required CloudProvider cloudProvider,
+  }) {
+    final profileName = vpnProvider.activeProfile;
+    if (profileName == null ||
+        !ProfileProvider.isCloudManagedProfileName(profileName)) {
+      return false;
+    }
+    final label = profileName
+        .substring(ProfileProvider.cloudManagedProfilePrefix.length)
+        .trim();
+    if (label.isEmpty) return false;
+    CloudInstance? instance;
+    for (final candidate in cloudProvider.allInstances) {
+      if (candidate.label == label) {
+        instance = candidate;
+        break;
+      }
+    }
+    if (instance == null) return false;
+    final cdn = context.read<CdnProvider?>();
+    if (cdn == null) return false;
+    return cdn.deploymentFor(instance.id) != null;
+  }
+
   Future<void> _switchManagedCloudProvider(
     CloudProvider cloudProvider,
     CloudProviderId providerId,
@@ -423,6 +457,17 @@ class _NodesScreenState extends State<NodesScreen> {
               children: [
                 if (vpnProvider.needsCdnGuidance)
                   _CdnGuidanceBanner(
+                    // The banner has two distinct meanings depending on
+                    // whether CDN is already deployed for the active
+                    // cloud-managed node. Without this split the user
+                    // who has *already* set up CDN sees "请设置 CDN 加速"
+                    // when the real story is "CDN is on, but this
+                    // location's network still can't route through it
+                    // — try a different node" — confusing and actionless.
+                    deploymentExists: _cdnDeployedForActiveProfile(
+                      vpnProvider: vpnProvider,
+                      cloudProvider: cloudProvider,
+                    ),
                     onConfigure: _openCdnSettings,
                     onDismiss: vpnProvider.dismissCdnGuidance,
                   ),
@@ -593,10 +638,16 @@ class _NodesScreenState extends State<NodesScreen> {
 /// them with a generic "VPN failed to start" toast.
 class _CdnGuidanceBanner extends StatelessWidget {
   const _CdnGuidanceBanner({
+    required this.deploymentExists,
     required this.onConfigure,
     required this.onDismiss,
   });
 
+  /// True when the active cloud-managed node already has a CDN Worker
+  /// deployment in [CdnProvider]. Drives the entire copy + action set:
+  /// the "please set up CDN" framing only makes sense when there's no
+  /// existing deployment to point at.
+  final bool deploymentExists;
   final VoidCallback onConfigure;
   final VoidCallback onDismiss;
 
@@ -604,6 +655,15 @@ class _CdnGuidanceBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
+    final title = deploymentExists
+        ? l10n.cdnGuidanceTitleDeployed
+        : l10n.cdnGuidanceTitle;
+    final body = deploymentExists
+        ? l10n.cdnGuidanceBodyDeployed
+        : l10n.cdnGuidanceBody;
+    final actionLabel = deploymentExists
+        ? l10n.cdnGuidanceActionRedeploy
+        : l10n.cdnGuidanceConfigure;
     return Container(
       margin: EdgeInsets.only(bottom: 12.h),
       padding: EdgeInsets.fromLTRB(16.w, 12.h, 12.w, 12.h),
@@ -623,7 +683,7 @@ class _CdnGuidanceBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  l10n.cdnGuidanceTitle,
+                  title,
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: scheme.onErrorContainer,
@@ -632,7 +692,7 @@ class _CdnGuidanceBanner extends StatelessWidget {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  l10n.cdnGuidanceBody,
+                  body,
                   style: TextStyle(
                     color: scheme.onErrorContainer,
                     fontSize: 13.sp,
@@ -644,8 +704,13 @@ class _CdnGuidanceBanner extends StatelessWidget {
                   children: [
                     FilledButton.tonalIcon(
                       onPressed: onConfigure,
-                      icon: const Icon(Icons.cloud_outlined, size: 18),
-                      label: Text(l10n.cdnGuidanceConfigure),
+                      icon: Icon(
+                        deploymentExists
+                            ? Icons.refresh_rounded
+                            : Icons.cloud_outlined,
+                        size: 18,
+                      ),
+                      label: Text(actionLabel),
                     ),
                     SizedBox(width: 8.w),
                     TextButton(

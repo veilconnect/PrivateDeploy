@@ -362,6 +362,30 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get cdnGuidanceDismiss;
 
+  /// No description provided for @cdnGuidanceTitleDeployed.
+  ///
+  /// In en, this message translates to:
+  /// **'CDN acceleration is on, but this location still can\'t connect'**
+  String get cdnGuidanceTitleDeployed;
+
+  /// No description provided for @cdnGuidanceBodyDeployed.
+  ///
+  /// In en, this message translates to:
+  /// **'The Worker is deployed, but routing through the CDN still can\'t reach the node. The node itself may be offline, the Worker→VPS link may be down, or this network is filtering Cloudflare too. Try switching to a different node, or re-deploy the Worker from CDN settings.'**
+  String get cdnGuidanceBodyDeployed;
+
+  /// No description provided for @cdnGuidanceActionSwitchNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch node'**
+  String get cdnGuidanceActionSwitchNode;
+
+  /// No description provided for @cdnGuidanceActionRedeploy.
+  ///
+  /// In en, this message translates to:
+  /// **'Re-deploy Worker'**
+  String get cdnGuidanceActionRedeploy;
+
   /// No description provided for @cellularCarrierSynBlockMessageLocalized.
   ///
   /// In en, this message translates to:

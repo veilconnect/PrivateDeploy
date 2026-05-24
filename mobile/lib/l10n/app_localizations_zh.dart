@@ -156,6 +156,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cdnGuidanceDismiss => '暂不';
 
   @override
+  String get cdnGuidanceTitleDeployed => 'CDN 加速已部署，当前位置仍连不上';
+
+  @override
+  String get cdnGuidanceBodyDeployed =>
+      'Worker 已部署，但走 CDN 也无法到达节点。可能是节点本身离线、Worker 与 VPS 链路中断，或这个地点的网络也屏蔽了 Cloudflare。建议换一个节点试试，或者打开 CDN 设置重新部署 Worker。';
+
+  @override
+  String get cdnGuidanceActionSwitchNode => '切换节点';
+
+  @override
+  String get cdnGuidanceActionRedeploy => '重新部署 Worker';
+
+  @override
   String get cellularCarrierSynBlockMessageLocalized =>
       '蜂窝运营商似乎正在屏蔽该节点的 IP —— 隧道已建立，但没有任何外网流量返回。请在设置中开启 CDN 加速，改走 Cloudflare 边缘 IP。';
 

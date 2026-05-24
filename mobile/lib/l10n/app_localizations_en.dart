@@ -158,6 +158,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cdnGuidanceDismiss => 'Not now';
 
   @override
+  String get cdnGuidanceTitleDeployed =>
+      'CDN acceleration is on, but this location still can\'t connect';
+
+  @override
+  String get cdnGuidanceBodyDeployed =>
+      'The Worker is deployed, but routing through the CDN still can\'t reach the node. The node itself may be offline, the Worker→VPS link may be down, or this network is filtering Cloudflare too. Try switching to a different node, or re-deploy the Worker from CDN settings.';
+
+  @override
+  String get cdnGuidanceActionSwitchNode => 'Switch node';
+
+  @override
+  String get cdnGuidanceActionRedeploy => 'Re-deploy Worker';
+
+  @override
   String get cellularCarrierSynBlockMessageLocalized =>
       'Cellular carrier appears to be blocking the configured node\'s IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.';
 
