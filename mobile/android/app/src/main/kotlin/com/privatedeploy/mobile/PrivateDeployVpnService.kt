@@ -307,6 +307,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private val healthMonitorGeneration =
         java.util.concurrent.atomic.AtomicLong(0L)
 
+    /**
+     * Single-flight gate for the periodic health probe. Generation
+     * tokens block stale-era probes from broadcasting, but two probes
+     * within the SAME generation could still overlap when a slow probe
+     * runs past the next tick interval. This CAS ensures only one
+     * probe is alive at a time; subsequent ticks during the probe just
+     * reschedule themselves.
+     */
+    private val healthProbeInFlight =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
     private var lastUnderlyingRestartAtMs = 0L
 
     override fun onCreate() {
@@ -314,6 +325,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
         serviceInstance = this
         createNotificationChannel()
         registerUnderlyingNetworkMonitor()
+        // Process-recreate recovery. onCreate runs before any
+        // onStartCommand dispatch, so this is the right place to
+        // re-arm the VPN if the user previously wanted it active.
+        // Earlier code only tried to resume from a null-action
+        // onStartCommand — but START_REDELIVER_INTENT redelivers
+        // whatever the last *delivered* intent was, which could be
+        // ACTION_RESTART, ACTION_UPDATE_CONFIG, or ACTION_RESET_STATS.
+        // None of those carry the start config, and the action != null
+        // branch never fell through to the resume path. Doing it here
+        // covers every redelivery shape uniformly.
+        attemptResumeFromPersistedIntent()
         Log.d(TAG, "VPN Service created")
     }
 
@@ -325,11 +347,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
             ACTION_UPDATE_CONFIG -> updateConfig(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
             ACTION_RESET_STATS -> resetStats()
             null -> {
-                // Process was killed and recreated by the OS due to
-                // START_REDELIVER_INTENT semantics being unavailable (the
-                // service was restarted without a redelivered intent).
-                // Reconnect using persisted intent if the user previously
-                // wanted the VPN active. See [PersistentVpnState].
+                // OS recreated without a redelivered intent. onCreate
+                // already attempted resume; this branch is a safety
+                // net for the unusual case where onCreate raced. It's
+                // idempotent — startVpn early-returns if isRunning.
                 attemptResumeFromPersistedIntent()
             }
         }
@@ -338,9 +359,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // resume. The old START_NOT_STICKY return code dropped the user
         // entirely on process death; combined with the in-memory
         // delayed-restart Runnable also being lost, the VPN was simply
-        // dead until the user manually relaunched the app. Now the
-        // service is recreated, the original ACTION_START intent comes
-        // back, and we self-resume.
+        // dead until the user manually relaunched the app.
         return START_REDELIVER_INTENT
     }
 
@@ -350,13 +369,6 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // confuse the state machine.
         cancelDelayedRestart()
         delayedRestartAttempt = 0
-        // Mark user intent BEFORE the early-return guards so a stale
-        // NetworkCallback that fires between two rapid Start clicks
-        // doesn't see desiredRunning=false and decide to skip.
-        desiredRunning.set(true)
-        // Persist user intent + config so a process-kill→recreate cycle
-        // can resume without the user touching the UI.
-        persistVpnIntent(config)
         if (isRunning) {
             Log.w(TAG, "VPN is already running")
             return
@@ -390,6 +402,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return
         }
 
+        // ONLY AFTER validation: mark user intent + persist for
+        // process-recreate recovery. Previously this happened before
+        // validation, so a blank/malformed config still left
+        // desiredRunning=true on disk + flipped the in-memory flag —
+        // and a NetworkCallback firing seconds later would happily try
+        // to "restart" using a stale activeConfig that had nothing to
+        // do with what the user just attempted.
+        desiredRunning.set(true)
+        persistVpnIntent(runtimeConfig)
+
         activeConfig = runtimeConfig
         clearRecentLogs()
         startForeground(NOTIFICATION_ID, createNotification("VPN is connecting"))
@@ -410,6 +432,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
             var succeeded = false
 
             for (attempt in 1..START_MAX_ATTEMPTS) {
+                // Worker re-checks user intent at the top of every
+                // attempt. A Stop landing while we're mid-loop should
+                // abort cleanly — without this, the worker would happily
+                // keep building tun even after the user explicitly
+                // disconnected, and would broadcast success on a tunnel
+                // the user no longer wants.
+                if (!desiredRunning.get()) {
+                    Log.w(
+                        TAG,
+                        "Start worker abandoned: desiredRunning cleared mid-loop",
+                    )
+                    break
+                }
                 try {
                     if (attempt > 1) {
                         startForeground(
@@ -431,6 +466,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     }
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
+
+                    // Another check at the success boundary — start
+                    // may have taken several seconds; the user could
+                    // have hit Stop while we were dialing.
+                    if (!desiredRunning.get()) {
+                        Log.w(
+                            TAG,
+                            "Start worker tearing down: desiredRunning cleared " +
+                                "after core.start() returned",
+                        )
+                        try { core.stop() } catch (_: Exception) {}
+                        cleanupTunnel()
+                        isRunning = false
+                        break
+                    }
 
                     updateForegroundNotification("VPN connected (verifying)")
 
@@ -679,6 +729,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         //     the first was cancelled, so a network change ~100ms after
         //     stop could quietly revive the tunnel.
         cancelDelayedRestart()
+        cancelFollowUpRestart()
         delayedRestartAttempt = 0
         pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingUnderlyingNetworkRestart = null
@@ -691,6 +742,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
             } finally {
                 cleanupTunnel()
                 isRunning = false
+                // Clear activeConfig too — otherwise a NetworkCallback
+                // that races stopVpn could see the persisted-config
+                // string still present and try to "restart" the
+                // tunnel the user just stopped. The desiredRunning
+                // guard catches this in 99% of cases, but belt +
+                // suspenders.
+                activeConfig = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 broadcastStatus("disconnected", null)
                 stopSelf()
@@ -740,6 +798,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
             )
 
             for (attempt in 1..RESTART_MAX_ATTEMPTS) {
+                // Same protection as the start worker — Stop should
+                // abort mid-restart even if NetworkCallback fired the
+                // restart before Stop arrived.
+                if (!desiredRunning.get()) {
+                    Log.w(
+                        TAG,
+                        "Restart worker abandoned: desiredRunning cleared mid-loop",
+                    )
+                    break
+                }
                 try {
                     startForeground(
                         NOTIFICATION_ID,
@@ -753,6 +821,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     core.restart()
                     isRunning = true
                     captureCurrentUnderlyingNetworkSnapshot()
+
+                    // Tear down if Stop arrived while core.restart() was
+                    // running — typically a few seconds during which the
+                    // user can have tapped disconnect.
+                    if (!desiredRunning.get()) {
+                        Log.w(
+                            TAG,
+                            "Restart worker tearing down: desiredRunning " +
+                                "cleared after core.restart() returned",
+                        )
+                        try { core.stop() } catch (_: Exception) {}
+                        cleanupTunnel()
+                        isRunning = false
+                        break
+                    }
 
                     val health = checkTunnelHealth()
                     // Mirror startVpn's policy: don't retry on UpstreamDegraded.
@@ -899,12 +982,38 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             "(${formatInterfaceType(typeAtStart)}@$handleAtStart -> " +
                             "${formatInterfaceType(currentType)}@$currentHandle); forcing follow-up restart",
                     )
-                    mainHandler.postDelayed({ restartVpn() }, UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS)
+                    scheduleFollowUpRestart(UNDERLYING_NETWORK_RESTART_DEBOUNCE_MS)
                 }
             } finally {
                 restartInProgress.set(false)
             }
         }
+    }
+
+    /**
+     * Replaces the inline `mainHandler.postDelayed({ restartVpn() }, ...)`
+     * that previously fired after a Healthy restart noticed the
+     * underlying network had moved again. Codex flagged that anonymous
+     * runnable as non-cancelable — a Stop landing in the debounce
+     * window couldn't remove it. Now we hold the Runnable reference so
+     * [cancelFollowUpRestart] can remove it from onDestroy/stopVpn.
+     */
+    private var followUpRestartRunnable: Runnable? = null
+
+    private fun scheduleFollowUpRestart(delayMs: Long) {
+        cancelFollowUpRestart()
+        val runnable = Runnable {
+            followUpRestartRunnable = null
+            if (!desiredRunning.get()) return@Runnable
+            restartVpn()
+        }
+        followUpRestartRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun cancelFollowUpRestart() {
+        followUpRestartRunnable?.let(mainHandler::removeCallbacks)
+        followUpRestartRunnable = null
     }
 
     /**
@@ -1176,6 +1285,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 val core = ensureVpnCore()
                 core.updateConfig(runtimeConfig)
                 activeConfig = runtimeConfig
+                // Persist the NEW config too. Without this, a process
+                // recreate after UPDATE_CONFIG would resume from the
+                // original ACTION_START config, not the user's most
+                // recent edit — silently rolling back changes the user
+                // explicitly applied (e.g. switching cloud nodes).
+                if (desiredRunning.get()) {
+                    persistVpnIntent(runtimeConfig)
+                }
                 Log.i(TAG, "VPN config updated")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update VPN config", e)
@@ -1508,11 +1625,40 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun attemptResumeFromPersistedIntent() {
         try {
+            if (isRunning) {
+                // Idempotency guard — the safety-net null-action branch
+                // in onStartCommand can fire even after onCreate already
+                // resumed us.
+                return
+            }
             val prefs = getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
             val wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false)
             val config = prefs.getString(persistedIntentKeyConfig, null).orEmpty()
             if (!wantsRunning || config.isBlank()) {
                 Log.i(TAG, "Resume skipped: no persisted active VPN intent.")
+                return
+            }
+            // VPN permission may have been revoked while the process
+            // was dead. Builder.establish() returns null in that
+            // case and openTun() throws, but we'd silently leave
+            // desiredRunning persisted and try again on every
+            // service recreate → infinite spawn loop. Probe consent
+            // first; on revoked, clear persisted state and surface
+            // a "permission needed" broadcast that the Dart side
+            // already knows how to render.
+            val consentNeeded = try {
+                VpnService.prepare(this) != null
+            } catch (_: Exception) {
+                false
+            }
+            if (consentNeeded) {
+                Log.w(
+                    TAG,
+                    "Resume skipped: VPN consent has been revoked. " +
+                        "Clearing persisted intent so we don't spin.",
+                )
+                clearPersistedVpnIntent()
+                broadcastStatus("revoked", VPN_REVOKED_MESSAGE)
                 return
             }
             Log.i(TAG, "Resuming VPN from persisted intent after process recreate.")
@@ -1523,12 +1669,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     override fun onDestroy() {
+        // Clear in-memory user intent FIRST so any thread still running
+        // (start/restart worker, probe thread) sees desiredRunning=false
+        // on its next re-check and bails. Disk-persisted intent stays
+        // because onDestroy is triggered for memory pressure too, not
+        // just user-initiated stop; we want process-recreate to resume.
+        desiredRunning.set(false)
         // Cancel ALL timer-backed retries before super.onDestroy. The
         // earlier code missed cancelDelayedRestart() — a service torn
         // down by the OS for memory pressure left the backoff
         // [Runnable] queued against a stale Handler that would try to
         // fire on a vanished service instance.
         cancelDelayedRestart()
+        cancelFollowUpRestart()
         pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingUnderlyingNetworkRestart = null
         stopHealthMonitor()
@@ -1583,60 +1736,92 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     healthMonitorHandler.postDelayed(this, HEALTH_MONITOR_INTERVAL_MS)
                     return
                 }
+                // Single-flight guard. The generation token blocks
+                // STALE-era probes from mutating state, but does not
+                // prevent two SAME-era probes overlapping when a probe
+                // takes longer than the 30s tick interval (slow cell,
+                // captive portal redirect). Without this CAS, both
+                // probes could pass the generation gate and stomp
+                // lastBroadcastTunnelHealth.
+                if (!healthProbeInFlight.compareAndSet(false, true)) {
+                    Log.w(
+                        TAG,
+                        "Health monitor: previous probe still in flight, " +
+                            "skipping this tick",
+                    )
+                    healthMonitorHandler.postDelayed(this, HEALTH_MONITOR_INTERVAL_MS)
+                    return
+                }
+                val outerRunnable = this
                 thread(name = "PrivateDeploy-VPN-HealthCheck", isDaemon = true) {
-                    val health = try {
-                        checkTunnelHealth()
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "Periodic health probe failed", e)
-                        null
-                    }
-                    // Discard stale results from a previous monitor era.
-                    if (generation != healthMonitorGeneration.get()) {
-                        return@thread
-                    }
-                    if (health == TunnelHealth.TunnelDown) {
-                        // The tun went away while isRunning was still true —
-                        // restart budget likely got exhausted in a flap, or
-                        // sing-box tore the tun down internally. Self-heal
-                        // by calling restartVpn() — its own atomic gate
-                        // handles double-entry from delayed restart /
-                        // NetworkCallback.
-                        Log.w(
-                            TAG,
-                            "Health monitor: TunnelDown detected (vpnInterface " +
-                                "is null while isRunning=true). Triggering " +
-                                "restart to self-heal.",
-                        )
-                        restartVpn()
-                        return@thread
-                    }
-                    if (health != null && health != lastBroadcastTunnelHealth) {
-                        Log.i(
-                            TAG,
-                            "Health monitor: $lastBroadcastTunnelHealth → $health",
-                        )
-                        // Healthy after a Degraded period also resets
-                        // the delayed-restart backoff. Without this, a
-                        // session that flapped through Degraded but
-                        // never died still kept a long backoff queued
-                        // for the next time it died — wrong, because
-                        // the recovery just succeeded.
-                        if (health == TunnelHealth.Healthy) {
-                            cancelDelayedRestart()
-                            delayedRestartAttempt = 0
+                    try {
+                        val health = try {
+                            checkTunnelHealth()
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "Periodic health probe failed", e)
+                            null
                         }
-                        val outcome = describeTunnelHealth(health)
-                        // Stay in the "connected" status family — we don't
-                        // want to flip the user back into a connecting/error
-                        // banner just because a probe came back ambiguous.
-                        // The statusMessage payload conveys the degraded
-                        // sub-state to the Dart side.
-                        broadcastStatus("connected", outcome.statusMessage)
-                        updateForegroundNotification(outcome.notificationText)
-                        lastBroadcastTunnelHealth = health
+                        // Discard stale results from a previous monitor era.
+                        if (generation != healthMonitorGeneration.get()) {
+                            return@thread
+                        }
+                        if (health == TunnelHealth.TunnelDown) {
+                            // The tun went away while isRunning was still true —
+                            // restart budget likely got exhausted in a flap, or
+                            // sing-box tore the tun down internally. Self-heal
+                            // by calling restartVpn() — its own atomic gate
+                            // handles double-entry from delayed restart /
+                            // NetworkCallback.
+                            Log.w(
+                                TAG,
+                                "Health monitor: TunnelDown detected (vpnInterface " +
+                                    "is null while isRunning=true). Triggering " +
+                                    "restart to self-heal.",
+                            )
+                            restartVpn()
+                            return@thread
+                        }
+                        if (health != null && health != lastBroadcastTunnelHealth) {
+                            Log.i(
+                                TAG,
+                                "Health monitor: $lastBroadcastTunnelHealth → $health",
+                            )
+                            // Healthy after a Degraded period also resets
+                            // the delayed-restart backoff. Without this, a
+                            // session that flapped through Degraded but
+                            // never died still kept a long backoff queued
+                            // for the next time it died — wrong, because
+                            // the recovery just succeeded.
+                            if (health == TunnelHealth.Healthy) {
+                                cancelDelayedRestart()
+                                delayedRestartAttempt = 0
+                            }
+                            val outcome = describeTunnelHealth(health)
+                            // Stay in the "connected" status family — we don't
+                            // want to flip the user back into a connecting/error
+                            // banner just because a probe came back ambiguous.
+                            // The statusMessage payload conveys the degraded
+                            // sub-state to the Dart side.
+                            broadcastStatus("connected", outcome.statusMessage)
+                            updateForegroundNotification(outcome.notificationText)
+                            lastBroadcastTunnelHealth = health
+                        }
+                    } finally {
+                        // Always release the single-flight guard, and
+                        // schedule the next tick from HERE (the probe
+                        // thread's finally) instead of immediately after
+                        // spawning the thread. This way the next tick
+                        // is queued only after the previous probe is
+                        // truly finished, eliminating the same-
+                        // generation overlap window. If the next tick
+                        // would've fired during the probe, it just
+                        // fires immediately after release.
+                        healthProbeInFlight.set(false)
+                        if (generation == healthMonitorGeneration.get()) {
+                            healthMonitorHandler.postDelayed(outerRunnable, HEALTH_MONITOR_INTERVAL_MS)
+                        }
                     }
                 }
-                healthMonitorHandler.postDelayed(this, HEALTH_MONITOR_INTERVAL_MS)
             }
         }
         healthMonitorRunnable = runnable

@@ -15,7 +15,18 @@
         android:name="${applicationName}"
         android:label="PrivateDeploy"
         android:icon="@mipmap/ic_launcher"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+        <!-- allowBackup=false: prevents Android Auto Backup from
+             uploading the network service's SharedPreferences (which now
+             persists the active sing-box config containing VLESS UUIDs
+             + server addresses for process-recreate recovery), VLESS
+             credentials in Hive/secure storage, and CF API tokens.
+             dataExtractionRules excludes the same on Android 12+
+             (device-to-device transfer + cloud backup).  -->
+
 
         <!-- Main Activity -->
         <activity

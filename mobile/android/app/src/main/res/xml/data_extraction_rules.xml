@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ Data Extraction Rules.
+
+    The network service persists the active sing-box runtime config to a
+    SharedPreferences file (vpn_intent_v1) so a process-kill→recreate
+    cycle can resume without user interaction. That config contains
+    VLESS UUIDs, server addresses, custom-domain hostnames, and
+    Worker path-secrets — all of them sensitive enough that we don't
+    want them leaving the device via cloud backup or device-to-device
+    transfer.
+
+    Disabling backup entirely instead of trying to enumerate
+    individual paths because the same goes for Hive boxes (cloud
+    profiles, CF tokens) and other app state. Users who want to
+    migrate to a new device should re-import their CF token + profiles
+    through the in-app backup flow, which encrypts secrets explicitly.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
