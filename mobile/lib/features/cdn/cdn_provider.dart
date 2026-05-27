@@ -809,7 +809,14 @@ class CdnProvider with ChangeNotifier {
   /// doesn't need to think about pending/initializing zones (CF won't
   /// accept Worker domain bindings on those anyway).
   Future<List<CdnZone>> listZones() async {
-    if (_status != CdnStatus.verified) {
+    // Accept verifiedButIncomplete too — that state means "token is
+    // good, account known, but no destination (subdomain OR custom
+    // domain) is bound yet". Binding a custom domain is one of the
+    // two ways to clear the incomplete state, so we MUST allow zone
+    // listing in that state. Previously the strict == verified gate
+    // locked the user out: dropdown returned empty zones, UI showed
+    // "no zones visible" orange warning, user reported "无法选择域名".
+    if (!_hadValidTokenBefore(_status)) {
       _lastError = 'Token not verified — verify it first';
       notifyListeners();
       return const [];
@@ -909,7 +916,12 @@ class CdnProvider with ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if (_status != CdnStatus.verified) {
+    // Same logic as listZones: verifiedButIncomplete is allowed here
+    // because binding a custom domain is how the user EXITS the
+    // incomplete state. The strict == verified gate would make the
+    // save button silently fail with "Token not verified" even
+    // though the token is fine.
+    if (!_hadValidTokenBefore(_status)) {
       _lastError = 'Token not verified — verify it first.';
       notifyListeners();
       return false;

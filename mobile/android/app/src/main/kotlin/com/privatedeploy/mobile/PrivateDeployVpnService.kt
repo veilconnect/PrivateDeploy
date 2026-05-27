@@ -287,6 +287,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private val restartInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
+     * Atomic gate for startVpn(). Codex flagged a duplicate-start race:
+     * [attemptResumeFromPersistedIntent] could be called from both
+     * [onCreate] and the null-action branch of [onStartCommand], and
+     * the idempotency check on [isRunning] alone wasn't enough because
+     * `isRunning = true` only flips INSIDE the start worker, after a
+     * window where the resume can be triggered a second time and spawn
+     * a second worker against the same config. This flag is set true
+     * by [startVpn] BEFORE the worker spawns, and cleared by the
+     * worker on completion (success or failure).
+     */
+    private val startInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
      * "User wants VPN active". Set true by [startVpn] on intent receipt,
      * false by [stopVpn], [onRevoke], [onDestroy]. All auto-restart
      * paths (NetworkCallback, periodic health monitor, scheduled
@@ -402,6 +415,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
             return
         }
 
+        // Duplicate-start gate. Codex flagged that the previous code
+        // could spawn TWO start workers if attemptResumeFromPersistedIntent
+        // ran from both onCreate and onStartCommand's null-action
+        // branch before either worker reached `isRunning = true`. Now
+        // the CAS atomically wins exactly one start; later callers
+        // observe startInProgress=true (or isRunning=true if start
+        // already completed) and bail. Stays true until the worker's
+        // finally-clause clears it.
+        if (!startInProgress.compareAndSet(false, true)) {
+            Log.i(TAG, "VPN start ignored — another start is already in progress")
+            return
+        }
+
         // ONLY AFTER validation: mark user intent + persist for
         // process-recreate recovery. Previously this happened before
         // validation, so a blank/malformed config still left
@@ -418,6 +444,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
         broadcastStatus("connecting", null)
 
         thread(name = "PrivateDeploy-VPN-Start") {
+            // try/finally ensures startInProgress.set(false) runs no
+            // matter how the worker terminates (success path, failure
+            // path, cancellation via desiredRunning=false, or an
+            // unexpected throw). Without this, an exception path
+            // would leave the gate stuck true and block every future
+            // start attempt.
+            try {
             // Users tend to tap Connect right after a Wi-Fi ↔ cellular hand-off
             // (e.g. stepping out of range), which historically produced an
             // immediate failure because the default network wasn't yet
@@ -633,17 +666,45 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
 
             if (!succeeded) {
-                Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
-                try {
-                    vpnCore?.stop()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error stopping VPN runtime after start failure", e)
+                // Distinguish cancellation from genuine failure. Codex
+                // flagged that a Stop landing mid-loop set
+                // desiredRunning=false → worker broke out of the loop →
+                // but then fell into this block and broadcast an error
+                // to the UI as if it had legitimately failed. Worse,
+                // restartVpn's version of this block called
+                // scheduleDelayedRestart() which would have re-armed
+                // the very tunnel the user just stopped.
+                val cancelled = !desiredRunning.get()
+                if (cancelled) {
+                    Log.i(
+                        TAG,
+                        "VPN start cancelled (desiredRunning=false). " +
+                            "Skipping error broadcast and stopSelf — the " +
+                            "stopVpn path owns the rest of the teardown.",
+                    )
+                    // stopVpn already cancelled handlers, broadcast
+                    // disconnected, etc. Just clean up our own
+                    // resources without stepping on it.
+                } else {
+                    Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
+                    try {
+                        vpnCore?.stop()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error stopping VPN runtime after start failure", e)
+                    }
+                    cleanupTunnel()
+                    isRunning = false
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    broadcastError(failedStartErrorMessage(lastError))
+                    stopSelf()
                 }
-                cleanupTunnel()
-                isRunning = false
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                broadcastError(failedStartErrorMessage(lastError))
-                stopSelf()
+            }
+            } finally {
+                // Release the duplicate-start gate regardless of how
+                // the worker terminated. Critical that this runs on
+                // every exit path including the early `break` from
+                // the desiredRunning re-check.
+                startInProgress.set(false)
             }
         }
     }
@@ -930,6 +991,26 @@ class PrivateDeployVpnService : VpnService(), Platform {
             // restart while this one was still tearing down.
             try {
                 if (!succeeded) {
+                    // Cancellation vs failure: a Stop that landed during
+                    // the loop sets desiredRunning=false and breaks the
+                    // worker out. Calling scheduleDelayedRestart() in
+                    // that case would re-arm the tunnel the user just
+                    // stopped — that's bug, not recovery. stopVpn
+                    // handles its own teardown; we just clean up our
+                    // own thread-local state without broadcasting an
+                    // error or scheduling a retry.
+                    val cancelled = !desiredRunning.get()
+                    if (cancelled) {
+                        Log.i(
+                            TAG,
+                            "VPN restart cancelled (desiredRunning=false). " +
+                                "Skipping error broadcast and delayed " +
+                                "restart — stopVpn owns the teardown.",
+                        )
+                        cancelDelayedRestart()
+                        cancelFollowUpRestart()
+                        return@thread
+                    }
                     Log.e(
                         TAG,
                         "Failed to restart VPN after $RESTART_MAX_ATTEMPTS attempts",
@@ -951,6 +1032,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // was still in flight.
                     isRunning = false
                     cleanupTunnel()
+                    // Cancel any follow-up restart that would otherwise
+                    // race the new delayed-restart backoff schedule.
+                    cancelFollowUpRestart()
                     // Keep service alive — see scheduleDelayedRestart()
                     // docstring for why we don't stopSelf(). Service
                     // stays in foreground with a "tunnel closed — tap
@@ -1625,10 +1709,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun attemptResumeFromPersistedIntent() {
         try {
-            if (isRunning) {
-                // Idempotency guard — the safety-net null-action branch
-                // in onStartCommand can fire even after onCreate already
-                // resumed us.
+            if (isRunning || startInProgress.get()) {
+                // Idempotency guard — onCreate AND onStartCommand(null)
+                // can both call this, and the first call's start
+                // worker takes seconds to flip isRunning=true. Without
+                // startInProgress in the check, the second call
+                // passed and spawned a duplicate worker against the
+                // same config. The new gate covers the
+                // worker-spawned-but-not-yet-running window.
                 return
             }
             val prefs = getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
