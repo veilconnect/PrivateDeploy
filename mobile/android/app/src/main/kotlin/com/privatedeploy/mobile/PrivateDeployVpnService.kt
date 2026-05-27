@@ -74,6 +74,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // the connect button flips back to "Failed".
         private const val START_MAX_ATTEMPTS = 4
         private const val START_RETRY_BASE_DELAY_MS = 1500L
+        // After RESTART_MAX_ATTEMPTS is exhausted, schedule a delayed
+        // retry instead of calling stopSelf(). Earlier behaviour left the
+        // service permanently dead — and the last broadcast error was the
+        // stale UpstreamDegraded probe of a half-built tun, which users
+        // read as "the carrier blocked the upstream node" when actually
+        // "the restart loop hit a transient bad-network window". 15s seed
+        // backoff doubles per attempt, capped at 5 minutes.
+        private const val DELAYED_RESTART_INITIAL_MS = 15_000L
+        private const val DELAYED_RESTART_MAX_INTERVAL_MS = 5L * 60_000L
         // Wait up to 12 s for the new transport to reach
         // NET_CAPABILITY_VALIDATED before kicking off start/restart.
         // Real-world mobile networks (mobile carrier / Telecom / Unicom)
@@ -375,6 +384,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             updateForegroundNotification(outcome.notificationText)
                             broadcastStatus("connected", outcome.statusMessage)
                             succeeded = true
+                            // Healthy connect resets the self-heal backoff
+                            // — the next budget exhaustion (likely tomorrow's
+                            // bad-network window) should start from the
+                            // initial delay, not whatever we last escalated to.
+                            cancelDelayedRestart()
+                            delayedRestartAttempt = 0
                             Log.i(TAG, "VPN started successfully on attempt $attempt")
                         }
                         TunnelHealth.UpstreamDegraded -> {
@@ -458,6 +473,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                     "endpoint through the tunnel; treating this as a " +
                                     "failed start so the app does not leave a blackholed " +
                                     "TUN route installed",
+                            )
+                        }
+                        TunnelHealth.TunnelDown -> {
+                            // Can only happen if openTun() succeeded but the
+                            // descriptor went away before health verify. Treat
+                            // like Unreachable so we retry — but log distinctly
+                            // so post-mortem can see we never had a tun in the
+                            // first place, not "node blocked us".
+                            lastError = IllegalStateException(
+                                "VPN tunnel descriptor was not established",
+                            )
+                            Log.w(
+                                TAG,
+                                "VPN start attempt $attempt: TunnelDown — " +
+                                    "vpnInterface is null after openTun()",
                             )
                         }
                     }
@@ -571,6 +601,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun stopVpn() {
         stopHealthMonitor()
+        // User-initiated stop — cancel any scheduled self-heal and reset
+        // the backoff counter so the next session starts fresh.
+        cancelDelayedRestart()
+        delayedRestartAttempt = 0
         broadcastStatus("disconnecting", null)
         thread(name = "PrivateDeploy-VPN-Stop") {
             try {
@@ -646,15 +680,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         TunnelHealth.Healthy,
                         TunnelHealth.DirectRouteDegraded -> true
                         TunnelHealth.UpstreamDegraded -> !onCellular
-                        TunnelHealth.Unreachable -> false
+                        TunnelHealth.Unreachable,
+                        TunnelHealth.TunnelDown -> false
                     }
                     if (acceptNow) {
                         val outcome = degradedOutcomeForCurrentTransport(health)
                         updateForegroundNotification(outcome.notificationText)
                         broadcastStatus("connected", outcome.statusMessage)
                         when (health) {
-                            TunnelHealth.Healthy ->
+                            TunnelHealth.Healthy -> {
+                                cancelDelayedRestart()
+                                delayedRestartAttempt = 0
                                 Log.i(TAG, "VPN restarted successfully on attempt $attempt")
+                            }
                             TunnelHealth.UpstreamDegraded ->
                                 Log.w(
                                     TAG,
@@ -671,7 +709,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                         "stabilizing indicator until the periodic monitor " +
                                         "clears it.",
                                 )
-                            TunnelHealth.Unreachable -> Unit
+                            TunnelHealth.Unreachable,
+                            TunnelHealth.TunnelDown -> Unit
                         }
                         succeeded = true
                         startHealthMonitor()
@@ -721,9 +760,25 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 }
                 cleanupTunnel()
                 isRunning = false
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                broadcastError(lastError?.message ?: "Failed to restart VPN")
-                stopSelf()
+                // CRITICAL: do NOT stopSelf() here. The previous behaviour
+                // left the service permanently dead until the user manually
+                // tapped reconnect — and the last broadcast error was the
+                // stale UpstreamDegraded message from the LAST attempted
+                // restart's probe (which probed a half-built tun), which
+                // the user read as "the carrier blocked the upstream
+                // node". The real failure was just "the restart loop hit
+                // a transient bad network and exhausted its budget". We
+                // keep the foreground notification so the OS doesn't
+                // background-kill the process, and broadcast a clearly
+                // distinct "tunnel down, recovering" state that the UI
+                // can render. The next NetworkCallback (or the user
+                // tapping reconnect) will retry restartVpn(); the
+                // service stays alive in the meantime.
+                lastBroadcastTunnelHealth = TunnelHealth.TunnelDown
+                val outcome = describeTunnelHealth(TunnelHealth.TunnelDown)
+                updateForegroundNotification(outcome.notificationText)
+                broadcastStatus("error", outcome.statusMessage)
+                scheduleDelayedRestart()
                 return@thread
             }
 
@@ -830,6 +885,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
         UpstreamDegraded,
         DirectRouteDegraded,
         Unreachable,
+
+        /**
+         * The tun interface itself is gone (vpnInterface == null) — no point
+         * sending probes because they'd fall back to the physical network,
+         * succeed on direct routes, fail on offshore, and get misclassified
+         * as [UpstreamDegraded] ("upstream blocked"). This was the real
+         * root cause when users reported "the app keeps blaming upstream
+         * but the upstream is actually fine" — sing-box had torn the tun
+         * down (e.g. restart budget exhausted) and the health monitor
+         * kept reporting [UpstreamDegraded] on a dead tunnel.
+         */
+        TunnelDown,
     }
 
     /**
@@ -845,6 +912,22 @@ class PrivateDeployVpnService : VpnService(), Platform {
      * declaring Healthy.
      */
     private fun checkTunnelHealth(): TunnelHealth {
+        // Tun-existence guard. Without this, the probe sockets fall back to
+        // the underlying physical network (carrier DPI strips them, baidu
+        // works, gstatic doesn't) and we mis-report this as
+        // "UpstreamDegraded" — i.e. blame the upstream node for a problem
+        // that's actually "our tun is gone". Returning TunnelDown stops
+        // the periodic health monitor from re-classifying the same dead
+        // state every 30s, and lets restartVpn() know the recovery
+        // strategy is "rebuild tun", not "the carrier hates us".
+        if (vpnInterface == null) {
+            Log.w(
+                TAG,
+                "checkTunnelHealth: vpnInterface is null — tun is gone, " +
+                    "skipping probes that would falsely indicate UpstreamDegraded",
+            )
+            return TunnelHealth.TunnelDown
+        }
         val connectivityManager =
             getSystemService(ConnectivityManager::class.java) ?: return TunnelHealth.Unreachable
 
@@ -963,6 +1046,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
             notificationText = "VPN egress unreachable",
             statusMessage = "Tunnel is up but egress could not be verified. " +
                 "Browsing may not work — try a different node or network.",
+        )
+        // Distinct from "Unreachable" — tun itself is gone. UI should
+        // prompt the user to reconnect rather than blaming a node that
+        // never got a chance to respond.
+        TunnelHealth.TunnelDown -> TunnelHealthOutcome(
+            notificationText = "VPN tunnel closed — tap to reconnect",
+            statusMessage = "VPN tunnel is no longer active. The previous " +
+                "session ended; tap reconnect to re-establish.",
         )
     }
 
@@ -1321,6 +1412,25 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         Log.w(TAG, "Periodic health probe failed", e)
                         null
                     }
+                    if (health == TunnelHealth.TunnelDown) {
+                        // The tun went away while isRunning was still true —
+                        // restart budget likely got exhausted in a flap, or
+                        // sing-box tore the tun down internally. Either way
+                        // we should NOT keep spamming UpstreamDegraded
+                        // notifications about a node that never had a
+                        // chance. Trigger a restart so the service self-
+                        // heals without the user having to tap reconnect.
+                        Log.w(
+                            TAG,
+                            "Health monitor: TunnelDown detected (vpnInterface " +
+                                "is null while isRunning=true). Triggering " +
+                                "restart to self-heal.",
+                        )
+                        if (!restartInProgress) {
+                            restartVpn()
+                        }
+                        return@thread
+                    }
                     if (health != null && health != lastBroadcastTunnelHealth) {
                         Log.i(
                             TAG,
@@ -1349,6 +1459,60 @@ class PrivateDeployVpnService : VpnService(), Platform {
         healthMonitorRunnable?.let(healthMonitorHandler::removeCallbacks)
         healthMonitorRunnable = null
         lastBroadcastTunnelHealth = null
+    }
+
+    /**
+     * Self-heal after restart-budget exhaustion. Earlier behaviour was to
+     * call [stopSelf] and leave the service permanently dead until the
+     * user tapped reconnect — but the failure was almost always a
+     * transient bad-network window, not a true config failure. Schedule
+     * a backoff retry that calls [restartVpn] again. If the second
+     * round also fails, the same path schedules another retry with a
+     * longer delay, capped at [DELAYED_RESTART_MAX_INTERVAL_MS] so we
+     * don't burn battery polling forever.
+     */
+    private val delayedRestartHandler = Handler(Looper.getMainLooper())
+    private var delayedRestartAttempt = 0
+    private var delayedRestartRunnable: Runnable? = null
+
+    private fun scheduleDelayedRestart() {
+        cancelDelayedRestart()
+        val attemptIndex = delayedRestartAttempt
+        delayedRestartAttempt++
+        val delay = computeDelayedRestartBackoffMs(attemptIndex)
+        Log.w(
+            TAG,
+            "Scheduling delayed restart #${attemptIndex + 1} in ${delay}ms " +
+                "(restart-budget was exhausted; service stays alive).",
+        )
+        val runnable = Runnable {
+            delayedRestartRunnable = null
+            if (isRunning || restartInProgress) {
+                // Something else already brought it back — skip.
+                Log.i(TAG, "Delayed restart skipped: VPN already active.")
+                delayedRestartAttempt = 0
+                return@Runnable
+            }
+            if (activeConfig.isNullOrBlank()) {
+                Log.w(TAG, "Delayed restart skipped: activeConfig is empty.")
+                return@Runnable
+            }
+            Log.i(TAG, "Delayed restart firing now (attempt #${attemptIndex + 1}).")
+            restartVpn()
+        }
+        delayedRestartRunnable = runnable
+        delayedRestartHandler.postDelayed(runnable, delay)
+    }
+
+    private fun cancelDelayedRestart() {
+        delayedRestartRunnable?.let(delayedRestartHandler::removeCallbacks)
+        delayedRestartRunnable = null
+    }
+
+    private fun computeDelayedRestartBackoffMs(attemptIndex: Int): Long {
+        // 15s, 30s, 1m, 2m, 4m, ... capped at 5m.
+        val raw = DELAYED_RESTART_INITIAL_MS shl attemptIndex.coerceAtMost(8)
+        return raw.coerceAtMost(DELAYED_RESTART_MAX_INTERVAL_MS)
     }
 
     override fun onRevoke() {
