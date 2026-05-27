@@ -962,6 +962,18 @@ class CdnProvider with ChangeNotifier {
         subdomain: cleanSub,
       );
       await _persistCustomDomain();
+      // Promote out of verifiedButIncomplete now that a destination
+      // exists. Without this, the UI stayed locked in the yellow
+      // "setup incomplete" state even after the user successfully
+      // bound a domain — the very thing the warning was asking them
+      // to do — because nothing recomputed _status. Codex review #4
+      // caught this as a half-fix of the dropdown bug: dropdown
+      // works, save succeeds, but the user still can't deploy
+      // Workers because [deployWorkerForNode] gates strictly on
+      // verified.
+      if (_status == CdnStatus.verifiedButIncomplete) {
+        _status = CdnStatus.verified;
+      }
       _lastError = null;
       return true;
     } finally {

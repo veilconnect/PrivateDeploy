@@ -509,9 +509,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             "Start worker tearing down: desiredRunning cleared " +
                                 "after core.start() returned",
                         )
-                        try { core.stop() } catch (_: Exception) {}
-                        cleanupTunnel()
-                        isRunning = false
+                        teardownVpnCore("start-worker-cancelled")
                         break
                     }
 
@@ -570,13 +568,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                         "will fire on the Dart side. Tearing " +
                                         "down tun immediately and skipping retry.",
                                 )
-                                try {
-                                    vpnCore?.stop()
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "stop() during synblock refuse failed", e)
-                                }
-                                cleanupTunnel()
-                                isRunning = false
+                                teardownVpnCore("synblock-refuse")
                                 break
                             } else {
                                 val outcome =
@@ -679,21 +671,23 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     Log.i(
                         TAG,
                         "VPN start cancelled (desiredRunning=false). " +
-                            "Skipping error broadcast and stopSelf — the " +
-                            "stopVpn path owns the rest of the teardown.",
+                            "Running serialized teardown; stopVpn (if that's " +
+                            "what flipped the flag) will see a no-op second " +
+                            "teardown via the synchronized helper.",
                     )
-                    // stopVpn already cancelled handlers, broadcast
-                    // disconnected, etc. Just clean up our own
-                    // resources without stepping on it.
+                    // Always run teardown ourselves. Codex review #4
+                    // pointed out that "stopVpn owns the teardown" is
+                    // only true when stopVpn was the trigger — onDestroy
+                    // (memory-pressure shutdown) also clears
+                    // desiredRunning but never tears down vpnCore,
+                    // leaking the libbox runtime. Calling
+                    // teardownVpnCore here is safe regardless of
+                    // who cleared desiredRunning because the helper
+                    // serializes via synchronized(teardownLock).
+                    teardownVpnCore("start-failed-cancelled")
                 } else {
                     Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
-                    try {
-                        vpnCore?.stop()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error stopping VPN runtime after start failure", e)
-                    }
-                    cleanupTunnel()
-                    isRunning = false
+                    teardownVpnCore("start-failed")
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     broadcastError(failedStartErrorMessage(lastError))
                     stopSelf()
@@ -797,12 +791,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         broadcastStatus("disconnecting", null)
         thread(name = "PrivateDeploy-VPN-Stop") {
             try {
-                vpnCore?.stop()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error stopping VPN runtime", e)
+                // Route through the serialized teardown helper so a
+                // worker thread that's mid-stop cannot race us calling
+                // vpnCore.stop() concurrently — libbox's Go runtime
+                // isn't documented to be safe for concurrent stop.
+                teardownVpnCore("stopVpn")
             } finally {
-                cleanupTunnel()
-                isRunning = false
                 // Clear activeConfig too — otherwise a NetworkCallback
                 // that races stopVpn could see the persisted-config
                 // string still present and try to "restart" the
@@ -892,9 +886,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             "Restart worker tearing down: desiredRunning " +
                                 "cleared after core.restart() returned",
                         )
-                        try { core.stop() } catch (_: Exception) {}
-                        cleanupTunnel()
-                        isRunning = false
+                        teardownVpnCore("restart-worker-cancelled")
                         break
                     }
 
@@ -1004,11 +996,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         Log.i(
                             TAG,
                             "VPN restart cancelled (desiredRunning=false). " +
-                                "Skipping error broadcast and delayed " +
-                                "restart — stopVpn owns the teardown.",
+                                "Running serialized teardown ourselves — " +
+                                "covers the onDestroy path where stopVpn " +
+                                "wasn't called.",
                         )
                         cancelDelayedRestart()
                         cancelFollowUpRestart()
+                        teardownVpnCore("restart-cancelled")
                         return@thread
                     }
                     Log.e(
@@ -1017,21 +1011,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         lastError,
                     )
                     stopHealthMonitor()
-                    try {
-                        vpnCore?.stop()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error stopping VPN runtime after restart failure", e)
-                    }
-                    // isRunning flips FIRST, before cleanupTunnel nulls
-                    // vpnInterface — so observers seeing one as torn down
-                    // see both as torn down. The previous ordering had a
-                    // window where the tun was already gone but the
-                    // running flag still read true, which is exactly the
-                    // TunnelDown state our health monitor self-heals on
-                    // — making it queue ANOTHER restart while this one
-                    // was still in flight.
-                    isRunning = false
-                    cleanupTunnel()
+                    teardownVpnCore("restart-failed")
                     // Cancel any follow-up restart that would otherwise
                     // race the new delayed-restart backoff schedule.
                     cancelFollowUpRestart()
@@ -1470,6 +1450,40 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
     }
 
+    /**
+     * Serialized, idempotent teardown of the sing-box runtime + tun fd.
+     *
+     * Multiple paths concurrently want to stop the VPN: stopVpn worker,
+     * start-worker failure cleanup, start-worker mid-loop cancellation,
+     * restart-worker failure cleanup, restart-worker mid-loop cancellation,
+     * onDestroy. Without serialization, two of them can hit
+     * `vpnCore.stop()` concurrently — libbox's Go runtime is not
+     * documented to be safe for concurrent stop calls, and the orphaned
+     * runtime is what the user experienced as "I stopped the VPN but it
+     * still says connected."
+     *
+     * All teardown sites now route through this single synchronized
+     * helper. The lock serializes calls so the libbox runtime sees at
+     * most one stop() at a time. `vpnCore` is NOT nulled because
+     * ensureVpnCore() lazily reuses the existing instance for the next
+     * session; nulling it would force the next [restartVpn] to call
+     * [VPNService.restart] on a freshly-created core that was never
+     * started, which fails.
+     */
+    private val teardownLock = Object()
+
+    private fun teardownVpnCore(reason: String) {
+        synchronized(teardownLock) {
+            try {
+                vpnCore?.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "teardown[$reason]: error stopping VPN runtime", e)
+            }
+            isRunning = false
+            cleanupTunnel()
+        }
+    }
+
     private fun cleanupTunnel() {
         try {
             vpnInterface?.close()
@@ -1774,6 +1788,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
         pendingUnderlyingNetworkRestart = null
         stopHealthMonitor()
         unregisterUnderlyingNetworkMonitor()
+        // Codex review #4 caught a libbox-runtime leak: onDestroy
+        // previously only flipped flags and removed callbacks, but
+        // never stopped vpnCore or closed the tun fd. If the OS
+        // destroyed the service for memory pressure while sing-box
+        // was actively routing, the runtime kept running and the
+        // tun stayed open until the process was killed, which the
+        // user observed as "I disconnected but the VPN icon stays
+        // on" or "VPN keeps reconnecting on its own". Always run
+        // the serialized teardown helper here.
+        teardownVpnCore("onDestroy")
         if (serviceInstance === this) {
             serviceInstance = null
         }
