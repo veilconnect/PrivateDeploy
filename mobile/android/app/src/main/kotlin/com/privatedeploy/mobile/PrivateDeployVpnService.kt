@@ -689,8 +689,28 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
                     teardownVpnCore("start-failed")
                     stopForeground(STOP_FOREGROUND_REMOVE)
-                    broadcastError(failedStartErrorMessage(lastError))
-                    stopSelf()
+                    // Re-check desiredRunning before broadcasting error
+                    // + stopSelf. Gemini flagged a race: between the
+                    // start attempts loop ending and this block
+                    // running, the user can have tapped Connect again,
+                    // which sets desiredRunning=true and starts a fresh
+                    // attempt via [startInProgress] CAS. If we
+                    // broadcast a stale error + call stopSelf() now,
+                    // the UI flickers to "failed" then back to
+                    // connecting, and stopSelf can race-destroy the
+                    // service mid-second-attempt because the
+                    // unparametrized stopSelf doesn't track startId.
+                    if (desiredRunning.get()) {
+                        Log.i(
+                            TAG,
+                            "Start failed, but user already retried — " +
+                                "skipping broadcastError + stopSelf so " +
+                                "the new attempt isn't disturbed",
+                        )
+                    } else {
+                        broadcastError(failedStartErrorMessage(lastError))
+                        stopSelf()
+                    }
                 }
             }
             } finally {
@@ -1474,13 +1494,31 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun teardownVpnCore(reason: String) {
         synchronized(teardownLock) {
+            // Idempotency: codex + gemini both flagged that a second
+            // caller landing here always invokes vpnCore.stop() again,
+            // which the Go wrapper rejects with "VPN is not running"
+            // — caught by try/catch but a confusing warning in logs
+            // every time stopVpn races a cancellation. Skip if state
+            // already shows torn-down.
+            if (!isRunning && vpnInterface == null) {
+                return
+            }
             try {
                 vpnCore?.stop()
             } catch (e: Exception) {
                 Log.w(TAG, "teardown[$reason]: error stopping VPN runtime", e)
             }
-            isRunning = false
+            // Ordering: cleanupTunnel BEFORE isRunning=false. Gemini
+            // caught a race here — if isRunning flipped to false
+            // first, a concurrent startVpn would pass its
+            // `if (isRunning) return` early-guard, spawn a new start
+            // worker, establish a fresh tun, set vpnInterface=newFd
+            // — and THEN this thread's cleanupTunnel() would close
+            // the *new* fd. Doing it the other way around: the new
+            // start sees isRunning=true and bails until teardown
+            // finishes.
             cleanupTunnel()
+            isRunning = false
         }
     }
 

@@ -1025,7 +1025,21 @@ class CdnProvider with ChangeNotifier {
   Future<void> clearCustomDomain() async {
     _customDomain = null;
     await _persistCustomDomain();
-    _lastError = null;
+    // Mirror of the promote logic in setCustomDomain: if removing the
+    // custom domain leaves no destination at all (no workers.dev
+    // subdomain claimed either), demote back to verifiedButIncomplete.
+    // Codex review round 2 caught the asymmetry — without this, the
+    // UI shows green "verified" but deployWorkerForNode would reject
+    // because there's no destination.
+    final hasSubdomain = (_workersSubdomain ?? '').isNotEmpty;
+    if (!hasSubdomain && _status == CdnStatus.verified) {
+      _status = CdnStatus.verifiedButIncomplete;
+      _lastError = 'Token verified, but no workers.dev subdomain claimed '
+          'yet — visit the Workers dashboard once to claim one, or bind '
+          'a custom domain below.';
+    } else {
+      _lastError = null;
+    }
     notifyListeners();
   }
 
