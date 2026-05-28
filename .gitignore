@@ -48,3 +48,4 @@ mobile/android/app/.cxx/
 
 # Flutter golden-test failure artifacts (regenerated on each failing run)
 mobile/test/failures/
+.wrangler/
