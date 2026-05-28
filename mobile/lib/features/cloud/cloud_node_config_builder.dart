@@ -208,9 +208,22 @@ Map<String, String> _appendInstanceOutbounds(
       info.vlessUuid.isNotEmpty) {
     final tag = '$label-CDN';
     final secret = cdnEndpoint?.pathSecret;
+    // Path-secret goes in a PATH SEGMENT, not a query string. Root cause
+    // found 2026-05-28 (codex source-level review): sing-box does NOT
+    // parse `?ed=N` query syntax in transport.ws.path — that's an
+    // xray/v2ray convention. sing-box uses explicit `max_early_data` +
+    // `early_data_header_name` options instead. So sing-box treats the
+    // whole `path` string as a literal URL path and Go's
+    // url.RequestURI() percent-escapes the `?` to `%3F`. The wire
+    // request became `GET /%3Fk=<secret> HTTP/1.1`, so the Worker's
+    // `url.searchParams.get('k')` was always null → 404 on every probe.
+    // curl/Dart worked because they send a real `?` query. Putting the
+    // secret in a path segment (`/<secret>`) survives escaping intact —
+    // slashes and hex are not escaped. The Worker now checks the
+    // pathname.
     final wsPath = (secret != null && secret.isNotEmpty)
-        ? '/?ed=2560&k=$secret'
-        : '/?ed=2560';
+        ? '/$secret'
+        : '/';
     outbounds.add({
       'type': 'vless',
       'tag': tag,

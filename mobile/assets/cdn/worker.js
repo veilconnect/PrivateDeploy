@@ -52,12 +52,22 @@ export default {
     // template without replacing the placeholder.
     if (PATH_SECRET) {
       const url = new URL(request.url);
-      if (url.searchParams.get('k') !== PATH_SECRET) {
+      // Accept the secret from EITHER the first path segment
+      // (`/<secret>`) OR the `?k=<secret>` query param. sing-box's WS
+      // dialer escapes query strings in transport.ws.path (it does not
+      // implement the xray `?ed=` convention — it uses max_early_data
+      // options instead), so it can only deliver the secret as a path
+      // segment. curl/Dart probes and any older client send it as a
+      // query. Checking both keeps every client working.
+      const pathSecret = url.pathname.replace(/^\/+/, '').split('/')[0];
+      const querySecret = url.searchParams.get('k');
+      if (pathSecret !== PATH_SECRET && querySecret !== PATH_SECRET) {
         return new Response(null, { status: 404 });
       }
     }
 
-    const upgradeHeader = request.headers.get('Upgrade');
+    // Header value is case-insensitive per RFC 6455 + RFC 7230 §3.2.
+    const upgradeHeader = request.headers.get('Upgrade')?.toLowerCase();
     if (upgradeHeader !== 'websocket') {
       // Even with the right secret, non-WS requests return a generic 404.
       // No landing page, no app branding — the hostname is functionally

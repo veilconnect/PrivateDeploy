@@ -52,7 +52,15 @@ export default {
     // template without replacing the placeholder.
     if (PATH_SECRET) {
       const url = new URL(request.url);
-      if (url.searchParams.get('k') !== PATH_SECRET) {
+      // Accept the secret from EITHER the first path segment
+      // (`/<secret>`) OR the `?k=<secret>` query param. sing-box's WS
+      // dialer escapes query strings in transport.ws.path (it uses
+      // max_early_data options, not the xray `?ed=` convention), so it
+      // can only deliver the secret as a path segment. curl/Dart probes
+      // send it as a query. Checking both keeps every client working.
+      const pathSecret = url.pathname.replace(/^\/+/, '').split('/')[0];
+      const querySecret = url.searchParams.get('k');
+      if (pathSecret !== PATH_SECRET && querySecret !== PATH_SECRET) {
         return new Response(null, { status: 404 });
       }
     }
