@@ -1034,8 +1034,12 @@ class CdnProvider with ChangeNotifier {
     final hasSubdomain = (_workersSubdomain ?? '').isNotEmpty;
     if (!hasSubdomain && _status == CdnStatus.verified) {
       _status = CdnStatus.verifiedButIncomplete;
-      _lastError = 'Token verified, but no workers.dev subdomain claimed '
-          'yet — visit the Workers dashboard once to claim one, or bind '
+      // Distinct copy from the generic "Token verified, but no
+      // subdomain" — the user just intentionally removed the binding,
+      // so the message should explain the consequence + what would
+      // re-enable deploy.
+      _lastError = 'Custom domain unbound. To deploy Workers, claim a '
+          'workers.dev subdomain in the Cloudflare dashboard, or bind '
           'a custom domain below.';
     } else {
       _lastError = null;

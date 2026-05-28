@@ -382,6 +382,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // confuse the state machine.
         cancelDelayedRestart()
         delayedRestartAttempt = 0
+        // Wait for any in-progress teardown to fully release before
+        // checking isRunning. Codex round-3 caught a dropped-start
+        // bug: teardownVpnCore now orders cleanupTunnel() BEFORE
+        // isRunning=false to close one race, but that means during
+        // teardown there's a window where isRunning is still true.
+        // A startVpn landing in that window would hit the
+        // `if (isRunning) return` below, silently bail, leave
+        // Flutter's pending start handle dangling until plugin
+        // timeout (90s). This synchronized() block does nothing
+        // except wait for the teardownLock so the check below sees
+        // a settled state.
+        synchronized(teardownLock) { /* barrier */ }
         if (isRunning) {
             Log.w(TAG, "VPN is already running")
             return
@@ -689,28 +701,24 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     Log.e(TAG, "Failed to start VPN after $START_MAX_ATTEMPTS attempts", lastError)
                     teardownVpnCore("start-failed")
                     stopForeground(STOP_FOREGROUND_REMOVE)
-                    // Re-check desiredRunning before broadcasting error
-                    // + stopSelf. Gemini flagged a race: between the
-                    // start attempts loop ending and this block
-                    // running, the user can have tapped Connect again,
-                    // which sets desiredRunning=true and starts a fresh
-                    // attempt via [startInProgress] CAS. If we
-                    // broadcast a stale error + call stopSelf() now,
-                    // the UI flickers to "failed" then back to
-                    // connecting, and stopSelf can race-destroy the
-                    // service mid-second-attempt because the
-                    // unparametrized stopSelf doesn't track startId.
+                    // `cancelled` was sampled at the top of this
+                    // block. The user could have tapped Stop in the
+                    // milliseconds between that sample and this
+                    // broadcast — codex round-2 LOW finding. Suppress
+                    // the misleading "failed to start" message when
+                    // desiredRunning is now false (user clearly
+                    // wanted to abort), but still stopSelf so the
+                    // service tears down cleanly.
                     if (desiredRunning.get()) {
+                        broadcastError(failedStartErrorMessage(lastError))
+                    } else {
                         Log.i(
                             TAG,
-                            "Start failed, but user already retried — " +
-                                "skipping broadcastError + stopSelf so " +
-                                "the new attempt isn't disturbed",
+                            "Start failed, but user stopped concurrently — " +
+                                "suppressing error broadcast",
                         )
-                    } else {
-                        broadcastError(failedStartErrorMessage(lastError))
-                        stopSelf()
                     }
+                    stopSelf()
                 }
             }
             } finally {
