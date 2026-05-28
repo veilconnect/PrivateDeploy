@@ -230,13 +230,21 @@ Map<String, String> _appendInstanceOutbounds(
         // `Upgrade` + `Connection` headers (they're hop-by-hop), the Worker
         // sees no upgrade, and it returns 404 — silently breaking every WS
         // dial through the Worker even though every other field is correct.
-        // Chrome uTLS otherwise advertises h2 first, so CF picks h2 and
-        // we hit exactly that 404 path.
         'alpn': ['http/1.1'],
-        'utls': {
-          'enabled': true,
-          'fingerprint': 'chrome',
-        },
+        // NO uTLS for the CDN outbound. uTLS Chrome's ClientHello carries
+        // its own ALPN list (`h2,http/1.1` with h2 preferred) and SILENTLY
+        // overrides the `alpn` field above when fingerprint=chrome. CF
+        // then picks h2 → Upgrade header gets stripped → Worker returns
+        // 404 → urltest deems CDN outbound dead → falls back to bare VPS
+        // → cellular connectivity failures bare VPS → user reports "still can't
+        // connect" while curl from the same device gets 101 (because
+        // curl --http1.1 forces HTTP/1.1).
+        //
+        // Don't reintroduce uTLS here without first verifying that
+        // sing-box's uTLS implementation actually honours the
+        // [`alpn`] config when fingerprint is set. The Chrome variant
+        // didn't on the build shipped 2026-05-28; the symptom is
+        // identical to the original ALPN bug from May 23.
       },
     });
     tags.add(tag);
