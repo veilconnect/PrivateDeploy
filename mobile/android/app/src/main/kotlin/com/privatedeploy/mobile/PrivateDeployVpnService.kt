@@ -1809,11 +1809,72 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 broadcastStatus("revoked", VPN_REVOKED_MESSAGE)
                 return
             }
+            // User report 2026-06-01: PrivateDeploy was silently stealing
+            // WireGuard's active VPN slot. Trace: user activates
+            // WireGuard, Android revokes our previous session. OS later
+            // kills our process for memory pressure WITHOUT delivering
+            // onRevoke (or kills us before stopVpn's clear ran). Service
+            // is recreated via START_REDELIVER_INTENT, this resume reads
+            // a stale "active" persisted intent, calls startVpn, and
+            // claiming a new VpnService instance causes Android to
+            // revoke WireGuard — exactly the "steals the slot" symptom
+            // the user reported.
+            //
+            // Guard: before resuming, ask ConnectivityManager whether
+            // some OTHER process currently owns a VPN NetworkAgent. If
+            // so, clear our persisted intent and respect the active
+            // VPN. This matches Clash + WireGuard's coexistence
+            // pattern that the user expected.
+            if (anotherVpnIsActive()) {
+                Log.w(
+                    TAG,
+                    "Resume skipped: another VPN (e.g. WireGuard) is already " +
+                        "active on this device. Clearing our persisted intent " +
+                        "so we don't steal its slot.",
+                )
+                clearPersistedVpnIntent()
+                return
+            }
             Log.i(TAG, "Resuming VPN from persisted intent after process recreate.")
             startVpn(config)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to resume from persisted VPN intent", e)
         }
+    }
+
+    /**
+     * True when ConnectivityManager reports any active VPN-transport
+     * network. Used by [attemptResumeFromPersistedIntent] to avoid
+     * stealing another VPN's (WireGuard, Clash-TUN, etc) session on
+     * process recreate.
+     *
+     * Why "any VPN" is safe: this is called only from the resume path,
+     * which runs at onCreate / null-action onStartCommand. At that
+     * moment our own service is JUST being constructed — we have not
+     * yet called [Builder.establish], `vpnInterface` is null, and our
+     * prior VPN NetworkAgent (if any) has already been torn down by
+     * the OS as part of the revoke/recreate cycle. So any
+     * TRANSPORT_VPN network present here can only belong to a peer
+     * VPN app, not us.
+     *
+     * VpnTransportInfo.sessionId would be the proper owner check but
+     * it's @SystemApi — not callable from third-party apps. The
+     * presence-only check is correct given the call-site invariant.
+     */
+    private fun anotherVpnIsActive(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
+        for (network in cm.allNetworks) {
+            val caps = cm.getNetworkCapabilities(network) ?: continue
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                Log.i(
+                    TAG,
+                    "anotherVpnIsActive: VPN network present (network=$network); " +
+                        "yielding to it instead of resuming",
+                )
+                return true
+            }
+        }
+        return false
     }
 
     override fun onDestroy() {
