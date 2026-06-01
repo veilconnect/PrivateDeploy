@@ -86,24 +86,28 @@ class PrivateDeployApp extends StatelessWidget {
               final dep = cdnProvider?.deploymentFor(nodeId);
               if (dep == null) return null;
               // Once the user has configured an M1 custom domain for this
-              // node, route through it regardless of customHostStatus.
-              // The status probe runs over the platform DNS resolver,
-              // which is exactly what's broken on the carriers where M1
-              // is needed most (regional mobile network DNS-poisons both *.workers.dev
-              // and the custom hostname). A 'failed' verdict from the
-              // probe under those conditions is a false negative, and
-              // falling back to workers.dev pushes traffic onto a more
-              // altered path. sing-box's internal DoH resolves the
-              // custom host correctly, so let it try. The 'pending'
-              // window (~60s while CF provisions the cert) is still a
-              // real failure mode — we surface it as a UI banner instead
-              // of silently rerouting.
+              // node, route through it as the PRIMARY hostname regardless
+              // of customHostStatus. The status probe runs over the
+              // platform DNS resolver, which is exactly what's broken on
+              // the carriers where M1 is needed most (regional mobile network
+              // DNS-poisons both *.workers.dev and the custom hostname).
+              // A 'failed' verdict from the probe under those conditions
+              // is a false negative.
+              //
+              // Side-by-side fallback: when a custom domain is bound, we
+              // ALSO emit the `*.workers.dev` form as a sibling outbound
+              // in the urltest pool. The two paths point at the SAME
+              // Worker (same path-secret) and sing-box's connection-time
+              // urltest will pick whichever the carrier actually lets
+              // through. This replaces the old probe-and-switch logic
+              // that left the user stuck on whichever hostname the
+              // single client-side probe happened to test first.
               final ch = dep.customHost;
-              final host =
-                  (ch != null && ch.isNotEmpty) ? ch : dep.workerHost;
+              final isPrimaryCustom = ch != null && ch.isNotEmpty;
               return CdnEndpoint(
-                host: host,
+                host: isPrimaryCustom ? ch : dep.workerHost,
                 pathSecret: dep.pathSecret,
+                fallbackHost: isPrimaryCustom ? dep.workerHost : null,
               );
             });
 

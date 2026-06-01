@@ -12,7 +12,11 @@ import 'cloud_models.dart';
 /// so the secret is part of the routing identity, not a UI-only field.
 @immutable
 class CdnEndpoint {
-  const CdnEndpoint({required this.host, this.pathSecret});
+  const CdnEndpoint({
+    required this.host,
+    this.pathSecret,
+    this.fallbackHost,
+  });
 
   final String host;
 
@@ -21,6 +25,25 @@ class CdnEndpoint {
   /// the path without ?k= and the Worker template falls through to its old
   /// behaviour. Newly deployed Workers always set this.
   final String? pathSecret;
+
+  /// Sibling hostname pointing at the same Worker. When non-null we emit
+  /// a SECOND CDN outbound into the urltest pool so sing-box's auto-failover
+  /// gets two paths to the same relay.
+  ///
+  /// Why this exists: the previous design used a single client-side TLS
+  /// probe to decide whether to route via the M1 custom domain or the
+  /// `*.workers.dev` fallback. On regional mobile network both `*.workers.dev` and
+  /// the custom domain can be altered by different operators in
+  /// different ways — and the probe runs from the very network we're
+  /// trying to fix, so it's unreliable in exactly the scenario where
+  /// the user needs M1 most. Giving sing-box BOTH hostnames lets
+  /// urltest's connection-time test pick whichever the carrier
+  /// actually lets through, no client probe needed.
+  ///
+  /// Typically [host] is the M1 custom domain and [fallbackHost] is
+  /// the `*.workers.dev` URL — but the builder makes no assumption
+  /// either way; both go into the urltest pool with equal weight.
+  final String? fallbackHost;
 }
 
 const Map<String, String> _cloudEndpointLabelByTagSuffix = {
@@ -186,14 +209,22 @@ Map<String, String> _appendInstanceOutbounds(
     endpointTagByLabel['VLESS'] = tag;
   }
 
-  // CDN-fronted variant. Routed to a Cloudflare Worker host that relays
-  // WS↔TCP to the node's vlessRelayPort. The caller resolves cdnEndpoint
-  // to the user's M1 custom-domain (preferred — bypasses the *.workers.dev
-  // DNS-poisoning that some carriers apply) and falls back to the
-  // workers.dev hostname if no custom domain is bound. Strict M1: we
-  // never emit BOTH simultaneously, because keeping a known-bad
-  // workers.dev sibling in the urltest group costs probe latency before
-  // urltest converges away from it.
+  // CDN-fronted variant(s). Routed to a Cloudflare Worker host that
+  // relays WS↔TCP to the node's vlessRelayPort. The caller resolves
+  // cdnEndpoint to the user's M1 custom-domain (preferred — bypasses
+  // the *.workers.dev DNS-poisoning that some carriers apply); if a
+  // sibling `fallbackHost` is also supplied (typically the `*.workers.dev`
+  // form), we emit a SECOND outbound pointing at it.
+  //
+  // Why two outbounds: the previous design used a single client-side
+  // TLS probe to gate which hostname was wired into the config, and
+  // fell back to a single workers.dev outbound on probe failure. But
+  // on the broken cellular networks where M1 is most needed, the probe
+  // runs through the SAME broken network and never succeeds — leaving
+  // the user permanently on the workers.dev path that the carrier is
+  // also DNS-poisoning. Giving sing-box BOTH hostnames lets urltest's
+  // connection-time test pick whichever one the carrier actually lets
+  // through, no client-side probe needed.
   //
   // The path always carries the per-deployment PATH_SECRET as ?k=<secret>
   // (when present). The Worker rejects every request that doesn't match
@@ -206,7 +237,6 @@ Map<String, String> _appendInstanceOutbounds(
       cdnHost.isNotEmpty &&
       info.vlessRelayPort > 0 &&
       info.vlessUuid.isNotEmpty) {
-    final tag = '$label-CDN';
     final secret = cdnEndpoint?.pathSecret;
     // Path-secret goes in a PATH SEGMENT, not a query string. Root cause
     // found 2026-05-28 (codex source-level review): sing-box does NOT
@@ -224,44 +254,60 @@ Map<String, String> _appendInstanceOutbounds(
     final wsPath = (secret != null && secret.isNotEmpty)
         ? '/$secret'
         : '/';
-    outbounds.add({
-      'type': 'vless',
-      'tag': tag,
-      'server': cdnHost,
-      'server_port': 443,
-      'uuid': info.vlessUuid,
-      'transport': {
-        'type': 'ws',
-        'path': wsPath,
-        'headers': {'Host': cdnHost},
-      },
-      'tls': {
-        'enabled': true,
-        'server_name': cdnHost,
-        // ALPN must be HTTP/1.1 only. CF Worker WebSocket upgrades use the
-        // HTTP/1.1 Upgrade mechanism; over HTTP/2 the runtime strips
-        // `Upgrade` + `Connection` headers (they're hop-by-hop), the Worker
-        // sees no upgrade, and it returns 404 — silently breaking every WS
-        // dial through the Worker even though every other field is correct.
-        'alpn': ['http/1.1'],
-        // NO uTLS for the CDN outbound. uTLS Chrome's ClientHello carries
-        // its own ALPN list (`h2,http/1.1` with h2 preferred) and SILENTLY
-        // overrides the `alpn` field above when fingerprint=chrome. CF
-        // then picks h2 → Upgrade header gets stripped → Worker returns
-        // 404 → urltest deems CDN outbound dead → falls back to bare VPS
-        // → cellular connectivity failures bare VPS → user reports "still can't
-        // connect" while curl from the same device gets 101 (because
-        // curl --http1.1 forces HTTP/1.1).
-        //
-        // Don't reintroduce uTLS here without first verifying that
-        // sing-box's uTLS implementation actually honours the
-        // [`alpn`] config when fingerprint is set. The Chrome variant
-        // didn't on the build shipped 2026-05-28; the symptom is
-        // identical to the original ALPN bug from May 23.
-      },
-    });
-    tags.add(tag);
-    endpointTagByLabel['CDN'] = tag;
+
+    void addCdnOutbound(String host, String tagSuffix) {
+      final tag = '$label-$tagSuffix';
+      outbounds.add({
+        'type': 'vless',
+        'tag': tag,
+        'server': host,
+        'server_port': 443,
+        'uuid': info.vlessUuid,
+        'transport': {
+          'type': 'ws',
+          'path': wsPath,
+          'headers': {'Host': host},
+        },
+        'tls': {
+          'enabled': true,
+          'server_name': host,
+          // ALPN must be HTTP/1.1 only. CF Worker WebSocket upgrades use the
+          // HTTP/1.1 Upgrade mechanism; over HTTP/2 the runtime strips
+          // `Upgrade` + `Connection` headers (they're hop-by-hop), the Worker
+          // sees no upgrade, and it returns 404 — silently breaking every WS
+          // dial through the Worker even though every other field is correct.
+          'alpn': ['http/1.1'],
+          // NO uTLS for the CDN outbound. uTLS Chrome's ClientHello carries
+          // its own ALPN list (`h2,http/1.1` with h2 preferred) and SILENTLY
+          // overrides the `alpn` field above when fingerprint=chrome. CF
+          // then picks h2 → Upgrade header gets stripped → Worker returns
+          // 404 → urltest deems CDN outbound dead → falls back to bare VPS
+          // → cellular connectivity failures bare VPS → user reports "still can't
+          // connect" while curl from the same device gets 101 (because
+          // curl --http1.1 forces HTTP/1.1).
+          //
+          // Don't reintroduce uTLS here without first verifying that
+          // sing-box's uTLS implementation actually honours the
+          // [`alpn`] config when fingerprint is set. The Chrome variant
+          // didn't on the build shipped 2026-05-28; the symptom is
+          // identical to the original ALPN bug from May 23.
+        },
+      });
+      tags.add(tag);
+    }
+
+    addCdnOutbound(cdnHost, 'CDN');
+    // Primary tag stays 'CDN' so existing label-based selection (e.g.
+    // "preferredEndpointLabel = CDN") continues to point at the
+    // user's preferred hostname, not the fallback.
+    endpointTagByLabel['CDN'] = '$label-CDN';
+
+    final fallbackHost = cdnEndpoint?.fallbackHost;
+    if (fallbackHost != null &&
+        fallbackHost.isNotEmpty &&
+        fallbackHost != cdnHost) {
+      addCdnOutbound(fallbackHost, 'CDN-fallback');
+    }
   }
 
   if (info.trojanPort > 0 && info.trojanPassword.isNotEmpty) {
@@ -322,6 +368,9 @@ String? buildCloudNodeConfig(
   if (cdnEndpoint?.host != null && cdnEndpoint!.host.isNotEmpty) {
     cdnHostsForDns.add(cdnEndpoint.host);
   }
+  if (cdnEndpoint?.fallbackHost != null && cdnEndpoint!.fallbackHost!.isNotEmpty) {
+    cdnHostsForDns.add(cdnEndpoint.fallbackHost!);
+  }
 
   final outbounds = <Map<String, dynamic>>[];
   final tags = <String>[];
@@ -381,6 +430,10 @@ String? buildCloudNodeConfig(
       final fiCdnEndpoint = failoverCdnEndpointResolver?.call(fi);
       if (fiCdnEndpoint?.host != null && fiCdnEndpoint!.host.isNotEmpty) {
         cdnHostsForDns.add(fiCdnEndpoint.host);
+      }
+      if (fiCdnEndpoint?.fallbackHost != null &&
+          fiCdnEndpoint!.fallbackHost!.isNotEmpty) {
+        cdnHostsForDns.add(fiCdnEndpoint.fallbackHost!);
       }
       _appendInstanceOutbounds(
         fi,

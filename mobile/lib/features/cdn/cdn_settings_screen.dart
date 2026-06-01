@@ -1231,20 +1231,24 @@ String _customHostStatusLabel({
   required CdnDeployment dep,
   required bool isZh,
 }) {
-  final hasWorkerFallback = dep.workerHost.isNotEmpty;
+  // The text used to say "暂用 workers.dev" / "fell back to workers.dev",
+  // implying the active outbound was workers.dev only. That was untrue:
+  // the routing layer at main.dart's CdnEndpointResolver already prefers
+  // customHost regardless of probe status, and since the side-by-side
+  // change (cloud_node_config_builder: emit both hostnames into the
+  // urltest pool) sing-box has BOTH paths concurrently and picks whichever
+  // the carrier lets through. Talking about a "fallback" implies a
+  // sequential decision that no longer exists — sing-box's urltest test
+  // runs them in parallel.
   switch (dep.customHostStatus) {
     case 'pending':
-      return hasWorkerFallback
-          ? (isZh
-              ? '正在验证 CDN 中转链路…暂用 workers.dev'
-              : 'Verifying CDN relay path; using workers.dev')
-          : (isZh ? '正在验证 CDN 中转链路…' : 'Verifying CDN relay path…');
+      return isZh
+          ? '正在验证 CDN 中转链路'
+          : 'Verifying CDN relay path';
     case 'failed':
-      return hasWorkerFallback
-          ? (isZh
-              ? 'CDN 中转链路不可用；回退 workers.dev'
-              : 'CDN relay path unreachable; fell back to workers.dev')
-          : (isZh ? 'CDN 中转链路不可用' : 'CDN relay path unreachable');
+      return isZh
+          ? 'CDN 探测未通过（仍会尝试连接）'
+          : "CDN probe didn't pass (we'll still try)";
     default:
       return '';
   }
