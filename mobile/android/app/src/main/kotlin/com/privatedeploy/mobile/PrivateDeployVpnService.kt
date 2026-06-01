@@ -1785,10 +1785,25 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun clearPersistedVpnIntent() {
         try {
+            // Synchronous .commit() rather than async .apply(). User-initiated
+            // Stop is the critical call site (line 833); .apply() returns
+            // immediately and the actual disk write is deferred to a
+            // background queue. If lmkd kills the process before that queue
+            // flushes, the persisted intent stays "active" on disk and the
+            // OS-recreated service auto-resumes the tunnel the user explicitly
+            // stopped — a "zombie VPN" violation of user intent that gemini
+            // flagged on 2026-06-01 (round-6 review).
+            //
+            // .commit() blocks the caller until the write completes against
+            // the filesystem journal/page cache. For our tiny prefs file
+            // that's typically sub-millisecond; the 5-second ANR threshold
+            // is multiple orders of magnitude away. Synchronous writes
+            // also survive lmkd kills because the kernel keeps page-cached
+            // data and flushes it after the process dies.
             getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
                 .edit()
                 .clear()
-                .apply()
+                .commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to clear persisted VPN intent", e)
         }
