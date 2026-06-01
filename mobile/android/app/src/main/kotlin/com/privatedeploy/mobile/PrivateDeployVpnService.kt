@@ -314,6 +314,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private val startInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
+     * Records that a [restartVpn] call arrived while a [startVpn] worker
+     * was mid-flight. We don't drop the request — that would lose the
+     * NetworkCallback's restart-on-handover signal and leave the start
+     * worker finishing against a network that may have just died. Instead
+     * the start worker checks this flag in its finally block (right
+     * before clearing [startInProgress]) and replays the restart if set.
+     *
+     * Gemini (round 6) caught that a naive "if startInProgress, drop" gate
+     * would silently strand the tunnel on the wrong underlying network
+     * across a handover. Queue-then-replay preserves the restart's
+     * intent without admitting two concurrent libbox callers.
+     */
+    private val pendingRestart = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
      * "User wants VPN active". Set true by [startVpn] on intent receipt,
      * false by [stopVpn], [onRevoke], [onDestroy]. All auto-restart
      * paths (NetworkCallback, periodic health monitor, scheduled
@@ -754,6 +769,24 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 // every exit path including the early `break` from
                 // the desiredRunning re-check.
                 startInProgress.set(false)
+                // Replay any restart that was queued while we held the
+                // gate. compareAndSet ensures we don't fire twice if
+                // multiple callbacks set [pendingRestart] during this
+                // worker's lifetime; we lose nothing because restart
+                // itself picks up the current underlying network state.
+                // Skip replay when desiredRunning was cleared mid-flight
+                // (user pressed Stop or onRevoke fired) — the tunnel
+                // is intentionally going away and a queued restart
+                // would revive it against user intent.
+                if (pendingRestart.compareAndSet(true, false) &&
+                    desiredRunning.get() &&
+                    isRunning) {
+                    Log.i(
+                        TAG,
+                        "Replaying queued restart now that startVpn worker has finished.",
+                    )
+                    mainHandler.post { restartVpn() }
+                }
             }
         }
     }
@@ -828,6 +861,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // callback, in-progress restart loop) must see this flag and
         // bail. Race-free because [desiredRunning] is atomic.
         desiredRunning.set(false)
+        // Drop any restart that was queued by a NetworkCallback while a
+        // start worker was mid-flight. The start worker's finally block
+        // re-checks desiredRunning before replaying, so this is belt +
+        // suspenders — but it makes the intent obvious to readers.
+        pendingRestart.set(false)
         // Persisted state goes too — next process-recreate must NOT
         // auto-resume because the user explicitly stopped.
         clearPersistedVpnIntent()
@@ -871,6 +909,26 @@ class PrivateDeployVpnService : VpnService(), Platform {
         val config = activeConfig
         if (config.isNullOrBlank()) {
             broadcastError("No VPN config available for restart")
+            return
+        }
+        // If a start is mid-flight (started by user tap OR auto-resume),
+        // a NetworkCallback's restart cannot enter libbox alongside it
+        // — two concurrent core operations is exactly the AtomicBoolean
+        // state machine's job to prevent. But we also can't DROP the
+        // restart: the NetworkCallback fires on handover, and ignoring
+        // it leaves the start worker bound to a network that just died.
+        // Queue the restart instead; the start worker checks
+        // [pendingRestart] in its finally block and replays.
+        //
+        // (codex round-5 caught the race; gemini round-6 caught that the
+        // naive drop-it fix would strand the tunnel on stale network.)
+        if (startInProgress.get()) {
+            pendingRestart.set(true)
+            Log.i(
+                TAG,
+                "Deferring restart: startVpn worker is mid-flight; " +
+                    "will replay when it finishes.",
+            )
             return
         }
         // Atomic check-and-set. Plain Boolean lost races between health
