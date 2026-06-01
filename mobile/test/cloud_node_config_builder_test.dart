@@ -75,7 +75,14 @@ void main() {
 
       final transport = cdnMap['transport'] as Map<String, dynamic>;
       expect(transport['type'], 'ws');
-      expect(transport['path'], '/?ed=2560');
+      // No pathSecret in this CdnEndpoint → path is bare '/'. The xray
+      // `?ed=N` convention is NOT what sing-box implements (it uses
+      // explicit max_early_data options), so we must not emit a query
+      // string in transport.ws.path — Go's url.RequestURI() escapes the
+      // `?` to `%3F` and the Worker 404s. Pinning the literal "/" here
+      // catches any regression that re-introduces the `?ed=` syntax.
+      // (Root cause + path-segment fix in commit dce7e7c, 2026-05-28.)
+      expect(transport['path'], '/');
       expect((transport['headers'] as Map)['Host'],
           'pd-relay-lax.acme.workers.dev');
 
@@ -85,6 +92,199 @@ void main() {
       // CDN variant must NOT carry the Reality block — that fields-based
       // protocol is what the dumb WS↔TCP relay can't handle.
       expect(tls.containsKey('reality'), isFalse);
+      // ALPN must be HTTP/1.1 only. CF Workers strip Upgrade/Connection
+      // headers on h2, so an h2-negotiated TLS session returns 404 to
+      // every WS upgrade. Locked in here so a future refactor cannot
+      // silently fall back to the sing-box default (which is no
+      // explicit alpn → CF picks h2). See commit 0bcbae9, 2026-05-24.
+      expect(tls['alpn'], ['http/1.1']);
+      // No uTLS for CDN outbound. uTLS Chrome's ClientHello carries its
+      // own ALPN list (h2 preferred) and SILENTLY overrides our `alpn`
+      // setting, so the only safe choice today is to leave uTLS off
+      // entirely. See commit 2e8deb1, 2026-05-28.
+      expect(tls.containsKey('utls'), isFalse);
+    });
+
+    test(
+        'CDN endpoint with pathSecret produces path segment, not query '
+        '(sing-box escapes ? in transport.ws.path)', () {
+      final instance = CloudInstance(
+        id: 'node-secret',
+        provider: 'vultr',
+        label: 'sea-1',
+        status: 'active',
+        region: 'sea',
+        plan: 'vc2-1c-1gb',
+        ipv4: '5.6.7.8',
+        nodeInfo: NodeInfo(
+          ssPort: 0,
+          ssPassword: '',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-secret',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: 'example.com',
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: null,
+          vlessRelayPort: 47100,
+        ),
+      );
+      final raw = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'pd-relay-sea.acme.workers.dev',
+          pathSecret: 'deadbeefcafef00ddeadbeefcafef00d',
+        ),
+      );
+      expect(raw, isNotNull);
+      final outbounds = (jsonDecode(raw!) as Map)['outbounds'] as List;
+      final cdn = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'sea-1-CDN',
+      ) as Map<String, dynamic>;
+      final transport = cdn['transport'] as Map<String, dynamic>;
+      // PATH SEGMENT, not query. The Worker accepts either form for
+      // backward-compat with curl/Dart probes, but sing-box's WS dialer
+      // MUST send the path segment — Go's url.RequestURI() escapes
+      // `?` to `%3F` and the Worker's url.searchParams.get('k') would
+      // see null. Pinning the literal expected value here makes the
+      // bug regression-proof.
+      expect(transport['path'], '/deadbeefcafef00ddeadbeefcafef00d');
+    });
+
+    test(
+        'CdnEndpoint with fallbackHost emits sibling CDN-fallback '
+        'outbound (gemini round-6 fix)', () {
+      // This is the change that finally reachable regional mobile network: shipping
+      // both the M1 custom domain AND the *.workers.dev fallback into
+      // the urltest pool so sing-box's connection-time test picks
+      // whichever the carrier lets through. Without this test the
+      // single-outbound regression that broke cellular for weeks
+      // would be silent.
+      final instance = CloudInstance(
+        id: 'node-dual',
+        provider: 'vultr',
+        label: 'lax-2',
+        status: 'active',
+        region: 'lax',
+        plan: 'vc2-1c-1gb',
+        ipv4: '5.6.7.8',
+        nodeInfo: NodeInfo(
+          ssPort: 0,
+          ssPassword: '',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-dual',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: 'example.com',
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: null,
+          vlessRelayPort: 47100,
+        ),
+      );
+      final raw = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'relay-lax-2.example.org',
+          pathSecret: 'cafebabecafebabecafebabecafebabe',
+          fallbackHost: 'pd-relay-lax2.acme.workers.dev',
+        ),
+      );
+      expect(raw, isNotNull);
+
+      final outbounds = (jsonDecode(raw!) as Map)['outbounds'] as List;
+      final primary = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'lax-2-CDN',
+        orElse: () => null,
+      ) as Map<String, dynamic>?;
+      final fallback = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'lax-2-CDN-fallback',
+        orElse: () => null,
+      ) as Map<String, dynamic>?;
+
+      expect(primary, isNotNull,
+          reason: 'primary CDN outbound must be emitted');
+      expect(fallback, isNotNull,
+          reason: 'fallbackHost must produce a sibling CDN-fallback '
+              'outbound — this is what makes urltest pick whichever '
+              'hostname the carrier lets through on cellular');
+
+      // Different hostnames, same path-secret (both point at the SAME
+      // Worker — the only thing that differs is which DNS record the
+      // client resolves).
+      expect(primary!['server'], 'relay-lax-2.example.org');
+      expect(fallback!['server'], 'pd-relay-lax2.acme.workers.dev');
+      expect(
+        (primary['transport'] as Map)['path'],
+        '/cafebabecafebabecafebabecafebabe',
+      );
+      expect(
+        (fallback['transport'] as Map)['path'],
+        '/cafebabecafebabecafebabecafebabe',
+      );
+      // Both must carry the same TLS hardening (alpn http/1.1, no uTLS).
+      expect((primary['tls'] as Map)['alpn'], ['http/1.1']);
+      expect((fallback['tls'] as Map)['alpn'], ['http/1.1']);
+      expect((primary['tls'] as Map).containsKey('utls'), isFalse);
+      expect((fallback['tls'] as Map).containsKey('utls'), isFalse);
+    });
+
+    test(
+        'fallbackHost equal to primary host is skipped to avoid '
+        'duplicate outbounds', () {
+      final instance = CloudInstance(
+        id: 'node-dup',
+        provider: 'vultr',
+        label: 'fra-1',
+        status: 'active',
+        region: 'fra',
+        plan: 'vc2-1c-1gb',
+        ipv4: '5.6.7.8',
+        nodeInfo: NodeInfo(
+          ssPort: 0,
+          ssPassword: '',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-dup',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: 'example.com',
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: null,
+          vlessRelayPort: 47100,
+        ),
+      );
+      final raw = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'pd-relay-fra.acme.workers.dev',
+          fallbackHost: 'pd-relay-fra.acme.workers.dev',
+        ),
+      );
+      expect(raw, isNotNull);
+      final outbounds = (jsonDecode(raw!) as Map)['outbounds'] as List;
+      final fallback = outbounds.where(
+        (o) => o is Map && o['tag'] == 'fra-1-CDN-fallback',
+      );
+      expect(fallback, isEmpty,
+          reason: 'identical fallbackHost is a no-op — emitting it would '
+              'just give urltest two probes against the same hostname');
     });
 
     test(
