@@ -858,7 +858,41 @@ class CloudProvider extends CloudProviderBase {
       await _saveApiKey(normalizedKey);
 
       final client = await _cloudClient();
-      await client.validateApiKey();
+      try {
+        await client.validateApiKey();
+      } catch (e) {
+        // Save-first / verify-later: a transient network failure here
+        // (timeout, DNS lookup failure, socket refused, certificate
+        // hiccup) is the exact shape of what happens on the
+        // China-Mobile cellular networks where this app is supposed to
+        // help — the carrier blocks api.vultr.com (or api.do.com, etc)
+        // outright, so the validation call can never complete from
+        // cellular even with a perfectly-good token. Previously we
+        // cleared the disk-saved key and returned false; the user saw
+        // "Failed to save API key" and was completely stuck unless
+        // they could find a Wi-Fi access point first. Now we keep the
+        // saved key, surface the failure as an informational message,
+        // and defer the actual validation + node-list refresh until
+        // the next time the network can reach the provider.
+        //
+        // Auth failures (401/403/"invalid api key") still abort and
+        // clear, because those mean the token itself is wrong and no
+        // amount of waiting for the network will fix it.
+        if (shouldKeepCloudApiKeyOnError(e)) {
+          _error =
+              'API key saved. Could not reach ${providerId.displayName} to verify yet '
+              '(${cloudProviderMessageFromError(e)}) — we will retry when the '
+              'network reaches it.';
+          AppLogger.warning(
+            '[CloudProvider] API key saved, online verify deferred: $e',
+          );
+          return true;
+        }
+        await _clearApiKey();
+        _error = 'Failed to save API key: ${cloudProviderMessageFromError(e)}';
+        AppLogger.error('[CloudProvider] Save API key error', e);
+        return false;
+      }
 
       await _loadNodeRecords();
       await refreshCloudConfig(notify: false);
@@ -871,6 +905,8 @@ class CloudProvider extends CloudProviderBase {
       unawaited(refreshAccountStatus());
       return true;
     } catch (e) {
+      // Pre-validate failures (storage, normalization) — keep the
+      // previous strict policy since they're not network-related.
       if (!shouldKeepCloudApiKeyOnError(e)) {
         await _clearApiKey();
       }

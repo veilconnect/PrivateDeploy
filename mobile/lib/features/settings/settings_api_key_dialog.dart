@@ -242,6 +242,11 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
           )
         : await widget.cloud.setApiKey(_apiKeyController.text.trim());
     if (success) {
+      // A transient-network save-first path can return success with a
+      // warning still in widget.cloud.error — "saved, will verify when
+      // network reaches the provider". Distinguish from a fully
+      // verified save so the snackbar isn't misleading.
+      final saveOnlyWarning = widget.cloud.error;
       await widget.cloud.loadInstances();
       if (!mounted) {
         return;
@@ -249,14 +254,22 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
       _savedSuccessfully = true;
       Navigator.pop(context, true);
       if (widget.rootContext.mounted) {
-        ScaffoldMessenger.of(widget.rootContext).showSnackBar(
-          SnackBar(
+        final messenger = ScaffoldMessenger.of(widget.rootContext);
+        if (saveOnlyWarning != null && saveOnlyWarning.isNotEmpty) {
+          messenger.showSnackBar(SnackBar(
+            content: Text(saveOnlyWarning),
+            backgroundColor: const Color(0xFFCA8A04),
+            duration: const Duration(seconds: 6),
+          ));
+        } else {
+          messenger.showSnackBar(SnackBar(
             content: Text(
-              AppLocalizations.of(widget.rootContext)!.cloudAccessSavedAndVerified,
+              AppLocalizations.of(widget.rootContext)!
+                  .cloudAccessSavedAndVerified,
             ),
             backgroundColor: Colors.green,
-          ),
-        );
+          ));
+        }
       }
       return;
     }
