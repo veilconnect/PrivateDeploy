@@ -11,6 +11,7 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import '../../core/storage/storage_service.dart';
 import '../cloud/cloud_backup.dart';
+import '../cloud/cloud_provider_utils.dart' show shouldKeepCloudApiKeyOnError;
 
 /// Holds Cloudflare account state for the optional CDN-front feature.
 ///
@@ -371,7 +372,29 @@ class CdnProvider with ChangeNotifier {
           : null;
       return true;
     } on DioException catch (e) {
-      _lastError = 'Network error verifying token: ${e.message ?? e.type.name}';
+      // Save-first / verify-later on transient network failures. Same
+      // motivation as CloudProvider.setApiKey: on regional mobile network where this
+      // CDN feature is most needed, api.cloudflare.com gets timed out
+      // alongside everything else. Refusing to save the token forces
+      // the user to find a Wi-Fi access point first — exactly the
+      // chicken-and-egg the feature is supposed to break. So when the
+      // failure shape says "couldn't reach", we save what we have
+      // (the token), park the status at `unverified` (existing state
+      // for "token on disk, never confirmed"), and surface a message
+      // explaining the deferred verification. Auth failures
+      // (401/403/"invalid api key") still fall through to the strict
+      // path below — no save, no false hope.
+      final message = e.message ?? e.type.name;
+      if (shouldKeepCloudApiKeyOnError(e)) {
+        await StorageService.saveSecureString(_kTokenKey, token);
+        _lastError =
+            'Token saved. Could not reach Cloudflare to verify yet ($message) — '
+            'we will retry when the network reaches it. Account details and '
+            'deployment will only work once verification completes.';
+        _status = CdnStatus.unverified;
+        return false;
+      }
+      _lastError = 'Network error verifying token: $message';
       _status = _hadValidTokenBefore(priorStatus)
           ? CdnStatus.unverified
           : CdnStatus.disabled;
