@@ -83,6 +83,14 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // backoff doubles per attempt, capped at 5 minutes.
         private const val DELAYED_RESTART_INITIAL_MS = 15_000L
         private const val DELAYED_RESTART_MAX_INTERVAL_MS = 5L * 60_000L
+        // Delay between scheduling a resume and actually probing for a
+        // peer VPN. ConnectivityManager.allNetworks can briefly report
+        // our OWN dying VPN NetworkAgent right after process recreate
+        // — yielding to it would permanently suppress resume even when
+        // no peer VPN exists. 500 ms is empirically enough for the
+        // framework to GC the stale agent; short enough that the user
+        // doesn't notice the gap on real handovers.
+        private const val PEER_VPN_RESUME_PROBE_DELAY_MS = 500L
         // Wait up to 12 s for the new transport to reach
         // NET_CAPABILITY_VALIDATED before kicking off start/restart.
         // Real-world mobile networks (mobile carrier / Telecom / Unicom)
@@ -263,6 +271,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
     @Volatile
     private var latestStatusMessage: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    // Runnable that fires the deferred peer-VPN probe + actual startVpn
+    // when resuming from a persisted intent. We hold the reference so
+    // onDestroy can cancel it — otherwise a service shut down between
+    // schedule and fire would leave a callback queued against a dead
+    // instance.
+    private var pendingResumeRunnable: Runnable? = null
     private var underlyingNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingUnderlyingNetworkRestart: Runnable? = null
     private var lastObservedUnderlyingNetworkHandle: Long? = null
@@ -353,8 +367,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val isRedeliver = (flags and START_FLAG_REDELIVERY) != 0
         when (intent?.action) {
-            ACTION_START -> startVpn(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
+            ACTION_START -> {
+                if (isRedeliver) {
+                    // OS-redelivered ACTION_START after a process kill.
+                    // Route through the resume path so the peer-VPN
+                    // gate fires — otherwise the redelivered intent
+                    // jumps straight into startVpn() and steals a
+                    // coexisting WireGuard/Clash slot. (Both codex and
+                    // gemini flagged this gap on 2026-06-01.)
+                    attemptResumeFromPersistedIntent()
+                } else {
+                    startVpn(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
+                }
+            }
             ACTION_STOP -> stopVpn()
             ACTION_RESTART -> restartVpn()
             ACTION_UPDATE_CONFIG -> updateConfig(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
@@ -1822,24 +1849,50 @@ class PrivateDeployVpnService : VpnService(), Platform {
             //
             // Guard: before resuming, ask ConnectivityManager whether
             // some OTHER process currently owns a VPN NetworkAgent. If
-            // so, clear our persisted intent and respect the active
-            // VPN. This matches Clash + WireGuard's coexistence
-            // pattern that the user expected.
-            if (anotherVpnIsActive()) {
-                Log.w(
-                    TAG,
-                    "Resume skipped: another VPN (e.g. WireGuard) is already " +
-                        "active on this device. Clearing our persisted intent " +
-                        "so we don't steal its slot.",
-                )
-                clearPersistedVpnIntent()
-                return
+            // so, yield to it. This matches Clash + WireGuard's
+            // coexistence pattern that the user expected.
+            //
+            // Deferred so the framework has time to GC our previous
+            // VPN NetworkAgent. On a fresh process recreate
+            // [ConnectivityManager.allNetworks] can still report our
+            // own dying agent for a few hundred milliseconds; a
+            // point-in-time check sometimes sees it and would yield
+            // permanently. Codex + gemini convergent 2026-06-01.
+            cancelPendingResume()
+            val runnable = Runnable {
+                pendingResumeRunnable = null
+                if (isRunning || startInProgress.get()) {
+                    return@Runnable
+                }
+                if (anotherVpnIsActive()) {
+                    Log.w(
+                        TAG,
+                        "Resume skipped: another VPN (e.g. WireGuard) is " +
+                            "still active after ${PEER_VPN_RESUME_PROBE_DELAY_MS}ms. " +
+                            "Keeping persisted intent — we'll retry on the next " +
+                            "OS recreate or when the peer yields.",
+                    )
+                    // NON-destructive: do NOT clearPersistedVpnIntent.
+                    // The earlier code did, which turned a transient
+                    // race window (Always-On VPN cycling, OS still
+                    // holding our dying agent) into a permanent
+                    // "PD never auto-resumes again" symptom. Keep the
+                    // intent and let the next recreate decide.
+                    return@Runnable
+                }
+                Log.i(TAG, "Resuming VPN from persisted intent after process recreate.")
+                startVpn(config)
             }
-            Log.i(TAG, "Resuming VPN from persisted intent after process recreate.")
-            startVpn(config)
+            pendingResumeRunnable = runnable
+            mainHandler.postDelayed(runnable, PEER_VPN_RESUME_PROBE_DELAY_MS)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to resume from persisted VPN intent", e)
         }
+    }
+
+    private fun cancelPendingResume() {
+        pendingResumeRunnable?.let(mainHandler::removeCallbacks)
+        pendingResumeRunnable = null
     }
 
     /**
@@ -1848,18 +1901,18 @@ class PrivateDeployVpnService : VpnService(), Platform {
      * stealing another VPN's (WireGuard, Clash-TUN, etc) session on
      * process recreate.
      *
-     * Why "any VPN" is safe: this is called only from the resume path,
-     * which runs at onCreate / null-action onStartCommand. At that
-     * moment our own service is JUST being constructed — we have not
-     * yet called [Builder.establish], `vpnInterface` is null, and our
-     * prior VPN NetworkAgent (if any) has already been torn down by
-     * the OS as part of the revoke/recreate cycle. So any
-     * TRANSPORT_VPN network present here can only belong to a peer
-     * VPN app, not us.
+     * Invoked from the resume runnable [PEER_VPN_RESUME_PROBE_DELAY_MS]
+     * after the resume was queued, not synchronously from onCreate.
+     * The delay matters: a point-in-time check at onCreate sometimes
+     * saw our OWN dying VPN NetworkAgent that the framework hadn't
+     * yet GC'd, which then caused us to yield permanently. After the
+     * delay, our previous agent is gone and any remaining
+     * TRANSPORT_VPN network belongs to a peer.
      *
-     * VpnTransportInfo.sessionId would be the proper owner check but
-     * it's @SystemApi — not callable from third-party apps. The
-     * presence-only check is correct given the call-site invariant.
+     * VpnTransportInfo.sessionId and NetworkCapabilities.ownerUid
+     * would be the proper owner checks but both are @SystemApi —
+     * not callable from third-party apps. The delayed presence check
+     * is the best signal we have access to.
      */
     private fun anotherVpnIsActive(): Boolean {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return false
@@ -1891,6 +1944,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // fire on a vanished service instance.
         cancelDelayedRestart()
         cancelFollowUpRestart()
+        cancelPendingResume()
         pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingUnderlyingNetworkRestart = null
         stopHealthMonitor()
