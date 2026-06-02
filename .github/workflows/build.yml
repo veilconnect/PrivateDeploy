@@ -221,7 +221,9 @@ jobs:
       # virtual framebuffer ("no GUI display detected" otherwise).
       - name: Build application (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a wails build -platform ${{ matrix.platform }}
+        # ubuntu-latest (24.04) ships webkit2gtk-4.1, not the 4.0 wails
+        # defaults to — build with the webkit2_41 tag so pkg-config resolves.
+        run: xvfb-run -a wails build -platform ${{ matrix.platform }} -tags webkit2_41
 
       - name: Build application
         if: runner.os != 'Linux'
