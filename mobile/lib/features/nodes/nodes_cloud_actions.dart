@@ -80,6 +80,8 @@ Future<void> confirmDeleteCloudNode({
     return;
   }
 
+  // Capture before any await so we don't touch context across async gaps.
+  final cdnProvider = context.read<CdnProvider>();
   final profileName = cloudProfileName(instance);
   final linkedProfile = profileProvider.getProfileByName(profileName);
   final shouldDisconnect = linkedProfile != null &&
@@ -98,6 +100,14 @@ Future<void> confirmDeleteCloudNode({
     profileCleanupSuccess = await profileProvider.deleteProfileByName(
       profileName,
     );
+    // Tear down the node's CDN Worker too — otherwise it's orphaned on
+    // Cloudflare with its relay backend destroyed (every request 502s).
+    // Best-effort: a failure here must not block the node deletion result.
+    if (cdnProvider.deploymentFor(instance.id) != null) {
+      try {
+        await cdnProvider.deleteWorkerForNode(instance.id);
+      } catch (_) {}
+    }
   }
 
   if (!context.mounted) {

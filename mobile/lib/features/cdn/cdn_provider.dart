@@ -714,6 +714,12 @@ class CdnProvider with ChangeNotifier {
         // when CF settles.
         unawaited(_probeCustomHostReadiness(nodeId, customHost));
       }
+      // Self-heal the occasional first-upload CF 1101: a freshly uploaded
+      // worker sometimes comes up throwing a runtime error (500/1101) that a
+      // second PUT clears. Verify the worker actually serves and re-upload
+      // once if it's erroring. Covers both manual deploy and the
+      // auto-deploy-after-create path (both land here).
+      unawaited(_verifyWorkerHealthAndHeal(nodeId));
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
@@ -1512,6 +1518,52 @@ class CdnProvider with ChangeNotifier {
     final dep = _deployments[nodeId];
     if (dep == null) return false;
     return (dep.customHost?.isNotEmpty ?? false) && dep.workerHost.isEmpty;
+  }
+
+  /// Best-effort GET that returns just the HTTP status (or null on error).
+  Future<int?> _httpStatus(String url) async {
+    try {
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+        validateStatus: (_) => true,
+      ));
+      final r = await dio.get<void>(url);
+      return r.statusCode;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Self-heal the occasional first-upload Cloudflare 1101: a freshly
+  /// uploaded Worker sometimes comes up throwing a runtime exception
+  /// (HTTP 500 / "error code: 1101") that a second PUT reliably clears.
+  /// Shortly after a deploy, fetch the worker's own workers.dev URL — a
+  /// healthy worker answers the path-secret gate with 404, a broken one
+  /// with 500 — and re-upload once if it's erroring.
+  ///
+  /// Only the workers.dev host is checked, not the custom domain: the
+  /// custom hostname can legitimately return 52x while its managed cert
+  /// provisions, which a re-upload would not fix.
+  Future<void> _verifyWorkerHealthAndHeal(String nodeId) async {
+    final dep = _deployments[nodeId];
+    if (dep == null) return;
+    final host = dep.workerHost;
+    if (host.isEmpty) return;
+    // Let the fresh upload propagate before judging it.
+    await Future<void>.delayed(const Duration(seconds: 12));
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final current = _deployments[nodeId];
+      if (current == null || current.workerHost != host) return; // re-deployed
+      final status = await _httpStatus('https://$host/');
+      if (status == 404) return; // healthy gate response
+      if (status == 500) {
+        // Worker is throwing — a re-upload (via repair) clears it.
+        await repairCustomHostForNode(nodeId);
+        return;
+      }
+      await Future<void>.delayed(const Duration(seconds: 6));
+    }
   }
 
   /// Single TLS handshake to host:443. Success = CF edge served a valid
