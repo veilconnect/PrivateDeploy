@@ -207,6 +207,13 @@ jobs:
     if: always()
 
     steps:
+      # This job has no other reason to check out, but the workflow's
+      # `working-directory: mobile` default makes every run step cd into
+      # mobile/ — which doesn't exist without a checkout, so the echo steps
+      # failed with "no such file or directory".
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Check build status
         run: |
           if [ "${{ needs.lint.result }}" == "success" ] && \
