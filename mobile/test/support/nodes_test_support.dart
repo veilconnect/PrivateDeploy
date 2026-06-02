@@ -740,6 +740,9 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
   bool get isDegraded => false;
 
   @override
+  bool get needsCdnGuidance => false;
+
+  @override
   List<VpnRouteDecision> get recentRouteDecisions =>
       List<VpnRouteDecision>.unmodifiable(_recentRouteDecisions);
 
