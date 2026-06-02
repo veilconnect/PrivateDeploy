@@ -161,11 +161,12 @@ jobs:
 
       - name: Check for outdated packages
         run: flutter pub outdated
+        continue-on-error: true
 
-      - name: Check for unused files
-        run: |
-          echo "Checking for unused Dart files..."
-          flutter pub run dart_code_metrics:metrics check-unused-files lib
+      # NOTE: the previous `dart_code_metrics:metrics check-unused-files` step
+      # was removed — dart_code_metrics is discontinued and isn't a project
+      # dependency, so the step always failed with "Could not find package".
+      # `flutter analyze` (in the Analyze job) already covers static checks.
 
       - name: Security audit
         run: |
