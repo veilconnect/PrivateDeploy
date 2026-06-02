@@ -197,7 +197,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev libgtksourceview-3.0-dev
+            libayatana-appindicator3-dev libgtksourceview-3.0-dev xvfb
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
@@ -216,11 +216,21 @@ jobs:
       - name: Build frontend assets
         run: cd frontend && pnpm run build-only
 
+      # wails binding generation compiles & runs the app to introspect bound
+      # methods; the headless Linux runner has no DISPLAY, so run it under a
+      # virtual framebuffer ("no GUI display detected" otherwise).
+      - name: Build application (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a wails build -platform ${{ matrix.platform }}
+
       - name: Build application
+        if: runner.os != 'Linux'
         run: wails build -platform ${{ matrix.platform }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PrivateDeploy-${{ matrix.platform }}
+          # matrix.platform contains a slash (e.g. windows/amd64) which is
+          # invalid in artifact names; key the artifact on the runner OS.
+          name: PrivateDeploy-${{ matrix.os }}
           path: build/bin/
