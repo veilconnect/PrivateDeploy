@@ -56,11 +56,11 @@ const (
 // reachable but markedly slower (200ms+ RTT) and sometimes middleboxed.
 // CF/Google trail as fallbacks for non-regional networks.
 var dohEndpoints = []string{
-	"https://223.5.5.5/resolve",  // AliDNS (CN-friendly)
-	"https://223.6.6.6/resolve",  // AliDNS secondary
-	"https://1.1.1.1/dns-query",  // Cloudflare
-	"https://1.0.0.1/dns-query",  // Cloudflare secondary
-	"https://8.8.8.8/resolve",    // Google
+	"https://223.5.5.5/resolve", // AliDNS (CN-friendly)
+	"https://223.6.6.6/resolve", // AliDNS secondary
+	"https://1.1.1.1/dns-query", // Cloudflare
+	"https://1.0.0.1/dns-query", // Cloudflare secondary
+	"https://8.8.8.8/resolve",   // Google
 }
 
 // dohClient is module-private and goroutine-safe. The transport pins
@@ -86,11 +86,18 @@ var dohClient = &http.Client{
 // stay in "pending" while only the cert is propagating (cheap) and
 // only spend the upgrade round-trip once TLS succeeds.
 //
-// Budget: 8 attempts at exponential-ish back-off (3,6,12,20,30,40,50,60s)
-// = ~3.7 min total. Cloudflare cert propagation typically completes in
-// well under that for an active zone; Worker→VPS becomes reachable
-// the instant UFW + vlessRelayPort are correct.
+// Budget: ~24 min of exponential-ish back-off. Cloudflare managed-cert
+// issuance + edge propagation for a brand-new custom hostname, and a
+// freshly-booted VPS opening UFW + vlessRelayPort, both routinely exceed
+// the first few minutes — an earlier ~3.7-min budget marked correct
+// deploys terminally "failed". load() re-runs this on every launch so a
+// node self-heals once CF/VPS settle.
 func (m *Manager) probeCustomHostReadiness(nodeID, host string) {
+	// Total budget ~24 min. The long tail covers worst-case Cloudflare
+	// managed-cert issuance + edge propagation for a brand-new custom
+	// hostname, and a freshly-booted VPS opening its relay port. A
+	// too-short budget here is what made correct deploys get stranded as
+	// permanently-"failed"; load() now re-runs this on every launch.
 	delays := []time.Duration{
 		3 * time.Second,
 		6 * time.Second,
@@ -100,6 +107,12 @@ func (m *Manager) probeCustomHostReadiness(nodeID, host string) {
 		40 * time.Second,
 		50 * time.Second,
 		60 * time.Second,
+		90 * time.Second,
+		120 * time.Second,
+		180 * time.Second,
+		240 * time.Second,
+		300 * time.Second,
+		300 * time.Second,
 	}
 	for _, d := range delays {
 		time.Sleep(d)
@@ -306,7 +319,6 @@ func (m *Manager) deploymentPathSecret(nodeID, host string) string {
 	}
 	return strings.TrimSpace(dep.PathSecret)
 }
-
 
 // deploymentStillExpectsHost checks the deployment record hasn't been
 // deleted/re-bound out from under the probe. Without this, a fast

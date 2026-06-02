@@ -579,6 +579,15 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 				dep.CustomDomainID = bind.ID
 				dep.CustomHostStatus = customHostStatusPending
 				go m.probeCustomHostReadiness(nodeID, bind.Hostname)
+				// Single-point-of-failure guard: a custom-domain-only deploy
+				// (host == "" because no workers.dev subdomain was claimed)
+				// leaves no sibling in the client's urltest pool, so if the
+				// custom hostname stalls in provisioning the node has zero
+				// working CDN entry points. Surface it so the user claims a
+				// workers.dev subdomain for a backup route.
+				if host == "" {
+					customWarn = "CDN deployed via custom domain only — no workers.dev fallback. Claim a workers.dev subdomain so the node keeps a backup route if the custom hostname stalls."
+				}
 			}
 		}
 	}
@@ -852,16 +861,27 @@ func (m *Manager) load() {
 	if m.deployments == nil {
 		m.deployments = map[string]*Deployment{}
 	}
-	// Resume readiness probes for any deployment that was Pending when we
-	// shut down. If the cert finished propagating in the meantime the very
-	// first probe attempt will flip it Active. "failed" stays failed until
-	// re-deploy — re-trying for hours after a real propagation failure
-	// would just keep noisy probes alive.
+	// Resume readiness probes for any deployment not yet Active — both
+	// "pending" and "failed". Treating "failed" as terminal stranded
+	// otherwise-correct deploys: the one-shot probe budget routinely
+	// expired before CF finished issuing the managed cert for a new
+	// custom hostname (5–15 min is normal) or before a freshly-booted VPS
+	// opened its relay port, and nothing ever retried — so the node was
+	// left advertising a custom host that 404/522s forever. Re-probing
+	// "failed" on every launch lets it self-heal once CF/VPS settle; the
+	// extended per-pass budget (see probeCustomHostReadiness) plus this
+	// per-launch resume keeps the probe noise bounded.
 	for nodeID, dep := range m.deployments {
-		if dep == nil {
+		if dep == nil || dep.CustomHost == "" {
 			continue
 		}
-		if dep.CustomHost != "" && dep.CustomHostStatus == customHostStatusPending {
+		if dep.CustomHostStatus == customHostStatusPending ||
+			dep.CustomHostStatus == customHostStatusFailed {
+			// Reset a stale "failed" to "pending" so callers see an honest
+			// in-progress status during the retry.
+			if dep.CustomHostStatus == customHostStatusFailed {
+				m.markCustomHostStatus(nodeID, dep.CustomHost, customHostStatusPending)
+			}
 			go m.probeCustomHostReadiness(nodeID, dep.CustomHost)
 		}
 	}

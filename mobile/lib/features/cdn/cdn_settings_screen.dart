@@ -1098,6 +1098,21 @@ class _NodeRow extends StatelessWidget {
                               ],
                             ),
                           ),
+                        // No workers.dev sibling in the urltest pool — a
+                        // single point of failure if the custom host stalls.
+                        if (provider.deploymentLacksFallback(node.id))
+                          Padding(
+                            padding: EdgeInsets.only(top: 2.h),
+                            child: Text(
+                              isZh
+                                  ? '⚠ 无 workers.dev 兜底线路，建议认领子域'
+                                  : '⚠ No workers.dev fallback — claim a subdomain',
+                              style: TextStyle(
+                                fontSize: 10.sp,
+                                color: const Color(0xFFCA8A04),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1254,11 +1269,14 @@ String _customHostStatusLabel({
   }
 }
 
-/// Compact icon button next to the pending/failed status row that re-runs
-/// the customHost readiness probe without redeploying the Worker. Solves
-/// the case where the first probe budget (~3.7 min) expired while CF was
-/// still mid-propagation — a single probe retry then clears it, no need
-/// to spam the deploy API.
+/// Compact button next to the pending/failed status row that REPAIRS a
+/// stuck custom-domain deployment: it re-uploads the Worker script (from
+/// the deployment's stored backend + path-secret), wires in a workers.dev
+/// fallback when one is now available, and re-attaches the Workers Custom
+/// Domain before re-probing. A bare probe retry can clear a slow cert but
+/// can't recover an orphaned / never-activated binding (the permanent-522
+/// case) — re-attaching can, which is why this drives
+/// [CdnProvider.repairCustomHostForNode] rather than the probe alone.
 class _RetryProbeButton extends StatefulWidget {
   const _RetryProbeButton({
     required this.provider,
@@ -1292,7 +1310,7 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
         child: Text(
-          widget.isZh ? '重试探测' : 'Retry probe',
+          widget.isZh ? '修复并重试' : 'Repair & retry',
           style: TextStyle(
             fontSize: 10.sp,
             color: const Color(0xFF1452CC),
@@ -1305,13 +1323,13 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
 
   Future<void> _retry(BuildContext context) async {
     setState(() => _running = true);
-    final ok = await widget.provider.retryCustomHostProbe(widget.nodeId);
+    final ok = await widget.provider.repairCustomHostForNode(widget.nodeId);
     if (!mounted) return;
     setState(() => _running = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         ok
-            ? (widget.isZh ? 'CDN 中转链路已就绪' : 'CDN relay path is live')
+            ? (widget.isZh ? 'CDN 中转链路已修复并就绪' : 'CDN relay path repaired and live')
             : (widget.isZh
                 ? 'CDN 仍不可达，稍后可再试'
                 : "CDN still unreachable; you can try again"),

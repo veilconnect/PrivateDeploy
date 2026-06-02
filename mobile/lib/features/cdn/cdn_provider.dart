@@ -176,17 +176,12 @@ class CdnProvider with ChangeNotifier {
     }
     _loadDeployments();
     notifyListeners();
-    // Resume readiness probes for any deployment still Pending from a
-    // previous app launch. If propagation finished while we were closed,
-    // the very first probe attempt will flip it Active. "failed" stays
-    // failed until the user re-deploys.
-    for (final entry in _deployments.entries) {
-      final dep = entry.value;
-      if ((dep.customHost?.isNotEmpty ?? false) &&
-          dep.customHostStatus == 'pending') {
-        unawaited(_probeCustomHostReadiness(entry.key, dep.customHost!));
-      }
-    }
+    // Resume readiness probes for any deployment not yet Active (pending
+    // OR failed) from a previous launch. If CF cert issuance / edge
+    // propagation / VPS relay boot finished while we were closed, the
+    // retry flips it Active — see [_resumeIncompleteProbes] for why
+    // 'failed' must be retried rather than treated as terminal.
+    _resumeIncompleteProbes();
   }
 
   void _loadCustomDomain() {
@@ -506,17 +501,12 @@ class CdnProvider with ChangeNotifier {
     _lastError = null;
     notifyListeners();
 
-    // Kick the readiness probe on any deployment that came in pending,
-    // matching what [load] does on a cold start. Active+failed stay as
-    // they were since they reflect a probe that already completed on
-    // the source phone — the importer can re-deploy to retry.
-    for (final entry in _deployments.entries) {
-      final dep = entry.value;
-      if ((dep.customHost?.isNotEmpty ?? false) &&
-          dep.customHostStatus == 'pending') {
-        unawaited(_probeCustomHostReadiness(entry.key, dep.customHost!));
-      }
-    }
+    // Kick the readiness probe on any imported deployment not yet Active
+    // (pending OR failed), matching what [load] does on a cold start. A
+    // 'failed' imported from another phone is very often just a probe that
+    // timed out there before CF/VPS settled — re-probing here can clear it
+    // without a manual re-deploy. See [_resumeIncompleteProbes].
+    _resumeIncompleteProbes();
   }
 
   Future<void> clear() async {
@@ -639,22 +629,7 @@ class CdnProvider with ChangeNotifier {
       ));
 
       // PUT script as a multipart upload (modules format).
-      final form = FormData();
-      form.fields.add(MapEntry(
-        'metadata',
-        jsonEncode({
-          'main_module': 'worker.mjs',
-          'compatibility_date': _kCompatDate,
-        }),
-      ));
-      form.files.add(MapEntry(
-        'worker.mjs',
-        MultipartFile.fromString(
-          scriptBody,
-          filename: 'worker.mjs',
-          contentType: DioMediaType('application', 'javascript+module'),
-        ),
-      ));
+      final form = _buildWorkerUploadForm(scriptBody);
 
       final put = await dio.put(
         '$_accountsEndpoint/$_accountId/workers/scripts/$scriptName',
@@ -745,6 +720,17 @@ class CdnProvider with ChangeNotifier {
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
         _lastError = 'workers.dev path live, but custom-domain binding produced no host.';
+      } else if (customHost != null && url.isEmpty) {
+        // Single-point-of-failure guard: a custom-domain-only deploy (no
+        // workers.dev subdomain claimed) leaves no sibling in the client's
+        // urltest pool. If the custom hostname stalls in provisioning or
+        // gets DNS-altered, the node has ZERO working CDN entry points —
+        // which is exactly how nodes ended up stranded behind a 522 host.
+        // Surface it so the user claims a workers.dev subdomain; a later
+        // repair/redeploy then wires the fallback in automatically.
+        _lastError = 'CDN deployed via custom domain only — no workers.dev '
+            'fallback exists. Claim a workers.dev subdomain so the node keeps '
+            'a backup route if the custom hostname ever stalls.';
       } else if (customHost != null) {
         _lastError = null;
       }
@@ -1094,6 +1080,41 @@ class CdnProvider with ChangeNotifier {
   /// (DNS CNAME + Worker route) flow; CF auto-creates DNS + managed cert.
   /// Returned id lets [_detachWorkerCustomDomain] address the binding later
   /// without re-resolving by hostname.
+  /// Build the multipart body for a module-Worker upload.
+  ///
+  /// ROOT-CAUSE FIX (1101): the `metadata` part MUST carry
+  /// `Content-Type: application/json`. Dio plain form *fields*
+  /// (`form.fields`) send no per-part Content-Type, so Cloudflare read the
+  /// metadata as text, ignored `main_module`, and treated the upload as a
+  /// legacy *service-worker* script. Under that mode the worker.js ES-module
+  /// syntax (`import { connect } …` / `export default`) is a parse error, so
+  /// the deployed Worker threw CF error 1101 on EVERY request — every phone
+  /// (Dart) deploy was silently broken this way, while the Go bridge worked
+  /// because it set the header explicitly. Sending metadata as a
+  /// MultipartFile forces the Content-Type and matches the Go path.
+  FormData _buildWorkerUploadForm(String scriptBody) {
+    final form = FormData();
+    form.files.add(MapEntry(
+      'metadata',
+      MultipartFile.fromString(
+        jsonEncode({
+          'main_module': 'worker.mjs',
+          'compatibility_date': _kCompatDate,
+        }),
+        contentType: DioMediaType('application', 'json'),
+      ),
+    ));
+    form.files.add(MapEntry(
+      'worker.mjs',
+      MultipartFile.fromString(
+        scriptBody,
+        filename: 'worker.mjs',
+        contentType: DioMediaType('application', 'javascript+module'),
+      ),
+    ));
+    return form;
+  }
+
   Future<_WorkerCustomDomainBinding?> _attachWorkerCustomDomain(
     Dio dio,
     String hostname,
@@ -1172,10 +1193,51 @@ class CdnProvider with ChangeNotifier {
     return name;
   }
 
+  /// Resume readiness probes for every deployment that has a custom host
+  /// but hasn't reached 'active' yet. Crucially this includes 'failed',
+  /// not only 'pending'.
+  ///
+  /// Root-cause fix: the one-shot probe in [_probeCustomHostReadiness]
+  /// regularly hit its budget before Cloudflare finished issuing the
+  /// managed cert for a new custom hostname, or before a just-deployed
+  /// VPS opened its relay port. Marking that transient 'failed' — and
+  /// then never re-probing 'failed' — permanently stranded otherwise
+  /// correct deployments behind a custom host that 404/522s. Re-probing
+  /// 'failed' on every cold start and after a cloud-backup import lets
+  /// such a node self-heal once CF and the VPS settle, instead of
+  /// requiring a manual re-deploy.
+  void _resumeIncompleteProbes() {
+    for (final entry in _deployments.entries) {
+      final dep = entry.value;
+      final host = dep.customHost;
+      if (host == null || host.isEmpty) continue;
+      final status = dep.customHostStatus;
+      if (status != 'pending' && status != 'failed') continue;
+      // Reset a stale 'failed' to 'pending' so the UI honestly shows
+      // "probing" during the retry instead of a red Failed chip.
+      if (status == 'failed') {
+        unawaited(_markCustomHostStatus(entry.key, host, 'pending'));
+      }
+      unawaited(_probeCustomHostReadiness(entry.key, host));
+    }
+  }
+
   /// Polls the customHost until the WS upgrade succeeds end-to-end (CF
   /// cert + Worker dispatch + Worker→VPS TCP) or the budget is
   /// exhausted. Mirrors bridge/cdn/cdn_probe.go so desktop and mobile
-  /// have the same readiness semantics. Total budget ~3.7 min.
+  /// have the same readiness semantics. Total budget ~24 min.
+  ///
+  /// The long tail is deliberate and was the fix for a real stranding
+  /// bug: a brand-new Workers Custom Domain's managed edge certificate
+  /// plus DNS/edge propagation, and a freshly-booted VPS opening its
+  /// relay port + UFW rule, both routinely take much longer than the
+  /// first few minutes. The old ~3.7-min budget expired mid-provisioning,
+  /// the deployment was marked terminally 'failed', and — because nothing
+  /// re-probed 'failed' — the node was left advertising a custom host that
+  /// 404/522s forever even though the deploy itself was correct. This
+  /// budget now covers worst-case CF cert issuance, and
+  /// [_resumeIncompleteProbes] re-runs it on every launch/import so even
+  /// this ceiling is per-session, not one-and-done.
   ///
   /// Two-stage: cheap TLS handshake first, then a WS upgrade with the
   /// deployment's path-secret. The WS upgrade is the only real proof
@@ -1192,6 +1254,12 @@ class CdnProvider with ChangeNotifier {
       Duration(seconds: 40),
       Duration(seconds: 50),
       Duration(seconds: 60),
+      Duration(seconds: 90),
+      Duration(seconds: 120),
+      Duration(seconds: 180),
+      Duration(seconds: 240),
+      Duration(seconds: 300),
+      Duration(seconds: 300),
     ];
     for (final d in delays) {
       await Future.delayed(d);
@@ -1239,6 +1307,210 @@ class CdnProvider with ChangeNotifier {
     await _probeCustomHostReadiness(nodeId, host);
     final after = _deployments[nodeId];
     return after?.customHostStatus == 'active';
+  }
+
+  /// Authoritative existence check of a Workers Custom Domain binding,
+  /// straight from Cloudflare rather than the blackbox TLS/WS probe.
+  ///
+  /// The blackbox probe can't tell "binding orphaned (worker/DNS gone)"
+  /// apart from "binding present but cert still provisioning" — both look
+  /// like an unreachable host. This GET does: a 404 means the binding is
+  /// gone (only a re-attach restores service), anything 2xx means it still
+  /// exists (waiting / re-probing can clear it). Returns null when the call
+  /// itself failed (network/token) so callers fall back to the probe
+  /// instead of acting on bad data.
+  Future<bool?> _customDomainBindingExists(
+    Dio dio,
+    String accountId,
+    String customDomainId,
+  ) async {
+    try {
+      final r = await dio.get(
+        '$_accountsEndpoint/$accountId/workers/domains/$customDomainId',
+      );
+      final code = r.statusCode ?? 0;
+      if (code == 404) return false;
+      if (code >= 400) return null;
+      return true;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Repair a stuck/failed custom-domain deployment WITHOUT a full node
+  /// redeploy. Unlike [retryCustomHostProbe] (which only re-runs the
+  /// blackbox probe and so can never recover an orphaned or never-activated
+  /// binding), this re-asserts the whole CF side from the deployment's own
+  /// stored parameters:
+  ///   1. Re-render + re-upload the Worker script from the deployment's
+  ///      backend + path-secret (reusing the SAME secret so every client
+  ///      already pointed here stays valid). Fixes a script deleted out
+  ///      from under the binding — a classic 522 cause.
+  ///   2. Enable the workers.dev fallback when a subdomain is now claimed,
+  ///      closing the single-point-of-failure where a custom-domain-only
+  ///      deploy had no sibling in the client's urltest pool.
+  ///   3. Re-attach the Workers Custom Domain (idempotent PUT) — the actual
+  ///      fix for "DNS record resolves but the host 404/522s".
+  ///   4. Re-probe and persist.
+  ///
+  /// Returns true when the node ends up with at least one usable CDN path
+  /// (custom host active, or a workers.dev fallback now in place).
+  Future<bool> repairCustomHostForNode(String nodeId) async {
+    if (_isDeploying) return false;
+    final dep = _deployments[nodeId];
+    if (dep == null) return false;
+    if (_status != CdnStatus.verified || (_accountId ?? '').isEmpty) {
+      _lastError = 'Token not verified — verify it first.';
+      notifyListeners();
+      return false;
+    }
+    _isDeploying = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      final token = await StorageService.getSecureString(_kTokenKey);
+      if (token == null || token.isEmpty) {
+        _lastError = 'Token missing from storage.';
+        return false;
+      }
+      // Pin to the deployment's recorded account so a re-verified token
+      // pointing at a different account doesn't repair the wrong worker.
+      final accountId =
+          (dep.accountId?.isNotEmpty ?? false) ? dep.accountId! : _accountId!;
+      final scriptName = dep.scriptName;
+
+      // Re-render from the deployment's OWN backend + path-secret. Never
+      // mint a fresh secret here: that would silently break every client
+      // already routed through this host.
+      final template = await rootBundle.loadString('assets/cdn/worker.js');
+      var scriptBody = template.replaceAll(
+        "'__BACKEND_PLACEHOLDER__'",
+        "'${_escapeJsString(dep.backend)}'",
+      );
+      scriptBody = scriptBody.replaceAll(
+        "'__PATH_SECRET_PLACEHOLDER__'",
+        "'${_escapeJsString(dep.pathSecret ?? '')}'",
+      );
+      if (scriptBody.contains("'__BACKEND_PLACEHOLDER__'") ||
+          scriptBody.contains("'__PATH_SECRET_PLACEHOLDER__'")) {
+        _lastError = 'Worker template placeholder render failed.';
+        return false;
+      }
+
+      final dio = Dio(BaseOptions(
+        headers: {'Authorization': 'Bearer $token'},
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 30),
+        validateStatus: (_) => true,
+      ));
+
+      // 1. Re-upload the script (idempotent).
+      final form = _buildWorkerUploadForm(scriptBody);
+      final put = await dio.put(
+        '$_accountsEndpoint/$accountId/workers/scripts/$scriptName',
+        data: form,
+        options: Options(headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'multipart/form-data; boundary=${form.boundary}',
+        }),
+      );
+      if ((put.statusCode ?? 500) >= 400) {
+        _lastError = _extractCloudflareError(put.data) ??
+            'Worker re-upload failed (HTTP ${put.statusCode}).';
+        return false;
+      }
+
+      // 2. Ensure a workers.dev fallback exists when a subdomain is claimed.
+      var workerHost = dep.workerHost;
+      if ((_workersSubdomain ?? '').isNotEmpty) {
+        final sub = await dio.post(
+          '$_accountsEndpoint/$accountId/workers/scripts/$scriptName/subdomain',
+          data: jsonEncode({'enabled': true}),
+          options: Options(headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          }),
+        );
+        if ((sub.statusCode ?? 500) < 400) {
+          workerHost = '$scriptName.$_workersSubdomain.workers.dev';
+        }
+      }
+
+      // 3. Re-attach the custom domain (idempotent). Only when the bound
+      //    domain still matches the deployment's host — otherwise we don't
+      //    know the zone id and must not guess.
+      var customHost = dep.customHost;
+      var customDomainId = dep.customDomainId;
+      final cd = _customDomain;
+      // Authoritative pre-flight (Hardening #2): ask Cloudflare whether the
+      // binding still exists, so we can tell the user whether this was an
+      // orphan (had to be re-created) or a slow cert (just re-attached).
+      bool? bindingWasPresent;
+      if (cd != null &&
+          (customHost?.isNotEmpty ?? false) &&
+          customHost!.endsWith('.${cd.zoneName}')) {
+        if (customDomainId != null && customDomainId.isNotEmpty) {
+          bindingWasPresent =
+              await _customDomainBindingExists(dio, accountId, customDomainId);
+        }
+        final binding =
+            await _attachWorkerCustomDomain(dio, customHost, scriptName, cd.zoneId);
+        if (binding != null) {
+          customHost = binding.hostname;
+          customDomainId = binding.id;
+        }
+      }
+
+      _deployments[nodeId] = CdnDeployment(
+        nodeId: dep.nodeId,
+        scriptName: scriptName,
+        workerHost: workerHost,
+        backend: dep.backend,
+        deployedAt: DateTime.now().toUtc(),
+        customHost: customHost,
+        customDomainId: customDomainId,
+        customHostStatus: (customHost?.isNotEmpty ?? false) ? 'pending' : null,
+        accountId: accountId,
+        pathSecret: dep.pathSecret,
+        deployedBy: dep.deployedBy,
+      );
+      await _persistDeployments();
+      notifyListeners();
+
+      if (customHost?.isNotEmpty ?? false) {
+        await _probeCustomHostReadiness(nodeId, customHost!);
+      }
+      final after = _deployments[nodeId];
+      final usable = after?.customHostStatus == 'active' ||
+          (after?.workerHost.isNotEmpty ?? false);
+      if (usable) {
+        _lastError = null;
+      } else if (bindingWasPresent == false) {
+        _lastError = 'Custom-domain binding was missing on Cloudflare and has '
+            'been re-created — give the managed certificate a few minutes, '
+            'then it will go active on its own.';
+      }
+      return usable;
+    } on DioException catch (e) {
+      _lastError = 'Network error repairing Worker: ${e.message ?? e.type.name}';
+      return false;
+    } catch (e) {
+      _lastError = 'Unexpected error: $e';
+      return false;
+    } finally {
+      _isDeploying = false;
+      notifyListeners();
+    }
+  }
+
+  /// True when this node's deployment relies on a custom hostname with no
+  /// workers.dev fallback — a single point of failure in the client's
+  /// urltest pool. Drives a UI hint nudging the user to claim a
+  /// workers.dev subdomain (which [repairCustomHostForNode] then wires in).
+  bool deploymentLacksFallback(String nodeId) {
+    final dep = _deployments[nodeId];
+    if (dep == null) return false;
+    return (dep.customHost?.isNotEmpty ?? false) && dep.workerHost.isEmpty;
   }
 
   /// Single TLS handshake to host:443. Success = CF edge served a valid
