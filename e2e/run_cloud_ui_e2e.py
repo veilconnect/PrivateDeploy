@@ -35,6 +35,11 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "output" / "playwright"
 DEFAULT_PORT = 4174
 IGNORED_CONSOLE_ERROR_PATTERNS = [
     re.compile(r"Node not found for connectivity test", re.IGNORECASE),
+    # The mock bridge intentionally ships no kernel binary, so the app's
+    # "kernel executable not found" toast is expected here — this E2E
+    # exercises the cloud UI, not kernel provisioning.
+    re.compile(r"未找到内核可执行文件"),
+    re.compile(r"kernel executable not found", re.IGNORECASE),
 ]
 
 
