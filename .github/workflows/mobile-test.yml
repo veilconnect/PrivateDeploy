@@ -36,6 +36,9 @@ jobs:
 
       - name: Check shared version metadata
         run: bash scripts/check_versions.sh
+        # Override the job-level `working-directory: mobile` default — the
+        # version scripts live at the repo root, not under mobile/.
+        working-directory: ${{ github.workspace }}
 
   analyze:
     name: Flutter Analyze

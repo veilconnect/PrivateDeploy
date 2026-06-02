@@ -49,7 +49,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vpncore-aar
-          path: android/app/libs/vpncore.aar
+          # Artifact actions ignore `working-directory: mobile`; the AAR is
+          # produced under mobile/ by build-android.sh (OUTPUT_DIR=../android/app/libs).
+          path: mobile/android/app/libs/vpncore.aar
           retention-days: 7
 
   build-apk:
@@ -78,7 +80,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vpncore-aar
-          path: android/app/libs/
+          path: mobile/android/app/libs/
 
       - name: Get dependencies
         run: flutter pub get
@@ -93,7 +95,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
       - name: Build App Bundle
@@ -103,7 +105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
-          path: build/app/outputs/bundle/release/app-release.aab
+          path: mobile/build/app/outputs/bundle/release/app-release.aab
           retention-days: 30
 
   build-apk-debug:
@@ -132,7 +134,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vpncore-aar
-          path: android/app/libs/
+          path: mobile/android/app/libs/
 
       - name: Get dependencies
         run: flutter pub get
@@ -147,5 +149,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7

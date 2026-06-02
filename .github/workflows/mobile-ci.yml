@@ -39,6 +39,9 @@ jobs:
 
       - name: Check shared version metadata
         run: bash scripts/check_versions.sh
+        # Override the job-level `working-directory: mobile` default — the
+        # version scripts live at the repo root, not under mobile/.
+        working-directory: ${{ github.workspace }}
 
   lint:
     name: Lint Check
@@ -159,7 +162,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-android-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 3
 
   build-web:
@@ -191,7 +194,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-web-build
-          path: build/web
+          path: mobile/build/web
           retention-days: 3
 
   security-scan:
