@@ -1410,7 +1410,17 @@ class CdnProvider with ChangeNotifier {
         validateStatus: (_) => true,
       ));
 
-      // 1. Re-upload the script (idempotent).
+      // 1. Delete the script, then re-create it. A Worker that came up
+      //    throwing 1101 on its very first upload stays broken under an
+      //    overwrite-PUT — only a delete + fresh create clears the bad
+      //    module state. force=true so an attached custom domain doesn't
+      //    block the delete (it's re-attached in step 3 below).
+      try {
+        await dio.delete(
+          '$_accountsEndpoint/$accountId/workers/scripts/$scriptName?force=true',
+          options: Options(headers: {'Authorization': 'Bearer $token'}),
+        );
+      } catch (_) {}
       final form = _buildWorkerUploadForm(scriptBody);
       final put = await dio.put(
         '$_accountsEndpoint/$accountId/workers/scripts/$scriptName',
