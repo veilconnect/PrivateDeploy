@@ -165,37 +165,10 @@ jobs:
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 3
 
-  build-web:
-    name: Build Web
-    runs-on: ubuntu-latest
-    needs: test-unit
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.35.7'
-          channel: 'stable'
-          cache: true
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Run code generation
-        run: flutter pub run build_runner build --delete-conflicting-outputs
-
-      - name: Build Web
-        run: flutter build web --release
-
-      - name: Upload Web build
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-web-build
-          path: mobile/build/web
-          retention-days: 3
+  # NOTE: the mobile app is Android/iOS only — it has no web/ platform dir,
+  # so `flutter build web` always failed with "project is not configured for
+  # the web". The desktop *frontend* (Vue) is built separately in build.yml.
+  # The Flutter web job was removed rather than configuring an unused target.
 
   security-scan:
     name: Security Scan
@@ -230,7 +203,7 @@ jobs:
   notify:
     name: Notify Build Status
     runs-on: ubuntu-latest
-    needs: [lint, test-unit, build-android, build-web]
+    needs: [lint, test-unit, build-android]
     if: always()
 
     steps:
@@ -238,8 +211,7 @@ jobs:
         run: |
           if [ "${{ needs.lint.result }}" == "success" ] && \
              [ "${{ needs.test-unit.result }}" == "success" ] && \
-             [ "${{ needs.build-android.result }}" == "success" ] && \
-             [ "${{ needs.build-web.result }}" == "success" ]; then
+             [ "${{ needs.build-android.result }}" == "success" ]; then
             echo "✅ All CI jobs passed!"
             echo "BUILD_STATUS=success" >> $GITHUB_ENV
           else
@@ -256,4 +228,3 @@ jobs:
           echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Unit Tests | ${{ needs.test-unit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Android | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Web | ${{ needs.build-web.result }} |" >> $GITHUB_STEP_SUMMARY
