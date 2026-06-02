@@ -150,6 +150,11 @@ Future<void> confirmRepairCloudNode({
       profileProvider.activeProfile?.id == linkedProfile.id &&
       vpnProvider.status != VpnStatus.disconnected;
 
+  // Same "working…" feedback as the create flow — a redeploy re-runs the
+  // full VPS provision + install and was equally silent before.
+  _showDeployProgressDialog(
+      context, AppLocalizations.of(context)!.nodeDeploying);
+
   var disconnectSuccess = true;
   if (shouldDisconnect) {
     disconnectSuccess = await vpnProvider.disconnect();
@@ -174,6 +179,9 @@ Future<void> confirmRepairCloudNode({
     }
   }
 
+  if (context.mounted) {
+    Navigator.of(context, rootNavigator: true).pop();
+  }
   if (!context.mounted) {
     return;
   }
@@ -214,6 +222,35 @@ Future<void> showCloudApiKeyFlow({
   await onSaved();
 }
 
+/// Non-dismissible modal progress dialog shown while a long cloud action
+/// (node create / redeploy) is in flight, so the user gets explicit
+/// "working…" feedback instead of a screen that looks frozen after the
+/// form dialog closes. Dismiss by popping the root navigator once the
+/// action completes.
+void _showDeployProgressDialog(BuildContext context, String message) {
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            const SizedBox(width: 18),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    ),
+  ));
+}
+
 Future<void> showCreateCloudNodeFlow({
   required BuildContext context,
   required CloudProvider cloudProvider,
@@ -230,11 +267,23 @@ Future<void> showCreateCloudNodeFlow({
     return;
   }
 
+  // Block with a visible progress dialog while the VPS is created and its
+  // install script is kicked off. Without this the create flow looked
+  // frozen: the form dialog closed and nothing happened on screen for the
+  // multi-second (sometimes minute-plus) createInstance round-trip, so
+  // users couldn't tell whether their tap registered or what was going on.
+  _showDeployProgressDialog(context, AppLocalizations.of(context)!.nodeDeploying);
+
   final success = await cloudProvider.createInstance(
     region: request.region,
     plan: request.plan,
     label: request.label,
   );
+
+  // Dismiss the progress dialog before any snackbar / follow-up CDN deploy.
+  if (context.mounted) {
+    Navigator.of(context, rootNavigator: true).pop();
+  }
   if (!context.mounted) {
     return;
   }
