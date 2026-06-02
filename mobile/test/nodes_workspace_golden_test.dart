@@ -228,15 +228,30 @@ void main() {
 }
 
 Future<void> _loadGoldenFonts() async {
+  // Locate the bundled MaterialIcons font via the live Flutter SDK instead
+  // of a hard-coded developer path: `flutter test` exports FLUTTER_ROOT, and
+  // on CI the SDK lives somewhere like /opt/hostedtoolcache/flutter, not
+  // /home/<user>/flutter. Each font load is best-effort — if a file is
+  // absent the loader is skipped so the test still runs with default fonts
+  // rather than crashing in setUpAll.
+  final flutterRoot = Platform.environment['FLUTTER_ROOT'];
+  final iconFont = flutterRoot == null
+      ? null
+      : File(
+          '$flutterRoot/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+        );
   final textFont = File('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
-  final iconFont = File(
-    '/home/user/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
-  );
 
-  await (FontLoader('Roboto')
-        ..addFont(Future.value(textFont.readAsBytesSync().buffer.asByteData())))
-      .load();
-  await (FontLoader('MaterialIcons')
-        ..addFont(Future.value(iconFont.readAsBytesSync().buffer.asByteData())))
-      .load();
+  if (textFont.existsSync()) {
+    await (FontLoader('Roboto')
+          ..addFont(
+              Future.value(textFont.readAsBytesSync().buffer.asByteData())))
+        .load();
+  }
+  if (iconFont != null && iconFont.existsSync()) {
+    await (FontLoader('MaterialIcons')
+          ..addFont(
+              Future.value(iconFont.readAsBytesSync().buffer.asByteData())))
+        .load();
+  }
 }

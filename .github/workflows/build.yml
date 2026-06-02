@@ -51,7 +51,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Use the latest stable toolchain (not the go.mod minimum) so
+          # govulncheck evaluates against an up-to-date standard library —
+          # recent GO-2026-xxxx stdlib advisories only land in the newest
+          # patch releases and otherwise fail the gate on net/tls/x509/http.
+          go-version: 'stable'
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -169,7 +173,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Use the latest stable toolchain (not the go.mod minimum) so
+          # govulncheck evaluates against an up-to-date standard library —
+          # recent GO-2026-xxxx stdlib advisories only land in the newest
+          # patch releases and otherwise fail the gate on net/tls/x509/http.
+          go-version: 'stable'
 
       - name: Install pnpm
         run: npm install -g pnpm
