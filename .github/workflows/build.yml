@@ -205,6 +205,17 @@ jobs:
       - name: Verify environment
         run: wails doctor
 
+      # Pre-build the frontend so frontend/dist/ exists before `wails build`.
+      # Wails generates Go bindings (which compile main.go and resolve its
+      # //go:embed frontend/dist/... directives) BEFORE it builds the
+      # frontend, so on a clean checkout the embed fails with
+      # "frontend/dist/favicon.ico: no matching files found".
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend assets
+        run: cd frontend && pnpm run build-only
+
       - name: Build application
         run: wails build -platform ${{ matrix.platform }}
 
