@@ -172,8 +172,7 @@ class _IntroCard extends StatelessWidget {
               SizedBox(width: 8.w),
               Text(
                 isZh ? '什么是 CDN 加速?' : 'What is CDN acceleration?',
-                style: TextStyle(
-                    fontSize: 14.sp, fontWeight: FontWeight.w700),
+                style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
               ),
             ],
           ),
@@ -258,17 +257,14 @@ class _StatusCard extends StatelessWidget {
             // account X but it's missing a subdomain" narrative that
             // the warning text below needs as context.
             if (provider.status == CdnStatus.verified ||
-                provider.status ==
-                    CdnStatus.verifiedButIncomplete) ...[
+                provider.status == CdnStatus.verifiedButIncomplete) ...[
               SizedBox(height: 12.h),
               if ((provider.accountEmail ?? '').isNotEmpty)
                 _kv(isZh ? '账号' : 'Account', provider.accountEmail!),
               if ((provider.accountId ?? '').isNotEmpty)
-                _kv('Account ID',
-                    _truncateId(provider.accountId!)),
+                _kv('Account ID', _truncateId(provider.accountId!)),
               if ((provider.workersSubdomain ?? '').isNotEmpty)
-                _kv(
-                    isZh ? 'Workers 子域' : 'Workers subdomain',
+                _kv(isZh ? 'Workers 子域' : 'Workers subdomain',
                     '${provider.workersSubdomain}.workers.dev'),
             ],
             if ((provider.lastError ?? '').isNotEmpty) ...[
@@ -277,8 +273,8 @@ class _StatusCard extends StatelessWidget {
                 padding: EdgeInsets.all(10.w),
                 decoration: BoxDecoration(
                   color: Colors.orange.withValues(alpha: 0.08),
-                  border: Border.all(
-                      color: Colors.orange.withValues(alpha: 0.4)),
+                  border:
+                      Border.all(color: Colors.orange.withValues(alpha: 0.4)),
                   borderRadius: BorderRadius.circular(8.r),
                 ),
                 child: Text(
@@ -349,7 +345,9 @@ class _SetupSection extends StatelessWidget {
             _step(
               context,
               n: 1,
-              title: isZh ? '生成 Cloudflare API Token' : 'Create a Cloudflare API token',
+              title: isZh
+                  ? '生成 Cloudflare API Token'
+                  : 'Create a Cloudflare API token',
               body: isZh
                   ? '点下方按钮拷贝链接,在浏览器打开 — Cloudflare 会预填好我们需要的 '
                       '3 行权限 (Workers Scripts:Edit / Account Settings:Read / '
@@ -412,8 +410,8 @@ class _SetupSection extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
                   onPressed: () => _confirmClear(context, isZh: isZh),
-                  icon: const Icon(Icons.delete_outline,
-                      color: Colors.redAccent),
+                  icon:
+                      const Icon(Icons.delete_outline, color: Colors.redAccent),
                   label: Text(
                     isZh ? '移除已保存的 token' : 'Remove saved token',
                     style: const TextStyle(color: Colors.redAccent),
@@ -468,9 +466,7 @@ class _SetupSection extends StatelessWidget {
                 SizedBox(height: 4.h),
                 Text(body,
                     style: TextStyle(
-                        fontSize: 12.sp,
-                        height: 1.5,
-                        color: Colors.grey[700])),
+                        fontSize: 12.sp, height: 1.5, color: Colors.grey[700])),
                 if (hasAction) ...[
                   SizedBox(height: 8.h),
                   Align(
@@ -515,7 +511,8 @@ class _SetupSection extends StatelessWidget {
     final newToken = await showDialog<String>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: Text(isZh ? '粘贴 Cloudflare API token' : 'Paste Cloudflare API token'),
+        title: Text(
+            isZh ? '粘贴 Cloudflare API token' : 'Paste Cloudflare API token'),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -550,8 +547,7 @@ class _SetupSection extends StatelessWidget {
     ));
   }
 
-  Future<void> _confirmClear(BuildContext context,
-      {required bool isZh}) async {
+  Future<void> _confirmClear(BuildContext context, {required bool isZh}) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
@@ -649,8 +645,7 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
     final isZh = widget.isZh;
     final msg = ok
         ? (isZh ? '已保存自定义域名绑定' : 'Custom domain saved')
-        : (widget.provider.lastError ??
-            (isZh ? '保存失败' : 'Save failed'));
+        : (widget.provider.lastError ?? (isZh ? '保存失败' : 'Save failed'));
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
@@ -691,9 +686,7 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
         ? (isZh
             ? '可选 · 用 Cloudflare 上的域名替代 workers.dev'
             : 'Optional · replace workers.dev with a domain on Cloudflare')
-        : (isZh
-            ? '已绑定: ${bound.hostPattern}'
-            : 'Bound: ${bound.hostPattern}');
+        : (isZh ? '已绑定: ${bound.hostPattern}' : 'Bound: ${bound.hostPattern}');
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
@@ -720,120 +713,122 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-            Text(
-              isZh
-                  ? '把 Worker 同时绑定到你 Cloudflare 上的某个域名 (例如 '
-                      'relay-<node>.example.com)。部分蜂窝运营商会针对 '
-                      '*.workers.dev 做指纹/投毒,自定义域名能绕开。'
-                  : 'Bind the Worker to a domain on your Cloudflare zone '
-                      '(e.g. relay-<node>.example.com). Some carriers '
-                      'fingerprint or DNS-poison *.workers.dev; a personal '
-                      'domain bypasses that.',
-              style: TextStyle(
-                  fontSize: 12.sp, height: 1.5, color: Colors.grey[700]),
-            ),
-            SizedBox(height: 8.h),
-            // SwitchListTile makes the entire row a tap target — bare
-            // Switch widgets have a small hit area that's annoying on
-            // touchscreens (and effectively un-driveable from `adb input
-            // tap`, which is also how tap automation breaks accidentally).
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: _enabled,
-              onChanged: _onToggle,
-              title: Text(
-                isZh ? '启用自定义域名' : 'Use custom domain',
-                style: TextStyle(fontSize: 13.sp),
+              Text(
+                isZh
+                    ? '把 Worker 同时绑定到你 Cloudflare 上的某个域名 (例如 '
+                        'relay-<node>.example.com)。部分蜂窝运营商会针对 '
+                        '*.workers.dev 做指纹/投毒,自定义域名能绕开。'
+                    : 'Bind the Worker to a domain on your Cloudflare zone '
+                        '(e.g. relay-<node>.example.com). Some carriers '
+                        'fingerprint or DNS-poison *.workers.dev; a personal '
+                        'domain bypasses that.',
+                style: TextStyle(
+                    fontSize: 12.sp, height: 1.5, color: Colors.grey[700]),
               ),
-            ),
-            if (_enabled) ...[
               SizedBox(height: 8.h),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (zones.isEmpty)
-                Text(
-                  isZh
-                      ? '当前 token 看不到任何活跃的 zone。请先在 Cloudflare 添加站点,'
-                          '并确认 token 拥有该 zone 的 Zone:Read 权限。'
-                      : 'No active zones visible to this token. Add a site to '
-                          'Cloudflare first and make sure your token has '
-                          'Zone:Read for it.',
-                  style: TextStyle(
-                      fontSize: 12.sp, color: const Color(0xFFB05010)),
-                )
-              else ...[
-                DropdownButtonFormField<String>(
-                  initialValue: _zoneId,
-                  decoration: InputDecoration(
-                    labelText: isZh ? '选择域名' : 'Zone',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: zones
-                      .map((z) => DropdownMenuItem(
-                            value: z.id,
-                            child: Text(z.name),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setState(() => _zoneId = v),
+              // SwitchListTile makes the entire row a tap target — bare
+              // Switch widgets have a small hit area that's annoying on
+              // touchscreens (and effectively un-driveable from `adb input
+              // tap`, which is also how tap automation breaks accidentally).
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: _enabled,
+                onChanged: _onToggle,
+                title: Text(
+                  isZh ? '启用自定义域名' : 'Use custom domain',
+                  style: TextStyle(fontSize: 13.sp),
                 ),
+              ),
+              if (_enabled) ...[
                 SizedBox(height: 8.h),
-                TextField(
-                  controller: _subdomainCtl,
-                  decoration: InputDecoration(
-                    labelText: isZh ? '子域名前缀' : 'Subdomain prefix',
-                    helperText: isZh
-                        ? '不含 ".",最终主机 = 前缀-<节点哈希>.根域名'
-                        : 'No "."; final host = prefix-<node-hash>.zone',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-                SizedBox(height: 6.h),
-                if (previewHost.isNotEmpty)
+                if (loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (zones.isEmpty)
                   Text(
-                    (isZh ? '生效后域名: ' : 'Resulting host: ') + previewHost,
-                    style: TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
-                  ),
-                SizedBox(height: 10.h),
-                Row(
-                  children: [
-                    ElevatedButton(
-                      onPressed: saving
-                          ? null
-                          : (_zoneId == null ||
-                                  _subdomainCtl.text.trim().isEmpty
-                              ? null
-                              : _onSave),
-                      child: Text(saving
-                          ? (isZh ? '保存中…' : 'Saving…')
-                          : (isZh ? '保存绑定' : 'Save binding')),
+                    isZh
+                        ? '当前 token 看不到任何活跃的 zone。请先在 Cloudflare 添加站点,'
+                            '并确认 token 拥有该 zone 的 Zone:Read 权限。'
+                        : 'No active zones visible to this token. Add a site to '
+                            'Cloudflare first and make sure your token has '
+                            'Zone:Read for it.',
+                    style: TextStyle(
+                        fontSize: 12.sp, color: const Color(0xFFB05010)),
+                  )
+                else ...[
+                  DropdownButtonFormField<String>(
+                    initialValue: _zoneId,
+                    decoration: InputDecoration(
+                      labelText: isZh ? '选择域名' : 'Zone',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
                     ),
-                    SizedBox(width: 8.w),
-                    if (p.customDomain != null)
-                      TextButton(
-                        onPressed: saving ? null : _onClear,
-                        child: Text(isZh ? '关闭并解绑' : 'Disable and unbind'),
-                      ),
-                  ],
-                ),
-                if (p.customDomain != null) ...[
-                  SizedBox(height: 6.h),
-                  Text(
-                    (isZh ? '已绑定: ' : 'Bound: ') +
-                        p.customDomain!.hostPattern,
-                    style: TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                    items: zones
+                        .map((z) => DropdownMenuItem(
+                              value: z.id,
+                              child: Text(z.name),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setState(() => _zoneId = v),
                   ),
+                  SizedBox(height: 8.h),
+                  TextField(
+                    controller: _subdomainCtl,
+                    decoration: InputDecoration(
+                      labelText: isZh ? '子域名前缀' : 'Subdomain prefix',
+                      helperText: isZh
+                          ? '不含 ".",最终主机 = 前缀-<节点哈希>.根域名'
+                          : 'No "."; final host = prefix-<node-hash>.zone',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  SizedBox(height: 6.h),
+                  if (previewHost.isNotEmpty)
+                    Text(
+                      (isZh ? '生效后域名: ' : 'Resulting host: ') + previewHost,
+                      style:
+                          TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                    ),
+                  SizedBox(height: 10.h),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        onPressed: saving
+                            ? null
+                            : (_zoneId == null ||
+                                    _subdomainCtl.text.trim().isEmpty
+                                ? null
+                                : _onSave),
+                        child: Text(saving
+                            ? (isZh ? '保存中…' : 'Saving…')
+                            : (isZh ? '保存绑定' : 'Save binding')),
+                      ),
+                      SizedBox(width: 8.w),
+                      if (p.customDomain != null)
+                        TextButton(
+                          onPressed: saving ? null : _onClear,
+                          child: Text(isZh ? '关闭并解绑' : 'Disable and unbind'),
+                        ),
+                    ],
+                  ),
+                  if (p.customDomain != null) ...[
+                    SizedBox(height: 6.h),
+                    Text(
+                      (isZh ? '已绑定: ' : 'Bound: ') +
+                          p.customDomain!.hostPattern,
+                      style:
+                          TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                    ),
+                  ],
                 ],
               ],
             ],
-          ],
-        ),
+          ),
         ],
       ),
     );
@@ -856,12 +851,11 @@ class _NodesSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final nodes = cloud.instances
         .where((n) =>
-            n.hasIp &&
-            n.nodeInfo != null &&
-            n.nodeInfo!.vlessUuid.isNotEmpty)
+            n.hasIp && n.nodeInfo != null && n.nodeInfo!.vlessUuid.isNotEmpty)
         .toList(growable: false);
 
-    final hasUnrecoverable = nodes.any((n) => (n.nodeInfo?.vlessRelayPort ?? 0) <= 0);
+    final hasUnrecoverable =
+        nodes.any((n) => (n.nodeInfo?.vlessRelayPort ?? 0) <= 0);
     return Card(
       child: Padding(
         padding: EdgeInsets.all(14.w),
@@ -873,12 +867,14 @@ class _NodesSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     isZh ? '你的节点' : 'Your nodes',
-                    style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
+                    style:
+                        TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700),
                   ),
                 ),
                 IconButton(
                   tooltip: isZh ? '刷新节点列表' : 'Refresh nodes',
-                  icon: Icon(Icons.refresh, size: 20.w,
+                  icon: Icon(Icons.refresh,
+                      size: 20.w,
                       color: hasUnrecoverable ? Colors.orange : null),
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -959,8 +955,7 @@ class _NodeRow extends StatelessWidget {
                       Flexible(
                         child: Text(node.label,
                             style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.w600)),
+                                fontSize: 13.sp, fontWeight: FontWeight.w600)),
                       ),
                       // Provenance chip — only shown when a deployment
                       // exists. Lets the user instantly tell apart "I
@@ -980,7 +975,9 @@ class _NodeRow extends StatelessWidget {
                       hasRelay
                           ? '${node.ipv4} · relay :$relayPort'
                           : '${node.ipv4} · ' +
-                              (isZh ? 'CDN 不可用(需重新部署)' : 'CDN unavailable (re-deploy)'),
+                              (isZh
+                                  ? 'CDN 不可用(需重新部署)'
+                                  : 'CDN unavailable (re-deploy)'),
                       style: TextStyle(
                           fontSize: 11.sp,
                           color: hasRelay ? Colors.grey[600] : Colors.orange,
@@ -1009,14 +1006,12 @@ class _NodeRow extends StatelessWidget {
               ),
             ] else
               FilledButton(
-                onPressed:
-                    canDeploy ? () => _deploy(context) : null,
+                onPressed: canDeploy ? () => _deploy(context) : null,
                 child: provider.isDeploying
                     ? SizedBox(
                         width: 14.w,
                         height: 14.w,
-                        child: const CircularProgressIndicator(
-                            strokeWidth: 2),
+                        child: const CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Text(isZh ? '部署 Worker' : 'Deploy Worker'),
               ),
@@ -1026,8 +1021,7 @@ class _NodeRow extends StatelessWidget {
           Padding(
             padding: EdgeInsets.only(top: 6.h, left: 2.w),
             child: Container(
-              padding: EdgeInsets.symmetric(
-                  horizontal: 8.w, vertical: 6.h),
+              padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
               decoration: BoxDecoration(
                 color: const Color(0xFF15803D).withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8.r),
@@ -1035,8 +1029,7 @@ class _NodeRow extends StatelessWidget {
               child: Row(
                 children: [
                   Icon(Icons.cloud_done_outlined,
-                      size: 14.sp,
-                      color: const Color(0xFF15803D)),
+                      size: 14.sp, color: const Color(0xFF15803D)),
                   SizedBox(width: 6.w),
                   Expanded(
                     child: Column(
@@ -1052,9 +1045,7 @@ class _NodeRow extends StatelessWidget {
                               ? dep.customHost!
                               : dep.workerHost.isNotEmpty
                                   ? dep.workerHost
-                                  : (isZh
-                                      ? '正在配置中…'
-                                      : 'Provisioning…'),
+                                  : (isZh ? '正在配置中…' : 'Provisioning…'),
                           style: TextStyle(
                               fontSize: 11.sp,
                               fontFamily: 'monospace',
@@ -1153,8 +1144,7 @@ class _NodeRow extends StatelessWidget {
             child: Text(isZh ? '取消' : 'Cancel'),
           ),
           FilledButton(
-            style:
-                FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.of(dialogCtx).pop(true),
             child: Text(isZh ? '删除' : 'Delete'),
           ),
@@ -1166,8 +1156,7 @@ class _NodeRow extends StatelessWidget {
     if (!context.mounted) return;
     if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(provider.lastError ??
-            (isZh ? '删除失败' : 'Delete failed')),
+        content: Text(provider.lastError ?? (isZh ? '删除失败' : 'Delete failed')),
       ));
     }
   }
@@ -1201,9 +1190,7 @@ class _DeployProvenanceChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAuto = dep.deployedBy == 'auto';
-    final label = isAuto
-        ? (isZh ? '自动' : 'Auto')
-        : (isZh ? '已部署' : 'Deployed');
+    final label = isAuto ? (isZh ? '自动' : 'Auto') : (isZh ? '已部署' : 'Deployed');
     final age = _relativeTime(dep.deployedAt, isZh: isZh);
     final accent = isAuto ? const Color(0xFFCA8A04) : Colors.grey[600]!;
     return Container(
@@ -1257,9 +1244,7 @@ String _customHostStatusLabel({
   // runs them in parallel.
   switch (dep.customHostStatus) {
     case 'pending':
-      return isZh
-          ? '正在验证 CDN 中转链路'
-          : 'Verifying CDN relay path';
+      return isZh ? '正在验证 CDN 中转链路' : 'Verifying CDN relay path';
     case 'failed':
       return isZh
           ? 'CDN 探测未通过（仍会尝试连接）'
@@ -1329,7 +1314,9 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         ok
-            ? (widget.isZh ? 'CDN 中转链路已修复并就绪' : 'CDN relay path repaired and live')
+            ? (widget.isZh
+                ? 'CDN 中转链路已修复并就绪'
+                : 'CDN relay path repaired and live')
             : (widget.isZh
                 ? 'CDN 仍不可达，稍后可再试'
                 : "CDN still unreachable; you can try again"),

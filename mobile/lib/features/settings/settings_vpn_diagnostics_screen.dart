@@ -169,7 +169,8 @@ class _DiagnosticsStatusCard extends StatelessWidget {
             if (vpn.diagnosticsUpdatedAt != null) ...[
               SizedBox(height: 8.h),
               Text(
-                l10n.lastUpdated(DateFormat('yyyy-MM-dd HH:mm:ss').format(vpn.diagnosticsUpdatedAt!)),
+                l10n.lastUpdated(DateFormat('yyyy-MM-dd HH:mm:ss')
+                    .format(vpn.diagnosticsUpdatedAt!)),
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -216,7 +217,8 @@ class _DiagnosticsEgressCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(l10n.currentEgressIp, style: theme.textTheme.titleMedium),
+                  Text(l10n.currentEgressIp,
+                      style: theme.textTheme.titleMedium),
                   SizedBox(height: 6.h),
                   Text(
                     value,

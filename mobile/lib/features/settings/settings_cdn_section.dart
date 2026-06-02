@@ -39,8 +39,7 @@ class SettingsCdnSection extends StatelessWidget {
             color: Theme.of(context).colorScheme.surfaceContainerLowest,
             borderRadius: BorderRadius.circular(16.r),
             border: Border.all(
-              color:
-                  Theme.of(context).dividerColor.withValues(alpha: 0.12),
+              color: Theme.of(context).dividerColor.withValues(alpha: 0.12),
             ),
           ),
           child: ListTile(
@@ -100,9 +99,7 @@ class SettingsCdnSection extends StatelessWidget {
         );
       case CdnStatus.verifiedButIncomplete:
         return (
-          isZh
-              ? '已验证 · 尚未声明子域'
-              : 'Verified · subdomain not claimed',
+          isZh ? '已验证 · 尚未声明子域' : 'Verified · subdomain not claimed',
           const Color(0xFFCA8A04),
         );
       case CdnStatus.verified:

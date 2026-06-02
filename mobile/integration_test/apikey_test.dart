@@ -14,7 +14,8 @@ class _ApiKeyDialogHarness extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: FilledButton(
-        onPressed: () => showSettingsApiKeyDialog(context: context, cloud: cloud),
+        onPressed: () =>
+            showSettingsApiKeyDialog(context: context, cloud: cloud),
         child: const Text('Open API Key'),
       ),
     );

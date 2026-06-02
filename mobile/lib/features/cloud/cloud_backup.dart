@@ -52,7 +52,8 @@ class CdnBackup {
   Map<String, dynamic> toJson() {
     final out = <String, dynamic>{};
     if (token != null && token!.isNotEmpty) out['token'] = token;
-    if (accountId != null && accountId!.isNotEmpty) out['accountId'] = accountId;
+    if (accountId != null && accountId!.isNotEmpty)
+      out['accountId'] = accountId;
     if (accountEmail != null && accountEmail!.isNotEmpty) {
       out['accountEmail'] = accountEmail;
     }

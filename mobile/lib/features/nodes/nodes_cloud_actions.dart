@@ -272,7 +272,8 @@ Future<void> showCreateCloudNodeFlow({
   // frozen: the form dialog closed and nothing happened on screen for the
   // multi-second (sometimes minute-plus) createInstance round-trip, so
   // users couldn't tell whether their tap registered or what was going on.
-  _showDeployProgressDialog(context, AppLocalizations.of(context)!.nodeDeploying);
+  _showDeployProgressDialog(
+      context, AppLocalizations.of(context)!.nodeDeploying);
 
   final success = await cloudProvider.createInstance(
     region: request.region,

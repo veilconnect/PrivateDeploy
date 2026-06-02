@@ -7,8 +7,8 @@ void main() {
       // Critical: existing users already have data under these exact keys.
       // Changing the strings would orphan their records.
       expect(CloudProviderId.vultr.id, 'vultr');
-      expect(CloudProviderId.vultr.apiKeyStorageKey,
-          'mobile_cloud_vultr_api_key');
+      expect(
+          CloudProviderId.vultr.apiKeyStorageKey, 'mobile_cloud_vultr_api_key');
       expect(CloudProviderId.vultr.nodeRecordsStorageKey,
           'mobile_cloud_vultr_nodes');
     });

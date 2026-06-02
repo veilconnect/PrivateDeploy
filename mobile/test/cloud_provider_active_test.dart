@@ -13,7 +13,8 @@ void main() {
     await StorageService.init();
     // flutter_secure_storage has no test mock; stub the platform channel so
     // reads/writes no-op instead of crashing under the unit-test binding.
-    const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+    const channel =
+        MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'read') return null;
@@ -22,11 +23,13 @@ void main() {
   });
 
   group('CloudProvider.setActiveProvider', () {
-    test('switches providerId and persists selection to SharedPreferences', () async {
+    test('switches providerId and persists selection to SharedPreferences',
+        () async {
       final cloud = CloudProvider(autoInitialize: false);
       expect(cloud.providerId, CloudProviderId.vultr);
 
-      final switched = await cloud.setActiveProvider(CloudProviderId.digitalocean);
+      final switched =
+          await cloud.setActiveProvider(CloudProviderId.digitalocean);
       expect(switched, isTrue);
       expect(cloud.providerId, CloudProviderId.digitalocean);
 

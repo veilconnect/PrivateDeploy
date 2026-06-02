@@ -22,7 +22,7 @@ void main() {
     app.main();
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
-  expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
+    expect(find.byKey(NodesTestKeys.connectButton), findsOneWidget);
     expect(find.byKey(NodesTestKeys.importProfileFab), findsOneWidget);
 
     await tester.tap(find.byKey(NodesTestKeys.importProfileFab));

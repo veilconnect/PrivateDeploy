@@ -257,13 +257,11 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
             // nodes don't get a CF worker either (M1 is cloud-provider-
             // specific), so we hide it on SSH too.
             if (!isSsh &&
-                context.watch<CdnProvider>().status ==
-                    CdnStatus.verified) ...[
+                context.watch<CdnProvider>().status == CdnStatus.verified) ...[
               SizedBox(height: 16.h),
               CheckboxListTile(
                 value: _autoDeployCdn,
-                onChanged: (v) =>
-                    setState(() => _autoDeployCdn = v ?? false),
+                onChanged: (v) => setState(() => _autoDeployCdn = v ?? false),
                 title: Text(l10n.deployCdnWorkerAfterCreate),
                 subtitle: Text(
                   l10n.deployCdnWorkerAfterCreateHint,

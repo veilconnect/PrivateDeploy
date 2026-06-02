@@ -46,8 +46,7 @@ class CdnProvider with ChangeNotifier {
       'https://api.cloudflare.com/client/v4/user/tokens/verify';
   static const _accountsEndpoint =
       'https://api.cloudflare.com/client/v4/accounts';
-  static const _zonesEndpoint =
-      'https://api.cloudflare.com/client/v4/zones';
+  static const _zonesEndpoint = 'https://api.cloudflare.com/client/v4/zones';
 
   CdnStatus _status = CdnStatus.disabled;
   String? _accountId;
@@ -70,8 +69,7 @@ class CdnProvider with ChangeNotifier {
   bool get isVerifying => _isVerifying;
   bool get isDeploying => _isDeploying;
   bool get isConfigured => _status != CdnStatus.disabled;
-  Map<String, CdnDeployment> get deployments =>
-      Map.unmodifiable(_deployments);
+  Map<String, CdnDeployment> get deployments => Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
   CdnCustomDomain? get customDomain => _customDomain;
   List<CdnZone> get zones => List.unmodifiable(_zones);
@@ -127,8 +125,7 @@ class CdnProvider with ChangeNotifier {
   /// and verified count: they only differ on the *destination* prerequisite,
   /// not on whether the token itself ever passed verify.
   bool _hadValidTokenBefore(CdnStatus prior) =>
-      prior == CdnStatus.verified ||
-      prior == CdnStatus.verifiedButIncomplete;
+      prior == CdnStatus.verified || prior == CdnStatus.verifiedButIncomplete;
 
   /// Build the workers.dev URL fragment we display in the UI as
   /// "<your-name>.<subdomain>.workers.dev". Returns null if not yet known.
@@ -225,8 +222,8 @@ class CdnProvider with ChangeNotifier {
         _deployments = {};
         return;
       }
-      _deployments = decoded.map((k, v) =>
-          MapEntry(k.toString(), CdnDeployment.fromJson(v as Map)));
+      _deployments = decoded.map(
+          (k, v) => MapEntry(k.toString(), CdnDeployment.fromJson(v as Map)));
     } catch (_) {
       _deployments = {};
     }
@@ -283,8 +280,9 @@ class CdnProvider with ChangeNotifier {
 
       // 2. List accounts. Token-scoped tokens typically return one entry.
       final acc = await dio.get(_accountsEndpoint);
-      final accounts =
-          (acc.data is Map) ? (acc.data['result'] as List? ?? const []) : const [];
+      final accounts = (acc.data is Map)
+          ? (acc.data['result'] as List? ?? const [])
+          : const [];
       if (accounts.isEmpty) {
         _lastError = 'Token has no accessible Cloudflare accounts.';
         _status = _hadValidTokenBefore(priorStatus)
@@ -553,6 +551,7 @@ class CdnProvider with ChangeNotifier {
     required String nodeLabel,
     required String backendHost,
     required int backendPort,
+
     /// Whether this call originated from a user tap on the manual
     /// "Deploy Worker" button ('manual') or from Gate ① recovering
     /// from a cellular connectivity failure ('auto'). Persisted on the resulting
@@ -636,8 +635,7 @@ class CdnProvider with ChangeNotifier {
         data: form,
         options: Options(headers: {
           'Authorization': 'Bearer $token',
-          'Content-Type':
-              'multipart/form-data; boundary=${form.boundary}',
+          'Content-Type': 'multipart/form-data; boundary=${form.boundary}',
         }),
       );
       if (put.statusCode! >= 400) {
@@ -719,7 +717,8 @@ class CdnProvider with ChangeNotifier {
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
-        _lastError = 'workers.dev path live, but custom-domain binding produced no host.';
+        _lastError =
+            'workers.dev path live, but custom-domain binding produced no host.';
       } else if (customHost != null && url.isEmpty) {
         // Single-point-of-failure guard: a custom-domain-only deploy (no
         // workers.dev subdomain claimed) leaves no sibling in the client's
@@ -736,7 +735,8 @@ class CdnProvider with ChangeNotifier {
       }
       return true;
     } on DioException catch (e) {
-      _lastError = 'Network error deploying Worker: ${e.message ?? e.type.name}';
+      _lastError =
+          'Network error deploying Worker: ${e.message ?? e.type.name}';
       return false;
     } catch (e) {
       _lastError = 'Unexpected error: $e';
@@ -1012,8 +1012,8 @@ class CdnProvider with ChangeNotifier {
         receiveTimeout: const Duration(seconds: 30),
         validateStatus: (_) => true,
       ));
-      final r = await dio
-          .get('$_accountsEndpoint/$aid/workers/domains?per_page=1');
+      final r =
+          await dio.get('$_accountsEndpoint/$aid/workers/domains?per_page=1');
       final code = r.statusCode ?? 0;
       if (code == 200) return null;
       if (code == 401 || code == 403) {
@@ -1165,8 +1165,8 @@ class CdnProvider with ChangeNotifier {
     final r = await dio.delete(
       '$_accountsEndpoint/$accountId/workers/domains/$domainId',
     );
-    final ok = r.statusCode != null &&
-        (r.statusCode! < 400 || r.statusCode == 404);
+    final ok =
+        r.statusCode != null && (r.statusCode! < 400 || r.statusCode == 404);
     if (!ok) {
       _lastError = _extractCloudflareError(r.data) ??
           'Custom domain detach failed (HTTP ${r.statusCode}).';
@@ -1453,8 +1453,8 @@ class CdnProvider with ChangeNotifier {
           bindingWasPresent =
               await _customDomainBindingExists(dio, accountId, customDomainId);
         }
-        final binding =
-            await _attachWorkerCustomDomain(dio, customHost, scriptName, cd.zoneId);
+        final binding = await _attachWorkerCustomDomain(
+            dio, customHost, scriptName, cd.zoneId);
         if (binding != null) {
           customHost = binding.hostname;
           customDomainId = binding.id;
@@ -1492,7 +1492,8 @@ class CdnProvider with ChangeNotifier {
       }
       return usable;
     } on DioException catch (e) {
-      _lastError = 'Network error repairing Worker: ${e.message ?? e.type.name}';
+      _lastError =
+          'Network error repairing Worker: ${e.message ?? e.type.name}';
       return false;
     } catch (e) {
       _lastError = 'Unexpected error: $e';
@@ -1606,8 +1607,7 @@ class CdnProvider with ChangeNotifier {
         keyBytes[i] = rng.nextInt(256);
       }
       final wsKey = base64Encode(keyBytes);
-      final query =
-          'ed=2560&k=${Uri.encodeQueryComponent(pathSecret)}';
+      final query = 'ed=2560&k=${Uri.encodeQueryComponent(pathSecret)}';
       final req = 'GET /?$query HTTP/1.1\r\n'
           'Host: $host\r\n'
           'Upgrade: websocket\r\n'
@@ -1643,8 +1643,7 @@ class CdnProvider with ChangeNotifier {
         },
         cancelOnError: true,
       );
-      final line =
-          await firstLine.future.timeout(const Duration(seconds: 12));
+      final line = await firstLine.future.timeout(const Duration(seconds: 12));
       // "HTTP/1.1 101 Switching Protocols" — match status code, ignore
       // case + minor status-text variation across reverse proxies.
       return RegExp(r'^HTTP/1\.[01]\s+101\b').hasMatch(line);
@@ -1672,11 +1671,11 @@ class CdnProvider with ChangeNotifier {
   /// CF/Google follow as fallbacks for non-regional networks where AliDNS is
   /// the slow path.
   static const List<String> _kDoHEndpoints = [
-    'https://223.5.5.5/resolve',           // AliDNS (CN-friendly)
-    'https://223.6.6.6/resolve',           // AliDNS secondary
-    'https://1.1.1.1/dns-query',           // Cloudflare
-    'https://1.0.0.1/dns-query',           // Cloudflare secondary
-    'https://8.8.8.8/resolve',             // Google
+    'https://223.5.5.5/resolve', // AliDNS (CN-friendly)
+    'https://223.6.6.6/resolve', // AliDNS secondary
+    'https://1.1.1.1/dns-query', // Cloudflare
+    'https://1.0.0.1/dns-query', // Cloudflare secondary
+    'https://8.8.8.8/resolve', // Google
   ];
 
   Future<List<InternetAddress>> _resolveViaDoH(String host) async {
@@ -1925,7 +1924,8 @@ class CdnDeployment {
         'workerHost': workerHost,
         'backend': backend,
         'deployedAt': deployedAt.toIso8601String(),
-        if (customHost != null && customHost!.isNotEmpty) 'customHost': customHost,
+        if (customHost != null && customHost!.isNotEmpty)
+          'customHost': customHost,
         if (customDomainId != null && customDomainId!.isNotEmpty)
           'customDomainId': customDomainId,
         if (customHostStatus != null && customHostStatus!.isNotEmpty)
@@ -1942,9 +1942,8 @@ class CdnDeployment {
         scriptName: json['scriptName']?.toString() ?? '',
         workerHost: json['workerHost']?.toString() ?? '',
         backend: json['backend']?.toString() ?? '',
-        deployedAt:
-            DateTime.tryParse(json['deployedAt']?.toString() ?? '') ??
-                DateTime.fromMillisecondsSinceEpoch(0).toUtc(),
+        deployedAt: DateTime.tryParse(json['deployedAt']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0).toUtc(),
         customHost: (json['customHost']?.toString().isEmpty ?? true)
             ? null
             : json['customHost'].toString(),

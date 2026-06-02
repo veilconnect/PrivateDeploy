@@ -418,11 +418,11 @@ class _SettingsRoutingRulesDialogState
       _errorText = null;
     });
 
-      final settings = widget.initialSettings.copyWith(
-        dnsMode: _dnsMode,
-        directPrivateNetworks: _directPrivateNetworks,
-        directCnDomains: _directCnDomains,
-        directCnIpRanges: _directCnIpRanges,
+    final settings = widget.initialSettings.copyWith(
+      dnsMode: _dnsMode,
+      directPrivateNetworks: _directPrivateNetworks,
+      directCnDomains: _directCnDomains,
+      directCnIpRanges: _directCnIpRanges,
       customDirectPackages: _directPackages,
       customProxyPackages: _proxyPackages,
       customDirectDomains: directDomains,

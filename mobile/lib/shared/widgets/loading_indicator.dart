@@ -15,9 +15,8 @@ class LoadingIndicator extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final minHeight = constraints.maxHeight.isFinite
-            ? constraints.maxHeight
-            : 0.0;
+        final minHeight =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 0.0;
 
         return SingleChildScrollView(
           padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),

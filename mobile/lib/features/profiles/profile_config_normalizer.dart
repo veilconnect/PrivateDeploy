@@ -322,7 +322,9 @@ bool _looksLikeAndroidCloudProfileConfig(Map<String, dynamic> decoded) {
     return false;
   }
 
-  final selector = outbounds.whereType<Map>().cast<Map<String, dynamic>>()
+  final selector = outbounds
+      .whereType<Map>()
+      .cast<Map<String, dynamic>>()
       .where(
         (outbound) =>
             outbound['type']?.toString() == 'selector' &&
@@ -549,10 +551,8 @@ bool _sameStringSet(dynamic value, Set<String> expected) {
   if (value is! List<dynamic>) {
     return false;
   }
-  final actual = value
-      .map((item) => item?.toString())
-      .whereType<String>()
-      .toSet();
+  final actual =
+      value.map((item) => item?.toString()).whereType<String>().toSet();
   return actual.length == expected.length && actual.containsAll(expected);
 }
 
@@ -946,7 +946,8 @@ void _upsertDnsServer(
   required String address,
   required String detour,
 }) {
-  final index = servers.indexWhere((server) => server['tag']?.toString() == tag);
+  final index =
+      servers.indexWhere((server) => server['tag']?.toString() == tag);
   final next = <String, dynamic>{
     'tag': tag,
     'address': address,

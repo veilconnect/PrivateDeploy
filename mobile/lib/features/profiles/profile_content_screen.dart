@@ -112,7 +112,9 @@ class _ProfileContentScreenState extends State<ProfileContentScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          success ? l10nAfter.profileContentSaved : provider.error ?? l10nAfter.saveFailed,
+          success
+              ? l10nAfter.profileContentSaved
+              : provider.error ?? l10nAfter.saveFailed,
         ),
         backgroundColor: success ? Colors.green : Colors.red,
       ),

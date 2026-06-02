@@ -84,8 +84,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     // or dismiss-by-tap), roll the active provider back to what it was when
     // the dialog opened. Switching the dropdown is a preview action, not a
     // commit — only "Verify & Save" persists the change.
-    if (!_savedSuccessfully &&
-        widget.cloud.providerId != _originalProvider) {
+    if (!_savedSuccessfully && widget.cloud.providerId != _originalProvider) {
       unawaited(widget.cloud.setActiveProvider(_originalProvider));
     }
     _apiKeyController.dispose();
@@ -219,9 +218,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
         FilledButton(
           onPressed:
               _saving || _selectedProvider == null ? null : _verifyAndSave,
-          child: _saving
-              ? Text(l10n.verifying)
-              : Text(l10n.verifyAndSave),
+          child: _saving ? Text(l10n.verifying) : Text(l10n.verifyAndSave),
         ),
       ],
     );
@@ -279,8 +276,7 @@ class _SettingsApiKeyDialogState extends State<_SettingsApiKeyDialog> {
     }
     setState(() {
       _saving = false;
-      _dialogError =
-          widget.cloud.error ??
+      _dialogError = widget.cloud.error ??
           AppLocalizations.of(context)!.failedToSaveCloudAccess;
     });
   }

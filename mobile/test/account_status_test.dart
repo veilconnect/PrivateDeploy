@@ -21,8 +21,7 @@ void main() {
     });
 
     test('warning preserves the upstream message when present', () {
-      final status =
-          mapDigitalOceanAccountStatus('warning', 'balance low');
+      final status = mapDigitalOceanAccountStatus('warning', 'balance low');
       expect(status.message, 'balance low');
     });
 

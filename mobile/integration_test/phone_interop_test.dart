@@ -15,7 +15,8 @@ import 'package:privatedeploy_mobile/main.dart' as app;
 const _mode = String.fromEnvironment('PD_IT_MODE', defaultValue: 'noop');
 const _backupB64 = String.fromEnvironment('PD_BACKUP_B64', defaultValue: '');
 const _subscriptionUrl = String.fromEnvironment('PD_SUB_URL', defaultValue: '');
-const _profileName = String.fromEnvironment('PD_PROFILE_NAME', defaultValue: '');
+const _profileName =
+    String.fromEnvironment('PD_PROFILE_NAME', defaultValue: '');
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

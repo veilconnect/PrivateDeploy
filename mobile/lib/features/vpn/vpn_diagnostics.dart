@@ -37,7 +37,8 @@ class VpnRouteDecision {
 
   bool get isDnsDecision => dnsServerTag != null;
 
-  String get typeLabel => isDnsDecision ? 'DNS' : (isDirect ? 'DIRECT' : 'PROXY');
+  String get typeLabel =>
+      isDnsDecision ? 'DNS' : (isDirect ? 'DIRECT' : 'PROXY');
 
   String get routeLabel {
     if (isDnsDecision) {

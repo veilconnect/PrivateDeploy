@@ -31,8 +31,8 @@ class SettingsServerSection extends StatelessWidget {
         children: [
           Padding(
             padding: EdgeInsets.all(16.w),
-            child:
-                Text(l10n.server, style: Theme.of(context).textTheme.titleMedium),
+            child: Text(l10n.server,
+                style: Theme.of(context).textTheme.titleMedium),
           ),
           Consumer<CloudProvider>(
             builder: (context, cloud, _) {

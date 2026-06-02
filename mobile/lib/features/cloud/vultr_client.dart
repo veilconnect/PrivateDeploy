@@ -102,8 +102,8 @@ class VultrCloudClient implements CloudApiClient {
   Future<CloudAccountStatus> getAccountStatus() async {
     Map<String, dynamic> payload;
     try {
-      payload = await _requestJson('GET', '/firewalls',
-          timeout: _validationTimeout);
+      payload =
+          await _requestJson('GET', '/firewalls', timeout: _validationTimeout);
     } on DioException catch (err) {
       final status = err.response?.statusCode ?? 0;
       if (status == 401 || status == 403) {
@@ -571,8 +571,7 @@ CloudAccountStatus classifyVultrFirewallQuota(int total, int reusable) {
   if (total >= vultrFirewallWarnThreshold) {
     return CloudAccountStatus(
       state: CloudAccountState.warning,
-      message:
-          'Vultr firewall groups are approaching the per-account cap '
+      message: 'Vultr firewall groups are approaching the per-account cap '
           '($total/$vultrFirewallGroupCap). Consider deleting unused groups '
           'in the Vultr console before the next deploy.',
       canDeploy: true,

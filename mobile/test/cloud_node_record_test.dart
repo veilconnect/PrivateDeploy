@@ -50,7 +50,8 @@ void main() {
         ssPassword: 'pw',
       );
 
-      final restored = VultrNodeRecord.fromJson(original.instanceId, original.toJson());
+      final restored =
+          VultrNodeRecord.fromJson(original.instanceId, original.toJson());
 
       expect(restored.provider, CloudProviderId.digitalocean);
       expect(restored.label, 'do-node');

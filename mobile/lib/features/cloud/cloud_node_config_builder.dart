@@ -251,9 +251,7 @@ Map<String, String> _appendInstanceOutbounds(
     // secret in a path segment (`/<secret>`) survives escaping intact —
     // slashes and hex are not escaped. The Worker now checks the
     // pathname.
-    final wsPath = (secret != null && secret.isNotEmpty)
-        ? '/$secret'
-        : '/';
+    final wsPath = (secret != null && secret.isNotEmpty) ? '/$secret' : '/';
 
     void addCdnOutbound(String host, String tagSuffix) {
       final tag = '$label-$tagSuffix';
@@ -368,7 +366,8 @@ String? buildCloudNodeConfig(
   if (cdnEndpoint?.host != null && cdnEndpoint!.host.isNotEmpty) {
     cdnHostsForDns.add(cdnEndpoint.host);
   }
-  if (cdnEndpoint?.fallbackHost != null && cdnEndpoint!.fallbackHost!.isNotEmpty) {
+  if (cdnEndpoint?.fallbackHost != null &&
+      cdnEndpoint!.fallbackHost!.isNotEmpty) {
     cdnHostsForDns.add(cdnEndpoint.fallbackHost!);
   }
 

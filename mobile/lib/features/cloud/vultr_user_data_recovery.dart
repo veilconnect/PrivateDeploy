@@ -98,10 +98,8 @@ RecoveredVultrNodeRecord? recoverVultrNodeRecordFromUserData(String userData) {
   final vlessServerName = _firstMatchGroup(_vlessServerName, script, 1) ?? '';
 
   final trojanPort = _parseInt(_firstMatchGroup(_trojanPort, script, 1));
-  final trojanPassword =
-      _firstMatchGroup(_trojanPassword, script, 1) ?? '';
-  final trojanServerName =
-      _firstMatchGroup(_trojanServerName, script, 1) ?? '';
+  final trojanPassword = _firstMatchGroup(_trojanPassword, script, 1) ?? '';
+  final trojanServerName = _firstMatchGroup(_trojanServerName, script, 1) ?? '';
 
   // The plain-VLESS relay block (M1 / Workers Custom Domain front) is
   // emitted only when a relay port is allocated. Match either the UFW

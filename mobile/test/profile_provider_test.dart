@@ -424,7 +424,8 @@ void main() {
           (dns['servers'] as List<dynamic>).cast<Map<String, dynamic>>();
       expect(
         dnsRules.firstWhere(
-          (rule) => rule['server'] == 'dns-direct' && rule.containsKey('domain'),
+          (rule) =>
+              rule['server'] == 'dns-direct' && rule.containsKey('domain'),
         ),
         {
           'domain': ['edge.example.com'],
@@ -433,7 +434,8 @@ void main() {
       );
       expect(
         dnsRules.indexWhere(
-          (rule) => rule['server'] == 'dns-direct' && rule.containsKey('domain'),
+          (rule) =>
+              rule['server'] == 'dns-direct' && rule.containsKey('domain'),
         ),
         lessThan(
           dnsRules.indexWhere(
@@ -580,14 +582,14 @@ void main() {
       expect(
         dnsRules.any(
           (rule) =>
-              rule['server'] == 'dns-cn' &&
-              rule['rule_set'] == 'pd-geosite-cn',
+              rule['server'] == 'dns-cn' && rule['rule_set'] == 'pd-geosite-cn',
         ),
         isTrue,
       );
       expect(
         dnsRules.firstWhere(
-          (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
+          (rule) =>
+              (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
         )['server'],
         'dns-remote',
       );
@@ -595,7 +597,8 @@ void main() {
         dnsRules.any(
           (rule) =>
               rule['server'] == 'dns-remote-google' &&
-              (rule['domain_suffix'] as List<dynamic>?)?.contains('youtube.com') ==
+              (rule['domain_suffix'] as List<dynamic>?)
+                      ?.contains('youtube.com') ==
                   true,
         ),
         isTrue,
@@ -681,12 +684,13 @@ void main() {
         ),
       );
       final strictJson = jsonDecode(strict) as Map<String, dynamic>;
-      final strictRules = (((strictJson['dns'] as Map<String, dynamic>)['rules'])
-              as List<dynamic>)
+      final strictRules = (((strictJson['dns']
+              as Map<String, dynamic>)['rules']) as List<dynamic>)
           .cast<Map<String, dynamic>>();
       expect(
         strictRules.firstWhere(
-          (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
+          (rule) =>
+              (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
         )['server'],
         'dns-remote',
       );
@@ -703,12 +707,13 @@ void main() {
         ),
       );
       final systemJson = jsonDecode(system) as Map<String, dynamic>;
-      final systemRules = (((systemJson['dns'] as Map<String, dynamic>)['rules'])
-              as List<dynamic>)
+      final systemRules = (((systemJson['dns']
+              as Map<String, dynamic>)['rules']) as List<dynamic>)
           .cast<Map<String, dynamic>>();
       expect(
         systemRules.firstWhere(
-          (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
+          (rule) =>
+              (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
         )['server'],
         'dns-local',
       );

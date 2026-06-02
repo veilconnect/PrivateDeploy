@@ -16,8 +16,8 @@ class SettingsAboutSection extends StatelessWidget {
         children: [
           Padding(
             padding: EdgeInsets.all(16.w),
-            child:
-                Text(l10n.about, style: Theme.of(context).textTheme.titleMedium),
+            child: Text(l10n.about,
+                style: Theme.of(context).textTheme.titleMedium),
           ),
           FutureBuilder<PackageInfo>(
             future: PackageInfo.fromPlatform(),

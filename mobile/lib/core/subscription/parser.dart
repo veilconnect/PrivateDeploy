@@ -439,10 +439,10 @@ class SubscriptionParser {
         {'type': 'dns', 'tag': 'dns-out'},
         {'type': 'block', 'tag': 'block'},
       ],
-        'route': {
-          'rules': [
-            {'protocol': 'dns', 'outbound': 'dns-out'},
-            {
+      'route': {
+        'rules': [
+          {'protocol': 'dns', 'outbound': 'dns-out'},
+          {
             'geoip': ['private'],
             'outbound': 'direct'
           },
@@ -523,12 +523,10 @@ class SubscriptionParser {
         };
 
       case 'hysteria2':
-        final upMbps = int.tryParse(
-                node.extra['up_mbps']?.toString() ?? '') ??
-            100;
-        final downMbps = int.tryParse(
-                node.extra['down_mbps']?.toString() ?? '') ??
-            100;
+        final upMbps =
+            int.tryParse(node.extra['up_mbps']?.toString() ?? '') ?? 100;
+        final downMbps =
+            int.tryParse(node.extra['down_mbps']?.toString() ?? '') ?? 100;
         return {
           'type': 'hysteria2',
           'tag': node.name,

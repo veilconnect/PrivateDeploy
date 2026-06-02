@@ -265,9 +265,7 @@ class VpnRoutingSettings {
 
     VpnDnsMode parseDnsMode(dynamic value) {
       final raw = value?.toString();
-      return VpnDnsMode.values
-              .where((item) => item.name == raw)
-              .firstOrNull ??
+      return VpnDnsMode.values.where((item) => item.name == raw).firstOrNull ??
           VpnDnsMode.regionalOptimized;
     }
 
@@ -386,7 +384,8 @@ List<String> previewAndroidDirectPackages(
   final ordered = <String>[
     ...vpnDiagnosticsPinnedBypassPackages.where(packageSet.contains),
     ...packages.where(
-      (packageName) => !vpnDiagnosticsPinnedBypassPackages.contains(packageName),
+      (packageName) =>
+          !vpnDiagnosticsPinnedBypassPackages.contains(packageName),
     ),
   ];
   return ordered.take(maxItems).toList(growable: false);

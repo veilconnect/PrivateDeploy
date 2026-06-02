@@ -184,8 +184,10 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
         (dns['rules'] as List<dynamic>).cast<Map<String, dynamic>>(),
       );
       final cloudApiRule = rules.firstWhere(
-        (rule) => (rule['domain_suffix'] as List<dynamic>?)
-            ?.contains('api.vultr.com') == true,
+        (rule) =>
+            (rule['domain_suffix'] as List<dynamic>?)
+                ?.contains('api.vultr.com') ==
+            true,
       );
       final defaultRule = rules.firstWhere(
         (rule) => (rule['outbound'] as List<dynamic>?)?.contains('any') == true,
@@ -225,7 +227,8 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
         rules.any(
           (rule) =>
               rule['server'] == 'dns-remote-google' &&
-              (rule['domain_suffix'] as List<dynamic>?)?.contains('youtube.com') ==
+              (rule['domain_suffix'] as List<dynamic>?)
+                      ?.contains('youtube.com') ==
                   true,
         ),
         isTrue,

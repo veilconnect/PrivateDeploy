@@ -658,9 +658,8 @@ class _CdnGuidanceBanner extends StatelessWidget {
     final title = deploymentExists
         ? l10n.cdnGuidanceTitleDeployed
         : l10n.cdnGuidanceTitle;
-    final body = deploymentExists
-        ? l10n.cdnGuidanceBodyDeployed
-        : l10n.cdnGuidanceBody;
+    final body =
+        deploymentExists ? l10n.cdnGuidanceBodyDeployed : l10n.cdnGuidanceBody;
     final actionLabel = deploymentExists
         ? l10n.cdnGuidanceActionRedeploy
         : l10n.cdnGuidanceConfigure;
@@ -675,8 +674,7 @@ class _CdnGuidanceBanner extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber_rounded,
-              color: scheme.error, size: 22.sp),
+          Icon(Icons.warning_amber_rounded, color: scheme.error, size: 22.sp),
           SizedBox(width: 12.w),
           Expanded(
             child: Column(

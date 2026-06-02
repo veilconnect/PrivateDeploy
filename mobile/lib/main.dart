@@ -70,7 +70,8 @@ class PrivateDeployApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
-        ChangeNotifierProxyProvider3<CloudProvider, VpnProvider, ProfileProvider, CdnProvider>(
+        ChangeNotifierProxyProvider3<CloudProvider, VpnProvider,
+            ProfileProvider, CdnProvider>(
           // lazy: false so CdnProvider's create+update fire on app boot,
           // not lazily on first widget access. Without this, the Gate ①
           // auto-deploy handler in `update` is never wired until the user
@@ -78,7 +79,8 @@ class PrivateDeployApp extends StatelessWidget {
           // that the user shouldn't need to navigate there.
           lazy: false,
           create: (_) => CdnProvider()..load(),
-          update: (_, cloudProvider, vpnProvider, profileProvider, cdnProvider) {
+          update:
+              (_, cloudProvider, vpnProvider, profileProvider, cdnProvider) {
             // Wire the CDN provider's deployment lookup into the cloud
             // provider's outbound builder so generated node configs include
             // a CDN-fronted variant whenever a Worker has been deployed.

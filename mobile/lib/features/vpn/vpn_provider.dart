@@ -1310,8 +1310,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // (which would force a same-node restart / failover) because the
       // condition self-resolves once domestic probes start passing on the
       // next health-monitor cycle (~30 s).
-      final isDirectRouteDegraded =
-          message == tunnelDirectRouteDegradedMessage;
+      final isDirectRouteDegraded = message == tunnelDirectRouteDegradedMessage;
       _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;

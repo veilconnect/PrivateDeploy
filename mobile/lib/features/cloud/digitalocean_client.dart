@@ -95,10 +95,9 @@ class DigitalOceanCloudClient implements CloudApiClient {
         'monthly_cost': item['price_monthly'] ?? 0,
         'hourly_cost': item['price_hourly'] ?? 0,
         'type': 'standard',
-        'locations': (item['regions'] as List?)
-                ?.map((r) => r.toString())
-                .toList() ??
-            const [],
+        'locations':
+            (item['regions'] as List?)?.map((r) => r.toString()).toList() ??
+                const [],
         'description': item['description']?.toString() ?? '',
       });
     }
@@ -187,9 +186,8 @@ class DigitalOceanCloudClient implements CloudApiClient {
             ?.toString()
             .replaceFirst('Bearer ', '') ??
         '';
-    final effectiveBase = _dio.options.baseUrl.isNotEmpty
-        ? _dio.options.baseUrl
-        : baseUrl;
+    final effectiveBase =
+        _dio.options.baseUrl.isNotEmpty ? _dio.options.baseUrl : baseUrl;
     final baseUri = Uri.parse(effectiveBase);
 
     // Tests point at 127.0.0.1 mocks — keep the simple HttpClient path.
@@ -222,8 +220,7 @@ class DigitalOceanCloudClient implements CloudApiClient {
       ).timeout(_validationTimeout);
       try {
         final path = '${baseUri.path}/account';
-        socket.write(
-            'GET $path HTTP/1.1\r\n'
+        socket.write('GET $path HTTP/1.1\r\n'
             'Host: ${baseUri.host}\r\n'
             'Authorization: Bearer $apiKey\r\n'
             'User-Agent: PrivateDeploy-Mobile/1.0 (dart)\r\n'
@@ -310,9 +307,9 @@ class DigitalOceanCloudClient implements CloudApiClient {
       while (cursor < body.length) {
         final lineEnd = body.indexOf('\r\n', cursor);
         if (lineEnd < 0) break;
-        final size = int.tryParse(body.substring(cursor, lineEnd).trim(),
-                radix: 16) ??
-            0;
+        final size =
+            int.tryParse(body.substring(cursor, lineEnd).trim(), radix: 16) ??
+                0;
         if (size == 0) break;
         final chunkStart = lineEnd + 2;
         final chunkEnd = chunkStart + size;
@@ -355,11 +352,13 @@ class DigitalOceanCloudClient implements CloudApiClient {
           lower.contains('forbidden') ||
           lower.contains('401') ||
           lower.contains('403')) {
-        return CloudAccountStatus.invalidKey('DigitalOcean rejected the API key');
+        return CloudAccountStatus.invalidKey(
+            'DigitalOcean rejected the API key');
       }
       return CloudAccountStatus.unknown(err.message);
     } catch (err) {
-      return CloudAccountStatus.unknown('DigitalOcean account probe failed: $err');
+      return CloudAccountStatus.unknown(
+          'DigitalOcean account probe failed: $err');
     }
 
     final account = payload['account'];
@@ -573,7 +572,8 @@ class DigitalOceanCloudClient implements CloudApiClient {
 /// without a real HTTP client. Mirrors the desktop Go implementation
 /// (`mapDigitalOceanAccountStatus` in
 /// `bridge/cloud/providers/digitalocean/account.go`) — keep the two in sync.
-CloudAccountStatus mapDigitalOceanAccountStatus(String rawStatus, String message) {
+CloudAccountStatus mapDigitalOceanAccountStatus(
+    String rawStatus, String message) {
   final state = rawStatus.trim().toLowerCase();
   final now = DateTime.now().toUtc();
   switch (state) {

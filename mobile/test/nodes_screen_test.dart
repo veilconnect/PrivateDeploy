@@ -182,7 +182,8 @@ void main() {
       expect(find.text('Settings'), findsNothing);
     });
 
-    testWidgets('opens cloud access flow from action sheet when cloud access is not configured',
+    testWidgets(
+        'opens cloud access flow from action sheet when cloud access is not configured',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: false,
@@ -209,7 +210,8 @@ void main() {
       expect(find.text('Cloud Access'), findsOneWidget);
     });
 
-    testWidgets('shows cloud empty state and primary actions for first-time setup',
+    testWidgets(
+        'shows cloud empty state and primary actions for first-time setup',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: false,
@@ -240,7 +242,8 @@ void main() {
       expect(find.byKey(NodesTestKeys.workspaceFab), findsOneWidget);
     });
 
-    testWidgets('shows saved profiles before cloud routes when local routes are the only usable path',
+    testWidgets(
+        'shows saved profiles before cloud routes when local routes are the only usable path',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,
@@ -269,12 +272,14 @@ void main() {
       await tester.pumpAndSettle();
 
       final savedProfilesY = tester.getTopLeft(find.text('Saved Profiles')).dy;
-      final cloudRoutesY = tester.getTopLeft(find.text('Cloud Routes').first).dy;
+      final cloudRoutesY =
+          tester.getTopLeft(find.text('Cloud Routes').first).dy;
 
       expect(savedProfilesY, lessThan(cloudRoutesY));
     });
 
-    testWidgets('reserves bottom scroll padding so the fab does not cover the last controls',
+    testWidgets(
+        'reserves bottom scroll padding so the fab does not cover the last controls',
         (tester) async {
       final cloudProvider = TestCloudProvider(
         hasApiKey: true,

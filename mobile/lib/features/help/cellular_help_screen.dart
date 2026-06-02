@@ -266,8 +266,7 @@ class _HelpContent {
 // ─────────────────────────────────────── 中文 ───────────────────────────────────────
 
 final _zhContent = _HelpContent(
-  tldr:
-      '蜂窝运营商对"用户独立部署的海外 VPS 裸 IP"做 SYN 丢包,但对"通过域名走 CDN 的 HTTPS 流量"较宽松。'
+  tldr: '蜂窝运营商对"用户独立部署的海外 VPS 裸 IP"做 SYN 丢包,但对"通过域名走 CDN 的 HTTPS 流量"较宽松。'
       'PrivateDeploy 自部署的节点用的是 Vultr/DO/Linode 等云厂商的裸 IPv4——这正是被运营商重点过滤的范围。'
       'Wi-Fi 通常没有此问题。',
   sections: [
@@ -327,7 +326,8 @@ final _zhContent = _HelpContent(
     _SectionData(
       title: '你现在能做什么?',
       blocks: [
-        _Bullet('① 切到 Wi-Fi(最快):家里 / 公司 Wi-Fi 国际段过滤通常比蜂窝松得多。'
+        _Bullet(
+            '① 切到 Wi-Fi(最快):家里 / 公司 Wi-Fi 国际段过滤通常比蜂窝松得多。'
             '90% 的用户日常其实在 Wi-Fi,这条路覆盖大部分场景。',
             bold: true),
         _Bullet('② 切换到其他节点:在「云线路」列表里点击其他线路的"切换到此线路",'
@@ -335,8 +335,7 @@ final _zhContent = _HelpContent(
             '(法兰克福 / 圣保罗)有时比 LAX/NRT 等热门区域更容易透过来。'),
         _Bullet('③ 切到不同的 SIM 卡运营商:移动网络 / 电信 / 联通的不可达策略不同步。'
             '移动网络 5G 在敏感时段封得最狠,电信和联通通常稍宽松。'),
-        _Bullet(
-            '④ 启用 CDN 加速:在「设置 → CDN 加速」里粘贴 Cloudflare API token,'
+        _Bullet('④ 启用 CDN 加速:在「设置 → CDN 加速」里粘贴 Cloudflare API token,'
             '应用会在你的 Cloudflare 账号下自动部署一个中转 Worker——客户端连 Cloudflare '
             '边缘 IP(运营商不封),Worker 再转发到你的 VPS。需要节点用最新的 userdata 重新部署一次。'),
       ],
@@ -351,8 +350,7 @@ final _zhContent = _HelpContent(
       ],
     ),
   ],
-  disclaimer:
-      '这是中国蜂窝运营商和"自部署 VPN"产品形态之间的结构性矛盾,无法靠一次软件更新一劳永逸解决。'
+  disclaimer: '这是中国蜂窝运营商和"自部署 VPN"产品形态之间的结构性矛盾,无法靠一次软件更新一劳永逸解决。'
       '当前版本能做到的是诚实告知和提供切换工具,长期方案是 CDN 前置(规划中)。',
 );
 
@@ -406,9 +404,12 @@ final _enContent = _HelpContent(
     _SectionData(
       title: 'Why does this happen?',
       blocks: [
-        _Para('Carrier DPI applies an "over-block" policy to international traffic:'),
-        _Bullet('Bare-IP HTTPS = highly suspicious (rare for normal users) → IP blacklist or SYN drop.'),
-        _Bullet('Domain → CDN edge = lower suspicion (huge volume of legit sites and apps).'),
+        _Para(
+            'Carrier DPI applies an "over-block" policy to international traffic:'),
+        _Bullet(
+            'Bare-IP HTTPS = highly suspicious (rare for normal users) → IP blacklist or SYN drop.'),
+        _Bullet(
+            'Domain → CDN edge = lower suspicion (huge volume of legit sites and apps).'),
         _Para(
           'Vultr/DigitalOcean/Linode IP ranges have been broadly tagged as "VPN-friendly" '
           'and are filtered as a class. Protocol choice (Shadowsocks, Hysteria2, VLESS, Trojan) '
@@ -445,10 +446,14 @@ final _enContent = _HelpContent(
     _SectionData(
       title: 'Common misconceptions',
       blocks: [
-        _Bullet('"Will another protocol work?" — No. The SYN is dropped at TCP layer, before any protocol.'),
-        _Bullet('"Is Vultr specifically blocked?" — No. All major VPS providers fall in the filtered range.'),
-        _Bullet('"Why does Mojie/Surge etc. work for my friend?" — Commercial network services run constantly-rotated relay infrastructure, which a single self-deployed VPS cannot match.'),
-        _Bullet('"What about IPv6?" — IPv6 has the same filter behavior. No improvement.'),
+        _Bullet(
+            '"Will another protocol work?" — No. The SYN is dropped at TCP layer, before any protocol.'),
+        _Bullet(
+            '"Is Vultr specifically blocked?" — No. All major VPS providers fall in the filtered range.'),
+        _Bullet(
+            '"Why does Mojie/Surge etc. work for my friend?" — Commercial network services run constantly-rotated relay infrastructure, which a single self-deployed VPS cannot match.'),
+        _Bullet(
+            '"What about IPv6?" — IPv6 has the same filter behavior. No improvement.'),
       ],
     ),
   ],
@@ -457,4 +462,3 @@ final _enContent = _HelpContent(
       'product shape — no single software update can fix it for good. Right now PrivateDeploy '
       'is honest about it and gives you switching tools; the long-term answer is CDN fronting (planned).',
 );
-

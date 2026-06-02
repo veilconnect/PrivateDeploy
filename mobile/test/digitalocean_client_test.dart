@@ -14,8 +14,8 @@ void main() {
       server.listen((request) async {
         request.response.statusCode = HttpStatus.unauthorized;
         request.response.headers.contentType = ContentType.json;
-        request.response
-            .write(jsonEncode({'id': 'unauthorized', 'message': 'Unable to authenticate you.'}));
+        request.response.write(jsonEncode(
+            {'id': 'unauthorized', 'message': 'Unable to authenticate you.'}));
         await request.response.close();
       });
 
@@ -122,8 +122,7 @@ void main() {
       expect(plan['locations'], ['nyc3', 'sfo3']);
     });
 
-    test('listInstances normalizes droplets to Vultr-instance shape',
-        () async {
+    test('listInstances normalizes droplets to Vultr-instance shape', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
 
@@ -169,8 +168,7 @@ void main() {
       expect(inst['plan'], 's-1vcpu-512mb-10gb');
     });
 
-    test('deleteInstance strips cloud-do- prefix from id before URL',
-        () async {
+    test('deleteInstance strips cloud-do- prefix from id before URL', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
 
