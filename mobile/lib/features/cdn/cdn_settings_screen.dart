@@ -1071,6 +1071,8 @@ class _NodeRow extends StatelessWidget {
                                     _customHostStatusLabel(
                                       dep: dep,
                                       isZh: isZh,
+                                      lastStatus:
+                                          provider.lastProbeStatusFor(node.id),
                                     ),
                                     style: TextStyle(
                                       fontSize: 10.sp,
@@ -1081,11 +1083,18 @@ class _NodeRow extends StatelessWidget {
                                   ),
                                 ),
                                 SizedBox(width: 4.w),
-                                _RetryProbeButton(
-                                  provider: provider,
-                                  nodeId: node.id,
-                                  isZh: isZh,
-                                ),
+                                // A backend (VPS relay) 502/504 can't be fixed
+                                // by repairing the Worker — hide the repair
+                                // button so the label's "redeploy the node"
+                                // guidance is the only action shown.
+                                if (!(dep.customHostStatus == 'failed' &&
+                                    const [502, 504].contains(
+                                        provider.lastProbeStatusFor(node.id))))
+                                  _RetryProbeButton(
+                                    provider: provider,
+                                    nodeId: node.id,
+                                    isZh: isZh,
+                                  ),
                               ],
                             ),
                           ),
@@ -1232,6 +1241,7 @@ class _DeployProvenanceChip extends StatelessWidget {
 String _customHostStatusLabel({
   required CdnDeployment dep,
   required bool isZh,
+  int? lastStatus,
 }) {
   // The text used to say "暂用 workers.dev" / "fell back to workers.dev",
   // implying the active outbound was workers.dev only. That was untrue:
@@ -1246,6 +1256,14 @@ String _customHostStatusLabel({
     case 'pending':
       return isZh ? '正在验证 CDN 中转链路' : 'Verifying CDN relay path';
     case 'failed':
+      // 502/504 = the Worker is healthy but its VPS relay backend is
+      // unreachable (bad gateway). Repairing the Worker won't help — the
+      // node's relay is down — so steer the user to redeploy the node.
+      if (lastStatus == 502 || lastStatus == 504) {
+        return isZh
+            ? 'Worker 正常，但中继后端不可达 — 请重新部署该节点'
+            : "Worker is up but its relay backend is down — redeploy this node";
+      }
       return isZh
           ? 'CDN 探测未通过（仍会尝试连接）'
           : "CDN probe didn't pass (we'll still try)";
@@ -1315,11 +1333,11 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
       content: Text(
         ok
             ? (widget.isZh
-                ? 'CDN 中转链路已修复并就绪'
-                : 'CDN relay path repaired and live')
+                ? 'CDN 已重新部署，正在后台验证链路'
+                : 'CDN redeployed — verifying the relay path in the background')
             : (widget.isZh
-                ? 'CDN 仍不可达，稍后可再试'
-                : "CDN still unreachable; you can try again"),
+                ? 'CDN 修复失败，稍后可再试'
+                : 'CDN repair failed; you can try again'),
       ),
       duration: const Duration(seconds: 3),
     ));

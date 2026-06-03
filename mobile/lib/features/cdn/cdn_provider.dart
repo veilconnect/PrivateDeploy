@@ -56,6 +56,11 @@ class CdnProvider with ChangeNotifier {
   bool _isVerifying = false;
   bool _isDeploying = false;
   Map<String, CdnDeployment> _deployments = {};
+  // Last WS-upgrade status the readiness probe saw per node (in-memory only;
+  // repopulated by the probe on each run). Lets the UI tell a backend failure
+  // (Worker up, VPS relay 502/504) apart from a CDN-layer failure, so it can
+  // point the user at the right fix (redeploy the node, not repair the Worker).
+  final Map<String, int> _lastProbeStatus = {};
   CdnCustomDomain? _customDomain;
   List<CdnZone> _zones = const [];
   bool _zonesLoading = false;
@@ -71,6 +76,11 @@ class CdnProvider with ChangeNotifier {
   bool get isConfigured => _status != CdnStatus.disabled;
   Map<String, CdnDeployment> get deployments => Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
+
+  /// Last WS-upgrade status the probe recorded for [nodeId] (null if never
+  /// probed this session). 502/504 here on a 'failed' node means the Worker
+  /// is fine but its VPS relay backend is unreachable — redeploy the node.
+  int? lastProbeStatusFor(String nodeId) => _lastProbeStatus[nodeId];
   CdnCustomDomain? get customDomain => _customDomain;
   List<CdnZone> get zones => List.unmodifiable(_zones);
   bool get isZonesLoading => _zonesLoading;
@@ -87,7 +97,7 @@ class CdnProvider with ChangeNotifier {
     final host = dep.customHost ?? dep.workerHost;
     final secret = dep.pathSecret;
     if (host.isEmpty || secret == null || secret.isEmpty) return null;
-    return _customHostRelayReachable(host, secret);
+    return (await _customHostUpgradeStatus(host, secret)) == 101;
   }
 
   /// True when every precondition for [deployWorkerForNode] is in place
@@ -714,6 +724,9 @@ class CdnProvider with ChangeNotifier {
         // when CF settles.
         unawaited(_probeCustomHostReadiness(nodeId, customHost));
       }
+      // (First-upload CF 1101 self-heal lives in _probeCustomHostReadiness:
+      // it rides the DoH + custom-domain path, so it works even though the
+      // phone can't reach the DNS-altered *.workers.dev host.)
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
@@ -1244,7 +1257,11 @@ class CdnProvider with ChangeNotifier {
   /// that Worker→VPS connectivity is live (UFW open, port correct,
   /// VPS up). Earlier code only checked TLS, which would happily report
   /// "active" against a Worker pointing at a closed port.
-  Future<void> _probeCustomHostReadiness(String nodeId, String host) async {
+  Future<void> _probeCustomHostReadiness(String nodeId, String host,
+      {bool autoRepair = true}) async {
+    var repaired = false;
+    var badStreak = 0;
+    var backendStreak = 0;
     const delays = [
       Duration(seconds: 3),
       Duration(seconds: 6),
@@ -1269,6 +1286,7 @@ class CdnProvider with ChangeNotifier {
         return;
       }
       if (!await _customHostTLSReachable(host)) {
+        debugPrint('[CDNProbe] $host tls=DOWN (retry, delay was $d)');
         continue;
       }
       final secret = (dep.pathSecret ?? '').trim();
@@ -1279,9 +1297,56 @@ class CdnProvider with ChangeNotifier {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
       }
-      if (await _customHostRelayReachable(host, secret)) {
+      final status = await _customHostUpgradeStatus(host, secret);
+      debugPrint('[CDNProbe] $host status=$status secretLen=${secret.length}');
+      // Record the last definite status so the UI can distinguish a backend
+      // failure (Worker up, VPS relay 502/504) from a CDN-layer failure and
+      // point the user at the right fix. 502/504 is intentionally NOT treated
+      // as brokenWorkerOrBinding below: recreating the Worker can't revive a
+      // dead VPS relay (confirmed on node-260602234422 — stayed 502 across a
+      // full worker+binding recreate; only a node redeploy fixed it).
+      if (status != null) _lastProbeStatus[nodeId] = status;
+      if (status == 101) {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
+      }
+      // 502/504 = the Worker is up but can't reach the VPS relay backend.
+      // Tolerate a boot window (a freshly-deployed node's relay needs a few
+      // minutes), but past ~7 min of unbroken bad-gateway the backend is
+      // genuinely down — and no Worker/binding action can revive it (proven
+      // on node-260602234422). Fail now, with the 502 already recorded above,
+      // so the UI says "redeploy the node" promptly instead of sitting on
+      // "verifying" for the full ~24-min budget.
+      if (status == 502 || status == 504) {
+        backendStreak++;
+        if (backendStreak >= 10) {
+          await _markCustomHostStatus(nodeId, host, 'failed');
+          return;
+        }
+      } else {
+        backendStreak = 0;
+      }
+      // TLS is up but the host isn't serving the relay. 500 = the Worker
+      // threw (first-upload CF 1101); 52x = the custom-domain binding is
+      // stuck — both are cleared by a delete+recreate. A brand-new custom
+      // domain can briefly 52x while its managed cert provisions, so only
+      // repair after the bad state persists a few iterations. 502/504 = the
+      // VPS relay is still booting and 404 = secret/legacy — those
+      // self-resolve, so keep probing. repairCustomHostForNode re-uploads +
+      // re-attaches and re-probes with autoRepair off, so it can't loop.
+      // Rides the DoH + custom-domain path, so it works where a
+      // *.workers.dev GET can't (that host is DNS-altered on these nets).
+      final brokenWorkerOrBinding =
+          status != null && (status == 500 || (status >= 520 && status <= 526));
+      if (brokenWorkerOrBinding) {
+        badStreak++;
+        if (autoRepair && !repaired && badStreak >= 3) {
+          repaired = true;
+          await repairCustomHostForNode(nodeId);
+          return;
+        }
+      } else {
+        badStreak = 0;
       }
     }
     await _markCustomHostStatus(nodeId, host, 'failed');
@@ -1404,7 +1469,17 @@ class CdnProvider with ChangeNotifier {
         validateStatus: (_) => true,
       ));
 
-      // 1. Re-upload the script (idempotent).
+      // 1. Delete the script, then re-create it. A Worker that came up
+      //    throwing 1101 on its very first upload stays broken under an
+      //    overwrite-PUT — only a delete + fresh create clears the bad
+      //    module state. force=true so an attached custom domain doesn't
+      //    block the delete (it's re-attached in step 3 below).
+      try {
+        await dio.delete(
+          '$_accountsEndpoint/$accountId/workers/scripts/$scriptName?force=true',
+          options: Options(headers: {'Authorization': 'Bearer $token'}),
+        );
+      } catch (_) {}
       final form = _buildWorkerUploadForm(scriptBody);
       final put = await dio.put(
         '$_accountsEndpoint/$accountId/workers/scripts/$scriptName',
@@ -1452,6 +1527,21 @@ class CdnProvider with ChangeNotifier {
         if (customDomainId != null && customDomainId.isNotEmpty) {
           bindingWasPresent =
               await _customDomainBindingExists(dio, accountId, customDomainId);
+          // A binding that exists but never goes live — the host 52x's while
+          // the Worker itself is healthy on workers.dev — is stuck: its
+          // managed certificate failed to provision, or the route points at a
+          // stale service. An idempotent re-attach (PUT) just returns that
+          // same stuck binding without re-issuing anything, which is why
+          // delete+recreate of the *script* alone never healed these nodes.
+          // Mirror the Worker fix at the binding layer: DELETE the binding,
+          // then create it fresh so CF re-provisions the cert and re-wires the
+          // route. CF cascades the auto-created DNS record on detach; the
+          // attach below re-creates it. (Confirmed on node-260602234422:
+          // worker = 404 on workers.dev, custom host = 522.)
+          if (bindingWasPresent == true) {
+            await _detachWorkerCustomDomain(dio, accountId, customDomainId);
+            customDomainId = null;
+          }
         }
         final binding = await _attachWorkerCustomDomain(
             dio, customHost, scriptName, cd.zoneId);
@@ -1477,20 +1567,36 @@ class CdnProvider with ChangeNotifier {
       await _persistDeployments();
       notifyListeners();
 
+      // Release the deploy lock BEFORE verifying. _probeCustomHostReadiness
+      // can run for its full retry budget (~24 min when a managed cert is
+      // slow); awaiting it here pinned _isDeploying for that entire window.
+      // Because the auto-heal path calls repairCustomHostForNode from INSIDE
+      // the deploy probe (on persistent 500/52x), that hold blocked every
+      // concurrent deploy and made the manual "repair & retry" button
+      // instant-fail with a misleading "unreachable" for up to 24 min.
+      // Mirror deployWorkerForNode, which kicks its probe unawaited: free the
+      // lock now and let the status row reflect the real verdict via
+      // _markCustomHostStatus → notifyListeners as CF settles.
+      _isDeploying = false;
       if (customHost?.isNotEmpty ?? false) {
-        await _probeCustomHostReadiness(nodeId, customHost!);
+        // autoRepair off: this probe runs right after a recreate, so it must
+        // not trigger another recreate (would loop).
+        unawaited(
+            _probeCustomHostReadiness(nodeId, customHost!, autoRepair: false));
       }
-      final after = _deployments[nodeId];
-      final usable = after?.customHostStatus == 'active' ||
-          (after?.workerHost.isNotEmpty ?? false);
-      if (usable) {
-        _lastError = null;
-      } else if (bindingWasPresent == false) {
-        _lastError = 'Custom-domain binding was missing on Cloudflare and has '
-            'been re-created — give the managed certificate a few minutes, '
-            'then it will go active on its own.';
+      // "Applied" = the CF side was re-asserted (script recreated, domain
+      // re-attached) and a path now exists to verify; readiness itself is
+      // reported asynchronously by the probe kicked above.
+      final applied =
+          (customHost?.isNotEmpty ?? false) || workerHost.isNotEmpty;
+      if (applied) {
+        _lastError = bindingWasPresent == false
+            ? 'Custom-domain binding was missing on Cloudflare and has been '
+                're-created — the managed certificate can take a few minutes '
+                'to go active.'
+            : null;
       }
-      return usable;
+      return applied;
     } on DioException catch (e) {
       _lastError =
           'Network error repairing Worker: ${e.message ?? e.type.name}';
@@ -1567,8 +1673,13 @@ class CdnProvider with ChangeNotifier {
   ///
   /// A 502/504 means Worker→VPS TCP failed (UFW, wrong port, VPS down).
   /// 404 means the path-secret didn't match.
-  Future<bool> _customHostRelayReachable(String host, String pathSecret) async {
-    if (host.isEmpty || pathSecret.isEmpty) return false;
+  /// Performs the WS upgrade against the custom host (DoH-resolved, so it
+  /// works even where *.workers.dev is DNS-altered) and returns the HTTP
+  /// status of the response: 101 = relay path live, 404 = secret mismatch,
+  /// 500 = the Worker itself threw (CF 1101), 502/504 = Worker→VPS down.
+  /// null = couldn't get a status (TLS/DNS/timeout).
+  Future<int?> _customHostUpgradeStatus(String host, String pathSecret) async {
+    if (host.isEmpty || pathSecret.isEmpty) return null;
     Socket? raw;
     SecureSocket? secure;
     StreamSubscription<List<int>>? sub;
@@ -1582,7 +1693,9 @@ class CdnProvider with ChangeNotifier {
       // a TLS-wrapped socket. Rather than fight the framework, we just
       // do the upgrade dance directly — eight extra lines of HTTP/1.1.
       final ips = await _resolveViaDoH(host);
-      if (ips.isEmpty) return false;
+      debugPrint(
+          '[CDNProbe] $host DoH-> ${ips.isEmpty ? "EMPTY" : ips.join(",")}');
+      if (ips.isEmpty) return null;
       raw = await Socket.connect(
         ips.first,
         443,
@@ -1644,11 +1757,13 @@ class CdnProvider with ChangeNotifier {
         cancelOnError: true,
       );
       final line = await firstLine.future.timeout(const Duration(seconds: 12));
-      // "HTTP/1.1 101 Switching Protocols" — match status code, ignore
-      // case + minor status-text variation across reverse proxies.
-      return RegExp(r'^HTTP/1\.[01]\s+101\b').hasMatch(line);
-    } catch (_) {
-      return false;
+      debugPrint('[CDNProbe] $host upgrade line: $line');
+      // Parse the numeric status from "HTTP/1.1 <code> <text>".
+      final m = RegExp(r'^HTTP/1\.[01]\s+(\d{3})').firstMatch(line);
+      return m != null ? int.parse(m.group(1)!) : null;
+    } catch (e) {
+      debugPrint('[CDNProbe] $host upgrade EXC: $e');
+      return null;
     } finally {
       try {
         await sub?.cancel();
