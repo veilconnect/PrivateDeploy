@@ -76,6 +76,7 @@ class CdnProvider with ChangeNotifier {
   bool get isConfigured => _status != CdnStatus.disabled;
   Map<String, CdnDeployment> get deployments => Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
+
   /// Last WS-upgrade status the probe recorded for [nodeId] (null if never
   /// probed this session). 502/504 here on a 'failed' node means the Worker
   /// is fine but its VPS relay backend is unreachable — redeploy the node.
@@ -1692,7 +1693,8 @@ class CdnProvider with ChangeNotifier {
       // a TLS-wrapped socket. Rather than fight the framework, we just
       // do the upgrade dance directly — eight extra lines of HTTP/1.1.
       final ips = await _resolveViaDoH(host);
-      debugPrint('[CDNProbe] $host DoH-> ${ips.isEmpty ? "EMPTY" : ips.join(",")}');
+      debugPrint(
+          '[CDNProbe] $host DoH-> ${ips.isEmpty ? "EMPTY" : ips.join(",")}');
       if (ips.isEmpty) return null;
       raw = await Socket.connect(
         ips.first,
