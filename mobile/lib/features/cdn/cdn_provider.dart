@@ -56,6 +56,11 @@ class CdnProvider with ChangeNotifier {
   bool _isVerifying = false;
   bool _isDeploying = false;
   Map<String, CdnDeployment> _deployments = {};
+  // Last WS-upgrade status the readiness probe saw per node (in-memory only;
+  // repopulated by the probe on each run). Lets the UI tell a backend failure
+  // (Worker up, VPS relay 502/504) apart from a CDN-layer failure, so it can
+  // point the user at the right fix (redeploy the node, not repair the Worker).
+  final Map<String, int> _lastProbeStatus = {};
   CdnCustomDomain? _customDomain;
   List<CdnZone> _zones = const [];
   bool _zonesLoading = false;
@@ -71,6 +76,10 @@ class CdnProvider with ChangeNotifier {
   bool get isConfigured => _status != CdnStatus.disabled;
   Map<String, CdnDeployment> get deployments => Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
+  /// Last WS-upgrade status the probe recorded for [nodeId] (null if never
+  /// probed this session). 502/504 here on a 'failed' node means the Worker
+  /// is fine but its VPS relay backend is unreachable — redeploy the node.
+  int? lastProbeStatusFor(String nodeId) => _lastProbeStatus[nodeId];
   CdnCustomDomain? get customDomain => _customDomain;
   List<CdnZone> get zones => List.unmodifiable(_zones);
   bool get isZonesLoading => _zonesLoading;
@@ -1251,6 +1260,7 @@ class CdnProvider with ChangeNotifier {
       {bool autoRepair = true}) async {
     var repaired = false;
     var badStreak = 0;
+    var backendStreak = 0;
     const delays = [
       Duration(seconds: 3),
       Duration(seconds: 6),
@@ -1275,6 +1285,7 @@ class CdnProvider with ChangeNotifier {
         return;
       }
       if (!await _customHostTLSReachable(host)) {
+        debugPrint('[CDNProbe] $host tls=DOWN (retry, delay was $d)');
         continue;
       }
       final secret = (dep.pathSecret ?? '').trim();
@@ -1286,9 +1297,33 @@ class CdnProvider with ChangeNotifier {
         return;
       }
       final status = await _customHostUpgradeStatus(host, secret);
+      debugPrint('[CDNProbe] $host status=$status secretLen=${secret.length}');
+      // Record the last definite status so the UI can distinguish a backend
+      // failure (Worker up, VPS relay 502/504) from a CDN-layer failure and
+      // point the user at the right fix. 502/504 is intentionally NOT treated
+      // as brokenWorkerOrBinding below: recreating the Worker can't revive a
+      // dead VPS relay (confirmed on node-260602234422 — stayed 502 across a
+      // full worker+binding recreate; only a node redeploy fixed it).
+      if (status != null) _lastProbeStatus[nodeId] = status;
       if (status == 101) {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
+      }
+      // 502/504 = the Worker is up but can't reach the VPS relay backend.
+      // Tolerate a boot window (a freshly-deployed node's relay needs a few
+      // minutes), but past ~7 min of unbroken bad-gateway the backend is
+      // genuinely down — and no Worker/binding action can revive it (proven
+      // on node-260602234422). Fail now, with the 502 already recorded above,
+      // so the UI says "redeploy the node" promptly instead of sitting on
+      // "verifying" for the full ~24-min budget.
+      if (status == 502 || status == 504) {
+        backendStreak++;
+        if (backendStreak >= 10) {
+          await _markCustomHostStatus(nodeId, host, 'failed');
+          return;
+        }
+      } else {
+        backendStreak = 0;
       }
       // TLS is up but the host isn't serving the relay. 500 = the Worker
       // threw (first-upload CF 1101); 52x = the custom-domain binding is
@@ -1657,6 +1692,7 @@ class CdnProvider with ChangeNotifier {
       // a TLS-wrapped socket. Rather than fight the framework, we just
       // do the upgrade dance directly — eight extra lines of HTTP/1.1.
       final ips = await _resolveViaDoH(host);
+      debugPrint('[CDNProbe] $host DoH-> ${ips.isEmpty ? "EMPTY" : ips.join(",")}');
       if (ips.isEmpty) return null;
       raw = await Socket.connect(
         ips.first,
@@ -1719,10 +1755,12 @@ class CdnProvider with ChangeNotifier {
         cancelOnError: true,
       );
       final line = await firstLine.future.timeout(const Duration(seconds: 12));
+      debugPrint('[CDNProbe] $host upgrade line: $line');
       // Parse the numeric status from "HTTP/1.1 <code> <text>".
       final m = RegExp(r'^HTTP/1\.[01]\s+(\d{3})').firstMatch(line);
       return m != null ? int.parse(m.group(1)!) : null;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[CDNProbe] $host upgrade EXC: $e');
       return null;
     } finally {
       try {
