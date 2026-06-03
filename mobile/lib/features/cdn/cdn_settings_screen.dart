@@ -1315,11 +1315,11 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
       content: Text(
         ok
             ? (widget.isZh
-                ? 'CDN 中转链路已修复并就绪'
-                : 'CDN relay path repaired and live')
+                ? 'CDN 已重新部署，正在后台验证链路'
+                : 'CDN redeployed — verifying the relay path in the background')
             : (widget.isZh
-                ? 'CDN 仍不可达，稍后可再试'
-                : "CDN still unreachable; you can try again"),
+                ? 'CDN 修复失败，稍后可再试'
+                : 'CDN repair failed; you can try again'),
       ),
       duration: const Duration(seconds: 3),
     ));

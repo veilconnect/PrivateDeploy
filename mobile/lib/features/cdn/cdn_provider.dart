@@ -1516,22 +1516,36 @@ class CdnProvider with ChangeNotifier {
       await _persistDeployments();
       notifyListeners();
 
+      // Release the deploy lock BEFORE verifying. _probeCustomHostReadiness
+      // can run for its full retry budget (~24 min when a managed cert is
+      // slow); awaiting it here pinned _isDeploying for that entire window.
+      // Because the auto-heal path calls repairCustomHostForNode from INSIDE
+      // the deploy probe (on persistent 500/52x), that hold blocked every
+      // concurrent deploy and made the manual "repair & retry" button
+      // instant-fail with a misleading "unreachable" for up to 24 min.
+      // Mirror deployWorkerForNode, which kicks its probe unawaited: free the
+      // lock now and let the status row reflect the real verdict via
+      // _markCustomHostStatus → notifyListeners as CF settles.
+      _isDeploying = false;
       if (customHost?.isNotEmpty ?? false) {
         // autoRepair off: this probe runs right after a recreate, so it must
         // not trigger another recreate (would loop).
-        await _probeCustomHostReadiness(nodeId, customHost!, autoRepair: false);
+        unawaited(
+            _probeCustomHostReadiness(nodeId, customHost!, autoRepair: false));
       }
-      final after = _deployments[nodeId];
-      final usable = after?.customHostStatus == 'active' ||
-          (after?.workerHost.isNotEmpty ?? false);
-      if (usable) {
-        _lastError = null;
-      } else if (bindingWasPresent == false) {
-        _lastError = 'Custom-domain binding was missing on Cloudflare and has '
-            'been re-created — give the managed certificate a few minutes, '
-            'then it will go active on its own.';
+      // "Applied" = the CF side was re-asserted (script recreated, domain
+      // re-attached) and a path now exists to verify; readiness itself is
+      // reported asynchronously by the probe kicked above.
+      final applied =
+          (customHost?.isNotEmpty ?? false) || workerHost.isNotEmpty;
+      if (applied) {
+        _lastError = bindingWasPresent == false
+            ? 'Custom-domain binding was missing on Cloudflare and has been '
+                're-created — the managed certificate can take a few minutes '
+                'to go active.'
+            : null;
       }
-      return usable;
+      return applied;
     } on DioException catch (e) {
       _lastError =
           'Network error repairing Worker: ${e.message ?? e.type.name}';
