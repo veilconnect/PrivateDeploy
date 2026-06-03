@@ -87,7 +87,7 @@ class CdnProvider with ChangeNotifier {
     final host = dep.customHost ?? dep.workerHost;
     final secret = dep.pathSecret;
     if (host.isEmpty || secret == null || secret.isEmpty) return null;
-    return _customHostRelayReachable(host, secret);
+    return (await _customHostUpgradeStatus(host, secret)) == 101;
   }
 
   /// True when every precondition for [deployWorkerForNode] is in place
@@ -714,12 +714,9 @@ class CdnProvider with ChangeNotifier {
         // when CF settles.
         unawaited(_probeCustomHostReadiness(nodeId, customHost));
       }
-      // Self-heal the occasional first-upload CF 1101: a freshly uploaded
-      // worker sometimes comes up throwing a runtime error (500/1101) that a
-      // second PUT clears. Verify the worker actually serves and re-upload
-      // once if it's erroring. Covers both manual deploy and the
-      // auto-deploy-after-create path (both land here).
-      unawaited(_verifyWorkerHealthAndHeal(nodeId));
+      // (First-upload CF 1101 self-heal lives in _probeCustomHostReadiness:
+      // it rides the DoH + custom-domain path, so it works even though the
+      // phone can't reach the DNS-altered *.workers.dev host.)
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
@@ -1250,7 +1247,9 @@ class CdnProvider with ChangeNotifier {
   /// that Worker→VPS connectivity is live (UFW open, port correct,
   /// VPS up). Earlier code only checked TLS, which would happily report
   /// "active" against a Worker pointing at a closed port.
-  Future<void> _probeCustomHostReadiness(String nodeId, String host) async {
+  Future<void> _probeCustomHostReadiness(String nodeId, String host,
+      {bool autoRepair = true}) async {
+    var repaired = false;
     const delays = [
       Duration(seconds: 3),
       Duration(seconds: 6),
@@ -1285,8 +1284,22 @@ class CdnProvider with ChangeNotifier {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
       }
-      if (await _customHostRelayReachable(host, secret)) {
+      final status = await _customHostUpgradeStatus(host, secret);
+      if (status == 101) {
         await _markCustomHostStatus(nodeId, host, 'active');
+        return;
+      }
+      // TLS already succeeded (cert is live), so a 500 here is the Worker
+      // itself throwing — the first-upload CF 1101 quirk — which a
+      // delete+recreate clears. repairCustomHostForNode re-uploads +
+      // re-attaches and re-probes (autoRepair off below, so it can't loop).
+      // This works where the GET-based check can't: it rides the same
+      // DoH + custom-domain path, not the DNS-altered *.workers.dev host.
+      // 502/504 = the VPS relay isn't up yet, 404 = legacy/secret — keep
+      // probing.
+      if (status == 500 && autoRepair && !repaired) {
+        repaired = true;
+        await repairCustomHostForNode(nodeId);
         return;
       }
     }
@@ -1494,7 +1507,9 @@ class CdnProvider with ChangeNotifier {
       notifyListeners();
 
       if (customHost?.isNotEmpty ?? false) {
-        await _probeCustomHostReadiness(nodeId, customHost!);
+        // autoRepair off: this probe runs right after a recreate, so it must
+        // not trigger another recreate (would loop).
+        await _probeCustomHostReadiness(nodeId, customHost!, autoRepair: false);
       }
       final after = _deployments[nodeId];
       final usable = after?.customHostStatus == 'active' ||
@@ -1528,52 +1543,6 @@ class CdnProvider with ChangeNotifier {
     final dep = _deployments[nodeId];
     if (dep == null) return false;
     return (dep.customHost?.isNotEmpty ?? false) && dep.workerHost.isEmpty;
-  }
-
-  /// Best-effort GET that returns just the HTTP status (or null on error).
-  Future<int?> _httpStatus(String url) async {
-    try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
-        validateStatus: (_) => true,
-      ));
-      final r = await dio.get<void>(url);
-      return r.statusCode;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Self-heal the occasional first-upload Cloudflare 1101: a freshly
-  /// uploaded Worker sometimes comes up throwing a runtime exception
-  /// (HTTP 500 / "error code: 1101") that a second PUT reliably clears.
-  /// Shortly after a deploy, fetch the worker's own workers.dev URL — a
-  /// healthy worker answers the path-secret gate with 404, a broken one
-  /// with 500 — and re-upload once if it's erroring.
-  ///
-  /// Only the workers.dev host is checked, not the custom domain: the
-  /// custom hostname can legitimately return 52x while its managed cert
-  /// provisions, which a re-upload would not fix.
-  Future<void> _verifyWorkerHealthAndHeal(String nodeId) async {
-    final dep = _deployments[nodeId];
-    if (dep == null) return;
-    final host = dep.workerHost;
-    if (host.isEmpty) return;
-    // Let the fresh upload propagate before judging it.
-    await Future<void>.delayed(const Duration(seconds: 12));
-    for (var attempt = 0; attempt < 3; attempt++) {
-      final current = _deployments[nodeId];
-      if (current == null || current.workerHost != host) return; // re-deployed
-      final status = await _httpStatus('https://$host/');
-      if (status == 404) return; // healthy gate response
-      if (status == 500) {
-        // Worker is throwing — a re-upload (via repair) clears it.
-        await repairCustomHostForNode(nodeId);
-        return;
-      }
-      await Future<void>.delayed(const Duration(seconds: 6));
-    }
   }
 
   /// Single TLS handshake to host:443. Success = CF edge served a valid
@@ -1629,8 +1598,13 @@ class CdnProvider with ChangeNotifier {
   ///
   /// A 502/504 means Worker→VPS TCP failed (UFW, wrong port, VPS down).
   /// 404 means the path-secret didn't match.
-  Future<bool> _customHostRelayReachable(String host, String pathSecret) async {
-    if (host.isEmpty || pathSecret.isEmpty) return false;
+  /// Performs the WS upgrade against the custom host (DoH-resolved, so it
+  /// works even where *.workers.dev is DNS-altered) and returns the HTTP
+  /// status of the response: 101 = relay path live, 404 = secret mismatch,
+  /// 500 = the Worker itself threw (CF 1101), 502/504 = Worker→VPS down.
+  /// null = couldn't get a status (TLS/DNS/timeout).
+  Future<int?> _customHostUpgradeStatus(String host, String pathSecret) async {
+    if (host.isEmpty || pathSecret.isEmpty) return null;
     Socket? raw;
     SecureSocket? secure;
     StreamSubscription<List<int>>? sub;
@@ -1644,7 +1618,7 @@ class CdnProvider with ChangeNotifier {
       // a TLS-wrapped socket. Rather than fight the framework, we just
       // do the upgrade dance directly — eight extra lines of HTTP/1.1.
       final ips = await _resolveViaDoH(host);
-      if (ips.isEmpty) return false;
+      if (ips.isEmpty) return null;
       raw = await Socket.connect(
         ips.first,
         443,
@@ -1706,11 +1680,11 @@ class CdnProvider with ChangeNotifier {
         cancelOnError: true,
       );
       final line = await firstLine.future.timeout(const Duration(seconds: 12));
-      // "HTTP/1.1 101 Switching Protocols" — match status code, ignore
-      // case + minor status-text variation across reverse proxies.
-      return RegExp(r'^HTTP/1\.[01]\s+101\b').hasMatch(line);
+      // Parse the numeric status from "HTTP/1.1 <code> <text>".
+      final m = RegExp(r'^HTTP/1\.[01]\s+(\d{3})').firstMatch(line);
+      return m != null ? int.parse(m.group(1)!) : null;
     } catch (_) {
-      return false;
+      return null;
     } finally {
       try {
         await sub?.cancel();
