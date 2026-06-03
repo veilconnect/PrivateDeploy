@@ -1491,6 +1491,21 @@ class CdnProvider with ChangeNotifier {
         if (customDomainId != null && customDomainId.isNotEmpty) {
           bindingWasPresent =
               await _customDomainBindingExists(dio, accountId, customDomainId);
+          // A binding that exists but never goes live — the host 52x's while
+          // the Worker itself is healthy on workers.dev — is stuck: its
+          // managed certificate failed to provision, or the route points at a
+          // stale service. An idempotent re-attach (PUT) just returns that
+          // same stuck binding without re-issuing anything, which is why
+          // delete+recreate of the *script* alone never healed these nodes.
+          // Mirror the Worker fix at the binding layer: DELETE the binding,
+          // then create it fresh so CF re-provisions the cert and re-wires the
+          // route. CF cascades the auto-created DNS record on detach; the
+          // attach below re-creates it. (Confirmed on node-260602234422:
+          // worker = 404 on workers.dev, custom host = 522.)
+          if (bindingWasPresent == true) {
+            await _detachWorkerCustomDomain(dio, accountId, customDomainId);
+            customDomainId = null;
+          }
         }
         final binding = await _attachWorkerCustomDomain(
             dio, customHost, scriptName, cd.zoneId);
