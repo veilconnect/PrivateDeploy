@@ -1250,6 +1250,7 @@ class CdnProvider with ChangeNotifier {
   Future<void> _probeCustomHostReadiness(String nodeId, String host,
       {bool autoRepair = true}) async {
     var repaired = false;
+    var badStreak = 0;
     const delays = [
       Duration(seconds: 3),
       Duration(seconds: 6),
@@ -1289,18 +1290,27 @@ class CdnProvider with ChangeNotifier {
         await _markCustomHostStatus(nodeId, host, 'active');
         return;
       }
-      // TLS already succeeded (cert is live), so a 500 here is the Worker
-      // itself throwing — the first-upload CF 1101 quirk — which a
-      // delete+recreate clears. repairCustomHostForNode re-uploads +
-      // re-attaches and re-probes (autoRepair off below, so it can't loop).
-      // This works where the GET-based check can't: it rides the same
-      // DoH + custom-domain path, not the DNS-altered *.workers.dev host.
-      // 502/504 = the VPS relay isn't up yet, 404 = legacy/secret — keep
-      // probing.
-      if (status == 500 && autoRepair && !repaired) {
-        repaired = true;
-        await repairCustomHostForNode(nodeId);
-        return;
+      // TLS is up but the host isn't serving the relay. 500 = the Worker
+      // threw (first-upload CF 1101); 52x = the custom-domain binding is
+      // stuck — both are cleared by a delete+recreate. A brand-new custom
+      // domain can briefly 52x while its managed cert provisions, so only
+      // repair after the bad state persists a few iterations. 502/504 = the
+      // VPS relay is still booting and 404 = secret/legacy — those
+      // self-resolve, so keep probing. repairCustomHostForNode re-uploads +
+      // re-attaches and re-probes with autoRepair off, so it can't loop.
+      // Rides the DoH + custom-domain path, so it works where a
+      // *.workers.dev GET can't (that host is DNS-altered on these nets).
+      final brokenWorkerOrBinding =
+          status != null && (status == 500 || (status >= 520 && status <= 526));
+      if (brokenWorkerOrBinding) {
+        badStreak++;
+        if (autoRepair && !repaired && badStreak >= 3) {
+          repaired = true;
+          await repairCustomHostForNode(nodeId);
+          return;
+        }
+      } else {
+        badStreak = 0;
       }
     }
     await _markCustomHostStatus(nodeId, host, 'failed');
