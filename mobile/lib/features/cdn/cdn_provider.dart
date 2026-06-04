@@ -1438,6 +1438,21 @@ class CdnProvider with ChangeNotifier {
     if (_isDeploying) return false;
     final dep = _deployments[nodeId];
     if (dep == null) return false;
+    // Repair re-renders from dep.backend (the stored value — we can't reach
+    // the live CloudInstance here, and must keep the SAME path-secret so
+    // existing clients keep working). If that stored backend is host-less
+    // (e.g. ":24444", left by the pre-fix empty-IPv4 auto-deploy race), an
+    // overwrite just re-creates a Worker that 502s on every relay — only a
+    // delete + fresh deploy re-derives the backend from the node's IPv4.
+    // Refuse loudly instead of silently re-uploading a broken Worker.
+    if (dep.backend.split(':').first.trim().isEmpty) {
+      _lastError =
+          'Stored backend "${dep.backend}" has no host (legacy empty-IP '
+          'deploy). Repair would just re-upload a 502 Worker — delete this '
+          "node's Worker and deploy it again to re-bind the node IP.";
+      notifyListeners();
+      return false;
+    }
     if (_status != CdnStatus.verified || (_accountId ?? '').isEmpty) {
       _lastError = 'Token not verified — verify it first.';
       notifyListeners();
