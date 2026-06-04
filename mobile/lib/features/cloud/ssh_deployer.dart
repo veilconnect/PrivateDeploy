@@ -152,6 +152,12 @@ Future<SshDeployResult> deployNodeViaSsh({
       trojanPort: bundle.nodeRecord['trojanPort'] as int? ?? 0,
       trojanPassword: bundle.nodeRecord['trojanPassword']?.toString() ?? '',
       trojanServerName: bundle.nodeRecord['trojanServerName']?.toString() ?? '',
+      // Without this, every SSH-deployed node records relay port 0, which
+      // hard-disables the CDN deploy button (gated on relayPort > 0) — and
+      // unlike Vultr there is no user-data recovery path, so it never
+      // self-heals. The install script DID open + start the relay on this
+      // port, so the value is in the bundle; just carry it through.
+      vlessRelayPort: bundle.nodeRecord['vlessRelayPort'] as int? ?? 0,
       ipv4: host,
       createdAt: createdAt,
       portProfile: bundle.nodeRecord['portProfile']?.toString() ??

@@ -67,6 +67,11 @@ class StorageService {
         '[StorageService] Secure storage delete failed for "$key": ${error.message ?? error.code}',
       );
     }
+    // saveSecureString falls back to _prefs when the keystore throws, and
+    // getSecureString reads `secure ?? prefs`. Deleting only from the keystore
+    // would leave a fallback-stored secret (e.g. a CF API token) readable
+    // forever after a "clear", so always clear the prefs mirror too.
+    await _prefs.remove(key);
   }
 
   static Future<void> saveBool(String key, bool value) async {
