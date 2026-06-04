@@ -137,6 +137,15 @@ class SubscriptionParser {
         body = body.substring(0, hashIdx);
       }
 
+      // SIP002 appends `?plugin=...` after host:port. Plugins aren't
+      // supported, but leaving the query attached makes _parseHostPort read
+      // "8388?plugin=..." → port 0 → a dead outbound. The base64 alphabet
+      // has no '?', so stripping at the first '?' is safe for both forms.
+      final qIdx = body.indexOf('?');
+      if (qIdx >= 0) {
+        body = body.substring(0, qIdx);
+      }
+
       String method, password, host;
       int port;
 
@@ -202,11 +211,14 @@ class SubscriptionParser {
   static ProxyNode? _parseVless(String uri) {
     try {
       final parsed = Uri.parse(uri);
-      final uuid = parsed.userInfo;
+      final uuid = Uri.decodeComponent(parsed.userInfo);
       final host = parsed.host;
       final port = parsed.port;
-      final name =
-          parsed.fragment.isNotEmpty ? parsed.fragment : 'VLESS $host:$port';
+      // Uri.fragment is percent-ENCODED; the tag must be human text or the
+      // UI shows mojibake and `#`/`&` in a name corrupts the sing-box tag.
+      final name = parsed.fragment.isNotEmpty
+          ? Uri.decodeComponent(parsed.fragment)
+          : 'VLESS $host:$port';
       final params = parsed.queryParameters;
 
       return ProxyNode(
@@ -223,6 +235,11 @@ class SubscriptionParser {
           'sid': params['sid'] ?? '',
           'type': params['type'] ?? 'tcp',
           'fp': params['fp'] ?? '',
+          // Transport params — without these a ws/grpc node is emitted as a
+          // plain-TCP outbound and the handshake fails.
+          'host': params['host'] ?? '',
+          'path': params['path'] ?? '',
+          'serviceName': params['serviceName'] ?? '',
         },
       );
     } catch (_) {
@@ -234,11 +251,14 @@ class SubscriptionParser {
   static ProxyNode? _parseTrojan(String uri) {
     try {
       final parsed = Uri.parse(uri);
-      final password = parsed.userInfo;
+      // userInfo is percent-ENCODED; trojan passwords routinely contain
+      // URL-special chars, so the raw value auth-fails on the server.
+      final password = Uri.decodeComponent(parsed.userInfo);
       final host = parsed.host;
       final port = parsed.port;
-      final name =
-          parsed.fragment.isNotEmpty ? parsed.fragment : 'Trojan $host:$port';
+      final name = parsed.fragment.isNotEmpty
+          ? Uri.decodeComponent(parsed.fragment)
+          : 'Trojan $host:$port';
       final params = parsed.queryParameters;
 
       return ProxyNode(
@@ -250,6 +270,10 @@ class SubscriptionParser {
           'password': password,
           'sni': params['sni'] ?? host,
           'insecure': params['allowInsecure'] ?? params['insecure'] ?? '0',
+          'type': params['type'] ?? 'tcp',
+          'host': params['host'] ?? '',
+          'path': params['path'] ?? '',
+          'serviceName': params['serviceName'] ?? '',
         },
       );
     } catch (_) {
@@ -261,11 +285,12 @@ class SubscriptionParser {
   static ProxyNode? _parseHysteria2(String uri) {
     try {
       final parsed = Uri.parse(uri.replaceFirst('hy2://', 'hysteria2://'));
-      final password = parsed.userInfo;
+      final password = Uri.decodeComponent(parsed.userInfo);
       final host = parsed.host;
       final port = parsed.port;
-      final name =
-          parsed.fragment.isNotEmpty ? parsed.fragment : 'Hy2 $host:$port';
+      final name = parsed.fragment.isNotEmpty
+          ? Uri.decodeComponent(parsed.fragment)
+          : 'Hy2 $host:$port';
       final params = parsed.queryParameters;
 
       return ProxyNode(
@@ -306,6 +331,8 @@ class SubscriptionParser {
           'network': json['net']?.toString() ?? 'tcp',
           'tls': json['tls']?.toString() ?? '',
           'sni': json['sni']?.toString() ?? json['host']?.toString() ?? '',
+          'path': json['path']?.toString() ?? '',
+          'host': json['host']?.toString() ?? '',
         },
       );
     } catch (_) {
@@ -335,12 +362,25 @@ class SubscriptionParser {
     final outbounds = <Map<String, dynamic>>[];
     final tags = <String>[];
 
+    final seenTags = <String>{};
     for (final node in nodes) {
       final outbound = _nodeToOutbound(node);
-      if (outbound != null) {
-        outbounds.add(outbound);
-        tags.add(outbound['tag'] as String);
+      if (outbound == null) continue;
+      var base = (outbound['tag'] as String?) ?? '';
+      if (base.isEmpty) base = '${node.type}-${node.server}:${node.port}';
+      // sing-box rejects the ENTIRE config when two outbounds share a tag, so
+      // a subscription with duplicate #names would otherwise lose every node,
+      // not just one. Disambiguate collisions.
+      var unique = base;
+      var n = 2;
+      while (seenTags.contains(unique)) {
+        unique = '$base #$n';
+        n++;
       }
+      seenTags.add(unique);
+      outbound['tag'] = unique;
+      outbounds.add(outbound);
+      tags.add(unique);
     }
 
     if (outbounds.isEmpty) return '{}';
@@ -462,6 +502,31 @@ class SubscriptionParser {
     return const JsonEncoder.withIndent('  ').convert(config);
   }
 
+  /// Build a sing-box `transport` block for ws/grpc nodes. Returns null for
+  /// plain TCP (and unknown networks) so the outbound omits `transport`.
+  /// vless/trojan carry the network in `extra['type']`, vmess in
+  /// `extra['network']`.
+  static Map<String, dynamic>? _transportFor(ProxyNode node) {
+    final net =
+        (node.extra['type'] ?? node.extra['network'] ?? 'tcp').toString();
+    if (net == 'ws') {
+      final t = <String, dynamic>{'type': 'ws'};
+      final path = (node.extra['path'] ?? '').toString();
+      if (path.isNotEmpty) t['path'] = path;
+      final host = (node.extra['host'] ?? '').toString();
+      if (host.isNotEmpty) {
+        t['headers'] = {'Host': host};
+      }
+      return t;
+    }
+    if (net == 'grpc') {
+      final svc =
+          (node.extra['serviceName'] ?? node.extra['path'] ?? '').toString();
+      return {'type': 'grpc', if (svc.isNotEmpty) 'service_name': svc};
+    }
+    return null;
+  }
+
   static Map<String, dynamic>? _nodeToOutbound(ProxyNode node) {
     switch (node.type) {
       case 'shadowsocks':
@@ -506,10 +571,12 @@ class SubscriptionParser {
             'server_name': node.extra['sni'] ?? '',
           };
         }
+        final vlessTr = _transportFor(node);
+        if (vlessTr != null) out['transport'] = vlessTr;
         return out;
 
       case 'trojan':
-        return {
+        final trojanOut = <String, dynamic>{
           'type': 'trojan',
           'tag': node.name,
           'server': node.server,
@@ -521,6 +588,9 @@ class SubscriptionParser {
             'insecure': node.extra['insecure'] == '1',
           },
         };
+        final trojanTr = _transportFor(node);
+        if (trojanTr != null) trojanOut['transport'] = trojanTr;
+        return trojanOut;
 
       case 'hysteria2':
         final upMbps =
@@ -558,6 +628,8 @@ class SubscriptionParser {
             'server_name': node.extra['sni'] ?? '',
           };
         }
+        final vmessTr = _transportFor(node);
+        if (vmessTr != null) out['transport'] = vmessTr;
         return out;
 
       default:
