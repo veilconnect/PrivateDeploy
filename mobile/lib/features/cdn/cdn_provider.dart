@@ -589,6 +589,20 @@ class CdnProvider with ChangeNotifier {
       notifyListeners();
       return false;
     }
+    // Defence in depth against the auto-deploy race: a node whose IPv4 has
+    // not been populated yet renders BACKEND=":$backendPort" (empty host),
+    // which makes worker.js return 502 on every relay forever (the secret
+    // check passes, then `!host` trips the bad-gateway guard before connect).
+    // Refuse to ship such a Worker so callers fail loudly instead of
+    // stranding the node in a permanent "verifying" state.
+    if (backendHost.trim().isEmpty) {
+      _lastError =
+          'Node IP not available yet — refusing to deploy a Worker with an '
+          'empty backend host (would be BACKEND=":$backendPort" and 502 '
+          'forever). Wait for the node IPv4 to populate, then retry.';
+      notifyListeners();
+      return false;
+    }
 
     _isDeploying = true;
     _lastError = null;

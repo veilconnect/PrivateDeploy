@@ -350,7 +350,15 @@ Future<void> _autoDeployCdnWorkerAfterCreate({
   for (var i = 0; i < 60 && context.mounted; i++) {
     final inst =
         cloudProvider.allInstances.where((c) => c.id == instanceId).firstOrNull;
-    if (inst != null && (inst.nodeInfo?.vlessRelayPort ?? 0) > 0) {
+    // BOTH must be present before we deploy: the relay port (written into the
+    // local record at create time, so it appears almost immediately) AND a
+    // populated IPv4 (only filled once a Vultr list refresh returns the
+    // assigned address). Gating on the port alone exits on the first poll
+    // with ipv4 still null, which made deployWorkerForNode render
+    // BACKEND=":<port>" — a Worker that 502s on every relay forever.
+    if (inst != null &&
+        (inst.nodeInfo?.vlessRelayPort ?? 0) > 0 &&
+        (inst.ipv4 ?? '').isNotEmpty) {
       readyInstance = inst;
       break;
     }
