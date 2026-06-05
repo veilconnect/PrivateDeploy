@@ -16,9 +16,21 @@ class CdnEndpoint {
     required this.host,
     this.pathSecret,
     this.fallbackHost,
+    this.preferredEdgeIp,
   });
 
   final String host;
+
+  /// Optional hand-picked Cloudflare edge IP ("优选IP"). When set, the builder
+  /// adds an EXTRA CDN outbound that dials this IP directly on :443 while still
+  /// presenting [host] as the TLS SNI + WebSocket `Host` header, so CF routes
+  /// it to the same Worker. This is the standard China technique to bypass
+  /// Cloudflare GeoDNS handing CN clients a throttled edge IP — mirrors how
+  /// 魔戒-class airports pin their entry to a fast, reachable relay IP. The
+  /// DNS-resolved custom-host and workers.dev paths are kept alongside it, so
+  /// urltest gets three independent entry points and self-heals if any one is
+  /// altered/blocked. Empty/null = unchanged behaviour (no pinned outbound).
+  final String? preferredEdgeIp;
 
   /// Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
   /// Empty/null means "deployed before the gate landed" — the client emits
@@ -253,12 +265,17 @@ Map<String, String> _appendInstanceOutbounds(
     // pathname.
     final wsPath = (secret != null && secret.isNotEmpty) ? '/$secret' : '/';
 
-    void addCdnOutbound(String host, String tagSuffix) {
+    void addCdnOutbound(String host, String tagSuffix, {String? dialIp}) {
       final tag = '$label-$tagSuffix';
+      // 优选IP: when dialIp is given we connect the TCP socket to that IP but
+      // keep SNI + WS Host = [host], so Cloudflare still routes to the Worker.
+      // No DNS lookup happens for an IP literal, which is the whole point —
+      // we sidestep CF GeoDNS's throttled regional edge.
+      final dialTarget = (dialIp != null && dialIp.isNotEmpty) ? dialIp : host;
       outbounds.add({
         'type': 'vless',
         'tag': tag,
-        'server': host,
+        'server': dialTarget,
         'server_port': 443,
         'uuid': info.vlessUuid,
         'transport': {
@@ -299,6 +316,15 @@ Map<String, String> _appendInstanceOutbounds(
     // "preferredEndpointLabel = CDN") continues to point at the
     // user's preferred hostname, not the fallback.
     endpointTagByLabel['CDN'] = '$label-CDN';
+
+    // 优选IP path: an extra urltest member that pins the custom host to a
+    // hand-picked fast CF edge IP. Kept ALONGSIDE the DNS-resolved 'CDN'
+    // outbound so we don't lose the independent-DNS path if the chosen IP
+    // later goes bad — urltest picks whichever wins at connection time.
+    final edgeIp = cdnEndpoint?.preferredEdgeIp;
+    if (edgeIp != null && edgeIp.isNotEmpty) {
+      addCdnOutbound(cdnHost, 'CDN-edgeip', dialIp: edgeIp);
+    }
 
     final fallbackHost = cdnEndpoint?.fallbackHost;
     if (fallbackHost != null &&

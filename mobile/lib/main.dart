@@ -110,6 +110,11 @@ class PrivateDeployApp extends StatelessWidget {
                 host: isPrimaryCustom ? ch : dep.workerHost,
                 pathSecret: dep.pathSecret,
                 fallbackHost: isPrimaryCustom ? dep.workerHost : null,
+                // 优选IP: only meaningful for the custom-domain path (a pinned
+                // IP + workers.dev SNI wouldn't match CF's cert/routing), so
+                // pass it through solely when a custom host is the primary.
+                preferredEdgeIp:
+                    isPrimaryCustom ? cdnProvider?.preferredEdgeIp : null,
               );
             });
 

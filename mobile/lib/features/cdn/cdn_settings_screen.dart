@@ -590,11 +590,14 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
   bool _enabled = false;
   String? _zoneId;
   late final TextEditingController _subdomainCtl;
+  late final TextEditingController _edgeIpCtl;
 
   @override
   void initState() {
     super.initState();
     _subdomainCtl = TextEditingController(text: 'relay');
+    _edgeIpCtl =
+        TextEditingController(text: widget.provider.preferredEdgeIp ?? '');
     final cd = widget.provider.customDomain;
     if (cd != null) {
       _enabled = true;
@@ -626,7 +629,21 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
   @override
   void dispose() {
     _subdomainCtl.dispose();
+    _edgeIpCtl.dispose();
     super.dispose();
+  }
+
+  Future<void> _onSaveEdgeIp() async {
+    await widget.provider.setPreferredEdgeIp(_edgeIpCtl.text);
+    if (!mounted) return;
+    final isZh = widget.isZh;
+    final saved = (widget.provider.preferredEdgeIp ?? '').isNotEmpty;
+    final msg = saved
+        ? (isZh
+            ? '已保存优选IP，下次连接生效'
+            : 'Preferred edge IP saved — applies on next connect')
+        : (isZh ? '已清除优选IP' : 'Preferred edge IP cleared');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _onToggle(bool next) async {
@@ -823,6 +840,51 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
                           p.customDomain!.hostPattern,
                       style:
                           TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                    ),
+                    SizedBox(height: 12.h),
+                    const Divider(height: 1),
+                    SizedBox(height: 10.h),
+                    Text(
+                      isZh ? '优选IP (可选)' : 'Preferred edge IP (optional)',
+                      style: TextStyle(
+                          fontSize: 13.sp, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      isZh
+                          ? '手填一个快速的 Cloudflare 边缘 IP:CDN 会直连它,但 '
+                              'SNI/Host 仍用上面的自定义域名,绕开中国被限速的 CF '
+                              '默认线路。留空=不启用。'
+                          : 'A fast Cloudflare edge IP. The CDN dials it '
+                              'directly while keeping the custom host as '
+                              'SNI/Host — bypasses CF\'s throttled regional edge. '
+                              'Blank = off.',
+                      style:
+                          TextStyle(fontSize: 11.sp, color: Colors.grey[600]),
+                    ),
+                    SizedBox(height: 8.h),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _edgeIpCtl,
+                            decoration: InputDecoration(
+                              labelText: isZh
+                                  ? '优选IP (留空关闭)'
+                                  : 'Edge IP (blank = off)',
+                              hintText: '104.19.x.x',
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        ElevatedButton(
+                          onPressed: _onSaveEdgeIp,
+                          child: Text(isZh ? '保存' : 'Save'),
+                        ),
+                      ],
                     ),
                   ],
                 ],

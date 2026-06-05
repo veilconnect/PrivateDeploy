@@ -241,6 +241,89 @@ void main() {
     });
 
     test(
+        'preferredEdgeIp adds a CDN-edgeip outbound that dials the IP but '
+        'keeps the custom host as SNI/Host (优选IP)', () {
+      final instance = CloudInstance(
+        id: 'node-edge',
+        provider: 'vultr',
+        label: 'hk-1',
+        status: 'active',
+        region: 'hk',
+        plan: 'vc2-1c-1gb',
+        ipv4: '5.6.7.8',
+        nodeInfo: NodeInfo(
+          ssPort: 0,
+          ssPassword: '',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-edge',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: 'example.com',
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: null,
+          vlessRelayPort: 47100,
+        ),
+      );
+      final raw = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'relay-hk.example.org',
+          pathSecret: 'cafebabecafebabecafebabecafebabe',
+          fallbackHost: 'pd-relay-hk.acme.workers.dev',
+          preferredEdgeIp: '104.19.1.2',
+        ),
+      );
+      expect(raw, isNotNull);
+      final outbounds = (jsonDecode(raw!) as Map)['outbounds'] as List;
+      final edge = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'hk-1-CDN-edgeip',
+        orElse: () => null,
+      ) as Map<String, dynamic>?;
+      expect(edge, isNotNull,
+          reason: 'preferredEdgeIp must add a CDN-edgeip outbound');
+      // Dials the pinned IP directly...
+      expect(edge!['server'], '104.19.1.2');
+      // ...but SNI + WS Host stay the custom domain so CF still routes to
+      // the Worker (this is the whole point of 优选IP).
+      expect((edge['tls'] as Map)['server_name'], 'relay-hk.example.org');
+      expect(
+        ((edge['transport'] as Map)['headers'] as Map)['Host'],
+        'relay-hk.example.org',
+      );
+      // Same path-secret + http/1.1 hardening as the other CDN outbounds.
+      expect((edge['transport'] as Map)['path'],
+          '/cafebabecafebabecafebabecafebabe');
+      expect((edge['tls'] as Map)['alpn'], ['http/1.1']);
+      // The DNS-resolved custom-host + workers.dev paths are kept alongside.
+      final dnsCdn = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'hk-1-CDN',
+        orElse: () => null,
+      ) as Map<String, dynamic>?;
+      expect(dnsCdn?['server'], 'relay-hk.example.org',
+          reason: 'pinned-IP path must not replace the DNS-resolved path');
+      // Absent without preferredEdgeIp: rebuild without it → no edgeip tag.
+      final raw2 = buildCloudNodeConfig(
+        instance,
+        cdnEndpoint: const CdnEndpoint(
+          host: 'relay-hk.example.org',
+          pathSecret: 'cafebabecafebabecafebabecafebabe',
+        ),
+      );
+      final ob2 = (jsonDecode(raw2!) as Map)['outbounds'] as List;
+      expect(
+        ob2.any((o) => o is Map && o['tag'] == 'hk-1-CDN-edgeip'),
+        isFalse,
+        reason: 'no preferredEdgeIp → no pinned outbound',
+      );
+    });
+
+    test(
         'fallbackHost equal to primary host is skipped to avoid '
         'duplicate outbounds', () {
       final instance = CloudInstance(
