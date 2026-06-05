@@ -38,6 +38,9 @@ class CdnProvider with ChangeNotifier {
   // entry — every deploy uses the same zone+subdomain prefix and a per-
   // script-hash suffix to keep hostnames unique across nodes.
   static const _kCustomDomainKey = 'cdn.cf_custom_domain_v1';
+  // 优选IP: a user-picked Cloudflare edge IP the CDN outbound dials directly
+  // (SNI/Host stay the custom domain). Plain (non-secret) prefs string.
+  static const _kPreferredEdgeIpKey = 'cdn.preferred_edge_ip';
   // Compatibility date the Worker is deployed with. Bumping this can change
   // runtime behavior, so it lives next to the worker template.
   static const _kCompatDate = '2024-09-23';
@@ -65,12 +68,33 @@ class CdnProvider with ChangeNotifier {
   List<CdnZone> _zones = const [];
   bool _zonesLoading = false;
   bool _isSavingCustomDomain = false;
+  String? _preferredEdgeIp;
 
   CdnStatus get status => _status;
   String? get accountId => _accountId;
   String? get accountEmail => _accountEmail;
   String? get workersSubdomain => _workersSubdomain;
   String? get lastError => _lastError;
+
+  /// User-picked Cloudflare 优选IP, or null. When set, generated node configs
+  /// add a CDN outbound that dials this IP directly (custom host as SNI/Host).
+  String? get preferredEdgeIp => _preferredEdgeIp;
+
+  /// Persist (or clear, when [ip] is blank) the 优选IP and notify listeners so
+  /// the next connect rebuilds the config. Light validation: must look like a
+  /// bare IPv4/IPv6 literal — a hostname here would defeat the purpose.
+  Future<void> setPreferredEdgeIp(String? ip) async {
+    final trimmed = (ip ?? '').trim();
+    if (trimmed.isEmpty) {
+      _preferredEdgeIp = null;
+      await StorageService.remove(_kPreferredEdgeIpKey);
+    } else {
+      _preferredEdgeIp = trimmed;
+      await StorageService.saveString(_kPreferredEdgeIpKey, trimmed);
+    }
+    notifyListeners();
+  }
+
   bool get isVerifying => _isVerifying;
   bool get isDeploying => _isDeploying;
   bool get isConfigured => _status != CdnStatus.disabled;
@@ -146,6 +170,9 @@ class CdnProvider with ChangeNotifier {
   }
 
   Future<void> load() async {
+    // Independent of the CF token — load it up front so it survives the
+    // no-token early return below.
+    _preferredEdgeIp = StorageService.getString(_kPreferredEdgeIpKey);
     final saved = await StorageService.getSecureString(_kTokenKey);
     if (saved == null || saved.isEmpty) {
       _status = CdnStatus.disabled;
