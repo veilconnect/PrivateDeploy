@@ -1,5 +1,5 @@
 export namespace bridge {
-
+	
 	export class CloudAccountStatus {
 	    provider: string;
 	    supported: boolean;
@@ -8,11 +8,11 @@ export namespace bridge {
 	    canDeploy: boolean;
 	    // Go type: time
 	    checkedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CloudAccountStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider = source["provider"];
@@ -22,7 +22,7 @@ export namespace bridge {
 	        this.canDeploy = source["canDeploy"];
 	        this.checkedAt = this.convertValues(source["checkedAt"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -44,11 +44,11 @@ export namespace bridge {
 	export class CloudProviderInfo {
 	    name: string;
 	    displayName: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CloudProviderInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
