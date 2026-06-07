@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -48,6 +50,8 @@ class _SettingsRoutingRulesDialogState
   late final TextEditingController _proxyDomainsController;
   late final TextEditingController _directCidrsController;
   late final TextEditingController _proxyCidrsController;
+  late final TextEditingController _customOutboundsController;
+  late final TextEditingController _customRulesController;
   late List<String> _directPackages;
   late List<String> _proxyPackages;
   List<VpnInstalledApp> _installedApps = const [];
@@ -81,6 +85,18 @@ class _SettingsRoutingRulesDialogState
     _proxyCidrsController = TextEditingController(
       text: settings.customProxyCidrs.join('\n'),
     );
+    _customOutboundsController = TextEditingController(
+      text: settings.customOutbounds.isEmpty
+          ? ''
+          : const JsonEncoder.withIndent('  ')
+              .convert(settings.customOutbounds),
+    );
+    _customRulesController = TextEditingController(
+      text: settings.customRules
+          .map((rule) =>
+              '${rule.matcher == CustomRuleMatcher.ipCidr ? 'ip_cidr' : 'domain_suffix'} ${rule.value} ${rule.outbound}')
+          .join('\n'),
+    );
     if (_supportsPackageRouting) {
       _loadInstalledApps();
     }
@@ -92,6 +108,8 @@ class _SettingsRoutingRulesDialogState
     _proxyDomainsController.dispose();
     _directCidrsController.dispose();
     _proxyCidrsController.dispose();
+    _customOutboundsController.dispose();
+    _customRulesController.dispose();
     super.dispose();
   }
 
@@ -257,6 +275,31 @@ class _SettingsRoutingRulesDialogState
                 label: l10n.customProxiedCidrs,
                 hint: l10n.customProxiedCidrsHint,
               ),
+              SizedBox(height: 16.h),
+              Divider(height: 1.h),
+              SizedBox(height: 12.h),
+              Text(
+                '高级 · 自定义出站与规则',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              SizedBox(height: 4.h),
+              Text(
+                '可定义额外出站（如 WireGuard 隧道到内网），并用自定义规则把指定流量指向它。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              SizedBox(height: 12.h),
+              _buildTextField(
+                controller: _customOutboundsController,
+                label: '自定义出站 (sing-box 出站 JSON)',
+                hint:
+                    '粘贴单个 JSON 对象或数组，每个须含 tag 与 type。例（WireGuard）：\n{"type":"wireguard","tag":"home-wg","server":"1.2.3.4","server_port":51820,"local_address":["10.0.0.20/32"],"private_key":"<私钥>","peer_public_key":"<对端公钥>"}',
+              ),
+              SizedBox(height: 12.h),
+              _buildTextField(
+                controller: _customRulesController,
+                label: '自定义规则（每行一条）',
+                hint: '格式：<domain_suffix|ip_cidr> <值> <出站tag>\n例：ip_cidr 10.0.0.0/24 home-wg',
+              ),
               if (_errorText != null) ...[
                 SizedBox(height: 12.h),
                 Text(
@@ -413,6 +456,22 @@ class _SettingsRoutingRulesDialogState
       return;
     }
 
+    final customOutboundsResult =
+        _parseCustomOutbounds(_customOutboundsController.text);
+    if (customOutboundsResult.error != null) {
+      setState(() {
+        _errorText = customOutboundsResult.error;
+      });
+      return;
+    }
+    final customRulesResult = _parseCustomRules(_customRulesController.text);
+    if (customRulesResult.error != null) {
+      setState(() {
+        _errorText = customRulesResult.error;
+      });
+      return;
+    }
+
     setState(() {
       _saving = true;
       _errorText = null;
@@ -429,6 +488,8 @@ class _SettingsRoutingRulesDialogState
       customProxyDomains: proxyDomains,
       customDirectCidrs: directCidrs,
       customProxyCidrs: proxyCidrs,
+      customOutbounds: customOutboundsResult.value,
+      customRules: customRulesResult.value,
     );
 
     await widget.onSave(settings);
@@ -436,6 +497,94 @@ class _SettingsRoutingRulesDialogState
       return;
     }
     Navigator.pop(context);
+  }
+
+  ({List<Map<String, dynamic>> value, String? error}) _parseCustomOutbounds(
+      String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return (value: const <Map<String, dynamic>>[], error: null);
+    }
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(trimmed);
+    } catch (error) {
+      return (
+        value: const <Map<String, dynamic>>[],
+        error: '自定义出站 JSON 解析失败: $error',
+      );
+    }
+    final list = decoded is List ? decoded : [decoded];
+    final result = <Map<String, dynamic>>[];
+    final tags = <String>{};
+    for (final item in list) {
+      if (item is! Map) {
+        return (
+          value: const <Map<String, dynamic>>[],
+          error: '自定义出站必须是 JSON 对象',
+        );
+      }
+      final map = Map<String, dynamic>.from(item);
+      final tag = map['tag']?.toString().trim() ?? '';
+      final type = map['type']?.toString().trim() ?? '';
+      if (tag.isEmpty || type.isEmpty) {
+        return (
+          value: const <Map<String, dynamic>>[],
+          error: '每个自定义出站必须含非空的 tag 和 type',
+        );
+      }
+      final tagError = validateVpnRoutingOutboundTag(tag);
+      if (tagError != null) {
+        return (value: const <Map<String, dynamic>>[], error: tagError);
+      }
+      if (!tags.add(tag)) {
+        return (
+          value: const <Map<String, dynamic>>[],
+          error: '出站 tag 重复: $tag',
+        );
+      }
+      result.add(map);
+    }
+    return (value: result, error: null);
+  }
+
+  ({List<CustomRoutingRule> value, String? error}) _parseCustomRules(
+      String text) {
+    final result = <CustomRoutingRule>[];
+    for (final line in _lines(text)) {
+      final parts =
+          line.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+      if (parts.length != 3) {
+        return (
+          value: const <CustomRoutingRule>[],
+          error: '规则格式错误（应为 “matcher 值 出站tag”）: $line',
+        );
+      }
+      final matcher = switch (parts[0].toLowerCase()) {
+        'domain_suffix' => CustomRuleMatcher.domainSuffix,
+        'ip_cidr' => CustomRuleMatcher.ipCidr,
+        _ => null,
+      };
+      if (matcher == null) {
+        return (
+          value: const <CustomRoutingRule>[],
+          error: 'matcher 仅支持 domain_suffix / ip_cidr: ${parts[0]}',
+        );
+      }
+      final value = parts[1];
+      final valueError = matcher == CustomRuleMatcher.ipCidr
+          ? validateVpnRoutingCidr(value)
+          : validateVpnRoutingDomain(value);
+      if (valueError != null) {
+        return (value: const <CustomRoutingRule>[], error: valueError);
+      }
+      result.add(CustomRoutingRule(
+        matcher: matcher,
+        value: value,
+        outbound: parts[2],
+      ));
+    }
+    return (value: result, error: null);
   }
 
   List<String> _lines(String raw) {

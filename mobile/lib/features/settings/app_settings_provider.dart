@@ -94,6 +94,70 @@ const vpnDiagnosticsPinnedBypassPackages = [
   'com.sina.weibo',
 ];
 
+/// Matcher type for a user-defined custom routing rule.
+enum CustomRuleMatcher {
+  domainSuffix,
+  ipCidr,
+}
+
+/// A user-defined routing rule that sends traffic matching [value] to the
+/// outbound tagged [outbound]. Unlike the built-in customDirect/customProxy
+/// lists, [outbound] can target any outbound tag, including a user-defined
+/// custom outbound (e.g. a WireGuard tunnel to a private network).
+@immutable
+class CustomRoutingRule {
+  const CustomRoutingRule({
+    required this.matcher,
+    required this.value,
+    required this.outbound,
+  });
+
+  final CustomRuleMatcher matcher;
+  final String value;
+  final String outbound;
+
+  CustomRoutingRule copyWith({
+    CustomRuleMatcher? matcher,
+    String? value,
+    String? outbound,
+  }) {
+    return CustomRoutingRule(
+      matcher: matcher ?? this.matcher,
+      value: value ?? this.value,
+      outbound: outbound ?? this.outbound,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'matcher': matcher.name,
+        'value': value,
+        'outbound': outbound,
+      };
+
+  factory CustomRoutingRule.fromJson(Map<String, dynamic> json) {
+    final rawMatcher = json['matcher']?.toString();
+    final matcher = CustomRuleMatcher.values
+            .where((item) => item.name == rawMatcher)
+            .firstOrNull ??
+        CustomRuleMatcher.domainSuffix;
+    return CustomRoutingRule(
+      matcher: matcher,
+      value: json['value']?.toString().trim() ?? '',
+      outbound: json['outbound']?.toString().trim() ?? '',
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomRoutingRule &&
+      other.matcher == matcher &&
+      other.value == value &&
+      other.outbound == outbound;
+
+  @override
+  int get hashCode => Object.hash(matcher, value, outbound);
+}
+
 @immutable
 class VpnRoutingSettings {
   const VpnRoutingSettings({
@@ -108,6 +172,8 @@ class VpnRoutingSettings {
     this.customProxyDomains = const [],
     this.customDirectCidrs = const [],
     this.customProxyCidrs = const [],
+    this.customOutbounds = const [],
+    this.customRules = const [],
   });
 
   final VpnRoutingMode mode;
@@ -121,6 +187,15 @@ class VpnRoutingSettings {
   final List<String> customProxyDomains;
   final List<String> customDirectCidrs;
   final List<String> customProxyCidrs;
+
+  /// User-defined extra sing-box outbounds (each a raw outbound JSON map that
+  /// must contain at least `tag` and `type`). These are merged into the
+  /// generated sing-box config so custom routing rules can target them.
+  final List<Map<String, dynamic>> customOutbounds;
+
+  /// User-defined routing rules that can target any outbound tag (built-in
+  /// `direct`/`proxy` or a custom outbound tag).
+  final List<CustomRoutingRule> customRules;
 
   static const defaults = VpnRoutingSettings();
 
@@ -143,7 +218,8 @@ class VpnRoutingSettings {
           customProxyDomains.length +
           customProxyPackages.length +
           customDirectCidrs.length +
-          customProxyCidrs.length;
+          customProxyCidrs.length +
+          customRules.length;
       if (customCount == 0) {
         return 'All traffic via VPN, LAN bypassed · $dnsModeLabel';
       }
@@ -221,6 +297,8 @@ class VpnRoutingSettings {
     List<String>? customProxyDomains,
     List<String>? customDirectCidrs,
     List<String>? customProxyCidrs,
+    List<Map<String, dynamic>>? customOutbounds,
+    List<CustomRoutingRule>? customRules,
   }) {
     return VpnRoutingSettings(
       mode: mode ?? this.mode,
@@ -235,6 +313,8 @@ class VpnRoutingSettings {
       customProxyDomains: customProxyDomains ?? this.customProxyDomains,
       customDirectCidrs: customDirectCidrs ?? this.customDirectCidrs,
       customProxyCidrs: customProxyCidrs ?? this.customProxyCidrs,
+      customOutbounds: customOutbounds ?? this.customOutbounds,
+      customRules: customRules ?? this.customRules,
     );
   }
 
@@ -251,6 +331,8 @@ class VpnRoutingSettings {
       'customProxyDomains': customProxyDomains,
       'customDirectCidrs': customDirectCidrs,
       'customProxyCidrs': customProxyCidrs,
+      'customOutbounds': customOutbounds,
+      'customRules': customRules.map((rule) => rule.toJson()).toList(),
     };
   }
 
@@ -279,6 +361,32 @@ class VpnRoutingSettings {
       return const [];
     }
 
+    List<Map<String, dynamic>> parseOutbounds(dynamic value) {
+      if (value is List) {
+        return value
+            .whereType<Map>()
+            .map((item) =>
+                Map<String, dynamic>.from(item))
+            .where((item) =>
+                item['tag']?.toString().trim().isNotEmpty == true &&
+                item['type']?.toString().trim().isNotEmpty == true)
+            .toList(growable: false);
+      }
+      return const [];
+    }
+
+    List<CustomRoutingRule> parseRules(dynamic value) {
+      if (value is List) {
+        return value
+            .whereType<Map>()
+            .map((item) => CustomRoutingRule.fromJson(
+                Map<String, dynamic>.from(item)))
+            .where((rule) => rule.value.isNotEmpty && rule.outbound.isNotEmpty)
+            .toList(growable: false);
+      }
+      return const [];
+    }
+
     return VpnRoutingSettings(
       mode: parseMode(json['mode']),
       dnsMode: parseDnsMode(json['dnsMode']),
@@ -291,6 +399,8 @@ class VpnRoutingSettings {
       customProxyDomains: parseList(json['customProxyDomains']),
       customDirectCidrs: parseList(json['customDirectCidrs']),
       customProxyCidrs: parseList(json['customProxyCidrs']),
+      customOutbounds: parseOutbounds(json['customOutbounds']),
+      customRules: parseRules(json['customRules']),
     );
   }
 }
@@ -349,6 +459,72 @@ String? validateVpnRoutingPackageName(String value) {
     return 'Invalid app package: $value';
   }
   return null;
+}
+
+/// Tags reserved by the generated sing-box config; user outbounds must not
+/// reuse them.
+const reservedOutboundTags = {
+  'direct',
+  'block',
+  'dns-out',
+  'select',
+  'auto',
+};
+
+String? validateVpnRoutingOutboundTag(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    return 'Outbound tag cannot be empty';
+  }
+  if (normalized.contains(' ')) {
+    return 'Outbound tag cannot contain spaces';
+  }
+  if (!RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(normalized)) {
+    return 'Invalid outbound tag: $value';
+  }
+  if (reservedOutboundTags.contains(normalized.toLowerCase())) {
+    return 'Reserved tag, choose another: $value';
+  }
+  return null;
+}
+
+/// Builds a sing-box (v1.11 legacy) WireGuard outbound map from form fields.
+/// Stored verbatim in [VpnRoutingSettings.customOutbounds] and merged into the
+/// generated config's `outbounds` so routing rules can target [tag].
+Map<String, dynamic> buildWireguardOutbound({
+  required String tag,
+  required String server,
+  required int serverPort,
+  required String privateKey,
+  required String peerPublicKey,
+  required List<String> localAddress,
+  String? preSharedKey,
+  int? mtu,
+  int? persistentKeepalive,
+}) {
+  final outbound = <String, dynamic>{
+    'type': 'wireguard',
+    'tag': tag.trim(),
+    'server': server.trim(),
+    'server_port': serverPort,
+    'local_address': localAddress
+        .map((address) => address.trim())
+        .where((address) => address.isNotEmpty)
+        .toList(growable: false),
+    'private_key': privateKey.trim(),
+    'peer_public_key': peerPublicKey.trim(),
+  };
+  final psk = preSharedKey?.trim();
+  if (psk != null && psk.isNotEmpty) {
+    outbound['pre_shared_key'] = psk;
+  }
+  if (mtu != null && mtu > 0) {
+    outbound['mtu'] = mtu;
+  }
+  if (persistentKeepalive != null && persistentKeepalive > 0) {
+    outbound['persistent_keepalive_interval'] = persistentKeepalive;
+  }
+  return outbound;
 }
 
 List<String> effectiveAndroidDirectPackages(VpnRoutingSettings settings) {

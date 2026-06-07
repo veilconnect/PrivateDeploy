@@ -588,6 +588,22 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     outboundMaps.toList(growable: false),
   );
 
+  // Merge user-defined custom outbounds (e.g. a WireGuard tunnel to a private
+  // network) so custom routing rules can target them. Skip any whose tag
+  // already exists to avoid clobbering node/proxy/structural outbounds.
+  for (final customOutbound in routingSettings.customOutbounds) {
+    final tag = customOutbound['tag']?.toString().trim();
+    final type = customOutbound['type']?.toString().trim();
+    if (tag == null || tag.isEmpty || type == null || type.isEmpty) {
+      continue;
+    }
+    if (outboundTags.contains(tag)) {
+      continue;
+    }
+    outbounds.add(Map<String, dynamic>.from(customOutbound));
+    outboundTags.add(tag);
+  }
+
   final hasDirectOutbound = outboundTags.contains('direct');
   final hasDnsOutbound = outboundTags.contains('dns-out');
   final route = _ensureMap(decoded, 'route');
@@ -628,6 +644,26 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
       'protocol': 'dns',
       'outbound': 'dns-out',
     });
+  }
+
+  // User-defined custom rules take priority over the built-in private/CN
+  // rules below, so e.g. `10.0.0.0/24 -> home-wg` wins over `ip_is_private ->
+  // direct`. Only emit rules whose target outbound actually exists (built-in
+  // direct/proxy or a merged custom outbound) to keep the config valid.
+  for (final rule in routingSettings.customRules) {
+    final value = rule.value.trim();
+    final outbound = rule.outbound.trim();
+    if (value.isEmpty || outbound.isEmpty || !outboundTags.contains(outbound)) {
+      continue;
+    }
+    switch (rule.matcher) {
+      case CustomRuleMatcher.domainSuffix:
+        _appendDomainSuffixRule(managedRules, [value], outbound);
+        break;
+      case CustomRuleMatcher.ipCidr:
+        _appendIpCidrRule(managedRules, [value], outbound);
+        break;
+    }
   }
 
   if (isAndroid && proxyOutboundTag != null) {
