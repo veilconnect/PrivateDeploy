@@ -134,11 +134,13 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
   const subscribesStore = useSubscribesStore()
 
   for (const outbound of outbounds) {
-    // WireGuard is emitted as a sing-box 1.12 endpoint, see generateEndpoints.
-    if (outbound.type === Outbound.WireGuard) continue
     const fallbackTag =
       (outbound.id && String(outbound.id).trim()) || `outbound-${++outboundFallbackCounter}`
     outbound.tag = ensureTag(outbound.tag, fallbackTag)
+    // WireGuard is emitted as a sing-box 1.12 endpoint (see generateEndpoints),
+    // but still runs through ensureTag above so a blank-tag entry falls back to
+    // its id — otherwise generateRoute/generateEndpoints would emit empty tags.
+    if (outbound.type === Outbound.WireGuard) continue
 
     const _outbound: Recordable = {
       type: outbound.type,
