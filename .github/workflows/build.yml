@@ -159,9 +159,9 @@ jobs:
           - os: windows-latest
             platform: windows/amd64
             node: 22
-          - os: macos-latest
-            platform: darwin/universal
-            node: 22
+          # macOS 桌面构建已移出日常 CI:macOS runner 在 private 仓按 10× 计费,
+          # 每次 push/PR 都跑会烧光每月免费额度。macOS 产物改由 release.yml(tag
+          # 触发)按需构建;需要平时验证可临时本地或手动跑。
           - os: ubuntu-latest
             platform: linux/amd64
             node: 22

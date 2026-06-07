@@ -1,16 +1,10 @@
 name: Mobile - Build iOS
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'mobile/**'
-      - '.github/workflows/mobile-build-ios.yml'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'mobile/**'
-      - '.github/workflows/mobile-build-ios.yml'
+  # iOS 构建跑在 macOS runner 上,private 仓按 10× 计费,会迅速抽干每月共享的
+  # 2000 分钟免费额度(连累 ubuntu 任务一起被封)。为保持 CI 全部落在免费池内,
+  # iOS 仅手动按需触发,不随 push/PR 自动跑。
+  # 需要验证时:gh workflow run mobile-build-ios.yml --ref <branch>
   workflow_dispatch:
 
 defaults:

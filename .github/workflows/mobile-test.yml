@@ -101,6 +101,9 @@ jobs:
 
   integration-test:
     name: Integration Tests
+    # macOS runner 10× 计费;仅手动触发时跑,避免每次 push/PR 烧光免费额度。
+    # ubuntu 上的单元测试/版本一致性等仍随 push/PR 正常跑。
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     needs: version-consistency
     strategy:
