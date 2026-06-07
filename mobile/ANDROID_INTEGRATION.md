@@ -9,7 +9,7 @@
 ### 开发环境
 
 - **Android Studio**: Electric Eel 或更高版本
-- **Android SDK**: API 21+ (Android 5.0+)
+- **Android SDK**: API 24+ (Android 7.0+)
 - **Android NDK**: r25c 或更高版本
 - **Go**: 1.21 或更高版本
 - **gomobile**: 最新版本

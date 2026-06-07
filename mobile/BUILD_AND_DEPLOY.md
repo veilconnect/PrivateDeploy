@@ -693,7 +693,7 @@ open /System/Applications/Utilities/Console.app
 - [ ] 签名密钥安全保存
 - [ ] ProGuard 规则测试
 - [ ] 多设备测试
-- [ ] API 21+ 兼容性
+- [ ] API 24+ 兼容性
 - [ ] Play Store 元数据完整
 
 ### iOS 特定

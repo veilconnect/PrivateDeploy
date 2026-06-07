@@ -72,7 +72,7 @@
 
 ##### build.gradle (应用级)
 - compileSdk: 34
-- minSdk: 21
+- minSdk: 24
 - targetSdk: 34
 - Kotlin 1.9.0
 - AndroidX 依赖
