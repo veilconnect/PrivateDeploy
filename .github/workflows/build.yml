@@ -156,12 +156,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            platform: windows/amd64
-            node: 22
-          # macOS 桌面构建已移出日常 CI:macOS runner 在 private 仓按 10× 计费,
-          # 每次 push/PR 都跑会烧光每月免费额度。macOS 产物改由 release.yml(tag
-          # 触发)按需构建;需要平时验证可临时本地或手动跑。
+          # 日常 push/PR 只在 Linux(1×)构建,保持 CI 全程落在免费额度内。
+          # Windows(2×)与 macOS(10×)桌面产物均改由 release.yml(tag 触发)
+          # 按需构建,避免每次 push/PR 消耗每月共享的 2000 分钟免费池。
+          # 需要平时验证 Windows/macOS 可临时本地构建或手动跑 release 流程。
           - os: ubuntu-latest
             platform: linux/amd64
             node: 22
