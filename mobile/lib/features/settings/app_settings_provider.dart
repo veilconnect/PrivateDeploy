@@ -500,7 +500,6 @@ Map<String, dynamic> buildWireguardOutbound({
   required List<String> localAddress,
   String? preSharedKey,
   int? mtu,
-  int? persistentKeepalive,
 }) {
   final outbound = <String, dynamic>{
     'type': 'wireguard',
@@ -521,9 +520,10 @@ Map<String, dynamic> buildWireguardOutbound({
   if (mtu != null && mtu > 0) {
     outbound['mtu'] = mtu;
   }
-  if (persistentKeepalive != null && persistentKeepalive > 0) {
-    outbound['persistent_keepalive_interval'] = persistentKeepalive;
-  }
+  // Note: the bundled sing-box (v1.11) legacy WireGuard outbound has no
+  // `persistent_keepalive_interval` field (it only exists on the 1.12+ endpoint
+  // format). Emitting it makes sing-box reject the entire config, so it is
+  // intentionally not set here; the normalizer also strips it defensively.
   return outbound;
 }
 

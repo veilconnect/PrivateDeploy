@@ -111,5 +111,35 @@ void main() {
       expect(directOutbounds.first['type'], 'direct',
           reason: 'the original direct outbound must be preserved');
     });
+
+    test(
+        'strips persistent_keepalive_interval from a WireGuard outbound '
+        '(unsupported by bundled sing-box v1.11 → would reject whole config)',
+        () {
+      final settings = VpnRoutingSettings(
+        customOutbounds: [
+          <String, dynamic>{
+            'type': 'wireguard',
+            'tag': 'home-wg',
+            'server': '203.0.113.1',
+            'server_port': 51820,
+            'local_address': const ['10.0.0.20/32'],
+            'private_key': 'private-key',
+            'peer_public_key': 'peer-public-key',
+            // A user pasting a standard WireGuard JSON commonly includes this;
+            // it must be stripped, not passed through.
+            'persistent_keepalive_interval': 25,
+          },
+        ],
+      );
+      final decoded = normalize(settings);
+      final wg = (decoded['outbounds'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((o) => o['tag'] == 'home-wg');
+      expect(wg.containsKey('persistent_keepalive_interval'), isFalse,
+          reason: 'invalid field must be stripped so sing-box accepts config');
+      expect(wg['server'], '203.0.113.1',
+          reason: 'the rest of the WireGuard outbound must be preserved');
+    });
   });
 }

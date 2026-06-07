@@ -600,7 +600,17 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     if (outboundTags.contains(tag)) {
       continue;
     }
-    outbounds.add(Map<String, dynamic>.from(customOutbound));
+    final merged = Map<String, dynamic>.from(customOutbound);
+    // The bundled sing-box (v1.11) legacy WireGuard outbound has no
+    // `persistent_keepalive_interval` field — it only exists on the 1.12+
+    // endpoint format. A user-pasted/standard WireGuard JSON commonly carries
+    // it, and sing-box rejects the WHOLE config on the unknown field
+    // ("decode config: outbounds[N].persistent_keepalive_interval: unknown
+    // field"), so the VPN never starts. Strip it so the outbound stays valid.
+    if (type == 'wireguard') {
+      merged.remove('persistent_keepalive_interval');
+    }
+    outbounds.add(merged);
     outboundTags.add(tag);
   }
 
