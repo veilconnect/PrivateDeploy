@@ -25,6 +25,9 @@ export enum Outbound {
   Direct = 'direct',
   Selector = 'selector',
   Urltest = 'urltest',
+  // sing-box 1.12: WireGuard is configured as an endpoint, not an outbound,
+  // but it shares the outbound tag namespace so route rules can target it.
+  WireGuard = 'wireguard',
 }
 
 export enum TunStack {
