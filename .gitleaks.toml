@@ -1,0 +1,37 @@
+# gitleaks config for PrivateDeploy — extends the default ruleset and allowlists
+# known non-secrets so the CI secret scan only fails on genuinely new leaks.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Docs examples, UI placeholders, and test fixtures — verified non-secrets."
+# File paths whose matches are illustrative only (curl `Bearer YOUR_API_KEY`
+# examples in docs, `REMOVED_PRIVATE_KEY_HEADER` UI placeholders, and
+# dummy keys/tokens in tests). Keep this list tight — do NOT add production code.
+paths = [
+  '''docs/.*''',
+  '''.*_test\.dart$''',
+  '''.*\.test\.ts$''',
+  '''.*\.spec\.ts$''',
+  '''e2e/.*''',
+  '''frontend/src/views/CloudView/components/SSHConfigForm\.vue$''',
+  '''frontend/src/views/WizardView/components/StepCredentials\.vue$''',
+]
+# Obvious placeholder/variable tokens that should never count as secrets.
+regexes = [
+  '''YOUR_API_KEY''',
+  '''\$\{?[A-Z_]+\}?''',
+  '''abcd1234efgh''',
+]
+# Historical leak: a real Vultr API key was committed in the commits below and
+# later removed from current files (commit c31c221). It is already public in the
+# pushed git history, so it MUST be rotated in the Vultr console — removing it
+# from history does not undo the exposure. These commits are allowlisted only so
+# a full-history scan does not permanently block CI. DO NOT allowlist new leaks
+# here; fix the code and rotate the credential instead.
+commits = [
+  "a2d1edc69db063827fbbd8966780050956fb5186",
+  "4572040b343149792778703ba9fb89b7f1bb76d3",
+  "bc10674afe4a368043389a11279b5b60d7e66e14",
+  "c31c221f0e8cdad719623eb5d7fee95bbb4cf148",
+]
