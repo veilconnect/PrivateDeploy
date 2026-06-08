@@ -1,0 +1,237 @@
+name: Mobile - Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
+      - '.github/workflows/mobile-ci.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'mobile/**'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - 'scripts/sync_versions.sh'
+      - '.github/workflows/mobile-ci.yml'
+  schedule:
+    # 每天凌晨 2 点运行
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mobile
+
+jobs:
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check shared version metadata
+        run: bash scripts/check_versions.sh
+        # Override the job-level `working-directory: mobile` default — the
+        # version scripts live at the repo root, not under mobile/.
+        working-directory: ${{ github.workspace }}
+
+  lint:
+    name: Lint Check
+    runs-on: ubuntu-latest
+    needs: version-consistency
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze code
+        run: flutter analyze --no-fatal-infos
+
+      - name: Check formatting
+        run: dart format --set-exit-if-changed lib test
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Run unit tests
+        run: flutter test --coverage
+
+      - name: Generate coverage report
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov
+          lcov --summary coverage/lcov.info
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+
+  build-android:
+    name: Build Android (CI)
+    runs-on: ubuntu-latest
+    needs: test-unit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mobile/gomobile/go.mod
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+
+      - name: Build Go Mobile AAR
+        run: |
+          cd gomobile
+          chmod +x build-android.sh
+          ./build-android.sh
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Build APK
+        run: flutter build apk --debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-android-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 3
+
+  # NOTE: the mobile app is Android/iOS only — it has no web/ platform dir,
+  # so `flutter build web` always failed with "project is not configured for
+  # the web". The desktop *frontend* (Vue) is built separately in build.yml.
+  # The Flutter web job was removed rather than configuring an unused target.
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    # Required for upload-sarif to push results to the code-scanning API;
+    # without it the upload fails with "Resource not accessible by integration".
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+        # Best-effort: on repos without code scanning (GHAS) enabled the
+        # upload still 403s — don't fail the whole job over telemetry/upload.
+        continue-on-error: true
+
+  notify:
+    name: Notify Build Status
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit, build-android]
+    if: always()
+
+    steps:
+      # This job has no other reason to check out, but the workflow's
+      # `working-directory: mobile` default makes every run step cd into
+      # mobile/ — which doesn't exist without a checkout, so the echo steps
+      # failed with "no such file or directory".
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check build status
+        run: |
+          if [ "${{ needs.lint.result }}" == "success" ] && \
+             [ "${{ needs.test-unit.result }}" == "success" ] && \
+             [ "${{ needs.build-android.result }}" == "success" ]; then
+            echo "✅ All CI jobs passed!"
+            echo "BUILD_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "❌ Some CI jobs failed"
+            echo "BUILD_STATUS=failure" >> $GITHUB_ENV
+          fi
+
+      - name: Summary
+        run: |
+          echo "## CI Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.test-unit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Android | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY

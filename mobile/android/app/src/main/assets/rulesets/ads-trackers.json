@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain_suffix": [
+        "adnxs.com",
+        "ads-twitter.com",
+        "amazon-adsystem.com",
+        "appsflyer.com",
+        "branch.io",
+        "criteo.com",
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googletagmanager.com",
+        "googletagservices.com",
+        "googleadservices.com",
+        "openx.net",
+        "outbrain.com",
+        "scorecardresearch.com",
+        "taboola.com"
+      ]
+    },
+    {
+      "domain_keyword": [
+        "adservice",
+        "analytics",
+        "tracking",
+        "tracker"
+      ]
+    }
+  ]
+}

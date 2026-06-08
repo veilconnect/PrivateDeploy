@@ -1,0 +1,5 @@
+# Pre-downloaded binaries fetched on host (build context only — github
+# isn't reliably reachable from inside the container behind GFW).
+linuxdeploy-x86_64.AppImage
+linuxdeploy-plugin-gtk.sh
+runtime-x86_64

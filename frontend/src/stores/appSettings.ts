@@ -1,0 +1,330 @@
+import { defineStore } from 'pinia'
+import { ref, watch } from 'vue'
+import { parse, stringify } from 'yaml'
+
+import {
+  GetEnv,
+  ReadDir,
+  ReadFile,
+  WriteFile,
+  WindowSetSystemDefaultTheme,
+  WindowIsMaximised,
+  WindowIsMinimised,
+} from '@/bridge'
+import {
+  Colors,
+  DefaultCardColumns,
+  DefaultConcurrencyLimit,
+  DefaultControllerSensitivity,
+  DefaultFontFamily,
+  DefaultTestURL,
+  UserFilePath,
+  LocalesFilePath,
+} from '@/constant/app'
+import {
+  CorePidFilePath,
+  DefaultConnections,
+  DefaultCoreConfig,
+  DeprecatedKernelEnvKeys,
+} from '@/constant/kernel'
+import {
+  Theme,
+  WindowStartState,
+  Lang,
+  View,
+  Color,
+  WebviewGpuPolicy,
+  ControllerCloseMode,
+  Branch,
+} from '@/enums/app'
+import i18n, { loadLocaleMessages } from '@/lang'
+import { debounce, updateTrayMenus, APP_TITLE, ignoredError, APP_VERSION, sleep } from '@/utils'
+
+import type { AppSettings } from '@/types/app'
+
+export const useAppSettingsStore = defineStore('app-settings', () => {
+  const themeMode = ref<Theme.Dark | Theme.Light>(Theme.Light)
+
+  const app = ref<AppSettings>({
+    lang: Lang.EN,
+    theme: Theme.Auto,
+    color: Color.Default,
+    fontFamily: DefaultFontFamily,
+    profilesView: View.Grid,
+    subscribesView: View.Grid,
+    rulesetsView: View.Grid,
+    pluginsView: View.Grid,
+    scheduledtasksView: View.Grid,
+    windowStartState: WindowStartState.Normal,
+    webviewGpuPolicy: WebviewGpuPolicy.Never,
+    width: 0,
+    height: 0,
+    exitOnClose: false,
+    closeKernelOnExit: true,
+    autoSetSystemProxy: true,
+    systemProxyPolicyInitialized: false,
+    systemProxyBackup: '',
+    systemProxyManaged: false,
+    autoStartKernel: true,
+    userAgent: APP_TITLE + '/' + APP_VERSION,
+    startupDelay: 30,
+    connections: DefaultConnections(),
+    kernel: {
+      branch: Branch.Main,
+      profile: '',
+      autoClose: true,
+      unAvailable: true,
+      cardMode: true,
+      cardColumns: DefaultCardColumns,
+      sortByDelay: false,
+      testUrl: DefaultTestURL,
+      concurrencyLimit: DefaultConcurrencyLimit,
+      controllerCloseMode: ControllerCloseMode.All,
+      controllerSensitivity: DefaultControllerSensitivity,
+      main: DefaultCoreConfig(),
+      alpha: DefaultCoreConfig(),
+    },
+    pluginSettings: {},
+    githubApiToken: '',
+    multipleInstance: false,
+    addPluginToMenu: false,
+    addGroupToMenu: false,
+    rollingRelease: true,
+    builtinPresetsVersion: 0,
+    userSettingsMigration: 0,
+    debugOutline: false,
+    debugNoAnimation: false,
+    pages: ['Workbench'],
+  })
+
+  const saveAppSettings = debounce((config: string) => {
+    WriteFile(UserFilePath, config)
+  }, 500)
+
+  const localesLoading = ref(false)
+  const locales = ref<{ label: string; value: string }[]>([])
+  const loadLocales = async (delay = false) => {
+    localesLoading.value = true
+    locales.value = [
+      {
+        label: 'settings.lang.zh',
+        value: Lang.ZH,
+      },
+      {
+        label: 'settings.lang.en',
+        value: Lang.EN,
+      },
+    ]
+    const dirs = await ignoredError(ReadDir, LocalesFilePath)
+    if (dirs) {
+      const files = dirs.flatMap((file) => {
+        if (file.isDir) return []
+        const [name, ext] = file.name.split('.')
+        return name && ext === 'json' ? { label: name, value: name } : []
+      })
+      locales.value.push(...files)
+    }
+    delay && (await sleep(200))
+    localesLoading.value = false
+  }
+
+  let latestUserSettings: string
+  const removeDeprecatedKernelEnvKeys = (env: Recordable | undefined) => {
+    if (!env || typeof env !== 'object') return false
+    let changed = false
+    for (const key of DeprecatedKernelEnvKeys) {
+      if (key in env) {
+        delete env[key]
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  const cleanupDeprecatedKernelEnv = () => {
+    const { kernel } = app.value
+    return (
+      removeDeprecatedKernelEnvKeys(kernel.main?.env) || removeDeprecatedKernelEnvKeys(kernel.alpha?.env)
+    )
+  }
+
+  const setupAppSettings = async () => {
+    const data = await ignoredError(ReadFile, UserFilePath)
+    const env = await ignoredError(GetEnv)
+    const isLinux = env?.os === 'linux'
+    const hasPersistedSettings = !!data
+    if (data) {
+      const settings = parse(data)
+      latestUserSettings = stringify(settings)
+      app.value = Object.assign(app.value, settings)
+    } else {
+      latestUserSettings = ''
+    }
+
+    await loadLocales()
+
+    if ((app.value.kernel.branch as any) === 'latest') {
+      app.value.kernel.branch = Branch.Main
+    }
+    if (app.value.kernel.controllerCloseMode === undefined) {
+      app.value.kernel.controllerCloseMode = ControllerCloseMode.All
+    }
+    if (app.value.kernel.controllerSensitivity === undefined) {
+      app.value.kernel.controllerSensitivity = DefaultControllerSensitivity
+    }
+    if (app.value.systemProxyPolicyInitialized === undefined) {
+      app.value.systemProxyPolicyInitialized = hasPersistedSettings
+    }
+    if (app.value.systemProxyBackup === undefined) {
+      app.value.systemProxyBackup = ''
+    }
+    if (app.value.systemProxyManaged === undefined) {
+      app.value.systemProxyManaged = false
+    }
+    if (app.value.addGroupToMenu === undefined) {
+      app.value.addGroupToMenu = false
+    }
+    if (app.value.kernel.concurrencyLimit === undefined) {
+      app.value.kernel.concurrencyLimit = DefaultConcurrencyLimit
+    }
+    if (app.value.builtinPresetsVersion === undefined) {
+      app.value.builtinPresetsVersion = 0
+    }
+    // 2.0.1: flip autoStartKernel + autoSetSystemProxy defaults from false→true
+    // for existing installs whose user.yaml still carries the old values. Tracked
+    // by userSettingsMigration so we only do this once; users who later prefer
+    // false can flip the toggle back and it persists.
+    if (!app.value.userSettingsMigration || app.value.userSettingsMigration < 1) {
+      app.value.autoStartKernel = true
+      app.value.autoSetSystemProxy = true
+      app.value.userSettingsMigration = 1
+    }
+    if (app.value.webviewGpuPolicy === undefined) {
+      app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
+    }
+    if (isLinux && app.value.webviewGpuPolicy === WebviewGpuPolicy.OnDemand) {
+      app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
+    }
+    // @ts-expect-error(Deprecated)
+    if (app.value['font-family'] !== undefined) {
+      // @ts-expect-error(Deprecated)
+      app.value.fontFamily = app.value['font-family']
+      // @ts-expect-error(Deprecated)
+      delete app.value['font-family']
+    }
+
+    if (typeof app.value.connections.visibility['metadata.destinationIP'] === 'undefined') {
+      app.value.connections.visibility['metadata.destinationIP'] = false
+      app.value.connections.order.push('metadata.destinationIP')
+      app.value.connections.order = app.value.connections.order.filter(
+        (field) =>
+          !['metadata.process', 'metadata.sniffHost', 'metadata.remoteDestination'].includes(field),
+      )
+    }
+
+    if (!app.value.kernel.main) {
+      app.value.kernel.main = DefaultCoreConfig()
+      app.value.kernel.alpha = DefaultCoreConfig()
+    }
+    cleanupDeprecatedKernelEnv()
+
+    if (!app.value.kernel.cardColumns) {
+      app.value.kernel.cardColumns = DefaultCardColumns
+    }
+    if (Array.isArray(app.value.pages)) {
+      app.value.pages = ['Workbench']
+    }
+    // @ts-expect-error(Deprecated)
+    if (app.value.kernel.running !== undefined) {
+      // @ts-expect-error(Deprecated)
+      await WriteFile(CorePidFilePath, String(app.value.kernel.pid))
+      // @ts-expect-error(Deprecated)
+      delete app.value.kernel.running
+      // @ts-expect-error(Deprecated)
+      delete app.value.kernel.pid
+    }
+  }
+
+  const mediaQueryList = window.matchMedia('(prefers-color-scheme: dark)')
+  mediaQueryList.addEventListener('change', ({ matches }) => {
+    if (app.value.theme === Theme.Auto) {
+      themeMode.value = matches ? Theme.Dark : Theme.Light
+    }
+  })
+
+  const setAppTheme = (theme: Theme.Dark | Theme.Light) => {
+    // startViewTransition is unsafe in both of this app's webview hosts:
+    //   • WebKitGTK 2.52.3 on Ubuntu 24.04 (Wails Linux): SIGSEGV addr=0x48
+    //     inside gtk_main when invoked during the immediate-watch on themeMode
+    //     at store-construction time — the process aborts before the UI mounts.
+    //   • WebView2 on Windows: rejects with InvalidStateError "Transition was
+    //     aborted because of invalid state" during early page init.
+    // The DOM mutation (setAttribute) is what actually applies the theme; the
+    // transition is only the cross-fade animation, not worth either failure.
+    document.body.setAttribute('theme-mode', theme)
+    WindowSetSystemDefaultTheme()
+  }
+
+  const updateAppSettings = (settings: AppSettings) => {
+    loadLocaleMessages(settings.lang)
+    i18n.global.locale.value = settings.lang
+    themeMode.value =
+      settings.theme === Theme.Auto
+        ? mediaQueryList.matches
+          ? Theme.Dark
+          : Theme.Light
+        : settings.theme
+    const { primary, secondary } = Colors[settings.color]
+    document.documentElement.style.setProperty('--primary-color', primary)
+    document.documentElement.style.setProperty('--secondary-color', secondary)
+    document.body.style.fontFamily = settings.fontFamily
+    document.body.setAttribute('debug-outline', String(settings.debugOutline))
+    document.body.setAttribute('debug-no-animation', String(settings.debugNoAnimation))
+  }
+
+  watch(
+    app,
+    (settings) => {
+      updateAppSettings(settings)
+
+      const lastModifiedSettings = stringify(settings)
+      if (latestUserSettings !== undefined && latestUserSettings !== lastModifiedSettings) {
+        saveAppSettings(lastModifiedSettings).then(() => {
+          latestUserSettings = lastModifiedSettings
+        })
+      } else {
+        saveAppSettings.cancel()
+      }
+    },
+    { deep: true, immediate: true },
+  )
+
+  window.addEventListener(
+    'resize',
+    debounce(async () => {
+      const [isMinimised, isMaximised] = await Promise.all([
+        WindowIsMinimised(),
+        WindowIsMaximised(),
+      ])
+      if (!isMinimised && !isMaximised) {
+        app.value.width = document.documentElement.clientWidth
+        app.value.height = document.documentElement.clientHeight
+      }
+    }, 1000),
+  )
+
+  watch(
+    [
+      themeMode,
+      locales,
+      () => app.value.color,
+      () => app.value.lang,
+      () => app.value.addPluginToMenu,
+    ],
+    updateTrayMenus,
+  )
+
+  watch(themeMode, setAppTheme, { immediate: true })
+
+  return { setupAppSettings, app, themeMode, locales, localesLoading, loadLocales }
+})

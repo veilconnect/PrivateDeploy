@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain": [
+        "captive.apple.com",
+        "gsp1.apple.com",
+        "time.apple.com",
+        "time-ios.apple.com",
+        "connectivitycheck.gstatic.com",
+        "clients3.google.com",
+        "connect.rom.miui.com",
+        "detectportal.firefox.com",
+        "msftconnecttest.com",
+        "msftncsi.com",
+        "time.windows.com",
+        "www.msftconnecttest.com",
+        "www.msftncsi.com"
+      ]
+    },
+    {
+      "domain_suffix": [
+        "ntp.org",
+        "pool.ntp.org"
+      ]
+    }
+  ]
+}

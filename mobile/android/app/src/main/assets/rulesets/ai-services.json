@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain_suffix": [
+        "anthropic.com",
+        "chatgpt.com",
+        "claude.ai",
+        "cursor.sh",
+        "grok.com",
+        "notionusercontent.com",
+        "oaistatic.com",
+        "openai.com",
+        "perplexity.ai",
+        "poe.com",
+        "windsurf.com",
+        "x.ai"
+      ]
+    }
+  ]
+}

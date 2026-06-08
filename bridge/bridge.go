@@ -1,0 +1,548 @@
+package bridge
+
+import (
+	"context"
+	"crypto/sha256"
+	"embed"
+	"io"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	sysruntime "runtime"
+
+	"privatedeploy/bridge/cdn"
+	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/defaults"
+	"privatedeploy/bridge/cloud/health"
+	filesystem "privatedeploy/bridge/services/filesystem"
+
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"gopkg.in/yaml.v3"
+)
+
+var Config = &AppConfig{}
+
+const (
+	webviewGpuPolicyAlways   = 0
+	webviewGpuPolicyOnDemand = 1
+	webviewGpuPolicyNever    = 2
+)
+
+// AppVersion is the build-time version of the binary. Default "dev" makes
+// it obvious when an unbranded local build is running. Override at link
+// time with:
+//
+//	go build -ldflags "-X privatedeploy/bridge.AppVersion=v2.0.0+12" ./api
+//	go build -ldflags "-X privatedeploy/bridge.AppVersion=v2.0.0+12" .
+//
+// Both /api/v1/version and /api/v1/health expose this value at runtime so
+// the deployed binary can always be queried for its build identity.
+var AppVersion = "dev"
+
+var Env = &EnvResult{
+	IsStartup:    true,
+	FromTaskSch:  false,
+	ExecPath:     "",
+	AppName:      "",
+	AppVersion:   AppVersion,
+	BasePath:     "",
+	OS:           sysruntime.GOOS,
+	ARCH:         sysruntime.GOARCH,
+	Capabilities: buildPlatformCapabilities(sysruntime.GOOS),
+}
+
+// NewApp creates a new App application struct
+func NewApp() *App {
+	return &App{
+		AppMenu: menu.NewMenu(),
+	}
+}
+
+func CreateApp(fs embed.FS) *App {
+	exePath, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	Env.ExecPath = exePath
+	Env.BasePath = resolveBasePath(Env.OS, exePath)
+	Env.AppName = filepath.Base(exePath)
+
+	if err := os.MkdirAll(Env.BasePath, 0o750); err != nil {
+		log.Printf("Warning: failed to create app base path %s: %v", Env.BasePath, err)
+	}
+
+	if err := os.Setenv("PRIVATEDEPLOY_BASE_PATH", Env.BasePath); err != nil {
+		log.Printf("Warning: failed to set PRIVATEDEPLOY_BASE_PATH: %v", err)
+	}
+
+	if slices.Contains(os.Args, "tasksch") {
+		Env.FromTaskSch = true
+	}
+
+	app := NewApp()
+	app.FileService = filesystem.NewService(Env.BasePath)
+
+	// Initialize CloudManager with shared default provider registry
+	registry := defaults.Registry()
+	app.CloudManager = cloud.NewManager(context.Background(), registry)
+	app.HealthMonitor = health.NewMonitor(5 * time.Minute)
+	app.CdnManager = cdn.NewManager(Env.BasePath)
+
+	// Set Vultr as the default active provider
+	if err := app.CloudManager.SetActiveProvider("vultr"); err != nil {
+		log.Printf("Warning: Failed to set default provider: %v", err)
+	}
+
+	if Env.OS == "darwin" {
+		createMacOSSymlink()
+		createMacOSMenus(app)
+	}
+
+	extractEmbeddedFiles(fs)
+	seedRuntimeData()
+
+	loadConfig()
+
+	return app
+}
+
+func (a *App) IsStartup() bool {
+	if Env.IsStartup {
+		Env.IsStartup = false
+		return true
+	}
+	return false
+}
+
+func (a *App) RestartApp() FlagResult {
+	cmd := exec.Command(Env.ExecPath)
+	SetCmdWindowHidden(cmd)
+
+	if err := cmd.Start(); err != nil {
+		return FlagResult{false, err.Error()}
+	}
+
+	a.ExitApp()
+
+	return FlagResult{true, "Success"}
+}
+
+func (a *App) GetEnv() EnvResult {
+	return EnvResult{
+		AppName:      Env.AppName,
+		AppVersion:   Env.AppVersion,
+		BasePath:     Env.BasePath,
+		OS:           Env.OS,
+		ARCH:         Env.ARCH,
+		Capabilities: buildPlatformCapabilities(Env.OS),
+	}
+}
+
+func (a *App) GetInterfaces() FlagResult {
+	log.Printf("GetInterfaces")
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return FlagResult{false, err.Error()}
+	}
+
+	var interfaceNames []string
+
+	for _, inter := range interfaces {
+		interfaceNames = append(interfaceNames, inter.Name)
+	}
+
+	return FlagResult{true, strings.Join(interfaceNames, "|")}
+}
+
+func (a *App) ShowMainWindow() {
+	runtime.WindowShow(a.Ctx)
+}
+
+func createMacOSSymlink() {
+	user, _ := user.Current()
+	linkPath := Env.BasePath + "/data"
+	appPath := "/Users/" + user.Username + "/Library/Application Support/" + Env.AppName
+	os.MkdirAll(appPath, 0o750)
+	os.Symlink(appPath, linkPath)
+}
+
+func resolveBasePath(osName, exePath string) string {
+	exeDir := filepath.Dir(exePath)
+	switch osName {
+	case "linux":
+		// AppImage mounts a read-only squashfs at /tmp/.mount_xxx/. Always
+		// redirect to the user data dir when running from one, or any other
+		// system install path.
+		if !isLinuxSystemInstallPath(exeDir) && !isAppImageRuntime(exeDir) {
+			return exeDir
+		}
+
+		homeDir, err := os.UserHomeDir()
+		if err != nil || homeDir == "" {
+			return exeDir
+		}
+
+		return filepath.Join(homeDir, ".local", "share", "PrivateDeploy")
+	case "windows":
+		if !isWindowsSystemInstallPath(exeDir) {
+			return exeDir
+		}
+
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			return filepath.Join(localAppData, "PrivateDeploy")
+		}
+
+		if userConfigDir, err := os.UserConfigDir(); err == nil && userConfigDir != "" {
+			return filepath.Join(userConfigDir, "PrivateDeploy")
+		}
+	}
+
+	return exeDir
+}
+
+// isAppImageRuntime returns true when the binary is running from an AppImage
+// FUSE mount (squashfs at /tmp/.mount_<hash>/...) or extracted AppDir
+// (APPDIR env var set by the AppImage runtime). Both surfaces are read-only
+// for the AppImage case, so we redirect BasePath to the user data dir.
+func isAppImageRuntime(exeDir string) bool {
+	if strings.TrimSpace(os.Getenv("APPDIR")) != "" {
+		return true
+	}
+	return strings.HasPrefix(exeDir, "/tmp/.mount_")
+}
+
+func isLinuxSystemInstallPath(exeDir string) bool {
+	candidates := []string{
+		"/usr/bin",
+		"/usr/local/bin",
+		"/usr/lib",
+		"/usr/local/lib",
+		"/opt",
+	}
+
+	for _, candidate := range candidates {
+		if exeDir == candidate || strings.HasPrefix(exeDir, candidate+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isWindowsSystemInstallPath(exeDir string) bool {
+	candidates := []string{
+		strings.TrimSpace(os.Getenv("ProgramFiles")),
+		strings.TrimSpace(os.Getenv("ProgramFiles(x86)")),
+		strings.TrimSpace(os.Getenv("ProgramW6432")),
+	}
+
+	normalize := func(path string) string {
+		path = strings.ToLower(strings.TrimSpace(filepath.Clean(path)))
+		path = strings.ReplaceAll(path, `\`, `/`)
+		// Windows installers and scheduled launches may surface 8.3 short paths.
+		// Normalize the common Program Files prefixes so system installs still
+		// resolve to LOCALAPPDATA instead of writing into the install directory.
+		path = strings.ReplaceAll(path, `/progra~1`, `/program files`)
+		path = strings.ReplaceAll(path, `/progra~2`, `/program files (x86)`)
+		return path
+	}
+
+	cleanExeDir := normalize(exeDir)
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		cleanCandidate := normalize(candidate)
+		if cleanExeDir == cleanCandidate || strings.HasPrefix(cleanExeDir, cleanCandidate+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func buildPlatformCapabilities(osName string) PlatformCapabilities {
+	capabilities := PlatformCapabilities{
+		TraySupported:                  true,
+		ShowMainWindowFromTray:         true,
+		SystemProxySupported:           true,
+		StartupLaunchSupported:         false,
+		StartupDelaySupported:          false,
+		AdminElevationSupported:        false,
+		ConfigurableWebviewGpuPolicy:   false,
+		KernelGrantPermissionSupported: true,
+	}
+
+	switch osName {
+	case "windows":
+		capabilities.ShowMainWindowFromTray = false
+		capabilities.StartupLaunchSupported = true
+		capabilities.StartupDelaySupported = true
+		capabilities.AdminElevationSupported = true
+		capabilities.KernelGrantPermissionSupported = false
+	case "linux":
+		capabilities.ConfigurableWebviewGpuPolicy = true
+	case "darwin":
+		// macOS keeps the standard tray and kernel grant flows.
+	default:
+		capabilities.TraySupported = false
+		capabilities.ShowMainWindowFromTray = false
+		capabilities.SystemProxySupported = false
+		capabilities.KernelGrantPermissionSupported = false
+	}
+
+	return capabilities
+}
+
+func createMacOSMenus(app *App) {
+	appMenu := app.AppMenu.AddSubmenu("App")
+	appMenu.AddText("Show", keys.CmdOrCtrl("s"), func(_ *menu.CallbackData) {
+		runtime.WindowShow(app.Ctx)
+	})
+	appMenu.AddText("Hide", keys.CmdOrCtrl("h"), func(_ *menu.CallbackData) {
+		runtime.WindowHide(app.Ctx)
+	})
+	appMenu.AddSeparator()
+	appMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+		runtime.EventsEmit(app.Ctx, "onExitApp")
+	})
+
+	// on macos platform, we should append EditMenu to enable Cmd+C,Cmd+V,Cmd+Z... shortcut
+	app.AppMenu.Append(menu.EditMenu())
+}
+
+func extractEmbeddedFiles(fs embed.FS) {
+	iconSrc := "frontend/dist/icons"
+	iconDst := "data/.cache/icons"
+	imgSrc := "frontend/dist/imgs"
+	imgDst := "data/.cache/imgs"
+
+	os.MkdirAll(GetPath(iconDst), 0o750)
+	os.MkdirAll(GetPath(imgDst), 0o750)
+
+	extractFiles(fs, iconSrc, iconDst)
+	extractFiles(fs, imgSrc, imgDst)
+}
+
+func extractFiles(fs embed.FS, srcDir, dstDir string) {
+	files, _ := fs.ReadDir(srcDir)
+	for _, file := range files {
+		fileName := file.Name()
+		dstPath := GetPath(dstDir + "/" + fileName)
+		data, _ := fs.ReadFile(srcDir + "/" + fileName)
+		existing, err := os.ReadFile(dstPath)
+		if err == nil && string(existing) == string(data) {
+			continue
+		}
+
+		if os.IsNotExist(err) {
+			log.Printf("InitResources [%s]: %s", dstDir, fileName)
+		} else {
+			log.Printf("RefreshResources [%s]: %s", dstDir, fileName)
+		}
+
+		if err := os.WriteFile(dstPath, data, os.ModePerm); err != nil {
+			log.Printf("Error writing file %s: %v", dstPath, err)
+		}
+	}
+}
+
+// seedRuntimeData copies bundled runtime data (e.g. sing-box binary) from the
+// installation directory to BasePath when BasePath differs from the exe directory
+// (i.e. on Windows system installs where BasePath is %LOCALAPPDATA%\PrivateDeploy).
+// Existing files are refreshed when the bundled copy changes so upgrades do not
+// leave behind a stale runtime.
+func seedRuntimeData() {
+	exeDir := filepath.Dir(Env.ExecPath)
+	basePath := Env.BasePath
+
+	// Only needed when BasePath is redirected away from the exe directory.
+	if filepath.Clean(exeDir) == filepath.Clean(basePath) {
+		return
+	}
+
+	// Files to seed from install dir → BasePath (relative paths).
+	seeds := []string{
+		filepath.Join("data", "sing-box", "sing-box"),
+	}
+	if sysruntime.GOOS == "windows" {
+		seeds = []string{
+			filepath.Join("data", "sing-box", "sing-box.exe"),
+		}
+	}
+
+	for _, rel := range seeds {
+		src := filepath.Join(exeDir, rel)
+		dst := filepath.Join(basePath, rel)
+
+		srcInfo, err := os.Stat(src)
+		if err != nil || srcInfo.IsDir() {
+			continue // source not bundled
+		}
+
+		shouldCopy, err := shouldRefreshSeededFile(src, dst, srcInfo.Size())
+		if err != nil {
+			log.Printf("seedRuntimeData: compare %s → %s: %v", src, dst, err)
+			continue
+		}
+		if !shouldCopy {
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			log.Printf("seedRuntimeData: mkdir %s: %v", filepath.Dir(dst), err)
+			continue
+		}
+
+		if err := copyFile(src, dst, srcInfo.Mode()); err != nil {
+			log.Printf("seedRuntimeData: copy %s → %s: %v", src, dst, err)
+		} else {
+			log.Printf("seedRuntimeData: seeded %s", rel)
+		}
+	}
+}
+
+func shouldRefreshSeededFile(src, dst string, srcSize int64) (bool, error) {
+	dstInfo, err := os.Stat(dst)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	if dstInfo.IsDir() {
+		return true, nil
+	}
+
+	if dstInfo.Size() != srcSize {
+		return true, nil
+	}
+
+	equal, err := filesHaveSameHash(src, dst)
+	if err != nil {
+		return false, err
+	}
+	return !equal, nil
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func filesHaveSameHash(src, dst string) (bool, error) {
+	srcHash, err := hashFile(src)
+	if err != nil {
+		return false, err
+	}
+
+	dstHash, err := hashFile(dst)
+	if err != nil {
+		return false, err
+	}
+
+	return srcHash == dstHash, nil
+}
+
+func hashFile(path string) ([sha256.Size]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+
+	var digest [sha256.Size]byte
+	copy(digest[:], hasher.Sum(nil))
+	return digest, nil
+}
+
+func loadConfig() {
+	b, err := os.ReadFile(GetPath("data/user.yaml"))
+	if err == nil {
+		yaml.Unmarshal(b, &Config)
+	}
+
+	Config.WebviewGpuPolicy = resolveWebviewGpuPolicy(Env.OS, b, Config.WebviewGpuPolicy)
+
+	if Config.Width == 0 {
+		Config.Width = 800
+	}
+
+	if Config.Height == 0 {
+		if Env.OS == "linux" {
+			Config.Height = 510
+		} else {
+			Config.Height = 540
+		}
+	}
+
+	Config.StartHidden = Env.FromTaskSch && Config.WindowStartState == int(options.Minimised)
+
+	if !Env.FromTaskSch {
+		Config.WindowStartState = int(options.Normal)
+	}
+}
+
+func resolveWebviewGpuPolicy(osName string, rawConfig []byte, configuredPolicy int) int {
+	if osName != "linux" {
+		return configuredPolicy
+	}
+
+	if !hasUserConfigKey(rawConfig, "webviewGpuPolicy") {
+		return webviewGpuPolicyNever
+	}
+
+	switch configuredPolicy {
+	case webviewGpuPolicyAlways, webviewGpuPolicyNever:
+		return configuredPolicy
+	case webviewGpuPolicyOnDemand:
+		log.Printf("Linux webviewGpuPolicy=OnDemand detected; forcing Never to avoid blank WebKit windows")
+		return webviewGpuPolicyNever
+	default:
+		return webviewGpuPolicyNever
+	}
+}
+
+func hasUserConfigKey(rawConfig []byte, key string) bool {
+	if len(rawConfig) == 0 {
+		return false
+	}
+
+	var settings map[string]any
+	if err := yaml.Unmarshal(rawConfig, &settings); err != nil {
+		return false
+	}
+
+	_, ok := settings[key]
+	return ok
+}

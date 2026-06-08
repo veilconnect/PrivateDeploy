@@ -1,0 +1,516 @@
+import { ReadFile, WriteFile } from '@/bridge'
+import { CoreConfigFilePath } from '@/constant/kernel'
+import {
+  DnsServer,
+  Inbound,
+  LogLevel,
+  Outbound,
+  RuleAction,
+  RulesetType,
+  RuleType,
+  Strategy,
+} from '@/enums/kernel'
+import {
+  useAppSettingsStore,
+  usePluginsStore,
+  useRulesetsStore,
+  useSubscribesStore,
+} from '@/stores'
+
+import { deepAssign, deepClone } from './others'
+
+const _generateRule = (rule: IRule | IDNSRule, rule_set: IRuleSet[], inbounds: IInbound[]) => {
+  const getInbound = (id: string) => inbounds.find((v) => v.id === id)?.tag
+  const getRuleset = (id: string) => rule_set.find((v) => v.id === id)?.tag
+
+  // sing-box 1.10.x: removed 'action' field from rules
+  const extra: Recordable = { invert: rule.invert ? true : undefined }
+  if (rule.type === RuleType.Inline) {
+    deepAssign(extra, JSON.parse(rule.payload))
+  } else if (rule.type === RuleType.RuleSet) {
+    extra[rule.type] = rule.payload.split(',').map((id) => getRuleset(id))
+  } else if (rule.type === RuleType.Inbound) {
+    extra[rule.type] = getInbound(rule.payload)
+  } else if ([RuleType.IpIsPrivate, RuleType.IpAcceptAny].includes(rule.type as any)) {
+    extra[rule.type] = rule.payload === 'true'
+  } else if (rule.type === RuleType.ClashMode) {
+    extra[rule.type] = rule.payload
+  } else {
+    extra[rule.type] = String(rule.payload)
+      .split(',')
+      .map((val) => {
+        if ([RuleType.Port, RuleType.SourcePort].includes(rule.type as any)) {
+          return Number(val)
+        }
+        return val
+      })
+    if (extra[rule.type].length === 1) {
+      extra[rule.type] = extra[rule.type][0]
+    }
+  }
+  return extra
+}
+
+const generateExperimental = (experimental: IExperimental, outbounds: IOutbound[]) => {
+  const getOutbound = (id: string) => outbounds.find((v) => v.id === id)?.tag
+  return {
+    clash_api: {
+      ...experimental.clash_api,
+      external_ui_download_detour: getOutbound(experimental.clash_api.external_ui_download_detour),
+    },
+    cache_file: experimental.cache_file,
+  }
+}
+
+const generateInbounds = (inbounds: IInbound[]) => {
+  return inbounds.flatMap((inbound) => {
+    if (!inbound.enable) return []
+    if (inbound.type !== Inbound.Tun) {
+      const users = inbound[inbound.type]!.users.map((user) => ({
+        username: user.split(':')[0],
+        password: user.split(':')[1],
+      }))
+      return {
+        type: inbound.type,
+        tag: inbound.tag,
+        ...inbound[inbound.type]!.listen,
+        users: users.length > 0 ? users : undefined,
+      }
+    }
+    if (inbound.type === Inbound.Tun) {
+      return {
+        type: inbound.type,
+        tag: inbound.tag,
+        ...inbound.tun!,
+        route_address: inbound.tun!.route_address?.length ? inbound.tun!.route_address : undefined,
+        route_exclude_address: inbound.tun!.route_exclude_address?.length
+          ? inbound.tun!.route_exclude_address
+          : undefined,
+      }
+    }
+  })
+}
+
+const generateOutbounds = async (outbounds: IOutbound[]) => {
+  const result: Recordable[] = []
+  const SubscriptionCache: Recordable<any[]> = {}
+  const proxiesSet = new Set<any>()
+  let outboundFallbackCounter = 0
+  let proxyFallbackCounter = 0
+
+  const ensureTag = (tag: unknown, fallback: string) => {
+    if (typeof tag === 'string') {
+      const trimmed = tag.trim()
+      if (trimmed.length > 0) {
+        return trimmed
+      }
+    }
+    return fallback
+  }
+
+  const normalizeProxy = (proxy: Recordable, defaultFallback?: string) => {
+    const fallback =
+      defaultFallback ||
+      (proxy.id && String(proxy.id).trim()) ||
+      (proxy.type && String(proxy.type).trim()) ||
+      `proxy-${++proxyFallbackCounter}`
+    // Don't mutate the original object, just ensure tag is set
+    if (!proxy.tag || typeof proxy.tag !== 'string' || !proxy.tag.trim()) {
+      proxy.tag = fallback
+    }
+    return proxy.tag
+  }
+
+  const createTagMatcher = (include: string, exclude: string) => {
+    const includeRegex = include ? new RegExp(include) : null
+    const excludeRegex = exclude ? new RegExp(exclude) : null
+    return (tag: string) => {
+      const flag1 = includeRegex ? includeRegex.test(tag) : true
+      const flag2 = excludeRegex ? !excludeRegex.test(tag) : true
+      return flag1 && flag2
+    }
+  }
+
+  const subscribesStore = useSubscribesStore()
+
+  for (const outbound of outbounds) {
+    const fallbackTag =
+      (outbound.id && String(outbound.id).trim()) || `outbound-${++outboundFallbackCounter}`
+    outbound.tag = ensureTag(outbound.tag, fallbackTag)
+    // WireGuard is emitted as a sing-box 1.12 endpoint (see generateEndpoints),
+    // but still runs through ensureTag above so a blank-tag entry falls back to
+    // its id — otherwise generateRoute/generateEndpoints would emit empty tags.
+    if (outbound.type === Outbound.WireGuard) continue
+
+    const _outbound: Recordable = {
+      type: outbound.type,
+      tag: outbound.tag,
+    }
+    if (outbound.type === Outbound.Urltest) {
+      _outbound.url = outbound.url
+      _outbound.interval = outbound.interval
+      _outbound.tolerance = outbound.tolerance
+    }
+    if (outbound.type === Outbound.Selector || outbound.type === Outbound.Urltest) {
+      _outbound.interrupt_exist_connections = outbound.interrupt_exist_connections
+      _outbound.outbounds = []
+      const isTagMatching = createTagMatcher(outbound.include, outbound.exclude)
+      for (const proxy of outbound.outbounds) {
+        if (proxy.type === 'Built-in') {
+          const tag = normalizeProxy(proxy)
+          tag && _outbound.outbounds.push(tag)
+        } else {
+          const subId = proxy.type === 'Subscription' ? proxy.id : proxy.type
+          if (!SubscriptionCache[subId]) {
+            const sub = subscribesStore.getSubscribeById(subId)
+            if (sub) {
+              const subStr = await ReadFile(sub.path)
+              const parsed = JSON.parse(subStr)
+              if (Array.isArray(parsed)) {
+                SubscriptionCache[subId] = parsed
+              } else if (Array.isArray(parsed?.outbounds)) {
+                SubscriptionCache[subId] = parsed.outbounds
+              } else {
+                SubscriptionCache[subId] = []
+              }
+
+              if (Array.isArray(SubscriptionCache[subId])) {
+                // Normalize proxies in cache (only process valid entries)
+                SubscriptionCache[subId] = SubscriptionCache[subId]
+                  .map((entry) => {
+                    const tag = normalizeProxy(entry)
+                    return tag ? entry : null
+                  })
+                  .filter(Boolean)
+              }
+            }
+          }
+          const entries = Array.isArray(SubscriptionCache[subId]) ? SubscriptionCache[subId] : []
+          if (proxy.type === 'Subscription') {
+            const tags = entries.map((v) => v.tag).filter((tag) => isTagMatching(tag))
+            _outbound.outbounds.push(
+              ...tags,
+            )
+            entries.forEach((v) => proxiesSet.add(v))
+          } else {
+            const proxyTag = normalizeProxy(proxy)
+            const _proxy = entries.find((v) => v.tag === proxyTag)
+            if (_proxy && isTagMatching(_proxy.tag)) {
+              _outbound.outbounds.push(_proxy.tag)
+              proxiesSet.add(_proxy)
+            }
+          }
+        }
+      }
+      if (_outbound.outbounds.length === 0) {
+        const directOutbound = outbounds.find((v) => v.type === Outbound.Direct)
+        const directTag = ensureTag(directOutbound?.tag, directOutbound?.id || 'direct')
+        _outbound.outbounds.push(directTag)
+      }
+    }
+    result.push(_outbound)
+  }
+
+  result.push(
+    ...Array.from(proxiesSet).filter((proxy) => typeof proxy?.tag === 'string' && proxy.tag.length),
+  )
+
+  return result
+}
+
+// sing-box 1.12 moved WireGuard from a (now deprecated) outbound to an endpoint.
+// Endpoints share the outbound tag namespace, so route rules / final / detour can
+// target a WireGuard endpoint by its tag exactly like any other outbound.
+const generateEndpoints = (outbounds: IOutbound[]) => {
+  return outbounds
+    .filter((outbound) => outbound.type === Outbound.WireGuard)
+    .map((outbound) => {
+      const peer: Recordable = {
+        address: outbound.server,
+        port: Number(outbound.server_port),
+        public_key: outbound.peer_public_key,
+        // Routing is decided by sing-box route rules; the peer accepts everything
+        // the route layer hands to this endpoint.
+        allowed_ips: ['0.0.0.0/0', '::/0'],
+      }
+      if (outbound.pre_shared_key) {
+        peer.pre_shared_key = outbound.pre_shared_key
+      }
+      if (outbound.persistent_keepalive_interval) {
+        peer.persistent_keepalive_interval = Number(outbound.persistent_keepalive_interval)
+      }
+      const endpoint: Recordable = {
+        type: 'wireguard',
+        tag: outbound.tag,
+        address: (outbound.local_address || []).map((v) => v.trim()).filter((v) => v),
+        private_key: outbound.private_key,
+        peers: [peer],
+      }
+      if (outbound.mtu) {
+        endpoint.mtu = Number(outbound.mtu)
+      }
+      return endpoint
+    })
+}
+
+const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound[], dns: IDNS) => {
+  const getOutbound = (id: string) => outbounds.find((v) => v.id === id)?.tag
+  const getDnsServer = (id: string) => dns.servers.find((v) => v.id === id)?.tag
+  const isInboundEnabled = (id: string) => inbounds.find((v) => v.id === id)?.enable
+
+  const rulesetsStore = useRulesetsStore()
+
+  const extra: Recordable = {}
+  if (!route.auto_detect_interface && route.default_interface) {
+    extra.default_interface = route.default_interface
+  }
+  return {
+    rules: route.rules.flatMap((rule) => {
+      if (rule.type === RuleType.Inbound && !isInboundEnabled(rule.payload)) {
+        return []
+      }
+      const extra: Recordable = _generateRule(rule, route.rule_set, inbounds)
+
+      // sing-box 1.10.x: action field removed, but rules still need action-specific fields
+      if (rule.action === RuleAction.RouteOptions) {
+        deepAssign(extra, JSON.parse(rule.outbound))
+      } else if (rule.action === RuleAction.Sniff) {
+        if (rule.sniffer.length) {
+          extra.sniffer = rule.sniffer
+        }
+      } else if (rule.action === RuleAction.Resolve) {
+        if (rule.strategy !== Strategy.Default) {
+          extra.strategy = rule.strategy
+        }
+        extra.server = getDnsServer(rule.server)
+      } else if (rule.action === RuleAction.Reject) {
+        // sing-box 1.10.x: reject action removed from route rules, skip these
+        return []
+      } else if (rule.action === RuleAction.HijackDNS) {
+        // sing-box 1.10.x: hijack-dns removed, skip these rules
+        return []
+      } else {
+        // Default action is Route - add outbound field
+        extra.outbound = getOutbound(rule.outbound)
+      }
+      if (rule.invert) {
+        extra.invert = true
+      }
+      return extra
+    }),
+    rule_set: route.rule_set.map((ruleset) => {
+      const extra: Recordable = {}
+      if (ruleset.type === RuleType.Inline) {
+        extra.rules = JSON.parse(ruleset.rules)
+      } else if (ruleset.type === RulesetType.Local) {
+        const _ruleset = rulesetsStore.getRulesetById(ruleset.path)
+        extra.path = _ruleset?.path.replace('data/', '../')
+        extra.format = ruleset.format
+      } else if (ruleset.type === RulesetType.Remote) {
+        extra.url = ruleset.url
+        extra.format = ruleset.format
+        extra.download_detour = getOutbound(ruleset.download_detour)
+        if (ruleset.update_interval) {
+          extra.update_interval = ruleset.update_interval
+        }
+      }
+      return {
+        tag: ruleset.tag,
+        type: ruleset.type,
+        ...extra,
+      }
+    }),
+    auto_detect_interface: route.auto_detect_interface,
+    find_process: route.find_process ? true : undefined,
+    final: getOutbound(route.final),
+    // sing-box 1.10.x: removed 'default_domain_resolver' field
+    ...extra,
+  }
+}
+
+const generateDns = (
+  dns: IDNS,
+  rule_set: IRuleSet[],
+  inbounds: IInbound[],
+  outbounds: IOutbound[],
+) => {
+  const getOutbound = (id: string) => outbounds.find((v) => v.id === id)
+  const getDnsServer = (id: string) => dns.servers.find((v) => v.id === id)?.tag
+  const extra: Recordable = {}
+  if (dns.strategy !== Strategy.Default) {
+    extra.strategy = dns.strategy
+  }
+  if (dns.client_subnet) {
+    extra.client_subnet = dns.client_subnet
+  }
+  return {
+    servers: dns.servers.flatMap((server) => {
+      const extra: Recordable = {}
+      // sing-box 1.10.x: use 'address' field instead of 'type' + other fields
+      extra.address = generateDnsServerURL(server)
+
+      if (server.detour) {
+        const outbound = getOutbound(server.detour)
+        if (outbound?.type !== Outbound.Direct) {
+          extra.detour = outbound?.tag
+        }
+      }
+      // sing-box 1.10.x: removed 'domain_resolver' field from DNS servers
+
+      return {
+        tag: server.tag,
+        ...extra,
+      }
+    }),
+    rules: dns.rules.flatMap((rule) => {
+      const extra: Recordable = _generateRule(rule, rule_set, inbounds)
+      extra.action = rule.action
+      if (rule.type === RuleType.Inline && rule.payload.includes('__is_fake_ip')) {
+        if (!dns.servers.find((v) => v.type === DnsServer.FakeIP)) {
+          return []
+        }
+        delete extra.__is_fake_ip
+      }
+      if ([RuleAction.Route, RuleAction.RouteOptions].includes(rule.action as any)) {
+        rule.disable_cache && (extra.disable_cache = rule.disable_cache)
+        rule.client_subnet && (extra.client_subnet = rule.client_subnet)
+        if (rule.action === RuleAction.Route) {
+          extra.server = getDnsServer(rule.server)
+          if (rule.strategy !== Strategy.Default) {
+            extra.strategy = rule.strategy
+          }
+        } else if ([RuleAction.RouteOptions, RuleAction.Predefined].includes(rule.action as any)) {
+          deepAssign(extra, JSON.parse(rule.server))
+        }
+      } else if (rule.action === RuleAction.Reject) {
+        extra.method = rule.server
+      }
+      return extra
+    }),
+    disable_cache: dns.disable_cache,
+    disable_expire: dns.disable_expire,
+    independent_cache: dns.independent_cache,
+    final: getDnsServer(dns.final),
+    ...extra,
+  }
+}
+
+export const generateDnsServerURL = (dnsServer: IDNSServer) => {
+  const { type, server_port, path, server, interface: _interface } = dnsServer
+  let address = ''
+  if (type == DnsServer.Https) {
+    address = `https://${server}${server_port ? ':' + server_port : ''}${path ? path : ''}`
+  } else if (type == DnsServer.H3) {
+    address = `h3://${server}${server_port ? ':' + server_port : ''}${path ? path : ''}`
+  } else if (type == DnsServer.Dhcp) {
+    address = `dhcp://${_interface}`
+  } else if (type == DnsServer.FakeIP) {
+    address =
+      'fake-ip://' +
+      (dnsServer.inet4_range ? dnsServer.inet4_range : '') +
+      (dnsServer.inet6_range ? (dnsServer.inet4_range ? ',' : '') + dnsServer.inet6_range : '')
+  } else if (type === DnsServer.Hosts) {
+    address = 'hosts'
+  } else if (type === DnsServer.Local) {
+    address = 'local'
+  } else {
+    address = `${type}://${server}${server_port ? ':' + server_port : ''}`
+  }
+  return address
+}
+
+const _adaptToStableBranch = (config: Recordable) => {
+  config
+}
+
+export const generateConfig = async (originalProfile: IProfile, adaptToStableCore?: boolean) => {
+  const profile = deepClone(originalProfile)
+  // step 1
+  const config: Recordable<any> = {
+    log: profile.log,
+    experimental: generateExperimental(profile.experimental, profile.outbounds),
+    inbounds: generateInbounds(profile.inbounds),
+    outbounds: await generateOutbounds(profile.outbounds),
+    route: generateRoute(profile.route, profile.inbounds, profile.outbounds, profile.dns),
+    dns: generateDns(profile.dns, profile.route.rule_set, profile.inbounds, profile.outbounds),
+  }
+
+  // Only emit `endpoints` when WireGuard is actually used, so existing
+  // WireGuard-free profiles keep generating byte-identical configs.
+  const endpoints = generateEndpoints(profile.outbounds)
+  if (endpoints.length) {
+    config.endpoints = endpoints
+  }
+
+  // adapt to stable branch
+  const appSettings = useAppSettingsStore()
+  const isStableBranch = appSettings.app.kernel.branch === 'main'
+  if ((isStableBranch && adaptToStableCore === undefined) || adaptToStableCore) {
+    _adaptToStableBranch(config)
+  }
+
+  // step 2
+  const pluginsStore = usePluginsStore()
+  const _config = await pluginsStore.onGenerateTrigger(config, originalProfile)
+
+  // step 3
+  const { priority, config: mixin } = originalProfile.mixin
+  if (priority === 'mixin') {
+    deepAssign(_config, JSON.parse(mixin))
+  } else if (priority === 'gui') {
+    deepAssign(_config, deepAssign(JSON.parse(mixin), _config))
+  }
+
+  // step 4
+  const fn = new window.AsyncFunction(
+    `${profile.script.code};return await onGenerate(${JSON.stringify(_config)})`,
+  )
+  let result
+  try {
+    result = await fn()
+  } catch (error: any) {
+    throw error.message || error
+  }
+
+  if (typeof result !== 'object') {
+    throw 'Wrong result'
+  }
+
+  return result
+}
+
+export const generateConfigFile = async (
+  profile: IProfile,
+  beforeWrite: (config: any) => Promise<any>,
+) => {
+  const _config = await generateConfig(profile)
+  const config = await beforeWrite(_config)
+
+  config.log.disabled = false
+  config.log.output = ''
+  if (![LogLevel.Trace, LogLevel.Debug, LogLevel.Info].includes(config.log.level)) {
+    config.log.level = LogLevel.Info
+  }
+
+  config.experimental.cache_file.path = 'cache.db'
+
+  // Validate: check for invalid server addresses (0.0.0.0 or empty)
+  if (config.outbounds && Array.isArray(config.outbounds)) {
+    const filtered: Recordable[] = []
+    for (const outbound of config.outbounds) {
+      if (outbound.server) {
+        const server = String(outbound.server).trim()
+        if (server === '0.0.0.0' || server === '' || server === '::') {
+          console.warn(
+            `[Generator] Skipping outbound ${outbound.tag} due to invalid server address "${server}"`,
+          )
+          continue
+        }
+      }
+      filtered.push(outbound)
+    }
+    config.outbounds = filtered
+  }
+
+  await WriteFile(CoreConfigFilePath, JSON.stringify(config, null, 2))
+}
