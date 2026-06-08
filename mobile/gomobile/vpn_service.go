@@ -701,6 +701,21 @@ func (a *platformAdapter) ReadWIFIState() *libbox.WIFIState {
 	return nil
 }
 
+// LocalDNSTransport was added to libbox.PlatformInterface in sing-box 1.12. It
+// lets the host platform answer DNS queries itself (e.g. Apple's built-in
+// resolver). We rely on sing-box's own DNS stack, so return nil — config.go
+// only wires a platform transport when this is non-nil.
+func (a *platformAdapter) LocalDNSTransport() libbox.LocalDNSTransport {
+	return nil
+}
+
+// SystemCertificates was added to libbox.PlatformInterface in sing-box 1.12 to
+// let the platform contribute extra trusted CA certificates. We trust the
+// Go/sing-box defaults, so return an empty iterator.
+func (a *platformAdapter) SystemCertificates() libbox.StringIterator {
+	return &stringIterator{}
+}
+
 func (a *platformAdapter) ClearDNSCache() {}
 
 func (a *platformAdapter) SendNotification(notification *libbox.Notification) error {

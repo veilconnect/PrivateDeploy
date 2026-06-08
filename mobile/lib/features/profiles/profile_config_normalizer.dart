@@ -588,6 +588,20 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     outboundMaps.toList(growable: false),
   );
 
+  // Endpoints (e.g. WireGuard on sing-box 1.12) share the outbound tag
+  // namespace. Fold any already-present endpoint tags into the known-tag set so
+  // custom rules can target them and re-normalizing an already-converted config
+  // stays idempotent (the conversion below won't append a duplicate endpoint).
+  final existingEndpoints = decoded['endpoints'];
+  if (existingEndpoints is List) {
+    for (final endpoint in existingEndpoints.whereType<Map>()) {
+      final tag = endpoint['tag']?.toString().trim();
+      if (tag != null && tag.isNotEmpty) {
+        outboundTags.add(tag);
+      }
+    }
+  }
+
   // Merge user-defined custom outbounds (e.g. a WireGuard tunnel to a private
   // network) so custom routing rules can target them. Skip any whose tag
   // already exists to avoid clobbering node/proxy/structural outbounds.
@@ -600,17 +614,19 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     if (outboundTags.contains(tag)) {
       continue;
     }
-    final merged = Map<String, dynamic>.from(customOutbound);
-    // The bundled sing-box (v1.11) legacy WireGuard outbound has no
-    // `persistent_keepalive_interval` field — it only exists on the 1.12+
-    // endpoint format. A user-pasted/standard WireGuard JSON commonly carries
-    // it, and sing-box rejects the WHOLE config on the unknown field
-    // ("decode config: outbounds[N].persistent_keepalive_interval: unknown
-    // field"), so the VPN never starts. Strip it so the outbound stays valid.
     if (type == 'wireguard') {
-      merged.remove('persistent_keepalive_interval');
+      // sing-box 1.12 dropped the legacy WireGuard *outbound* (it requires
+      // ENABLE_DEPRECATED_WIREGUARD_OUTBOUND and rejects the whole config on
+      // `persistent_keepalive_interval`). WireGuard now lives under top-level
+      // `endpoints` with the peer fields nested. The user still pastes the
+      // familiar outbound-shaped JSON; convert it here, mirroring the desktop
+      // generateEndpoints field mapping, and keep keepalive inside the peer.
+      final endpoints = _ensureList<Map<String, dynamic>>(decoded, 'endpoints');
+      endpoints.add(_buildWireguardEndpoint(customOutbound));
+      outboundTags.add(tag);
+      continue;
     }
-    outbounds.add(merged);
+    outbounds.add(Map<String, dynamic>.from(customOutbound));
     outboundTags.add(tag);
   }
 
@@ -895,6 +911,60 @@ void _applyTunPackageFiltering(
       inbound['exclude_package'] = merged;
     }
   }
+}
+
+/// Converts a user-supplied legacy WireGuard *outbound* JSON map into a
+/// sing-box 1.12 WireGuard *endpoint* map. Field mapping mirrors the desktop
+/// `generateEndpoints` (frontend/src/utils/generator.ts):
+///   local_address -> address, private_key/mtu stay at the endpoint level;
+///   server -> peers[].address, server_port -> peers[].port,
+///   peer_public_key -> peers[].public_key, pre_shared_key/keepalive nested in
+///   the peer. `allowed_ips` defaults to a full route so the route layer alone
+///   decides what traffic reaches the tunnel.
+Map<String, dynamic> _buildWireguardEndpoint(Map<String, dynamic> outbound) {
+  final peer = <String, dynamic>{
+    'address': outbound['server'],
+  };
+  final port = _asIntOrNull(outbound['server_port']);
+  if (port != null) {
+    peer['port'] = port;
+  }
+  peer['public_key'] = outbound['peer_public_key'];
+  final preSharedKey = outbound['pre_shared_key']?.toString().trim();
+  if (preSharedKey != null && preSharedKey.isNotEmpty) {
+    peer['pre_shared_key'] = outbound['pre_shared_key'];
+  }
+  peer['allowed_ips'] = const ['0.0.0.0/0', '::/0'];
+  final keepalive = _asIntOrNull(outbound['persistent_keepalive_interval']);
+  if (keepalive != null && keepalive > 0) {
+    peer['persistent_keepalive_interval'] = keepalive;
+  }
+
+  final endpoint = <String, dynamic>{
+    'type': 'wireguard',
+    'tag': outbound['tag']?.toString().trim(),
+    'address': _coerceStringList(outbound['local_address']),
+    'private_key': outbound['private_key'],
+    'peers': [peer],
+  };
+  final mtu = _asIntOrNull(outbound['mtu']);
+  if (mtu != null && mtu > 0) {
+    endpoint['mtu'] = mtu;
+  }
+  return endpoint;
+}
+
+int? _asIntOrNull(dynamic value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value.trim());
+  }
+  return null;
 }
 
 Map<String, dynamic> _buildBundledRuleSet({
