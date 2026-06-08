@@ -1,0 +1,22 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "PrivateDeploy",
+  "version": "2.0.1",
+  "outputfilename": "PrivateDeploy",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm run build",
+  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "frontend/src/bridge",
+  "author": {
+    "name": "PrivateDeploy Team",
+    "email": "team@privatedeploy.dev"
+  },
+  "info": {
+    "companyName": "PrivateDeploy",
+    "productName": "PrivateDeploy",
+    "productVersion": "2.0.1",
+    "copyright": "Copyright",
+    "comments": "https://github.com/veilconnect/PrivateDeploy"
+  }
+}

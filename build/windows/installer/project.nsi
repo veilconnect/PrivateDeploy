@@ -1,0 +1,196 @@
+Unicode true
+
+####
+## Please note: Template replacements don't work in this file. They are provided with default defines like
+## mentioned underneath.
+## If the keyword is not defined, "wails_tools.nsh" will populate them with the values from ProjectInfo.
+## If they are defined here, "wails_tools.nsh" will not touch them. This allows to use this project.nsi manually
+## from outside of Wails for debugging and development of the installer.
+##
+## For development first make a wails nsis build to populate the "wails_tools.nsh":
+## > wails build --target windows/amd64 --nsis
+## Then you can call makensis on this file with specifying the path to your binary:
+## For a AMD64 only installer:
+## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
+## For a ARM64 only installer:
+## > makensis -DARG_WAILS_ARM64_BINARY=..\..\bin\app.exe
+## For a installer with both architectures:
+## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app-amd64.exe -DARG_WAILS_ARM64_BINARY=..\..\bin\app-arm64.exe
+####
+## The following information is taken from the ProjectInfo file, but they can be overwritten here.
+####
+## !define INFO_PROJECTNAME    "MyProject" # Default "{{.Name}}"
+## !define INFO_COMPANYNAME    "MyCompany" # Default "{{.Info.CompanyName}}"
+## !define INFO_PRODUCTNAME    "MyProduct" # Default "{{.Info.ProductName}}"
+## !define INFO_PRODUCTVERSION "1.0.0"     # Default "{{.Info.ProductVersion}}"
+## !define INFO_COPYRIGHT      "Copyright" # Default "{{.Info.Copyright}}"
+###
+## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
+## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
+####
+## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
+####
+## Include the wails tools
+####
+!include "wails_tools.nsh"
+
+# The version information for this two must consist of 4 parts
+VIProductVersion "${INFO_PRODUCTVERSION}.0"
+VIFileVersion    "${INFO_PRODUCTVERSION}.0"
+
+VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
+VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
+VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
+VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
+VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
+VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
+
+# Enable HiDPI support. https://nsis.sourceforge.io/Reference/ManifestDPIAware
+ManifestDPIAware true
+
+!include "MUI.nsh"
+
+!define MUI_ICON "..\icon.ico"
+!define MUI_UNICON "..\icon.ico"
+# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
+!define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
+!define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
+
+# Default-checked "Launch app" option on the finish page. Without this the user
+# completes the installer, sees a static "done" screen, and frequently does not
+# realize the app needs to be launched — leaving 7890 / 20122 untouched and the
+# system in the "installed but unused" state that drives early uninstalls.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "$(^Name)"
+!define MUI_FINISHPAGE_RUN_CHECKED
+
+!insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
+# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
+!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
+!insertmacro MUI_PAGE_INSTFILES # Installing page.
+!insertmacro MUI_PAGE_FINISH # Finished installation page.
+
+!insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
+
+!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+
+## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
+#!uninstfinalize 'signtool --file "%1"'
+#!finalize 'signtool --file "%1"'
+
+!include "nsDialogs.nsh"
+
+Name "${INFO_PRODUCTNAME}"
+OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+ShowInstDetails show # This will always show the installation details.
+
+!define PRIVATEDEPLOY_INSTALLER_QUIT_ARG "--privatedeploy-installer-quit"
+
+Function PrivateDeployRequestGracefulShutdown
+   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+   Pop $0
+   Pop $1
+   ${If} $0 == 0
+       DetailPrint "Requesting running ${INFO_PRODUCTNAME} to exit"
+       IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 graceful_shutdown_done
+           ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" ${PRIVATEDEPLOY_INSTALLER_QUIT_ARG}'
+           ; The frontend gets up to 10s to stop the kernel; the backend tray
+           ; fallback exits after 12s if the frontend cannot complete shutdown.
+           Sleep 15000
+       graceful_shutdown_done:
+   ${EndIf}
+FunctionEnd
+
+Function un.PrivateDeployRequestGracefulShutdown
+   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+   Pop $0
+   Pop $1
+   ${If} $0 == 0
+       DetailPrint "Requesting running ${INFO_PRODUCTNAME} to exit"
+       IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 un_graceful_shutdown_done
+           ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" ${PRIVATEDEPLOY_INSTALLER_QUIT_ARG}'
+           Sleep 15000
+       un_graceful_shutdown_done:
+   ${EndIf}
+FunctionEnd
+
+Function .onInit
+   !insertmacro wails.checkArchitecture
+
+   ; --- Close running instance ---
+   ; WM_CLOSE now intentionally hides the desktop app to the tray on Windows.
+   ; Ask the running instance to perform the same full-exit flow as the tray
+   ; Exit command first, then keep taskkill as a last-resort file-lock cleanup.
+   Call PrivateDeployRequestGracefulShutdown
+
+   ; Force kill if still running
+   nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+   nsExec::ExecToLog 'taskkill /F /IM privatedeploy-tray.exe'
+   ; The bundled sing-box kernel runs as a separate process. If we leave the
+   ; old kernel alive across an upgrade it keeps holding the in-memory config
+   ; from the previous version, so the freshly-installed app writes a new
+   ; config.json to disk that nothing ever reads.
+   nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'
+   ; Brief wait for process to fully exit and release file locks
+   Sleep 500
+
+   ; --- Silent uninstall previous version ---
+   SetRegView 64
+   ReadRegStr $R0 HKLM "${UNINST_KEY}" "UninstallString"
+   ${If} $R0 != ""
+       ; Extract the uninstaller path (strip surrounding quotes)
+       StrCpy $R1 $R0 "" 1   ; remove first char (quote)
+       StrLen $R2 $R1
+       IntOp $R2 $R2 - 1
+       StrCpy $R1 $R1 $R2    ; remove last char (quote)
+
+       IfFileExists "$R1" 0 skip_uninstall
+           ExecWait '"$R1" /S _?=$INSTDIR'
+           Delete "$R1"
+       skip_uninstall:
+   ${EndIf}
+FunctionEnd
+
+Section
+    !insertmacro wails.setShellContext
+
+    !insertmacro wails.webview2runtime
+
+    SetOutPath $INSTDIR
+
+    !insertmacro wails.files
+    File "runtime-data\privatedeploy-tray.exe"
+    File /r "runtime-data\data"
+
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+
+    !insertmacro wails.associateFiles
+    !insertmacro wails.associateCustomProtocols
+
+    !insertmacro wails.writeUninstaller
+SectionEnd
+
+Section "uninstall"
+    !insertmacro wails.setShellContext
+
+    ; Close running instance before uninstalling
+    Call un.PrivateDeployRequestGracefulShutdown
+    nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
+    nsExec::ExecToLog 'taskkill /F /IM privatedeploy-tray.exe'
+    nsExec::ExecToLog 'taskkill /F /IM sing-box.exe'
+    Sleep 500
+
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+
+    RMDir /r $INSTDIR
+
+    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+
+    !insertmacro wails.unassociateFiles
+    !insertmacro wails.unassociateCustomProtocols
+
+    !insertmacro wails.deleteUninstaller
+SectionEnd

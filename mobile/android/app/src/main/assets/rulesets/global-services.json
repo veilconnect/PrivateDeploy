@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain_suffix": [
+        "1e100.net",
+        "cloudflare.com",
+        "discord.com",
+        "discord.gg",
+        "facebook.com",
+        "fastly.net",
+        "fbcdn.net",
+        "google.com",
+        "googleapis.com",
+        "gstatic.com",
+        "instagram.com",
+        "netflix.com",
+        "nflxvideo.net",
+        "reddit.com",
+        "redd.it",
+        "spotify.com",
+        "telegram.org",
+        "t.me",
+        "whatsapp.com",
+        "wikipedia.org",
+        "workers.dev",
+        "x.com",
+        "youtube.com",
+        "ytimg.com"
+      ]
+    }
+  ]
+}

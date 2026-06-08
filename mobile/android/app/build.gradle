@@ -1,0 +1,140 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
+def resolveSigningValue = { propKey, envKey ->
+    def envValue = System.getenv(envKey)
+    if (envValue != null && !envValue.trim().isEmpty()) {
+        return envValue.trim()
+    }
+
+    def propValue = keystoreProperties.getProperty(propKey)
+    if (propValue != null && !propValue.trim().isEmpty()) {
+        return propValue.trim()
+    }
+
+    return null
+}
+
+def releaseSigning = [
+    keyAlias: resolveSigningValue('keyAlias', 'PRIVATEDEPLOY_ANDROID_KEY_ALIAS'),
+    keyPassword: resolveSigningValue('keyPassword', 'PRIVATEDEPLOY_ANDROID_KEY_PASSWORD'),
+    storeFile: resolveSigningValue('storeFile', 'PRIVATEDEPLOY_ANDROID_STORE_FILE'),
+    storePassword: resolveSigningValue('storePassword', 'PRIVATEDEPLOY_ANDROID_STORE_PASSWORD'),
+]
+
+def hasReleaseSigning = releaseSigning.values().every { it }
+if (hasReleaseSigning && !file(releaseSigning.storeFile).exists()) {
+    logger.lifecycle("[PrivateDeploy] Release keystore not found at ${releaseSigning.storeFile}; release builds will be unsigned until signing credentials are provided.")
+    hasReleaseSigning = false
+}
+
+android {
+    namespace "com.privatedeploy.mobile"
+    compileSdk 36
+
+    ndkVersion "27.0.12077973"
+
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.privatedeploy.mobile"
+        minSdkVersion flutter.minSdkVersion
+        // Play 自 2025-08-31 起要求新应用/更新 target API 35+（Android 15）
+        targetSdk 35
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                keyAlias releaseSigning.keyAlias
+                keyPassword releaseSigning.keyPassword
+                storeFile file(releaseSigning.storeFile)
+                storePassword releaseSigning.storePassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+
+        debug {
+            minifyEnabled false
+            debuggable true
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+
+    // VPN Core (gomobile AAR)
+    implementation(name: 'vpncore', ext: 'aar')
+
+    // Kotlin
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.0"
+
+    // AndroidX
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
