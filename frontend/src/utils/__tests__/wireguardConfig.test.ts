@@ -34,8 +34,11 @@ const buildProfileWithWireGuard = () => {
     server: '203.0.113.10',
     server_port: '51820',
     local_address: ['10.7.0.2/32'],
-    private_key: '4FNO+XqF1hgreSRO0y23QWJ0OzK9LB1aaFFrsHHuelM=',
-    peer_public_key: 'Ry0BhFWC0RurNuWXTmUDk8BGy67HRwOg2Z5JCUCI0Hk=',
+    // Placeholder all-zero/all-one keys — NOT real secrets. They are valid
+    // base64 of 32 bytes so sing-box accepts the format, while staying obvious
+    // dummies that secret scanners won't flag as real WireGuard keys.
+    private_key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    peer_public_key: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
     mtu: '1408',
     persistent_keepalive_interval: '25',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,7 +76,7 @@ describe('wireguard config generation', () => {
     const peer = (wg!.peers as Array<Record<string, any>>)[0]
     expect(peer).toBeTruthy()
     expect(peer.persistent_keepalive_interval).toBe(25)
-    expect(peer.public_key).toBe('Ry0BhFWC0RurNuWXTmUDk8BGy67HRwOg2Z5JCUCI0Hk=')
+    expect(peer.public_key).toBe('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=')
   })
 
   it.skipIf(!hasSingBox)('passes `sing-box check` (real binary)', async () => {
