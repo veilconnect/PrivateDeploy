@@ -10,7 +10,7 @@
 
 ## 问题定位
 
-**文件**: `/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts`
+**文件**: `~/PrivateDeploy/frontend/src/stores/kernelApi.ts`
 
 **位置**:
 - 第 723 行: `removeProxyFromGroups` 函数

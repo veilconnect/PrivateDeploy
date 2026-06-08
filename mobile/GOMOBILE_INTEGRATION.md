@@ -57,7 +57,7 @@ PrivateDeploy 使用 sing-box 作为 VPN 核心引擎。为了在 Android 和 iO
 
 ### Phase 1: 创建 Go Mobile 桥接层
 
-1. **创建桥接包** (`/home/user/PrivateDeploy/mobile/gomobile/`)
+1. **创建桥接包** (`~/PrivateDeploy/mobile/gomobile/`)
    - 定义 Flutter 可调用的 Go 接口
    - 封装 sing-box 核心功能
    - 处理配置文件加载和更新

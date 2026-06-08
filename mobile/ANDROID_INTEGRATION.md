@@ -46,7 +46,7 @@ gomobile init
 
 ```bash
 # 进入 gomobile 目录
-cd /home/user/PrivateDeploy/mobile/gomobile
+cd ~/PrivateDeploy/mobile/gomobile
 
 # 运行编译脚本
 ./build-android.sh
@@ -54,7 +54,7 @@ cd /home/user/PrivateDeploy/mobile/gomobile
 
 编译成功后，AAR 文件将生成在：
 ```
-/home/user/PrivateDeploy/mobile/android/app/libs/vpncore.aar
+~/PrivateDeploy/mobile/android/app/libs/vpncore.aar
 ```
 
 ### 1.3 验证 AAR 文件

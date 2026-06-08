@@ -9,7 +9,7 @@
 
 ## Verified
 
-- Ubuntu 24.04 DEB upgrade/install on `user@192.168.10.16`: `privatedeploy 2.0.1`.
+- Ubuntu 24.04 DEB upgrade/install on `user@<linux-host>`: `privatedeploy 2.0.1`.
 - Ubuntu 24.04 installed-DEB GUI smoke at 100%, 125%, and 150% scaling.
 - Ubuntu 24.04 AppImage GUI smoke at 100%, 125%, and 150% scaling.
 - Fedora RPM container install using `dnf install /tmp/privatedeploy-2.0.1-1.x86_64.rpm`.

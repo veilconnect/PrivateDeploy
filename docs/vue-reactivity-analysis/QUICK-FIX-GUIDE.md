@@ -45,7 +45,7 @@ proxies.value = updated               // Vue 检测到内部引用未变
 ### 1. 运行自动化测试
 
 ```bash
-cd /home/user/PrivateDeploy
+cd ~/PrivateDeploy
 node test-vue-reactivity.js
 ```
 

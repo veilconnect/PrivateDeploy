@@ -20,7 +20,7 @@
 ### 1. 推送代码到 GitHub
 
 ```bash
-cd /home/user/PrivateDeploy/mobile
+cd ~/PrivateDeploy/mobile
 
 # 初始化 Git 仓库（如果还没有）
 git init

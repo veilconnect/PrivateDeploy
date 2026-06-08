@@ -15,7 +15,7 @@ set -euo pipefail
 MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$MOBILE_DIR"
 
-FLUTTER="${FLUTTER:-/home/user/flutter/bin/flutter}"
+FLUTTER="${FLUTTER:-$HOME/flutter/bin/flutter}"
 if [ ! -x "$FLUTTER" ]; then
   if command -v flutter >/dev/null 2>&1; then
     FLUTTER="$(command -v flutter)"

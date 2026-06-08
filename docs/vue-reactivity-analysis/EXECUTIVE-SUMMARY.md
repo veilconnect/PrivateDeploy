@@ -16,8 +16,8 @@
 **技术原因**: 使用浅拷贝 `{ ...proxies.value }` 导致嵌套对象引用共享，Vue 3 响应式系统无法正确追踪深层对象的变化。
 
 **代码位置**:
-- `/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts` 第 723 行
-- `/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts` 第 750 行
+- `~/PrivateDeploy/frontend/src/stores/kernelApi.ts` 第 723 行
+- `~/PrivateDeploy/frontend/src/stores/kernelApi.ts` 第 750 行
 
 ## 问题演示
 

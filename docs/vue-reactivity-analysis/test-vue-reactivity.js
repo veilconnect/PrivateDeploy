@@ -291,7 +291,7 @@ console.log(`
   ✅ 避免引用共享导致的响应式失效
 
 需要修改的文件：
-  📁 /home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts
+  📁 ~/PrivateDeploy/frontend/src/stores/kernelApi.ts
      - 第723行: const updated = deepClone(proxies.value)
      - 第750行: const updated = deepClone(proxies.value)
 

@@ -153,7 +153,7 @@ mobile/GITHUB_ACTIONS_FIX.md
 
 ### 根目录文档
 ```
-/home/user/PrivateDeploy/
+~/PrivateDeploy/
 ├── API_DESIGN.md                              # API 设计文档
 ├── DEPLOYMENT-IMPROVEMENTS.md                 # 部署改进
 ├── DEVELOPMENT_SUMMARY.md                     # 开发总结
@@ -165,7 +165,7 @@ mobile/GITHUB_ACTIONS_FIX.md
 
 ### 移动端文档
 ```
-/home/user/PrivateDeploy/mobile/
+~/PrivateDeploy/mobile/
 ├── README_FLUTTER.md                          # Flutter 项目说明
 ├── ANDROID_INTEGRATION.md                     # Android 集成指南
 ├── IOS_INTEGRATION.md                         # iOS 集成指南
@@ -185,7 +185,7 @@ mobile/GITHUB_ACTIONS_FIX.md
 
 ### API 文档
 ```
-/home/user/PrivateDeploy/api/
+~/PrivateDeploy/api/
 └── README.md                                  # API 服务器说明
 ```
 

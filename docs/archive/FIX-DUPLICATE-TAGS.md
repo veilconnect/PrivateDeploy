@@ -9,7 +9,7 @@
 在运行修复 0.0.0.0 bug 后的版本时，sing-box 启动失败并报错：
 
 ```
-FATAL[0000] decode config at /home/user/PrivateDeploy/build/bin/data/sing-box/config.json:
+FATAL[0000] decode config at ~/PrivateDeploy/build/bin/data/sing-box/config.json:
 duplicate outbound/endpoint tag: sg-ss-v4
 ```
 
@@ -111,8 +111,8 @@ SubscriptionCache[subId] = SubscriptionCache[subId]
 
 ### 构建应用：
 ```bash
-cd /home/user/PrivateDeploy
-PATH="/usr/bin:/usr/local/go/bin:/home/user/go/bin:/home/user/.npm-global/bin:$PATH" wails build
+cd ~/PrivateDeploy
+PATH="/usr/bin:/usr/local/go/bin:~/go/bin:~/.npm-global/bin:$PATH" wails build
 ```
 
 ### 验证配置（重启应用后）：
@@ -142,7 +142,7 @@ else:
 
 1. **编译应用：**
    ```bash
-   cd /home/user/PrivateDeploy
+   cd ~/PrivateDeploy
    wails build
    ```
 

@@ -78,7 +78,7 @@ func TestDetectUnsupportedLinuxRemoteDisplay(t *testing.T) {
 		{
 			name:          "x11 forwarding is blocked",
 			display:       "localhost:10.0",
-			sshConnection: "192.168.10.12 43210 192.168.10.16 22",
+			sshConnection: "192.0.2.12 43210 192.0.2.16 22",
 			wantReason:    "Remote Linux X11 forwarding is not supported by this build because WebKitGTK renders blank windows in forwarded sessions.",
 			wantBlocked:   true,
 		},
