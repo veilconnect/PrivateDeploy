@@ -103,7 +103,7 @@ PACKAGE_NAME="com.privatedeploy.mobile.vpncore"
 TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm,android/amd64}"
 LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w}"
 TRIMPATH="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TRIMPATH:-true}"
-TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_quic,with_utls}}"
+TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_quic,with_utls,with_wireguard}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"
