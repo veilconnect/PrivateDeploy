@@ -4,7 +4,7 @@ Flutter 移动端应用 - 跨平台 VPN 管理客户端
 
 ## 📱 支持平台
 
-- Android 5.0+ (API 21+)
+- Android 7.0+ (API 24+)
 - iOS 12.0+
 
 ## 🚀 快速开始

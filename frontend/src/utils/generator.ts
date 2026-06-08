@@ -137,6 +137,10 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
     const fallbackTag =
       (outbound.id && String(outbound.id).trim()) || `outbound-${++outboundFallbackCounter}`
     outbound.tag = ensureTag(outbound.tag, fallbackTag)
+    // WireGuard is emitted as a sing-box 1.12 endpoint (see generateEndpoints),
+    // but still runs through ensureTag above so a blank-tag entry falls back to
+    // its id — otherwise generateRoute/generateEndpoints would emit empty tags.
+    if (outbound.type === Outbound.WireGuard) continue
 
     const _outbound: Recordable = {
       type: outbound.type,
@@ -212,6 +216,41 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
   )
 
   return result
+}
+
+// sing-box 1.12 moved WireGuard from a (now deprecated) outbound to an endpoint.
+// Endpoints share the outbound tag namespace, so route rules / final / detour can
+// target a WireGuard endpoint by its tag exactly like any other outbound.
+const generateEndpoints = (outbounds: IOutbound[]) => {
+  return outbounds
+    .filter((outbound) => outbound.type === Outbound.WireGuard)
+    .map((outbound) => {
+      const peer: Recordable = {
+        address: outbound.server,
+        port: Number(outbound.server_port),
+        public_key: outbound.peer_public_key,
+        // Routing is decided by sing-box route rules; the peer accepts everything
+        // the route layer hands to this endpoint.
+        allowed_ips: ['0.0.0.0/0', '::/0'],
+      }
+      if (outbound.pre_shared_key) {
+        peer.pre_shared_key = outbound.pre_shared_key
+      }
+      if (outbound.persistent_keepalive_interval) {
+        peer.persistent_keepalive_interval = Number(outbound.persistent_keepalive_interval)
+      }
+      const endpoint: Recordable = {
+        type: 'wireguard',
+        tag: outbound.tag,
+        address: (outbound.local_address || []).map((v) => v.trim()).filter((v) => v),
+        private_key: outbound.private_key,
+        peers: [peer],
+      }
+      if (outbound.mtu) {
+        endpoint.mtu = Number(outbound.mtu)
+      }
+      return endpoint
+    })
 }
 
 const generateRoute = (route: IRoute, inbounds: IInbound[], outbounds: IOutbound[], dns: IDNS) => {
@@ -394,6 +433,13 @@ export const generateConfig = async (originalProfile: IProfile, adaptToStableCor
     outbounds: await generateOutbounds(profile.outbounds),
     route: generateRoute(profile.route, profile.inbounds, profile.outbounds, profile.dns),
     dns: generateDns(profile.dns, profile.route.rule_set, profile.inbounds, profile.outbounds),
+  }
+
+  // Only emit `endpoints` when WireGuard is actually used, so existing
+  // WireGuard-free profiles keep generating byte-identical configs.
+  const endpoints = generateEndpoints(profile.outbounds)
+  if (endpoints.length) {
+    config.endpoints = endpoints
   }
 
   // adapt to stable branch

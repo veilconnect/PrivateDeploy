@@ -75,9 +75,9 @@ echo ""
 
 # 编译参数
 OUTPUT_DIR="../ios"
-FRAMEWORK_NAME="VPNCore.framework"
+FRAMEWORK_NAME="VPNCore.xcframework"
 OUTPUT_PATH="$OUTPUT_DIR/$FRAMEWORK_NAME"
-TAGS="${PRIVATEDEPLOY_IOS_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
+TAGS="${PRIVATEDEPLOY_IOS_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_wireguard}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"
@@ -113,41 +113,34 @@ if [ $? -eq 0 ]; then
     echo ""
     echo -e "${YELLOW}[5/5] 验证 Framework...${NC}"
 
-    # 验证 Framework
+    # 验证 XCFramework（内含多个平台切片，逐切片校验）
     if [ -d "$OUTPUT_PATH" ]; then
-        echo "✓ Framework 已生成: $OUTPUT_PATH"
+        echo "✓ XCFramework 已生成: $OUTPUT_PATH"
 
-        # 显示架构信息
-        BINARY_PATH="$OUTPUT_PATH/VPNCore"
-        if [ -f "$BINARY_PATH" ]; then
-            echo ""
-            echo "支持的架构:"
-            lipo -info "$BINARY_PATH"
+        echo ""
+        echo "包含的切片:"
+        ls -1 "$OUTPUT_PATH" | grep -E '^ios' || true
 
-            # 显示符号
+        for slice in "$OUTPUT_PATH"/ios*; do
+            BINARY_PATH="$slice/VPNCore.framework/VPNCore"
+            [ -f "$BINARY_PATH" ] || continue
             echo ""
-            echo "导出的符号 (前 10 个):"
-            nm -g "$BINARY_PATH" | head -10
+            echo "切片 $(basename "$slice") 架构:"
+            lipo -info "$BINARY_PATH" || true
+        done
 
-            echo ""
-            echo -e "${GREEN}======================================${NC}"
-            echo -e "${GREEN}  编译完成！${NC}"
-            echo -e "${GREEN}======================================${NC}"
-            echo ""
-            echo "下一步："
-            echo "1. 在 Xcode 中打开 Runner.xcworkspace"
-            echo "2. 将 Framework 添加到项目"
-            echo "3. 配置 Embed & Sign"
-            echo "4. 运行项目测试"
-            echo ""
-
-        else
-            echo -e "${RED}错误: Framework 二进制文件未找到${NC}"
-            exit 1
-        fi
-
+        echo ""
+        echo -e "${GREEN}======================================${NC}"
+        echo -e "${GREEN}  编译完成！${NC}"
+        echo -e "${GREEN}======================================${NC}"
+        echo ""
+        echo "下一步："
+        echo "1. 在 Xcode 中打开 Runner.xcworkspace"
+        echo "2. XCFramework 已在工程中以 Embed & Sign 引用"
+        echo "3. 运行项目测试"
+        echo ""
     else
-        echo -e "${RED}错误: Framework 未生成${NC}"
+        echo -e "${RED}错误: XCFramework 未生成${NC}"
         exit 1
     fi
 else
@@ -158,8 +151,13 @@ else
 fi
 
 # 可选：自动打开 Xcode
-echo -e "${YELLOW}是否打开 Xcode 项目？(y/n)${NC}"
-read -r response
+# 非交互环境（CI）下跳过，避免 read 阻塞
+if [ -t 0 ]; then
+    echo -e "${YELLOW}是否打开 Xcode 项目？(y/n)${NC}"
+    read -r response
+else
+    response="n"
+fi
 if [[ "$response" =~ ^[Yy]$ ]]; then
     if [ -f "../ios/Runner.xcworkspace" ]; then
         open "../ios/Runner.xcworkspace"

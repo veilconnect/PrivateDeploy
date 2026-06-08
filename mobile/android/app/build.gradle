@@ -80,7 +80,8 @@ android {
     defaultConfig {
         applicationId "com.privatedeploy.mobile"
         minSdkVersion flutter.minSdkVersion
-        targetSdk 34
+        // Play 自 2025-08-31 起要求新应用/更新 target API 35+（Android 15）
+        targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true

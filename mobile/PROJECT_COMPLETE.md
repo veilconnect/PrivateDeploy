@@ -243,7 +243,7 @@ PrivateDeploy/
 |------|------|------|
 | Kotlin | 1.9.0 | 编程语言 |
 | Android SDK | 34 | 开发工具包 |
-| MinSDK | 21 | 最低支持版本 |
+| MinSDK | 24 | 最低支持版本 |
 | VpnService | - | VPN 服务 |
 
 ### iOS
