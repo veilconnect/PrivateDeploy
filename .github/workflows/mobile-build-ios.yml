@@ -1,0 +1,127 @@
+name: Mobile - Build iOS
+
+on:
+  # iOS 构建跑在 macOS runner 上,private 仓按 10× 计费,会迅速抽干每月共享的
+  # 2000 分钟免费额度(连累 ubuntu 任务一起被封)。为保持 CI 全部落在免费池内,
+  # iOS 仅手动按需触发,不随 push/PR 自动跑。
+  # 需要验证时:gh workflow run mobile-build-ios.yml --ref <branch>
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mobile
+
+jobs:
+  build-gomobile:
+    name: Build Go Mobile Framework
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mobile/gomobile/go.mod
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+
+      - name: Build Framework
+        run: |
+          cd gomobile
+          chmod +x build-ios.sh
+          ./build-ios.sh
+
+      - name: Upload Framework
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpncore-framework
+          path: mobile/ios/VPNCore.xcframework
+          retention-days: 7
+
+  build-ipa:
+    name: Build iOS IPA
+    runs-on: macos-latest
+    needs: build-gomobile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Download Framework artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vpncore-framework
+          path: mobile/ios/VPNCore.xcframework
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Create IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -r app-release.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-ipa
+          path: build/ios/iphoneos/app-release.ipa
+          retention-days: 30
+
+  build-ios-simulator:
+    name: Build iOS Simulator
+    runs-on: macos-latest
+    needs: build-gomobile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Download Framework artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vpncore-framework
+          path: mobile/ios/VPNCore.xcframework
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Build iOS Simulator
+        run: flutter build ios --release --simulator
+
+      - name: Upload Simulator Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-simulator
+          path: build/ios/iphonesimulator/Runner.app
+          retention-days: 7

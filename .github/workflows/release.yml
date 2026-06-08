@@ -1,0 +1,264 @@
+name: Build PrivateDeploy
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  Quality-Gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    if: github.repository == 'veilconnect/PrivateDeploy'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: bash scripts/check_versions.sh
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      # 必须在 go test 之前:根包 //go:embed all:frontend/dist,而 dist 被 gitignore，
+      # 干净检出需先生成产物，否则 go test ./... 会因 embed 找不到文件而编译失败
+      - name: Build frontend assets for Go embed
+        run: cd frontend && pnpm run build-only
+
+      - name: Go tests (root)
+        run: go test ./...
+
+      - name: Go tests (api)
+        run: cd api && go test ./...
+
+      - name: Go vulnerability check (root)
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+
+      - name: Go vulnerability check (api)
+        run: cd api && govulncheck ./...
+
+      - name: Frontend type-check
+        run: cd frontend && pnpm run type-check
+
+      - name: Frontend lint (ci)
+        run: cd frontend && pnpm run lint:ci
+
+      - name: Frontend security audit
+        run: cd frontend && pnpm audit --prod --audit-level=high
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright Python package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install playwright
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Cloud UI E2E regression
+        run: python3 e2e/run_cloud_ui_e2e.py
+
+      - name: Upload UI test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-cloud-ui-e2e-artifacts
+          path: output/playwright/
+
+  Build-Frontend:
+    needs: Quality-Gate
+    runs-on: ubuntu-latest
+    if: github.repository == 'veilconnect/PrivateDeploy'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+          pnpm build-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  Build-Windows:
+    needs: Build-Frontend
+    runs-on: windows-latest
+    env:
+      APP_NAME: PrivateDeploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Build & Pack Windows
+        shell: pwsh
+        run: |
+          function Build-And-Pack {
+            param([string]$arch)
+            $env:GOOS="windows"
+            $env:GOARCH=$arch
+
+            Write-Host "==> Building Windows $arch..."
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
+
+            cd build/bin
+            $zipName = "$env:APP_NAME-windows-$arch.zip"
+            Compress-Archive -Path "$env:APP_NAME.exe" -DestinationPath $zipName -Force
+            cd ../..
+          }
+
+          $arches = @("amd64","arm64","386")
+          foreach ($arch in $arches) { Build-And-Pack $arch }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: build/bin/*.zip
+
+  Build-macOS:
+    needs: Build-Frontend
+    runs-on: macos-latest
+    env:
+      APP_NAME: PrivateDeploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - run: |
+          go mod vendor
+          sed -i "" "s/\[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular\]/[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory]/g" vendor/github.com/wailsapp/wails/v2/internal/frontend/desktop/darwin/AppDelegate.m
+
+      - name: Build & Pack macOS
+        run: |
+          build_and_pack() {
+            arch=$1
+            export GOOS=darwin GOARCH=$arch
+
+            echo "==> Building macOS $arch..."
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+
+            cd build/bin
+            zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
+            cd ../..
+          }
+
+          for arch in amd64 arm64; do build_and_pack $arch; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: build/bin/*.zip
+
+  Build-Linux:
+    needs: Build-Frontend
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: PrivateDeploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - run: |
+          sudo apt-get update
+          sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build & Pack Linux
+        run: |
+          build_and_pack() {
+            arch=$1
+            export GOOS=linux GOARCH=$arch
+
+            echo "==> Building Linux $arch..."
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+
+            cd build/bin
+            mv $APP_NAME.exe $APP_NAME
+            zip $APP_NAME-linux-$arch.zip $APP_NAME
+            cd ../..
+          }
+
+          build_and_pack amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: build/bin/*.zip
+
+  Release:
+    needs: [Build-Windows, Build-macOS, Build-Linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          find . -name '*.zip' -exec sha256sum {} + | sed 's|  \./[^/]*/|  |' | sort -k2 > ../checksums.sha256
+          cat ../checksums.sha256
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            release-assets/**/*.zip
+            checksums.sha256
+          draft: false
+          prerelease: false
+          body: |
+            Auto-generated release from GitHub Actions.
+
+            ## Verify Downloads
+            ```
+            sha256sum -c checksums.sha256
+            ```

@@ -1,0 +1,47 @@
+--- a/common/dialer/default.go
++++ b/common/dialer/default.go
+@@ -99,25 +99,32 @@
+ 				listener.Control = control.Append(listener.Control, bindFunc)
+ 			} else if networkManager.AutoDetectInterface() {
+ 				if platformInterface != nil {
++					bindFunc := networkManager.ProtectFunc()
++					dialer.Control = control.Append(dialer.Control, bindFunc)
++					listener.Control = control.Append(listener.Control, bindFunc)
+ 					networkStrategy = (*C.NetworkStrategy)(options.NetworkStrategy)
+-					if networkStrategy == nil {
+-						networkStrategy = common.Ptr(C.NetworkStrategyDefault)
+-						defaultNetworkStrategy = true
+-					}
+ 					networkType = common.Map(options.NetworkType, option.InterfaceType.Build)
+ 					fallbackNetworkType = common.Map(options.FallbackNetworkType, option.InterfaceType.Build)
+-					if networkStrategy == nil && len(networkType) == 0 && len(fallbackNetworkType) == 0 {
+-						networkStrategy = defaultOptions.NetworkStrategy
+-						networkType = defaultOptions.NetworkType
+-						fallbackNetworkType = defaultOptions.FallbackNetworkType
+-					}
+ 					networkFallbackDelay = time.Duration(options.FallbackDelay)
+ 					if networkFallbackDelay == 0 && defaultOptions.FallbackDelay != 0 {
+ 						networkFallbackDelay = defaultOptions.FallbackDelay
+ 					}
+-					bindFunc := networkManager.ProtectFunc()
+-					dialer.Control = control.Append(dialer.Control, bindFunc)
+-					listener.Control = control.Append(listener.Control, bindFunc)
++					if !(networkStrategy == nil &&
++						len(networkType) == 0 &&
++						len(fallbackNetworkType) == 0 &&
++						defaultOptions.NetworkStrategy == nil &&
++						len(defaultOptions.NetworkType) == 0 &&
++						len(defaultOptions.FallbackNetworkType) == 0) {
++						if networkStrategy == nil {
++							networkStrategy = common.Ptr(C.NetworkStrategyDefault)
++							defaultNetworkStrategy = true
++						}
++						if networkStrategy == nil && len(networkType) == 0 && len(fallbackNetworkType) == 0 {
++							networkStrategy = defaultOptions.NetworkStrategy
++							networkType = defaultOptions.NetworkType
++							fallbackNetworkType = defaultOptions.FallbackNetworkType
++						}
++					}
+ 				} else {
+ 					bindFunc := networkManager.AutoDetectInterfaceFunc()
+ 					dialer.Control = control.Append(dialer.Control, bindFunc)

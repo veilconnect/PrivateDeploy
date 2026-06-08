@@ -1,0 +1,267 @@
+// Cloud Provider Types
+export type CloudProvider =
+  | 'vultr'
+  | 'digitalocean'
+  | 'ssh'
+  | 'aws'
+  // Extra cloud providers are kept disabled until live validation resumes.
+  // | 'hetzner'
+  // | 'linode'
+  // | 'scaleway'
+  // | 'upcloud'
+  // | 'contabo'
+  // | 'oracle'
+  | 'manual'
+
+// Generic Cloud Configuration
+export interface CloudConfig {
+  provider?: CloudProvider
+  apiKey: string
+  defaultRegion?: string
+  defaultPlan?: string
+  extra?: Record<string, string>
+}
+
+// Generic Cloud Region
+export interface CloudRegion {
+  id: string
+  city: string
+  country: string
+  continent?: string
+}
+
+// Generic Cloud Plan
+export interface CloudPlan {
+  id: string
+  description?: string
+  ram: number              // Memory in MB
+  vcpus: number            // Number of vCPUs
+  disk: number             // Disk size in GB
+  bandwidth: number        // Bandwidth in GB
+  monthlyCost?: number     // Monthly cost in USD
+  hourlyCost?: number      // Hourly cost in USD
+  type?: string
+  locations?: string[]
+}
+
+// Generic Cloud Node/Instance
+export interface CloudNode {
+  instanceId: string
+  replacedInstanceId?: string
+  // Non-fatal post-deploy concern carried from the provider. Today only the
+  // Vultr provider populates it, when configureInstanceFirewall fails (e.g.
+  // firewall-group cap exhausted) — the instance is running but unprotected
+  // at the cloud firewall layer. Cleared on the next refreshInstances cycle.
+  lastDeployWarning?: string
+  provider?: CloudProvider  // Which cloud provider this instance belongs to
+  label: string
+  status?: string
+  region?: string
+  plan?: string
+  osId?: number
+  ipv4?: string
+  ipv6?: string
+  port?: number
+  password?: string
+  createdAt?: string
+  // Multi-protocol configuration
+  ssPort?: number
+  ssPassword?: string
+  hysteriaPort?: number
+  hysteriaPassword?: string
+  hysteriaServerName?: string
+  hysteriaInsecure?: boolean
+  vlessPort?: number
+  vlessUUID?: string
+  vlessPublicKey?: string
+  vlessShortId?: string
+  vlessServerName?: string
+  trojanPort?: number
+  trojanPassword?: string
+  trojanServerName?: string
+  trojanInsecure?: boolean
+  // Plain (non-Reality) VLESS inbound deployed alongside Reality, used as
+  // upstream for a Cloudflare Worker WS↔TCP relay. 0/undefined means the
+  // node was provisioned before this field existed; CDN front-ending is
+  // unavailable until re-deploy.
+  vlessRelayPort?: number
+}
+
+// One Cloudflare Worker deployment fronting a single cloud node.
+//
+// customHost / customDomainId are populated when M1's Workers Custom
+// Domains binding has been applied (e.g. "relay.example.com"); empty
+// when only the workers.dev path is active. zoneId/routeId/dnsRecordId
+// are legacy fields from the pre-Workers-Custom-Domains M1
+// implementation, retained for cleanup of older persisted deployments.
+// workerHost (workers.dev path) is always present.
+export interface CdnDeployment {
+  nodeId: string
+  scriptName: string
+  workerHost: string
+  backend: string
+  deployedAt: string
+  customHost?: string
+  customDomainId?: string
+  /**
+   * CF-side readiness of the bound hostname.
+   *  - undefined / "" → no custom host bound.
+   *  - "pending"      → attached, awaiting cert + edge propagation.
+   *  - "active"       → TLS handshake confirmed; safe to route traffic.
+   *  - "failed"       → probe gave up; client falls back to workers.dev.
+   * Only "active" makes the customHost eligible for subscription emission.
+   */
+  customHostStatus?: 'pending' | 'active' | 'failed'
+  /**
+   * Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
+   * The client emits `?k=<secret>` on the WS path; the Worker rejects
+   * every request without a matching value with a generic 404. Empty
+   * (or undefined on older persisted records) means the deployment
+   * pre-dates the secret gate — the Worker template falls through to
+   * its old behaviour for those, so an in-flight tunnel keeps working
+   * across upgrades.
+   */
+  pathSecret?: string
+  /** @deprecated legacy; pre-Workers-Custom-Domains route+CNAME path */
+  zoneId?: string
+  /** @deprecated legacy */
+  routeId?: string
+  /** @deprecated legacy */
+  dnsRecordId?: string
+}
+
+export type CdnStatus = 'disabled' | 'unverified' | 'verified'
+
+// CdnCustomDomain describes the M1 binding: future deploys produce a
+// route on <subdomain>.<zoneName> in addition to the workers.dev path.
+export interface CdnCustomDomain {
+  zoneId: string
+  zoneName: string
+  subdomain: string
+}
+
+// CdnZone — one entry returned by ListCdnZones, used by the zone picker.
+export interface CdnZone {
+  id: string
+  name: string
+  status?: string
+}
+
+export interface CdnState {
+  status: CdnStatus
+  accountId?: string
+  accountEmail?: string
+  workersSubdomain?: string
+  lastError?: string
+  workersDevExample?: string
+  deployments: Record<string, CdnDeployment>
+  customDomain?: CdnCustomDomain
+}
+
+// Legacy types for backward compatibility
+export type VultrConfig = CloudConfig
+export type VultrRegion = CloudRegion
+export type VultrPlan = CloudPlan
+export type VultrNode = CloudNode
+
+export type DigitalOceanConfig = CloudConfig
+export type DigitalOceanRegion = CloudRegion
+export type DigitalOceanPlan = CloudPlan
+export type DigitalOceanDroplet = CloudNode
+
+// Region Latency Testing
+export interface RegionLatency {
+  code: string         // Region code (nrt, fra, lax...)
+  name: string         // Region name (Tokyo, Frankfurt...)
+  ip: string          // Test IP address
+  latency: number     // Average latency in milliseconds
+  loss: number        // Packet loss percentage (0-100)
+  status: string      // Status: "ok", "timeout", "error"
+}
+
+// Connectivity Testing
+export interface ConnectivityResult {
+  ip: string
+  icmpReachable: boolean
+  icmpMethod?: string
+  baselineReachable?: boolean
+  portsOpen: Record<string, boolean>  // merged tcp/udp reachability
+  tcpPortsOpen?: Record<string, boolean>
+  udpPortsStatus?: Record<string, 'open' | 'closed' | 'open_or_filtered' | 'unknown' | 'error'>
+  targetStatus?: Record<string, 'open' | 'closed' | 'open_or_filtered' | 'unknown' | 'error'>
+  status: 'reachable' | 'icmp_blocked' | 'blocked' | 'unknown'
+}
+
+export type ConnectivityStatus = 'reachable' | 'icmp_blocked' | 'blocked' | 'testing' | 'unknown'
+
+export interface ConnectivityProbeTarget {
+  name: string
+  port: number
+  network: 'tcp' | 'udp'
+}
+
+export interface ConnectivityProbeRequest {
+  tcpPorts?: number[]
+  udpPorts?: number[]
+  targets?: ConnectivityProbeTarget[]
+  probeICMP?: boolean
+  tcpTimeoutMs?: number
+  udpTimeoutMs?: number
+}
+
+// SSH Provider Types
+export interface SSHConfig {
+  host: string
+  port?: number
+  username?: string
+  authMethod: 'password' | 'key'
+  password?: string
+  privateKey?: string
+}
+
+export interface SSHServerInfo {
+  os: string
+  arch: string
+  memoryMB: number
+}
+
+export interface SSHDeployProgress {
+  instanceId: string
+  stage: 'connecting' | 'detecting' | 'generating' | 'deploying' | 'verifying' | 'ready' | 'failed'
+  message: string
+}
+
+// Multi-Deploy Types
+export interface MultiDeployResult {
+  id: string
+  success: boolean
+  error?: string
+}
+
+export type DeployProgressStatus = 'pending' | 'deploying' | 'ready' | 'failed'
+export interface DeployProgress {
+  index: number
+  status: DeployProgressStatus
+  label: string
+  message: string
+}
+
+// Region Recommendation Types
+export interface RegionScore {
+  region: CloudRegion
+  latencyMs: number
+  reachabilityRisk: string
+  aiAccess: boolean
+  score: number
+  reasons: string[]
+}
+
+// Health Monitoring Types
+export interface HealthResult {
+  nodeId: string
+  healthy: boolean
+  latencyMs: number
+  portsOpen: Record<number, boolean>
+  lastCheck: string
+  consecutiveFailures: number
+}

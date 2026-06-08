@@ -1,0 +1,236 @@
+name: Build Desktop Apps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'bridge/**'
+      - 'api/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/go.mod'
+      - 'api/go.sum'
+      - 'wails.json'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - '.github/workflows/build.yml'
+      - '!mobile/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'bridge/**'
+      - 'api/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/go.mod'
+      - 'api/go.sum'
+      - 'wails.json'
+      - 'VERSION'
+      - 'MOBILE_BUILD_NUMBER'
+      - 'scripts/check_versions.sh'
+      - '.github/workflows/build.yml'
+      - '!mobile/**'
+  workflow_dispatch:
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Version consistency
+        run: bash scripts/check_versions.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Use the latest stable toolchain (not the go.mod minimum) so
+          # govulncheck evaluates against an up-to-date standard library —
+          # recent GO-2026-xxxx stdlib advisories only land in the newest
+          # patch releases and otherwise fail the gate on net/tls/x509/http.
+          go-version: 'stable'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # pnpm latest (v10.x) uses the node:sqlite builtin and requires
+          # Node >= 22.13; Node 20 fails at "Set up Node.js".
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend assets for Go embed
+        run: cd frontend && pnpm run build-only
+
+      - name: Go tests with coverage (root)
+        run: |
+          mkdir -p output/coverage
+          ROOT_PACKAGES="$(go list ./... | grep -Ev '^privatedeploy/tmp($|/)')"
+          go test -coverprofile=output/coverage/go-root.out -covermode=atomic $ROOT_PACKAGES
+          go tool cover -func=output/coverage/go-root.out | tail -1
+
+      - name: Go tests with coverage (api)
+        run: |
+          cd api
+          go test -coverprofile=../output/coverage/go-api.out -covermode=atomic ./...
+          go tool cover -func=../output/coverage/go-api.out | tail -1
+
+      - name: Go coverage HTML reports
+        run: |
+          go tool cover -html=output/coverage/go-root.out -o output/coverage/go-root.html
+          cd api && go tool cover -html=../output/coverage/go-api.out -o ../output/coverage/go-api.html
+
+      - name: Go vulnerability check (root)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Go vulnerability check (api)
+        run: cd api && govulncheck ./...
+
+      - name: Frontend type-check
+        run: cd frontend && pnpm run type-check
+
+      - name: Frontend lint (ci)
+        run: cd frontend && pnpm run lint:ci
+
+      - name: Frontend tests with coverage
+        run: cd frontend && pnpm run test:coverage
+
+      - name: Frontend security audit
+        run: cd frontend && pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright Python package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install playwright
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Cloud UI E2E regression
+        run: python3 e2e/run_cloud_ui_e2e.py
+
+      - name: Upload UI test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-ui-e2e-artifacts
+          path: output/playwright/
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            output/coverage/
+            frontend/coverage/
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: quality-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 日常 push/PR 只在 Linux(1×)构建,保持 CI 全程落在免费额度内。
+          # Windows(2×)与 macOS(10×)桌面产物均改由 release.yml(tag 触发)
+          # 按需构建,避免每次 push/PR 消耗每月共享的 2000 分钟免费池。
+          # 需要平时验证 Windows/macOS 可临时本地构建或手动跑 release 流程。
+          - os: ubuntu-latest
+            platform: linux/amd64
+            node: 22
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Use the latest stable toolchain (not the go.mod minimum) so
+          # govulncheck evaluates against an up-to-date standard library —
+          # recent GO-2026-xxxx stdlib advisories only land in the newest
+          # patch releases and otherwise fail the gate on net/tls/x509/http.
+          go-version: 'stable'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+          # The pnpm lockfile lives under frontend/, not the repo root; without
+          # this setup-node fails with "Dependencies lock file is not found".
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev libgtksourceview-3.0-dev xvfb
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Verify environment
+        run: wails doctor
+
+      # Pre-build the frontend so frontend/dist/ exists before `wails build`.
+      # Wails generates Go bindings (which compile main.go and resolve its
+      # //go:embed frontend/dist/... directives) BEFORE it builds the
+      # frontend, so on a clean checkout the embed fails with
+      # "frontend/dist/favicon.ico: no matching files found".
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend assets
+        run: cd frontend && pnpm run build-only
+
+      # wails binding generation compiles & runs the app to introspect bound
+      # methods; the headless Linux runner has no DISPLAY, so run it under a
+      # virtual framebuffer ("no GUI display detected" otherwise).
+      - name: Build application (Linux)
+        if: runner.os == 'Linux'
+        # ubuntu-latest (24.04) ships webkit2gtk-4.1, not the 4.0 wails
+        # defaults to — build with the webkit2_41 tag so pkg-config resolves.
+        run: xvfb-run -a wails build -platform ${{ matrix.platform }} -tags webkit2_41
+
+      - name: Build application
+        if: runner.os != 'Linux'
+        run: wails build -platform ${{ matrix.platform }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          # matrix.platform contains a slash (e.g. windows/amd64) which is
+          # invalid in artifact names; key the artifact on the runner OS.
+          name: PrivateDeploy-${{ matrix.os }}
+          path: build/bin/

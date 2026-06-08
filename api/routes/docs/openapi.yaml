@@ -1,0 +1,739 @@
+openapi: 3.0.3
+info:
+  title: PrivateDeploy API
+  description: REST API for managing multi-protocol proxy node deployments on cloud infrastructure.
+  version: 2.0.0
+  license:
+    name: GPL-3.0
+
+servers:
+  - url: http://127.0.0.1:8443
+    description: Local development
+
+tags:
+  - name: system
+    description: Health and system information
+  - name: profiles
+    description: VPN profile management
+  - name: subscriptions
+    description: Subscription management
+  - name: cloud
+    description: Cloud provider and instance management
+
+paths:
+  /api/v1/health:
+    get:
+      tags: [system]
+      summary: Health check
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                success: true
+                data:
+                  status: healthy
+
+  /api/v1/system/info:
+    get:
+      tags: [system]
+      summary: System information
+      description: Returns runtime information including OS, memory, CPU, and uptime.
+      responses:
+        "200":
+          description: System info
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        $ref: "#/components/schemas/SystemInfo"
+
+  /api/v1/ws:
+    get:
+      tags: [system]
+      summary: WebSocket connection
+      description: Upgrades to a WebSocket connection for real-time event streaming.
+      responses:
+        "101":
+          description: Switching Protocols
+
+  /api/v1/profiles:
+    get:
+      tags: [profiles]
+      summary: List all profiles
+      responses:
+        "200":
+          description: List of profiles
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          profiles:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Profile"
+    post:
+      tags: [profiles]
+      summary: Create a profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                config:
+                  type: object
+                subscription_url:
+                  type: string
+      responses:
+        "200":
+          description: Profile created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          profile:
+                            $ref: "#/components/schemas/Profile"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/profiles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [profiles]
+      summary: Get a profile
+      responses:
+        "200":
+          description: Profile details
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [profiles]
+      summary: Update a profile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                config:
+                  type: object
+                subscription_url:
+                  type: string
+      responses:
+        "200":
+          description: Profile updated
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [profiles]
+      summary: Delete a profile
+      responses:
+        "200":
+          description: Profile deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/profiles/active:
+    get:
+      tags: [profiles]
+      summary: Get active profile
+      responses:
+        "200":
+          description: Active profile
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/profiles/{id}/active:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    put:
+      tags: [profiles]
+      summary: Set profile as active
+      responses:
+        "200":
+          description: Profile activated
+
+  /api/v1/profiles/{id}/content:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [profiles]
+      summary: Get profile raw content
+      responses:
+        "200":
+          description: Raw profile configuration
+    put:
+      tags: [profiles]
+      summary: Update profile raw content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+      responses:
+        "200":
+          description: Content saved
+
+  /api/v1/profiles/{id}/subscription:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    put:
+      tags: [profiles]
+      summary: Refresh profile subscription
+      responses:
+        "200":
+          description: Subscription updated
+
+  /api/v1/subscriptions:
+    get:
+      tags: [subscriptions]
+      summary: List all subscriptions
+      responses:
+        "200":
+          description: List of subscriptions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          subscriptions:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Subscription"
+    post:
+      tags: [subscriptions]
+      summary: Create a subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+      responses:
+        "200":
+          description: Subscription created
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/subscriptions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [subscriptions]
+      summary: Get a subscription
+      responses:
+        "200":
+          description: Subscription details
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [subscriptions]
+      summary: Update a subscription
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+      responses:
+        "200":
+          description: Subscription updated
+    delete:
+      tags: [subscriptions]
+      summary: Delete a subscription
+      responses:
+        "200":
+          description: Subscription deleted
+
+  /api/v1/subscriptions/{id}/refresh:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    put:
+      tags: [subscriptions]
+      summary: Refresh subscription nodes
+      responses:
+        "200":
+          description: Subscription refreshed with latest node count
+
+  /api/v1/cloud/providers:
+    get:
+      tags: [cloud]
+      summary: List cloud providers
+      responses:
+        "200":
+          description: Available cloud providers
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                  providers:
+                    - name: vultr
+                      displayName: Vultr
+                    - name: digitalocean
+                      displayName: DigitalOcean
+                    - name: ssh
+                      displayName: SSH Server
+
+  /api/v1/cloud/provider/active:
+    get:
+      tags: [cloud]
+      summary: Get active provider
+      responses:
+        "200":
+          description: Currently active cloud provider
+    post:
+      tags: [cloud]
+      summary: Set active provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider:
+                  type: string
+                  enum: [vultr, digitalocean, ssh]
+      responses:
+        "200":
+          description: Provider switched
+
+  /api/v1/cloud/config:
+    get:
+      tags: [cloud]
+      summary: Get cloud configuration
+      description: Returns active provider config with credentials redacted.
+      responses:
+        "200":
+          description: Cloud configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        $ref: "#/components/schemas/CloudConfig"
+    post:
+      tags: [cloud]
+      summary: Save cloud configuration
+      description: Saves API key and default settings for the active cloud provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apiKey:
+                  type: string
+                defaultRegion:
+                  type: string
+                defaultPlan:
+                  type: string
+      responses:
+        "200":
+          description: Configuration saved
+
+  /api/v1/cloud/instances:
+    get:
+      tags: [cloud]
+      summary: List cloud instances
+      responses:
+        "200":
+          description: List of deployed instances
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          instances:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/CloudInstance"
+    post:
+      tags: [cloud]
+      summary: Deploy a new instance
+      description: |
+        Creates a VPS on the active cloud provider and deploys multi-protocol proxy services.
+        Deployment takes 1-3 minutes. For servers with >600MB RAM, four protocols are deployed
+        (Shadowsocks, Hysteria2, VLESS-Reality, Trojan). Low-memory servers get Shadowsocks only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region, plan]
+              properties:
+                region:
+                  type: string
+                  description: Region ID (e.g. nrt, sgp, lax)
+                plan:
+                  type: string
+                  description: Plan ID (e.g. vc2-1c-1gb)
+                label:
+                  type: string
+      responses:
+        "201":
+          description: Instance created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          instance:
+                            $ref: "#/components/schemas/CloudInstance"
+
+  /api/v1/cloud/instances/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    delete:
+      tags: [cloud]
+      summary: Destroy an instance
+      responses:
+        "200":
+          description: Instance destroyed
+
+  /api/v1/cloud/regions:
+    get:
+      tags: [cloud]
+      summary: List available regions
+      responses:
+        "200":
+          description: Available regions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          regions:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Region"
+
+  /api/v1/cloud/plans:
+    get:
+      tags: [cloud]
+      summary: List available plans
+      parameters:
+        - name: region
+          in: query
+          schema:
+            type: string
+          description: Filter plans by region
+      responses:
+        "200":
+          description: Available plans
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          plans:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Plan"
+
+  /api/v1/cloud/availability:
+    get:
+      tags: [cloud]
+      summary: Check plan availability
+      parameters:
+        - name: region
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Plan availability for region
+
+components:
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponseBody"
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+    ValidationError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponseBody"
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Invalid request body
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+
+    ErrorResponseBody:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    SystemInfo:
+      type: object
+      properties:
+        appName:
+          type: string
+        version:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        goVersion:
+          type: string
+        platform:
+          type: string
+        uptime:
+          type: integer
+        memory:
+          type: object
+          properties:
+            total:
+              type: integer
+            used:
+              type: integer
+            free:
+              type: integer
+        cpu:
+          type: object
+          properties:
+            cores:
+              type: integer
+            usage:
+              type: number
+
+    Profile:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        config:
+          type: object
+        active:
+          type: boolean
+        subscription_url:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        url:
+          type: string
+        nodeCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CloudConfig:
+      type: object
+      properties:
+        provider:
+          type: string
+        defaultRegion:
+          type: string
+        defaultPlan:
+          type: string
+        hasApiKey:
+          type: boolean
+        extra:
+          type: object
+
+    CloudInstance:
+      type: object
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+        region:
+          type: string
+        plan:
+          type: string
+        ipv4:
+          type: string
+        ipv6:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        ssPort:
+          type: integer
+        ssPassword:
+          type: string
+        hysteriaPort:
+          type: integer
+        hysteriaPassword:
+          type: string
+        vlessPort:
+          type: integer
+        vlessUUID:
+          type: string
+        vlessPublicKey:
+          type: string
+        vlessShortId:
+          type: string
+        trojanPort:
+          type: integer
+        trojanPassword:
+          type: string
+
+    Region:
+      type: object
+      properties:
+        id:
+          type: string
+        city:
+          type: string
+        country:
+          type: string
+        continent:
+          type: string
+
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+        ram:
+          type: integer
+        vcpus:
+          type: integer
+        disk:
+          type: integer
+        bandwidth:
+          type: integer
+        monthlyCost:
+          type: number
+        hourlyCost:
+          type: number
+        type:
+          type: string
+        locations:
+          type: array
+          items:
+            type: string

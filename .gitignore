@@ -1,0 +1,58 @@
+build/bin
+build/windows/installer/runtime-data/
+frontend/dist
+.pnpm-store/
+.codex-tmp/
+
+.DS_Store
+
+# Sensitive data - Cloud provider configs and node information
+data/
+
+# Local API binary output
+api/privatedeploy-api
+
+# Temporary/backup sources
+*.backup
+
+# Flutter local build artifacts
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/android/*.jks
+mobile/android/app/*.jks
+
+# Local release outputs and test artifacts
+output/
+test-results/
+tmp/
+scripts/__pycache__/
+.claude-octopus/
+
+# Android NDK/CMake build artifacts
+mobile/android/app/.cxx/
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+
+# Claude Code runtime state (worktrees, memory, lockfiles, local settings)
+.claude/
+
+# Flutter golden-test failure artifacts (regenerated on each failing run)
+mobile/test/failures/
+.wrangler/
+build/frontend/
+build/bin/
+
+# 预编译移动端核心(由 gomobile build-android.sh 生成,不入库)
+mobile/android/app/libs/vpncore.aar
+mobile/android/app/libs/vpncore-sources.jar
+.vscode/
