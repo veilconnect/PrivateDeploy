@@ -954,6 +954,94 @@ Map<String, dynamic> _buildWireguardEndpoint(Map<String, dynamic> outbound) {
   return endpoint;
 }
 
+/// Builds a complete, connectable full-tunnel sing-box config from WireGuard
+/// form fields, so a WireGuard server can be added and connected to like any
+/// other VPN node (it shows up in the node list and routes all traffic through
+/// the tunnel). The WireGuard peer is emitted directly in sing-box 1.12
+/// `endpoints[]` format via [_buildWireguardEndpoint] — NOT the legacy
+/// `outbounds[]` form, which 1.12 rejects on `persistent_keepalive_interval`.
+///
+/// [persistentKeepalive] defaults to 25s (the wg-quick default). Without a
+/// keepalive the peer's NAT mapping expires after a minute or two of idle and
+/// the tunnel silently stops passing traffic — the classic "WireGuard keeps
+/// disconnecting" symptom — so we always emit one unless the caller opts out
+/// with a non-positive value.
+String buildWireguardProfileConfig({
+  required String server,
+  required int serverPort,
+  required String privateKey,
+  required String peerPublicKey,
+  required List<String> localAddress,
+  String? preSharedKey,
+  int? mtu,
+  int persistentKeepalive = 25,
+}) {
+  const tag = 'wireguard-out';
+  final outboundShaped = <String, dynamic>{
+    'type': 'wireguard',
+    'tag': tag,
+    'server': server.trim(),
+    'server_port': serverPort,
+    'local_address': localAddress
+        .map((address) => address.trim())
+        .where((address) => address.isNotEmpty)
+        .toList(growable: false),
+    'private_key': privateKey.trim(),
+    'peer_public_key': peerPublicKey.trim(),
+  };
+  final psk = preSharedKey?.trim();
+  if (psk != null && psk.isNotEmpty) {
+    outboundShaped['pre_shared_key'] = psk;
+  }
+  if (mtu != null && mtu > 0) {
+    outboundShaped['mtu'] = mtu;
+  }
+  if (persistentKeepalive > 0) {
+    outboundShaped['persistent_keepalive_interval'] = persistentKeepalive;
+  }
+
+  final endpoint = _buildWireguardEndpoint(outboundShaped);
+  final config = <String, dynamic>{
+    'log': <String, dynamic>{'level': 'info'},
+    // Resolve DNS through the tunnel so lookups don't leak to the underlying
+    // network while the full tunnel is up.
+    'dns': <String, dynamic>{
+      'servers': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'tag': 'dns-remote',
+          'address': '1.1.1.1',
+          'detour': tag,
+        },
+      ],
+      'strategy': 'prefer_ipv4',
+    },
+    'inbounds': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'type': 'tun',
+        'tag': 'tun-in',
+        'interface_name': 'tun0',
+        'inet4_address': '172.19.0.1/30',
+        'auto_route': true,
+        'stack': 'gvisor',
+        'sniff': true,
+      },
+    ],
+    'endpoints': <Map<String, dynamic>>[endpoint],
+    'outbounds': <Map<String, dynamic>>[
+      <String, dynamic>{'type': 'direct', 'tag': 'direct'},
+    ],
+    'route': <String, dynamic>{
+      'auto_detect_interface': true,
+      // Follow Android's current default underlying network so the tunnel's
+      // own socket survives a Wi-Fi <-> cellular handover (matches the cloud
+      // profile normalization in _normalizeAndroidConfig).
+      'default_network_strategy': 'default',
+      'final': tag,
+    },
+  };
+  return const JsonEncoder.withIndent('  ').convert(config);
+}
+
 int? _asIntOrNull(dynamic value) {
   if (value is int) {
     return value;

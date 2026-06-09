@@ -246,6 +246,58 @@ Future<void> showCreateProfileFlow({
   );
 }
 
+/// Collects WireGuard connection fields via a form and creates a connectable
+/// full-tunnel profile from them — the "configure WireGuard like a VPN" flow.
+/// Mirrors [showCreateProfileFlow] but generates the sing-box config from the
+/// form instead of asking the user to paste raw JSON.
+Future<void> showCreateWireguardFlow({
+  required BuildContext context,
+  required ProfileProvider profileProvider,
+}) async {
+  final request = await showNodesWireguardProfileDialog(
+    context,
+    validateName: profileProvider.validateProfileName,
+  );
+  if (request == null || !context.mounted) {
+    return;
+  }
+
+  final profileName = request.name.trim();
+  final rawConfig = request.config.trim();
+  final configError = validateSingboxConfig(
+    rawConfig,
+    AppLocalizations.of(context)!,
+  );
+  if (configError != null) {
+    showNodesActionSnackBar(
+      context,
+      message: configError,
+      backgroundColor: Colors.red,
+    );
+    return;
+  }
+
+  final config = const JsonEncoder.withIndent('  ')
+      .convert(jsonDecode(rawConfig) as Map<String, dynamic>);
+
+  final success = await profileProvider.createProfile(
+    name: profileName,
+    content: config,
+  );
+  if (!context.mounted) {
+    return;
+  }
+
+  final l10nCreate = AppLocalizations.of(context)!;
+  showNodesActionSnackBar(
+    context,
+    message: success
+        ? l10nCreate.profileCreatedSuccess
+        : profileProvider.error ?? l10nCreate.failedToCreateProfile,
+    backgroundColor: success ? Colors.green : Colors.red,
+  );
+}
+
 /// Run a throughput speed test for a manual profile.
 ///
 /// Temporarily connects VPN with the profile's config, measures download

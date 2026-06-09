@@ -355,6 +355,13 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  Future<void> _showWireguardDialog() {
+    return showCreateWireguardFlow(
+      context: context,
+      profileProvider: context.read<ProfileProvider>(),
+    );
+  }
+
   void _openSettings() {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
@@ -604,6 +611,7 @@ class _NodesScreenState extends State<NodesScreen> {
                 : null,
             onImportProfile: _showImportProfileDialog,
             onCreateProfile: _showCreateProfileDialog,
+            onAddWireguard: _showWireguardDialog,
           );
         },
       ),
