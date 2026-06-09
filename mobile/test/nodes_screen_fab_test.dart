@@ -16,6 +16,7 @@ void main() {
       var deployTapped = false;
       var importTapped = false;
       var createTapped = false;
+      var wireguardTapped = false;
 
       await _pumpFab(
         tester,
@@ -25,6 +26,7 @@ void main() {
           onCreateCloudNode: () => deployTapped = true,
           onImportProfile: () => importTapped = true,
           onCreateProfile: () => createTapped = true,
+          onAddWireguard: () => wireguardTapped = true,
         ),
       );
 
@@ -56,10 +58,16 @@ void main() {
       await tester.tap(find.byKey(NodesTestKeys.createProfileFab));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(NodesTestKeys.workspaceFab));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(NodesTestKeys.addWireguardFab));
+      await tester.pumpAndSettle();
+
       expect(configureTapped, isTrue);
       expect(deployTapped, isTrue);
       expect(importTapped, isTrue);
       expect(createTapped, isTrue);
+      expect(wireguardTapped, isTrue);
     });
 
     testWidgets('hides cloud actions when callbacks are absent',
@@ -69,6 +77,7 @@ void main() {
         child: NodesScreenFab(
           onImportProfile: () {},
           onCreateProfile: () {},
+          onAddWireguard: () {},
         ),
       );
 

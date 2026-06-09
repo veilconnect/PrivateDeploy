@@ -10,6 +10,7 @@ class NodesScreenFab extends StatelessWidget {
   final VoidCallback? onCreateCloudNode;
   final VoidCallback onImportProfile;
   final VoidCallback onCreateProfile;
+  final VoidCallback onAddWireguard;
 
   const NodesScreenFab({
     Key? key,
@@ -18,6 +19,7 @@ class NodesScreenFab extends StatelessWidget {
     this.onCreateCloudNode,
     required this.onImportProfile,
     required this.onCreateProfile,
+    required this.onAddWireguard,
   }) : super(key: key);
 
   @override
@@ -86,6 +88,15 @@ class NodesScreenFab extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(sheetContext);
                     onCreateProfile();
+                  },
+                ),
+                ListTile(
+                  key: NodesTestKeys.addWireguardFab,
+                  leading: const Icon(Icons.vpn_lock_outlined),
+                  title: const Text('添加 WireGuard / Add WireGuard'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    onAddWireguard();
                   },
                 ),
               ],
