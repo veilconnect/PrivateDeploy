@@ -105,7 +105,7 @@ xcodebuild -version
 ### 1. 获取依赖
 
 ```bash
-cd /home/user/PrivateDeploy/mobile
+cd ~/PrivateDeploy/mobile
 
 # 获取 pub 依赖
 flutter pub get
@@ -185,7 +185,7 @@ lipo -info ../ios/VPNCore.framework/VPNCore
 ### 开发构建
 
 ```bash
-cd /home/user/PrivateDeploy/mobile
+cd ~/PrivateDeploy/mobile
 
 # Debug APK
 flutter build apk --debug

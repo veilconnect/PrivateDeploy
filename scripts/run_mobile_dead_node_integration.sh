@@ -4,8 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOBILE_DIR="$ROOT_DIR/mobile"
-FLUTTER_BIN="${FLUTTER_BIN:-/home/user/flutter/bin/flutter}"
-EMULATOR_BIN="${ANDROID_EMULATOR_BIN:-/home/user/Android/Sdk/emulator/emulator}"
+FLUTTER_BIN="${FLUTTER_BIN:-$HOME/flutter/bin/flutter}"
+EMULATOR_BIN="${ANDROID_EMULATOR_BIN:-$HOME/Android/Sdk/emulator/emulator}"
 ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"
 ANDROID_AVD="${ANDROID_AVD:-test_pixel}"
 SUB_PORT="${PD_TEST_SUB_PORT:-8765}"

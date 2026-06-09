@@ -5,7 +5,7 @@
 在 Vue 3 应用中实现乐观UI更新时，由于使用了**浅拷贝**而非**深拷贝**，导致 Vue 响应式系统无法正确追踪嵌套对象的变化，从而引发 UI 不更新的问题。
 
 **影响范围**：
-- 文件：`/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts`
+- 文件：`~/PrivateDeploy/frontend/src/stores/kernelApi.ts`
 - 函数：`removeProxyFromGroups` (第722-743行) 和 `addProxyToGroups` (第749-774行)
 - 症状：删除或添加代理后，UI 没有立即更新
 
@@ -224,7 +224,7 @@ const removeProxyFromGroups = (subscriptionId: string) => {
 
 ### 修改 1：removeProxyFromGroups
 
-**文件**：`/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts`
+**文件**：`~/PrivateDeploy/frontend/src/stores/kernelApi.ts`
 **行号**：第722-743行
 
 ```typescript
@@ -245,7 +245,7 @@ const removeProxyFromGroups = (subscriptionId: string) => {
 
 ### 修改 2：addProxyToGroups
 
-**文件**：`/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts`
+**文件**：`~/PrivateDeploy/frontend/src/stores/kernelApi.ts`
 **行号**：第749-774行
 
 ```typescript
@@ -365,14 +365,14 @@ node test-vue-reactivity.js
 ## 相关资源
 
 ### 代码文件
-- 问题代码：`/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts` (第722-774行)
-- 调用位置：`/home/user/PrivateDeploy/frontend/src/stores/cloud.ts` (第733行)
-- 工具函数：`/home/user/PrivateDeploy/frontend/src/utils/others.ts` (第6行 - deepClone)
+- 问题代码：`~/PrivateDeploy/frontend/src/stores/kernelApi.ts` (第722-774行)
+- 调用位置：`~/PrivateDeploy/frontend/src/stores/cloud.ts` (第733行)
+- 工具函数：`~/PrivateDeploy/frontend/src/utils/others.ts` (第6行 - deepClone)
 
 ### 测试文件
-- Node.js 测试：`/home/user/PrivateDeploy/test-vue-reactivity.js`
-- 浏览器演示：`/home/user/PrivateDeploy/vue-reactivity-demo.html`
-- 详细分析：`/home/user/PrivateDeploy/vue-reactivity-analysis.md`
+- Node.js 测试：`~/PrivateDeploy/test-vue-reactivity.js`
+- 浏览器演示：`~/PrivateDeploy/vue-reactivity-demo.html`
+- 详细分析：`~/PrivateDeploy/vue-reactivity-analysis.md`
 
 ### Vue 官方文档
 - [响应式基础](https://vuejs.org/guide/essentials/reactivity-fundamentals.html)

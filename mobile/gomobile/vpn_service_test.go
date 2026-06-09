@@ -132,7 +132,7 @@ func TestClassifyInterfaceType(t *testing.T) {
 func TestGetInterfacesUsesPlatformSnapshots(t *testing.T) {
 	adapter := &platformAdapter{
 		platform: fakePlatform{
-			networkInterfaces: `[{"index":7,"mtu":1500,"name":"wlan0","addresses":["192.168.10.142/24"],"flags":65,"type":0,"dns_servers":["223.5.5.5"],"metered":false,"is_default":true}]`,
+			networkInterfaces: `[{"index":7,"mtu":1500,"name":"wlan0","addresses":["192.0.2.142/24"],"flags":65,"type":0,"dns_servers":["223.5.5.5"],"metered":false,"is_default":true}]`,
 		},
 	}
 
@@ -157,7 +157,7 @@ func TestGetInterfacesUsesPlatformSnapshots(t *testing.T) {
 	if next.Type != libbox.InterfaceTypeWIFI {
 		t.Fatalf("expected wifi type, got %d", next.Type)
 	}
-	if !next.Addresses.HasNext() || next.Addresses.Next() != "192.168.10.142/24" {
+	if !next.Addresses.HasNext() || next.Addresses.Next() != "192.0.2.142/24" {
 		t.Fatal("expected platform interface addresses to be preserved")
 	}
 	if !next.DNSServer.HasNext() || next.DNSServer.Next() != "223.5.5.5" {

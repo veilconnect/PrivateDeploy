@@ -2,7 +2,7 @@
 
 **修复版本:** 2025-11-03
 **编译时间:** 12.701秒
-**编译路径:** `/home/user/PrivateDeploy/build/bin/PrivateDeploy`
+**编译路径:** `~/PrivateDeploy/build/bin/PrivateDeploy`
 
 ## 已修复的问题
 
@@ -36,7 +36,7 @@
 ### 测试 1: 启动应用
 
 ```bash
-cd /home/user/PrivateDeploy
+cd ~/PrivateDeploy
 ./build/bin/PrivateDeploy
 ```
 
@@ -244,7 +244,7 @@ M  frontend/src/utils/generator.ts     (+25 -4 行)
 **构建信息：**
 - 构建时间: 2025-11-03
 - 构建耗时: 12.701 秒
-- 构建路径: /home/user/PrivateDeploy/build/bin/PrivateDeploy
+- 构建路径: ~/PrivateDeploy/build/bin/PrivateDeploy
 - 构建环境: linux/amd64
 
 **准备就绪，开始测试！** 🚀

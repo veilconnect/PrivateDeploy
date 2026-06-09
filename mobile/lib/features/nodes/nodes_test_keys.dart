@@ -7,6 +7,7 @@ class NodesTestKeys {
   static const deployCloudNodeFab = ValueKey('nodes.deployCloudNodeFab');
   static const importProfileFab = ValueKey('nodes.importProfileFab');
   static const createProfileFab = ValueKey('nodes.createProfileFab');
+  static const addWireguardFab = ValueKey('nodes.addWireguardFab');
   static const connectButton = ValueKey('nodes.connectButton');
   static const restartButton = ValueKey('nodes.restartButton');
   static const vpnNoticeCard = ValueKey('nodes.vpnNoticeCard');

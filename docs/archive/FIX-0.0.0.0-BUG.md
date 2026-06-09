@@ -96,7 +96,7 @@ if (!cloudNode.ipv4 && !cloudNode.ipv6) {
 python3 << 'EOF'
 import json
 
-config_path = '/home/user/PrivateDeploy/build/bin/data/sing-box/config.json'
+config_path = '~/PrivateDeploy/build/bin/data/sing-box/config.json'
 
 # 读取并修复配置
 with open(config_path) as f:
@@ -132,8 +132,8 @@ EOF
 
 1. 重新编译应用：
 ```bash
-cd /home/user/PrivateDeploy
-PATH="/usr/local/go/bin:/home/user/go/bin:/home/user/.npm-global/bin:$PATH" wails build
+cd ~/PrivateDeploy
+PATH="/usr/local/go/bin:~/go/bin:~/.npm-global/bin:$PATH" wails build
 ```
 
 2. 启动应用并检查日志

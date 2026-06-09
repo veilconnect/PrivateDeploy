@@ -2,7 +2,7 @@
 
 ## 问题概述
 
-在 `/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts` 中实现了乐观UI更新，但UI没有按预期更新。
+在 `~/PrivateDeploy/frontend/src/stores/kernelApi.ts` 中实现了乐观UI更新，但UI没有按预期更新。
 
 ## 核心代码分析
 
@@ -453,6 +453,6 @@ const addProxyToGroups = (subscriptionId: string, displayName: string) => {
 4. **对于对象**：使用扩展运算符创建新对象（每一层都要）
 
 ### 相关文件
-- 问题代码：`/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts` (第722-774行)
-- 调用位置：`/home/user/PrivateDeploy/frontend/src/stores/cloud.ts` (第733行)
-- 类型定义：`/home/user/PrivateDeploy/frontend/src/types/kernel.d.ts` (第15-25行)
+- 问题代码：`~/PrivateDeploy/frontend/src/stores/kernelApi.ts` (第722-774行)
+- 调用位置：`~/PrivateDeploy/frontend/src/stores/cloud.ts` (第733行)
+- 类型定义：`~/PrivateDeploy/frontend/src/types/kernel.d.ts` (第15-25行)

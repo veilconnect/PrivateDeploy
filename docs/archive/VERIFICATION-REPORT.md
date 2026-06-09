@@ -57,7 +57,7 @@ All four strategic fixes from `FIX-0.0.0.0-BUG.md` are properly implemented:
 
 ### 4. Build Status ✅
 ```
-Built '/home/user/PrivateDeploy/build/bin/PrivateDeploy' in 11.695s.
+Built '~/PrivateDeploy/build/bin/PrivateDeploy' in 11.695s.
 ```
 - No compilation errors
 - All TypeScript type checks passed
@@ -101,4 +101,4 @@ The 0.0.0.0 bug fix is **fully implemented and verified**. The configuration gen
 ---
 
 **Verified by:** Claude Code
-**Build artifact:** `/home/user/PrivateDeploy/build/bin/PrivateDeploy`
+**Build artifact:** `~/PrivateDeploy/build/bin/PrivateDeploy`

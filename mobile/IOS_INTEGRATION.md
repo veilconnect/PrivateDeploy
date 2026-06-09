@@ -39,7 +39,7 @@ gomobile init
 
 ```bash
 # 进入 gomobile 目录
-cd /home/user/PrivateDeploy/mobile/gomobile
+cd ~/PrivateDeploy/mobile/gomobile
 
 # 运行编译脚本
 ./build-ios.sh
@@ -47,7 +47,7 @@ cd /home/user/PrivateDeploy/mobile/gomobile
 
 编译成功后，Framework 将生成在：
 ```
-/home/user/PrivateDeploy/mobile/ios/VPNCore.framework
+~/PrivateDeploy/mobile/ios/VPNCore.framework
 ```
 
 ### 1.3 验证 Framework

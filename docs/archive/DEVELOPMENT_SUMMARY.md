@@ -196,7 +196,7 @@ mobile/
 ### 启动 API 服务器
 
 ```bash
-cd /home/user/PrivateDeploy/api
+cd ~/PrivateDeploy/api
 go run main.go
 
 # 或编译后运行
@@ -213,7 +213,7 @@ go build -o privatedeploy-api
 ### 运行 Flutter 应用
 
 ```bash
-cd /home/user/PrivateDeploy/mobile
+cd ~/PrivateDeploy/mobile
 
 # 安装依赖
 flutter pub get
@@ -346,10 +346,10 @@ curl -H "Authorization: Bearer <TOKEN>" \
 
 ### 项目目录
 
-- API 服务器：`/home/user/PrivateDeploy/api/`
-- Flutter 应用：`/home/user/PrivateDeploy/mobile/`
-- 桥接代码：`/home/user/PrivateDeploy/bridge/`
-- 文档：`/home/user/PrivateDeploy/*.md`
+- API 服务器：`~/PrivateDeploy/api/`
+- Flutter 应用：`~/PrivateDeploy/mobile/`
+- 桥接代码：`~/PrivateDeploy/bridge/`
+- 文档：`~/PrivateDeploy/*.md`
 
 ---
 

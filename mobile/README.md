@@ -91,17 +91,17 @@ mobile/
 
 ```bash
 cd mobile
-/home/user/flutter/bin/flutter pub get
-/home/user/flutter/bin/flutter analyze
-/home/user/flutter/bin/flutter test
-/home/user/flutter/bin/flutter run
+~/flutter/bin/flutter pub get
+~/flutter/bin/flutter analyze
+~/flutter/bin/flutter test
+~/flutter/bin/flutter run
 ```
 
 Android Release 示例：
 
 ```bash
 cd mobile
-/home/user/flutter/bin/flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
+~/flutter/bin/flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 ```
 
 ## 平台说明
@@ -165,8 +165,8 @@ iOS 平台未覆盖的功能（对齐桌面）：
 
 ```bash
 cd mobile
-/home/user/flutter/bin/flutter analyze
-/home/user/flutter/bin/flutter test
+~/flutter/bin/flutter analyze
+~/flutter/bin/flutter test
 ```
 
 当前 `test/` 主要覆盖：
@@ -187,7 +187,7 @@ cd mobile
 
 ```bash
 cd mobile
-/home/user/flutter/bin/flutter test integration_test/<file>.dart -d <device-id>
+~/flutter/bin/flutter test integration_test/<file>.dart -d <device-id>
 ```
 
 当前 `integration_test/` 覆盖：

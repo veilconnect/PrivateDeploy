@@ -66,6 +66,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const Duration upstreamDegradedRestartDelay = Duration(seconds: 30);
   static const int maxUpstreamDegradedRestartAttempts = 2;
 
+  // Once the fast same-node restart budget above is spent AND no failover
+  // candidate exists (the common single-cloud-node setup), we no longer tear
+  // the tunnel down. Tearing it down dropped the user to a fully-disconnected
+  // state and forced a manual reconnect on every transient upstream hiccup —
+  // the #1 "总是断线，要经常重新连接" complaint. Instead we keep the tunnel up
+  // (domestic-direct traffic keeps flowing) and keep nudging it back to health
+  // on this slower cadence so the session self-heals when the node/carrier
+  // recovers, with no manual reconnect.
+  static const Duration upstreamDegradedRecoveryRetryDelay =
+      Duration(seconds: 60);
+
   final VpnNativeService _nativeService = VpnNativeService.instance;
 
   VpnStatus _status = VpnStatus.disconnected;
@@ -1408,6 +1419,19 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     );
   }
 
+  /// Re-arms the watchdog on the slower [upstreamDegradedRecoveryRetryDelay]
+  /// cadence after the fast restart budget is spent. Keeps the tunnel up and
+  /// keeps retrying so a degraded single-node session recovers on its own. The
+  /// retry is a no-op once the degraded signal clears (see the early returns in
+  /// [_runUpstreamDegradedRestart]).
+  void _armUpstreamDegradedRecoveryRetry() {
+    _upstreamDegradedWatchdog?.cancel();
+    _upstreamDegradedWatchdog = Timer(
+      upstreamDegradedRecoveryRetryDelay,
+      _runUpstreamDegradedRestart,
+    );
+  }
+
   Future<void> _runUpstreamDegradedRestart() async {
     _upstreamDegradedWatchdog = null;
     if (_disposed || _isLoading || _status != VpnStatus.connected) {
@@ -1462,15 +1486,26 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           _failoverInFlight = false;
         }
       }
-      AppLogger.warning(
-        '[VpnProvider] Upstream-degraded watchdog: budget exhausted '
+      // No failover candidate (single-node setup, or every cloud node already
+      // tried). Keep the tunnel UP and schedule a slower recovery restart so
+      // the session self-heals when the node/carrier recovers — instead of
+      // tearing it down and forcing a manual reconnect. The degraded banner
+      // stays visible; the user can always disconnect or switch nodes by hand.
+      AppLogger.info(
+        '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
         '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
-        'and no working failover candidate; stopping the unreachable tunnel '
-        'so device traffic does not stay routed into a dead TUN interface.',
+        'and no failover candidate; keeping the tunnel up and scheduling a '
+        'recovery restart in ${upstreamDegradedRecoveryRetryDelay.inSeconds}s '
+        '(self-heal, no forced disconnect).',
       );
-      await stopDegradedSession(
-        reason: _error ?? _diagnosticsError ?? tunnelUpstreamDegradedMessage,
-      );
+      try {
+        await _nativeService.restartVpn();
+      } catch (e) {
+        AppLogger.warning(
+          '[VpnProvider] Upstream-degraded recovery restart failed: $e',
+        );
+      }
+      _armUpstreamDegradedRecoveryRetry();
       return;
     }
 

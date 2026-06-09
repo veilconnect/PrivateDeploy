@@ -397,7 +397,7 @@ packetFlow.readPackets { packets, protocols in
 
 1. **编译 gomobile 库**
    ```bash
-   cd /home/user/PrivateDeploy/mobile/gomobile
+   cd ~/PrivateDeploy/mobile/gomobile
    gomobile bind -target=android -o ../android/app/libs/vpncore.aar .
    ```
 
@@ -429,7 +429,7 @@ packetFlow.readPackets { packets, protocols in
 
 1. **编译 gomobile 库**
    ```bash
-   cd /home/user/PrivateDeploy/mobile/gomobile
+   cd ~/PrivateDeploy/mobile/gomobile
    gomobile bind -target=ios -o ../ios/VPNCore.framework .
    ```
 
@@ -531,7 +531,7 @@ packetFlow.readPackets { packets, protocols in
 
 ```bash
 # 1. 打开 Android Studio
-android-studio /home/user/PrivateDeploy/mobile/android
+android-studio ~/PrivateDeploy/mobile/android
 
 # 2. 同步 Gradle
 ./gradlew build
@@ -544,7 +544,7 @@ flutter run
 
 ```bash
 # 1. 打开 Xcode
-open /home/user/PrivateDeploy/mobile/ios/Runner.xcworkspace
+open ~/PrivateDeploy/mobile/ios/Runner.xcworkspace
 
 # 2. 配置签名
 # - 选择开发团队

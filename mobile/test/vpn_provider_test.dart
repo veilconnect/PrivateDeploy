@@ -1382,15 +1382,18 @@ void main() {
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
       expect(restartCalls, 2);
 
-      // Cap reached — third fire must stop the blackholed tunnel instead of
-      // looping restarts forever.
+      // Cap reached — the fast same-node restart budget is spent. With no
+      // failover candidate registered, the watchdog now keeps the tunnel UP
+      // and issues a slower recovery restart instead of tearing the session
+      // down (which used to force a manual reconnect on every transient
+      // upstream hiccup — the "总是断线" complaint).
       vpnProvider.debugApplyNativeStatus(disconnected());
       vpnProvider.debugApplyNativeStatus(connectedDegraded());
       await vpnProvider.debugFireUpstreamDegradedWatchdog();
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
-      expect(restartCalls, 2);
-      expect(stopCalls, 1);
-      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(restartCalls, 3);
+      expect(stopCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
     });
 
     test('does not restart while a connect attempt is still pending', () async {

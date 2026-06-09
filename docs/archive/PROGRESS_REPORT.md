@@ -213,7 +213,7 @@ api/
 ### 启动 API 服务器
 
 ```bash
-cd /home/user/PrivateDeploy/api
+cd ~/PrivateDeploy/api
 go run main.go
 ```
 

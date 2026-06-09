@@ -177,7 +177,7 @@ open vue-reactivity-demo.html
 
 ### 文件路径
 ```
-/home/user/PrivateDeploy/frontend/src/stores/kernelApi.ts
+~/PrivateDeploy/frontend/src/stores/kernelApi.ts
 ```
 
 ### 具体位置
@@ -186,7 +186,7 @@ open vue-reactivity-demo.html
 
 ### 调用位置
 ```
-/home/user/PrivateDeploy/frontend/src/stores/cloud.ts
+~/PrivateDeploy/frontend/src/stores/cloud.ts
 ```
 - **第 733 行**: 调用 `removeProxyFromGroups`
 
