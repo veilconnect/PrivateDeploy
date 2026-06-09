@@ -488,9 +488,11 @@ String? validateVpnRoutingOutboundTag(String value) {
   return null;
 }
 
-/// Builds a sing-box (v1.11 legacy) WireGuard outbound map from form fields.
-/// Stored verbatim in [VpnRoutingSettings.customOutbounds] and merged into the
-/// generated config's `outbounds` so routing rules can target [tag].
+/// Builds an outbound-shaped WireGuard map from form fields. This stays the
+/// familiar flat shape the UI collects and is stored verbatim in
+/// [VpnRoutingSettings.customOutbounds]; the profile normalizer converts it
+/// into a sing-box 1.12 WireGuard `endpoint` (see _buildWireguardEndpoint) so
+/// routing rules can target [tag] while keepalive lives inside the peer.
 Map<String, dynamic> buildWireguardOutbound({
   required String tag,
   required String server,

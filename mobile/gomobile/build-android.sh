@@ -101,7 +101,12 @@ OUTPUT_DIR="../android/app/libs"
 OUTPUT_FILE="vpncore.aar"
 PACKAGE_NAME="com.privatedeploy.mobile.vpncore"
 TARGETS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TARGETS:-android/arm64,android/arm,android/amd64}"
-LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w}"
+# -checklinkname=0: sing-box 1.12's Android pidfd support overrides
+# os.checkPidfdOnce via //go:linkname (common/dialer pidfd_android.go). Go's
+# linker (1.23+) rejects that cross-package linkname by default
+# ("invalid reference to os.checkPidfdOnce"), failing the gomobile link. This
+# disables the linkname check, matching upstream sing-box's own Android build.
+LDFLAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_LDFLAGS:--s -w -checklinkname=0}"
 TRIMPATH="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TRIMPATH:-true}"
 TAGS="${PRIVATEDEPLOY_ANDROID_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_quic,with_utls,with_wireguard}}"
 

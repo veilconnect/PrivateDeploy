@@ -1,0 +1,28 @@
+--- a/common/dialer/default.go
++++ b/common/dialer/default.go
+@@ -106,9 +106,22 @@
+ 				if networkFallbackDelay == 0 && defaultOptions.FallbackDelay != 0 {
+ 					networkFallbackDelay = defaultOptions.FallbackDelay
+ 				}
+-				if networkStrategy == nil {
+-					networkStrategy = common.Ptr(C.NetworkStrategyDefault)
+-					defaultNetworkStrategy = true
++				// PrivateDeploy (Android): only fall back to NetworkStrategyDefault when
++				// the profile actually configured a network strategy / interface type
++				// (on this outbound or via route.default_*). Otherwise keep it nil and
++				// rely on protect(fd) + the OS default route, so non-cloud profiles do
++				// not bind to a stale interface and lose connectivity across a
++				// Wi-Fi <-> cellular handover.
++				if !(networkStrategy == nil &&
++					len(networkType) == 0 &&
++					len(fallbackNetworkType) == 0 &&
++					defaultOptions.NetworkStrategy == nil &&
++					len(defaultOptions.NetworkType) == 0 &&
++					len(defaultOptions.FallbackNetworkType) == 0) {
++					if networkStrategy == nil {
++						networkStrategy = common.Ptr(C.NetworkStrategyDefault)
++						defaultNetworkStrategy = true
++					}
+ 				}
+ 				bindFunc := networkManager.ProtectFunc()
+ 				dialer.Control = control.Append(dialer.Control, bindFunc)
