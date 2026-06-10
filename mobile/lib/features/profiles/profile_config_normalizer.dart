@@ -1054,6 +1054,55 @@ String buildWireguardProfileConfig({
   return const JsonEncoder.withIndent('  ').convert(config);
 }
 
+/// Builds a tunnel config that carries ONLY the intranet WireGuard tunnel: LAN
+/// traffic goes through WireGuard, everything else goes direct (no proxy). Used
+/// when the user keeps the intranet VPN on but disconnects the proxy nodes — so
+/// the two run truly independently. Returns null when [wg] isn't active.
+String? buildWireguardIntranetOnlyConfig(
+  WireGuardIntranet wg, {
+  TargetPlatform? targetPlatform,
+}) {
+  if (!wg.isActive) {
+    return null;
+  }
+  final config = <String, dynamic>{
+    'log': <String, dynamic>{'level': 'info'},
+    'dns': <String, dynamic>{
+      'servers': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'tag': 'dns-direct',
+          'address': '223.5.5.5',
+          'detour': 'direct',
+        },
+      ],
+      'strategy': 'prefer_ipv4',
+    },
+    'inbounds': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'type': 'tun',
+        'tag': 'tun-in',
+        'interface_name': 'tun0',
+        'inet4_address': '172.19.0.1/30',
+        'auto_route': true,
+        'stack': 'gvisor',
+        'sniff': true,
+      },
+    ],
+    'outbounds': <Map<String, dynamic>>[
+      <String, dynamic>{'type': 'direct', 'tag': 'direct'},
+    ],
+    'route': <String, dynamic>{
+      'auto_detect_interface': true,
+      'default_network_strategy': 'default',
+      'rules': <Map<String, dynamic>>[],
+      'final': 'direct',
+    },
+  };
+  // Inject the WireGuard endpoint + the LAN -> WireGuard rule.
+  _applyWireGuardIntranet(config, wg);
+  return const JsonEncoder.withIndent('  ').convert(config);
+}
+
 /// Overlays the independent intranet WireGuard tunnel onto an already-built
 /// sing-box config (proxy nodes, direct, etc.). The WireGuard peer is injected
 /// as a 1.12 `endpoints[]` entry scoped (via `allowed_ips`) to the intranet

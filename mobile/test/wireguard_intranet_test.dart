@@ -148,4 +148,34 @@ void main() {
         endpoints.any((e) => (e as Map)['tag'] == WireGuardIntranet.tag),
         isFalse);
   });
+
+  group('buildWireguardIntranetOnlyConfig (WireGuard-only tunnel)', () {
+    test('carries only WireGuard for LAN, everything else direct', () {
+      final out = buildWireguardIntranetOnlyConfig(
+        wg,
+        targetPlatform: TargetPlatform.fuchsia,
+      );
+      expect(out, isNotNull);
+      final cfg = jsonDecode(out!) as Map<String, dynamic>;
+      // WireGuard endpoint present.
+      final eps = (cfg['endpoints'] as List).cast<Map<String, dynamic>>();
+      expect(eps.any((e) => e['tag'] == WireGuardIntranet.tag), isTrue);
+      // No proxy — only the direct outbound.
+      final obTags =
+          (cfg['outbounds'] as List).map((o) => (o as Map)['tag']).toSet();
+      expect(obTags, equals(<dynamic>{'direct'}));
+      // Default route is direct; LAN goes to WireGuard.
+      final route = cfg['route'] as Map;
+      expect(route['final'], 'direct');
+      final rules = (route['rules'] as List).cast<Map<String, dynamic>>();
+      final wgRule =
+          rules.firstWhere((r) => r['outbound'] == WireGuardIntranet.tag);
+      expect(wgRule['ip_cidr'] as List, contains('10.8.0.0/24'));
+    });
+
+    test('returns null when the overlay is inactive', () {
+      expect(buildWireguardIntranetOnlyConfig(wg.copyWith(enabled: false)),
+          isNull);
+    });
+  });
 }
