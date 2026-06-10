@@ -603,6 +603,7 @@ class _NodesScreenState extends State<NodesScreen> {
                 SizedBox(height: 12.h),
                 NodesWireguardCard(
                   busy: _wgBusy,
+                  proxyActive: _proxyActive,
                   onSetEnabled: (enabled) => _handleWireguardToggle(
                     cloudProvider,
                     profileProvider,
