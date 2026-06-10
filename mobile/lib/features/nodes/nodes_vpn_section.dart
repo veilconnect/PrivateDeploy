@@ -26,6 +26,12 @@ class NodesVpnSection extends StatelessWidget {
   final VoidCallback onRefreshRoutes;
   final bool showSetupShortcuts;
 
+  /// Whether the *proxy* (翻墙 node) is the active connection. When null the
+  /// card falls back to the raw tunnel state. When the tunnel is up carrying
+  /// only the intranet WireGuard overlay (proxy disconnected), pass `false` so
+  /// the card shows the proxy as disconnected and offers Connect.
+  final bool? proxyConnected;
+
   const NodesVpnSection({
     Key? key,
     required this.vpnProvider,
@@ -39,13 +45,20 @@ class NodesVpnSection extends StatelessWidget {
     required this.onCreateCloudNode,
     required this.onRefreshRoutes,
     this.showSetupShortcuts = true,
+    this.proxyConnected,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final isDegraded = vpnProvider.isDegraded;
-    final statusColor = _statusColor(vpnProvider.status, degraded: isDegraded);
+    // The proxy (翻墙) connection state, which can differ from the raw tunnel
+    // state: the tunnel may be up carrying only the intranet WireGuard overlay.
+    final proxyUp = proxyConnected ?? vpnProvider.isConnected;
+    final effStatus = proxyConnected == null
+        ? vpnProvider.status
+        : (proxyConnected! ? vpnProvider.status : VpnStatus.disconnected);
+    final statusColor = _statusColor(effStatus, degraded: isDegraded);
     final selectedProfile = profileProvider.activeProfile;
     final stats = vpnProvider.stats;
     final readyCloudNodes = connectableCloudInstances(cloudProvider);
@@ -103,7 +116,7 @@ class NodesVpnSection extends StatelessWidget {
                     ],
                   ),
                   child: Icon(
-                    _statusIcon(vpnProvider.status, degraded: isDegraded),
+                    _statusIcon(effStatus, degraded: isDegraded),
                     color: Colors.white,
                     size: 28.sp,
                   ),
@@ -114,7 +127,7 @@ class NodesVpnSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       NodesStatusChip(
-                        text: _statusLabel(vpnProvider.status, l10n,
+                        text: _statusLabel(effStatus, l10n,
                             degraded: isDegraded),
                         color: statusColor,
                       ),
@@ -143,7 +156,7 @@ class NodesVpnSection extends StatelessWidget {
               ],
             ),
             SizedBox(height: 16.h),
-            if (!vpnProvider.isConnected)
+            if (!proxyUp)
               NodesMetricTile(
                 icon: Icons.hub_outlined,
                 label: l10n.availableRoutes,
@@ -182,7 +195,7 @@ class NodesVpnSection extends StatelessWidget {
                   ),
                 ],
               ),
-            if (vpnProvider.isConnected &&
+            if (proxyUp &&
                 _hasConnectionDetails(vpnProvider)) ...[
               SizedBox(height: 12.h),
               _ConnectionDetailsTile(
@@ -205,7 +218,7 @@ class NodesVpnSection extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (vpnProvider.status == VpnStatus.connected) ...[
+                  if (effStatus == VpnStatus.connected) ...[
                     Row(
                       children: [
                         Expanded(
@@ -246,17 +259,17 @@ class NodesVpnSection extends StatelessWidget {
                       width: double.infinity,
                       child: FilledButton.icon(
                         key: NodesTestKeys.connectButton,
-                        onPressed: vpnProvider.status == VpnStatus.disconnected
+                        onPressed: effStatus == VpnStatus.disconnected
                             ? onConnect
                             : null,
                         icon: Icon(
-                          vpnProvider.status == VpnStatus.disconnected &&
+                          effStatus == VpnStatus.disconnected &&
                                   vpnProvider.error != null
                               ? Icons.refresh
                               : Icons.shield,
                         ),
                         label: Text(
-                          vpnProvider.status == VpnStatus.disconnected &&
+                          effStatus == VpnStatus.disconnected &&
                                   vpnProvider.error != null
                               ? l10n.retryConnect
                               : l10n.connect,

@@ -159,6 +159,184 @@ class CustomRoutingRule {
 }
 
 @immutable
+/// Independent "intranet VPN" overlay: a WireGuard tunnel that runs *alongside*
+/// the proxy nodes inside the same sing-box instance, but only claims traffic
+/// destined for the private LAN behind the WireGuard server. It is controlled
+/// separately from the proxy node selection (its own enable switch), so the
+/// user can run WireGuard-only, proxy-only, or both at once without the two
+/// interfering: intranet CIDRs -> WireGuard, blocked traffic -> proxy nodes,
+/// everything else -> direct.
+@immutable
+class WireGuardIntranet {
+  const WireGuardIntranet({
+    this.enabled = false,
+    this.server = '',
+    this.serverPort = 0,
+    this.privateKey = '',
+    this.peerPublicKey = '',
+    this.localAddress = const [],
+    this.preSharedKey,
+    this.mtu,
+    this.persistentKeepalive = 25,
+    this.extraCidrs = const [],
+  });
+
+  /// Reserved outbound/endpoint tag for the intranet WireGuard tunnel. Distinct
+  /// from the standalone full-tunnel `wireguard-out` so the two never collide.
+  static const tag = 'wireguard-intranet';
+
+  static const defaults = WireGuardIntranet();
+
+  final bool enabled;
+  final String server;
+  final int serverPort;
+  final String privateKey;
+  final String peerPublicKey;
+
+  /// Local interface address(es), e.g. `['10.8.0.2/24']`. The subnet of each
+  /// entry is auto-routed through WireGuard (see [intranetCidrs]).
+  final List<String> localAddress;
+  final String? preSharedKey;
+  final int? mtu;
+  final int persistentKeepalive;
+
+  /// Extra LAN ranges to route through WireGuard in addition to the WG subnet,
+  /// e.g. `['192.168.1.0/24', '10.0.0.0/8']`.
+  final List<String> extraCidrs;
+
+  bool get isConfigured =>
+      server.trim().isNotEmpty &&
+      serverPort > 0 &&
+      privateKey.trim().isNotEmpty &&
+      peerPublicKey.trim().isNotEmpty &&
+      localAddress.any((a) => a.trim().isNotEmpty);
+
+  /// The overlay only injects into the config when both enabled and complete.
+  bool get isActive => enabled && isConfigured;
+
+  /// Destination CIDRs that should be routed through WireGuard: the network of
+  /// each local address (auto) plus any user-supplied [extraCidrs], deduped.
+  List<String> get intranetCidrs {
+    final out = <String>[];
+    for (final addr in localAddress) {
+      final net = wireGuardCidrNetwork(addr);
+      if (net != null) out.add(net);
+    }
+    for (final cidr in extraCidrs) {
+      final net = wireGuardCidrNetwork(cidr);
+      if (net != null) out.add(net);
+    }
+    final seen = <String>{};
+    return out.where((c) => seen.add(c)).toList(growable: false);
+  }
+
+  WireGuardIntranet copyWith({
+    bool? enabled,
+    String? server,
+    int? serverPort,
+    String? privateKey,
+    String? peerPublicKey,
+    List<String>? localAddress,
+    String? preSharedKey,
+    bool clearPreSharedKey = false,
+    int? mtu,
+    bool clearMtu = false,
+    int? persistentKeepalive,
+    List<String>? extraCidrs,
+  }) {
+    return WireGuardIntranet(
+      enabled: enabled ?? this.enabled,
+      server: server ?? this.server,
+      serverPort: serverPort ?? this.serverPort,
+      privateKey: privateKey ?? this.privateKey,
+      peerPublicKey: peerPublicKey ?? this.peerPublicKey,
+      localAddress: localAddress ?? this.localAddress,
+      preSharedKey: clearPreSharedKey ? null : (preSharedKey ?? this.preSharedKey),
+      mtu: clearMtu ? null : (mtu ?? this.mtu),
+      persistentKeepalive: persistentKeepalive ?? this.persistentKeepalive,
+      extraCidrs: extraCidrs ?? this.extraCidrs,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'server': server,
+        'serverPort': serverPort,
+        'privateKey': privateKey,
+        'peerPublicKey': peerPublicKey,
+        'localAddress': localAddress,
+        if (preSharedKey != null) 'preSharedKey': preSharedKey,
+        if (mtu != null) 'mtu': mtu,
+        'persistentKeepalive': persistentKeepalive,
+        'extraCidrs': extraCidrs,
+      };
+
+  factory WireGuardIntranet.fromJson(Map<String, dynamic> json) {
+    List<String> parseList(dynamic value) {
+      if (value is List) {
+        return value
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+      }
+      return const [];
+    }
+
+    int parseInt(dynamic value, int fallback) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value.trim()) ?? fallback;
+      return fallback;
+    }
+
+    final psk = json['preSharedKey']?.toString().trim();
+    return WireGuardIntranet(
+      enabled: json['enabled'] == true,
+      server: json['server']?.toString().trim() ?? '',
+      serverPort: parseInt(json['serverPort'], 0),
+      privateKey: json['privateKey']?.toString().trim() ?? '',
+      peerPublicKey: json['peerPublicKey']?.toString().trim() ?? '',
+      localAddress: parseList(json['localAddress']),
+      preSharedKey: (psk == null || psk.isEmpty) ? null : psk,
+      mtu: json['mtu'] == null ? null : parseInt(json['mtu'], 0),
+      persistentKeepalive: parseInt(json['persistentKeepalive'], 25),
+      extraCidrs: parseList(json['extraCidrs']),
+    );
+  }
+}
+
+/// Normalizes an IPv4/IPv6 CIDR (or bare address) to its network/prefix form,
+/// e.g. `10.8.0.2/24` -> `10.8.0.0/24`. Returns null for unparseable input.
+/// IPv6 is passed through with its prefix (host-bit zeroing is left to the
+/// kernel/sing-box, which match by prefix anyway).
+String? wireGuardCidrNetwork(String raw) {
+  final value = raw.trim();
+  if (value.isEmpty) return null;
+  final slash = value.indexOf('/');
+  final host = slash >= 0 ? value.substring(0, slash) : value;
+  final prefixPart = slash >= 0 ? value.substring(slash + 1) : null;
+  if (host.contains(':')) {
+    // IPv6 — keep as-is with a default /128 when no prefix given.
+    return slash >= 0 ? value : '$value/128';
+  }
+  final octets = host.split('.');
+  if (octets.length != 4) return null;
+  final bytes = <int>[];
+  for (final o in octets) {
+    final n = int.tryParse(o);
+    if (n == null || n < 0 || n > 255) return null;
+    bytes.add(n);
+  }
+  final prefix = prefixPart == null ? 32 : int.tryParse(prefixPart);
+  if (prefix == null || prefix < 0 || prefix > 32) return null;
+  var bits = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+  final mask = prefix == 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF;
+  bits &= mask;
+  final net =
+      '${(bits >> 24) & 0xFF}.${(bits >> 16) & 0xFF}.${(bits >> 8) & 0xFF}.${bits & 0xFF}';
+  return '$net/$prefix';
+}
+
 class VpnRoutingSettings {
   const VpnRoutingSettings({
     this.mode = VpnRoutingMode.split,
@@ -174,6 +352,7 @@ class VpnRoutingSettings {
     this.customProxyCidrs = const [],
     this.customOutbounds = const [],
     this.customRules = const [],
+    this.wireGuardIntranet = WireGuardIntranet.defaults,
   });
 
   final VpnRoutingMode mode;
@@ -196,6 +375,10 @@ class VpnRoutingSettings {
   /// User-defined routing rules that can target any outbound tag (built-in
   /// `direct`/`proxy` or a custom outbound tag).
   final List<CustomRoutingRule> customRules;
+
+  /// Independent intranet WireGuard overlay (separately switched, coexists with
+  /// the proxy nodes). See [WireGuardIntranet].
+  final WireGuardIntranet wireGuardIntranet;
 
   static const defaults = VpnRoutingSettings();
 
@@ -299,6 +482,7 @@ class VpnRoutingSettings {
     List<String>? customProxyCidrs,
     List<Map<String, dynamic>>? customOutbounds,
     List<CustomRoutingRule>? customRules,
+    WireGuardIntranet? wireGuardIntranet,
   }) {
     return VpnRoutingSettings(
       mode: mode ?? this.mode,
@@ -315,6 +499,7 @@ class VpnRoutingSettings {
       customProxyCidrs: customProxyCidrs ?? this.customProxyCidrs,
       customOutbounds: customOutbounds ?? this.customOutbounds,
       customRules: customRules ?? this.customRules,
+      wireGuardIntranet: wireGuardIntranet ?? this.wireGuardIntranet,
     );
   }
 
@@ -333,6 +518,7 @@ class VpnRoutingSettings {
       'customProxyCidrs': customProxyCidrs,
       'customOutbounds': customOutbounds,
       'customRules': customRules.map((rule) => rule.toJson()).toList(),
+      'wireGuardIntranet': wireGuardIntranet.toJson(),
     };
   }
 
@@ -401,6 +587,10 @@ class VpnRoutingSettings {
       customProxyCidrs: parseList(json['customProxyCidrs']),
       customOutbounds: parseOutbounds(json['customOutbounds']),
       customRules: parseRules(json['customRules']),
+      wireGuardIntranet: json['wireGuardIntranet'] is Map
+          ? WireGuardIntranet.fromJson(
+              Map<String, dynamic>.from(json['wireGuardIntranet'] as Map))
+          : WireGuardIntranet.defaults,
     );
   }
 }
@@ -624,6 +814,23 @@ class AppSettingsProvider with ChangeNotifier {
 
   Future<void> setVpnRoutingMode(VpnRoutingMode mode) async {
     await updateVpnRoutingSettings(_vpnRoutingSettings.copyWith(mode: mode));
+  }
+
+  WireGuardIntranet get wireGuardIntranet =>
+      _vpnRoutingSettings.wireGuardIntranet;
+
+  /// Replace the whole intranet-WireGuard config (server, keys, CIDRs, …).
+  Future<void> setWireGuardIntranet(WireGuardIntranet wg) async {
+    await updateVpnRoutingSettings(
+        _vpnRoutingSettings.copyWith(wireGuardIntranet: wg));
+  }
+
+  /// Independent on/off switch for the intranet WireGuard overlay, controlled
+  /// separately from the proxy node selection.
+  Future<void> setWireGuardIntranetEnabled(bool enabled) async {
+    await updateVpnRoutingSettings(_vpnRoutingSettings.copyWith(
+        wireGuardIntranet:
+            _vpnRoutingSettings.wireGuardIntranet.copyWith(enabled: enabled)));
   }
 
   Future<void> updateVpnRoutingSettings(VpnRoutingSettings settings) async {

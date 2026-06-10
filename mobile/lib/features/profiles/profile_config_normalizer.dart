@@ -65,6 +65,13 @@ String normalizeProfileConfigForCurrentPlatform(
           isAndroid: isAndroid,
         ) ||
         changed;
+    // Overlay the independent intranet WireGuard tunnel last, so its LAN rule
+    // sits above the proxy/direct routing produced above.
+    changed = _applyWireGuardIntranet(
+          decoded,
+          routingSettings.wireGuardIntranet,
+        ) ||
+        changed;
 
     if (!changed) {
       return content;
@@ -934,7 +941,12 @@ Map<String, dynamic> _buildWireguardEndpoint(Map<String, dynamic> outbound) {
   if (preSharedKey != null && preSharedKey.isNotEmpty) {
     peer['pre_shared_key'] = outbound['pre_shared_key'];
   }
-  peer['allowed_ips'] = const ['0.0.0.0/0', '::/0'];
+  // Honor an explicit allowed_ips (e.g. the intranet overlay scopes the tunnel
+  // to LAN ranges only); otherwise default to a full route and let the route
+  // layer decide what reaches the tunnel.
+  final explicitAllowed = _coerceStringList(outbound['allowed_ips']);
+  peer['allowed_ips'] =
+      explicitAllowed.isNotEmpty ? explicitAllowed : const ['0.0.0.0/0', '::/0'];
   final keepalive = _asIntOrNull(outbound['persistent_keepalive_interval']);
   if (keepalive != null && keepalive > 0) {
     peer['persistent_keepalive_interval'] = keepalive;
@@ -1040,6 +1052,134 @@ String buildWireguardProfileConfig({
     },
   };
   return const JsonEncoder.withIndent('  ').convert(config);
+}
+
+/// Builds a tunnel config that carries ONLY the intranet WireGuard tunnel: LAN
+/// traffic goes through WireGuard, everything else goes direct (no proxy). Used
+/// when the user keeps the intranet VPN on but disconnects the proxy nodes — so
+/// the two run truly independently. Returns null when [wg] isn't active.
+String? buildWireguardIntranetOnlyConfig(
+  WireGuardIntranet wg, {
+  TargetPlatform? targetPlatform,
+}) {
+  if (!wg.isActive) {
+    return null;
+  }
+  final config = <String, dynamic>{
+    'log': <String, dynamic>{'level': 'info'},
+    'dns': <String, dynamic>{
+      'servers': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'tag': 'dns-direct',
+          'address': '223.5.5.5',
+          'detour': 'direct',
+        },
+      ],
+      'strategy': 'prefer_ipv4',
+    },
+    'inbounds': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'type': 'tun',
+        'tag': 'tun-in',
+        'interface_name': 'tun0',
+        'inet4_address': '172.19.0.1/30',
+        'auto_route': true,
+        'stack': 'gvisor',
+        'sniff': true,
+      },
+    ],
+    'outbounds': <Map<String, dynamic>>[
+      <String, dynamic>{'type': 'direct', 'tag': 'direct'},
+    ],
+    'route': <String, dynamic>{
+      'auto_detect_interface': true,
+      'default_network_strategy': 'default',
+      'rules': <Map<String, dynamic>>[],
+      'final': 'direct',
+    },
+  };
+  // Inject the WireGuard endpoint + the LAN -> WireGuard rule.
+  _applyWireGuardIntranet(config, wg);
+  return const JsonEncoder.withIndent('  ').convert(config);
+}
+
+/// Overlays the independent intranet WireGuard tunnel onto an already-built
+/// sing-box config (proxy nodes, direct, etc.). The WireGuard peer is injected
+/// as a 1.12 `endpoints[]` entry scoped (via `allowed_ips`) to the intranet
+/// CIDRs, and a single highest-priority route rule sends exactly those CIDRs to
+/// it. Everything else keeps flowing through the existing proxy/direct rules —
+/// so the intranet tunnel and the proxy nodes run together without interfering.
+/// Idempotent: re-applying replaces the prior intranet endpoint/rule.
+bool _applyWireGuardIntranet(
+  Map<String, dynamic> decoded,
+  WireGuardIntranet wg,
+) {
+  if (!wg.isActive) {
+    return false;
+  }
+  final cidrs = wg.intranetCidrs;
+  if (cidrs.isEmpty) {
+    return false;
+  }
+  const tag = WireGuardIntranet.tag;
+
+  final outboundShaped = <String, dynamic>{
+    'type': 'wireguard',
+    'tag': tag,
+    'server': wg.server.trim(),
+    'server_port': wg.serverPort,
+    'local_address': wg.localAddress
+        .map((address) => address.trim())
+        .where((address) => address.isNotEmpty)
+        .toList(growable: false),
+    'private_key': wg.privateKey.trim(),
+    'peer_public_key': wg.peerPublicKey.trim(),
+    // Scope the tunnel to the intranet ranges only — NOT a full route.
+    'allowed_ips': cidrs,
+  };
+  final psk = wg.preSharedKey?.trim();
+  if (psk != null && psk.isNotEmpty) {
+    outboundShaped['pre_shared_key'] = psk;
+  }
+  if (wg.mtu != null && wg.mtu! > 0) {
+    outboundShaped['mtu'] = wg.mtu;
+  }
+  if (wg.persistentKeepalive > 0) {
+    outboundShaped['persistent_keepalive_interval'] = wg.persistentKeepalive;
+  }
+
+  // 1. Inject the WireGuard endpoint (replace any stale intranet endpoint).
+  final endpoints = _ensureList<Map<String, dynamic>>(decoded, 'endpoints');
+  endpoints.removeWhere((e) => e['tag']?.toString() == tag);
+  endpoints.add(_buildWireguardEndpoint(outboundShaped));
+
+  // 2. Front-load a single LAN -> WireGuard rule, just after any leading DNS /
+  // sniff / block infrastructure rules so DNS handling is preserved but the
+  // intranet rule still outranks the proxy/direct routing.
+  final route = _ensureMap(decoded, 'route');
+  final rules = _ensureList<Map<String, dynamic>>(route, 'rules');
+  rules.removeWhere((r) => r['outbound']?.toString() == tag);
+  var insertAt = 0;
+  for (var i = 0; i < rules.length; i++) {
+    final r = rules[i];
+    final ob = r['outbound']?.toString();
+    final action = r['action']?.toString();
+    final isInfra = r['protocol']?.toString() == 'dns' ||
+        ob == 'dns-out' ||
+        ob == 'block' ||
+        action == 'sniff' ||
+        action == 'hijack-dns';
+    if (isInfra) {
+      insertAt = i + 1;
+    } else {
+      break;
+    }
+  }
+  rules.insert(insertAt, <String, dynamic>{
+    'ip_cidr': cidrs,
+    'outbound': tag,
+  });
+  return true;
 }
 
 int? _asIntOrNull(dynamic value) {

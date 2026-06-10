@@ -298,7 +298,8 @@ class _SettingsRoutingRulesDialogState
               _buildTextField(
                 controller: _customRulesController,
                 label: '自定义规则（每行一条）',
-                hint: '格式：<domain_suffix|ip_cidr> <值> <出站tag>\n例：ip_cidr 10.0.0.0/24 home-wg',
+                hint:
+                    '格式：<domain_suffix|ip_cidr> <值> <出站tag>\n例：ip_cidr 10.0.0.0/24 home-wg',
               ),
               if (_errorText != null) ...[
                 SizedBox(height: 12.h),
