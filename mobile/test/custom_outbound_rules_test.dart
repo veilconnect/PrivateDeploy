@@ -32,8 +32,7 @@ void main() {
       (decoded['outbounds'] as List).cast<Map<String, dynamic>>();
 
   List<Map<String, dynamic>> rulesOf(Map<String, dynamic> decoded) =>
-      ((decoded['route'] as Map)['rules'] as List)
-          .cast<Map<String, dynamic>>();
+      ((decoded['route'] as Map)['rules'] as List).cast<Map<String, dynamic>>();
 
   group('custom outbounds and rules', () {
     test(
@@ -86,12 +85,11 @@ void main() {
       final peer = peers.first;
       expect(peer['address'], '203.0.113.1',
           reason: 'server maps to peers[].address');
-      expect(peer['port'], 51820,
-          reason: 'server_port maps to peers[].port');
+      expect(peer['port'], 51820, reason: 'server_port maps to peers[].port');
       expect(peer['public_key'], 'peer-public-key',
           reason: 'peer_public_key maps to peers[].public_key');
-      expect((peer['allowed_ips'] as List).cast<String>(),
-          contains('0.0.0.0/0'));
+      expect(
+          (peer['allowed_ips'] as List).cast<String>(), contains('0.0.0.0/0'));
 
       // The rule targeting the endpoint tag must still be generated and take
       // priority over the built-in ip_is_private -> direct rule, otherwise

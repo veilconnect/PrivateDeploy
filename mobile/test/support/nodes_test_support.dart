@@ -84,6 +84,10 @@ class TestAppSettingsProvider extends ChangeNotifier
   VpnRoutingSettings get vpnRoutingSettings => _vpnRoutingSettings;
 
   @override
+  WireGuardIntranet get wireGuardIntranet =>
+      _vpnRoutingSettings.wireGuardIntranet;
+
+  @override
   Future<void> setVpnRoutingMode(VpnRoutingMode mode) async {
     _vpnRoutingSettings = _vpnRoutingSettings.copyWith(mode: mode);
     notifyListeners();

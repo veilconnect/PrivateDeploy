@@ -21,8 +21,11 @@ import '../profiles/profile_content_screen.dart';
 import '../profiles/profile_provider.dart';
 import '../cdn/cdn_provider.dart';
 import '../cdn/cdn_settings_screen.dart';
+import '../profiles/profile_config_normalizer.dart';
+import '../settings/app_settings_provider.dart';
 import '../settings/settings_screen.dart';
 import '../vpn/vpn_provider.dart';
+import 'nodes_wireguard_card.dart';
 
 class NodesScreen extends StatefulWidget {
   const NodesScreen({Key? key}) : super(key: key);
@@ -165,6 +168,7 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     CloudInstance instance,
   ) {
+    _proxyActive = true;
     return useCloudNodeAndConnect(
       context: context,
       instance: instance,
@@ -210,6 +214,105 @@ class _NodesScreenState extends State<NodesScreen> {
         instance,
       ),
     );
+  }
+
+  bool _wgBusy = false;
+
+  /// Whether the proxy (网络访问) node is the active connection. Tracked separately
+  /// from the raw tunnel state so the intranet WireGuard overlay can run on its
+  /// own (proxy disconnected, tunnel carrying only WireGuard) and vice versa.
+  bool _proxyActive = false;
+
+  /// Brings up a tunnel that carries ONLY the intranet WireGuard (LAN -> WG,
+  /// everything else direct). Used when WireGuard should run without the proxy.
+  Future<void> _connectWireguardOnly(VpnProvider vpnProvider) async {
+    final appSettings = context.read<AppSettingsProvider>();
+    final config =
+        buildWireguardIntranetOnlyConfig(appSettings.wireGuardIntranet);
+    if (config == null) {
+      return;
+    }
+    if (vpnProvider.isConnected) {
+      await vpnProvider.disconnect();
+      if (!mounted) return;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    await vpnProvider.connect(
+      configJson: config,
+      profileName: 'Intranet WireGuard',
+    );
+  }
+
+  /// Main connect button: the user wants the proxy node in the tunnel.
+  Future<void> _handleProxyConnect(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) async {
+    _proxyActive = true;
+    await _handleConnect(cloudProvider, profileProvider, vpnProvider);
+  }
+
+  /// Main disconnect button: drop the proxy from the tunnel. If the intranet
+  /// WireGuard is still on, keep the tunnel up carrying only WireGuard;
+  /// otherwise stop the tunnel entirely.
+  Future<void> _handleProxyDisconnect(VpnProvider vpnProvider) async {
+    _proxyActive = false;
+    final appSettings = context.read<AppSettingsProvider>();
+    setState(() => _wgBusy = true);
+    try {
+      if (appSettings.wireGuardIntranet.isActive) {
+        await _connectWireguardOnly(vpnProvider);
+      } else {
+        await handleNodesDisconnect(context: context, vpnProvider: vpnProvider);
+      }
+    } finally {
+      if (mounted) setState(() => _wgBusy = false);
+    }
+  }
+
+  /// Home-screen intranet WireGuard switch. Controls ONLY whether WireGuard is
+  /// in the tunnel — independent of the proxy node. Applies live.
+  Future<void> _handleWireguardToggle(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+    bool enabled,
+  ) async {
+    final appSettings = context.read<AppSettingsProvider>();
+    await appSettings.setWireGuardIntranetEnabled(enabled);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _wgBusy = true);
+    try {
+      if (enabled) {
+        if (_proxyActive) {
+          // Proxy wanted — (re)build proxy + WireGuard.
+          if (vpnProvider.isConnected) {
+            await _handleRestart(cloudProvider, profileProvider, vpnProvider);
+          } else {
+            await _handleConnect(cloudProvider, profileProvider, vpnProvider);
+          }
+        } else {
+          // No proxy — run WireGuard on its own.
+          await _connectWireguardOnly(vpnProvider);
+        }
+      } else if (vpnProvider.isConnected) {
+        if (_proxyActive) {
+          // Keep the proxy, drop WireGuard.
+          await _handleRestart(cloudProvider, profileProvider, vpnProvider);
+        } else {
+          // Was WireGuard-only — turning it off stops the tunnel.
+          await handleNodesDisconnect(
+              context: context, vpnProvider: vpnProvider);
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _wgBusy = false);
+      }
+    }
   }
 
   Future<void> _openCloudNodeDetails(CloudInstance instance) {
@@ -285,6 +388,7 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     Profile profile,
   ) {
+    _proxyActive = true;
     return activateProfileAndConnect(
       context: context,
       profile: profile,
@@ -483,12 +587,10 @@ class _NodesScreenState extends State<NodesScreen> {
                   profileProvider: profileProvider,
                   cloudProvider: cloudProvider,
                   showSetupShortcuts: false,
-                  onConnect: () => _handleConnect(
+                  proxyConnected: _proxyActive,
+                  onConnect: () => _handleProxyConnect(
                       cloudProvider, profileProvider, vpnProvider),
-                  onDisconnect: () => handleNodesDisconnect(
-                    context: context,
-                    vpnProvider: vpnProvider,
-                  ),
+                  onDisconnect: () => _handleProxyDisconnect(vpnProvider),
                   onRestart: () => _handleRestart(
                       cloudProvider, profileProvider, vpnProvider),
                   onConfigureApiKey: () =>
@@ -497,6 +599,17 @@ class _NodesScreenState extends State<NodesScreen> {
                   onCreateCloudNode: () =>
                       _showCreateCloudNodeDialog(cloudProvider),
                   onRefreshRoutes: _refreshAll,
+                ),
+                SizedBox(height: 12.h),
+                NodesWireguardCard(
+                  busy: _wgBusy,
+                  proxyActive: _proxyActive,
+                  onSetEnabled: (enabled) => _handleWireguardToggle(
+                    cloudProvider,
+                    profileProvider,
+                    vpnProvider,
+                    enabled,
+                  ),
                 ),
                 SizedBox(height: 20.h),
                 if (showLocalProfilesFirst && localProfiles.isNotEmpty) ...[
