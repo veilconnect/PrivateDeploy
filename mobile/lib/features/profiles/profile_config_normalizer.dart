@@ -1097,6 +1097,10 @@ String? buildWireguardIntranetOnlyConfig(
   if (!wg.isActive) {
     return null;
   }
+  final cidrs = wg.intranetCidrs;
+  if (cidrs.isEmpty) {
+    return null;
+  }
   final config = <String, dynamic>{
     'log': <String, dynamic>{'level': 'info'},
     'dns': <String, dynamic>{
@@ -1115,6 +1119,10 @@ String? buildWireguardIntranetOnlyConfig(
         'tag': 'tun-in',
         'interface_name': 'tun0',
         'inet4_address': '172.19.0.1/30',
+        // WG-only must not install a device-wide default route. Only the
+        // intranet CIDRs enter the VPN; all public traffic stays on Android's
+        // underlying network even if direct DNS/protect is flaky.
+        'route_address': cidrs,
         'auto_route': true,
         'stack': 'gvisor',
         'sniff': true,

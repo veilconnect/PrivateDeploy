@@ -11,7 +11,8 @@ Future<void> showWireguardIntranetConfigDialog(BuildContext context) async {
   final settings = context.read<AppSettingsProvider>();
   final result = await showDialog<WireGuardIntranet>(
     context: context,
-    builder: (_) => _WireguardIntranetDialog(current: settings.wireGuardIntranet),
+    builder: (_) =>
+        _WireguardIntranetDialog(current: settings.wireGuardIntranet),
   );
   if (result != null) {
     await settings.setWireGuardIntranet(result);
@@ -33,11 +34,21 @@ Future<void> showWireguardIntranetConfigDialog(BuildContext context) async {
 class SettingsWireguardIntranetSection extends StatelessWidget {
   const SettingsWireguardIntranetSection({Key? key}) : super(key: key);
 
+  List<String> _dedupeCidrs(Iterable<String> values) {
+    final seen = <String>{};
+    return values.where((value) => seen.add(value)).toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettingsProvider>();
     final wg = settings.wireGuardIntranet;
-    final cidrs = wg.intranetCidrs;
+    final autoCidrs = _dedupeCidrs(
+      wg.localAddress.map(wireGuardCidrNetwork).whereType<String>(),
+    );
+    final extraCidrs = _dedupeCidrs(
+      wg.extraCidrs.map(wireGuardCidrNetwork).whereType<String>(),
+    );
 
     return Card(
       child: Padding(
@@ -69,9 +80,11 @@ class SettingsWireguardIntranetSection extends StatelessWidget {
               title: const Text('启用内网 VPN / Enable intranet VPN'),
               subtitle: Text(
                 wg.isConfigured
-                    ? (cidrs.isEmpty
-                        ? '已配置 / Configured'
-                        : '走 WireGuard 的网段 / Routed: ${cidrs.join(', ')}')
+                    ? [
+                        if (autoCidrs.isNotEmpty)
+                          '自动路由 / Auto: ${autoCidrs.join(', ')}',
+                        '额外网段 / Extra: ${extraCidrs.isEmpty ? '未设置 / None' : extraCidrs.join(', ')}',
+                      ].join('\n')
                     : '尚未配置,点下方按钮设置 / Not configured yet',
               ),
               value: wg.enabled,
@@ -106,7 +119,6 @@ class SettingsWireguardIntranetSection extends StatelessWidget {
       ),
     );
   }
-
 }
 
 class _WireguardIntranetDialog extends StatefulWidget {
@@ -136,7 +148,8 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
     super.initState();
     final c = widget.current;
     _server = TextEditingController(text: c.server);
-    _port = TextEditingController(text: c.serverPort > 0 ? '${c.serverPort}' : '');
+    _port =
+        TextEditingController(text: c.serverPort > 0 ? '${c.serverPort}' : '');
     _privateKey = TextEditingController(text: c.privateKey);
     _peerPublicKey = TextEditingController(text: c.peerPublicKey);
     _localAddress = TextEditingController(text: c.localAddress.join(', '));
@@ -283,18 +296,28 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
                     hint: '192.168.1.0/24, 10.0.0.0/8',
                     maxLines: 2,
                     validator: (v) => _validateCidrList(v, required: false)),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: 12.h),
+                    child: Text(
+                      '本地地址所在子网会自动路由；这里仅填写额外网段。\n'
+                      'The local-address subnet is automatic; only add extra ranges here.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
                 _field(_preSharedKey, '预共享密钥 / Pre-shared key (可选)',
                     obscure: true),
-                _field(_mtu, 'MTU (可选)',
-                    keyboard: TextInputType.number,
+                _field(_mtu, 'MTU (可选)', keyboard: TextInputType.number,
                     validator: (v) {
-                      final t = v?.trim() ?? '';
-                      if (t.isEmpty) return null;
-                      final n = int.tryParse(t);
-                      return (n == null || n < 576 || n > 9000)
-                          ? '576–9000 或留空 / 576–9000 or blank'
-                          : null;
-                    }),
+                  final t = v?.trim() ?? '';
+                  if (t.isEmpty) return null;
+                  final n = int.tryParse(t);
+                  return (n == null || n < 576 || n > 9000)
+                      ? '576–9000 或留空 / 576–9000 or blank'
+                      : null;
+                }),
                 _field(_keepalive, '保活间隔秒 / Keepalive',
                     keyboard: TextInputType.number),
                 Text(

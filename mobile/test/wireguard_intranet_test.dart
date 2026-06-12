@@ -159,7 +159,14 @@ void main() {
       final obTags =
           (cfg['outbounds'] as List).map((o) => (o as Map)['tag']).toSet();
       expect(obTags, equals(<dynamic>{'direct'}));
-      // Default route is direct; LAN goes to WireGuard.
+      // Default route is direct inside sing-box, but Android should only
+      // route intranet CIDRs into the VPN instead of capturing 0.0.0.0/0.
+      final tun = (cfg['inbounds'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((i) => i['type'] == 'tun');
+      expect(tun['route_address'] as List,
+          containsAll(<String>['10.8.0.0/24', '192.168.1.0/24']));
+      expect(tun['route_address'] as List, isNot(contains('0.0.0.0/0')));
       final route = cfg['route'] as Map;
       expect(route['final'], 'direct');
       final rules = (route['rules'] as List).cast<Map<String, dynamic>>();
