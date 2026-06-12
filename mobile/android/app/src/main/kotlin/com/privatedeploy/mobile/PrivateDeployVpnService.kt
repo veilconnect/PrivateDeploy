@@ -1948,9 +1948,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
         prefs: SharedPreferences,
         config: String,
         proxyless: Boolean,
+        desiredRunning: Boolean,
     ): Boolean = prefs.edit()
         .putString(persistedIntentKeyConfig, config)
-        .putBoolean(persistedIntentKeyDesiredRunning, true)
+        .putBoolean(persistedIntentKeyDesiredRunning, desiredRunning)
         .putBoolean(persistedIntentKeyProxyless, proxyless)
         .commit()
 
@@ -1965,7 +1966,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 Log.e(TAG, "VPN intent not persisted: secure storage unavailable")
                 return
             }
-            if (!writePersistedVpnIntent(securePrefs, config, proxyless)) {
+            if (!writePersistedVpnIntent(
+                    securePrefs,
+                    config,
+                    proxyless,
+                    desiredRunning = true,
+                )) {
                 Log.e(TAG, "VPN intent not persisted: secure commit failed")
                 return
             }
@@ -2005,7 +2011,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // One-time migration from the historical plaintext prefs. Delete the
         // legacy copy only after the encrypted write succeeds.
         if (securePrefs != null &&
-            writePersistedVpnIntent(securePrefs, legacy.config, legacy.proxyless)) {
+            writePersistedVpnIntent(
+                securePrefs,
+                legacy.config,
+                legacy.proxyless,
+                desiredRunning = legacy.wantsRunning,
+            )) {
             legacyPrefs.edit().clear().commit()
         }
         return legacy

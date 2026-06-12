@@ -570,6 +570,13 @@ void main() {
         status: VpnStatus.connected,
         activeProfileName: 'Intranet WireGuard',
         proxylessTunnel: true,
+        liveConfigJson: jsonEncode({
+          'log': {'level': 'info'},
+          'outbounds': [
+            {'type': 'direct', 'tag': 'direct'},
+          ],
+          'route': {'final': 'snapshot-final'},
+        }),
       );
       final settingsProvider = _FakeAppSettingsProvider(
         VpnRoutingSettings(
@@ -603,10 +610,10 @@ void main() {
           <String?>['Cloud: fra-node', 'Intranet WireGuard']);
       final restored =
           jsonDecode(vpnProvider.connectConfigs.last!) as Map<String, dynamic>;
-      expect((restored['route'] as Map)['final'], 'direct');
-      final endpointTags =
-          (restored['endpoints'] as List).map((e) => (e as Map)['tag']).toSet();
-      expect(endpointTags, contains(WireGuardIntranet.tag));
+      expect((restored['route'] as Map)['final'], 'snapshot-final');
+      expect(restored.containsKey('endpoints'), isFalse,
+          reason:
+              'restore must use the live snapshot, not rebuild from settings');
     });
   });
 }
@@ -1053,6 +1060,7 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     this.disconnectResult = true,
     this.activeProfileName,
     this.proxylessTunnel = false,
+    this.liveConfigJson,
   });
 
   @override
@@ -1061,6 +1069,7 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   final bool disconnectResult;
   String? activeProfileName;
   bool proxylessTunnel;
+  String? liveConfigJson;
   int connectCalls = 0;
   int disconnectCalls = 0;
   String? lastConfigJson;
@@ -1109,6 +1118,19 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   @override
   bool get isProxylessTunnel => proxylessTunnel;
+
+  @override
+  VpnSessionSnapshot? get activeSessionSnapshot {
+    final config = liveConfigJson;
+    if (status != VpnStatus.connected || config == null || config.isEmpty) {
+      return null;
+    }
+    return VpnSessionSnapshot(
+      configJson: config,
+      profileName: activeProfileName,
+      proxyless: proxylessTunnel,
+    );
+  }
 
   @override
   Future<bool> connect({

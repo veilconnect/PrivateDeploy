@@ -325,8 +325,6 @@ Future<ProfileSpeedResult> testProfileSpeed({
   }
 
   final previousSession = capturePreviousVpnSession(
-    context: context,
-    profileProvider: profileProvider,
     vpnProvider: vpnProvider,
   );
 

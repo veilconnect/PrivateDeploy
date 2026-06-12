@@ -435,8 +435,6 @@ Future<void> testCloudNodeLatency({
   }
 
   final previousSession = capturePreviousVpnSession(
-    context: context,
-    profileProvider: profileProvider,
     vpnProvider: vpnProvider,
   );
 
@@ -536,8 +534,6 @@ Future<void> testAllCloudNodesLatency({
   }
 
   final previousSession = capturePreviousVpnSession(
-    context: context,
-    profileProvider: profileProvider,
     vpnProvider: vpnProvider,
   );
   final runThroughputProbe = throughputProbe ?? runCloudThroughputProbe;

@@ -1,4 +1,5 @@
 import Flutter
+import CryptoKit
 import NetworkExtension
 import UIKit
 
@@ -13,8 +14,12 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private static let extensionBundleInfoKey = "PrivateDeployVPNExtensionBundleIdentifier"
     private static let defaultAppGroup = "group.com.privatedeploy.mobile"
     private static let configDefaultsKey = "vpn_config"
+    private static let secureConfigDefaultsKey = "vpn_config_secure_v1"
+    private static let proxylessDefaultsKey = "vpn_proxyless"
     private static let statusDefaultsKey = "vpn_status"
     private static let statsDefaultsKey = "vpn_stats"
+    private static let configEncryptionKeyMaterial =
+        "PrivateDeploy iOS VPN config sealing v1"
     private static let unsupportedMessage =
         "iOS VPN core is not available in this build. Build and embed VPNCore.framework before using native VPN control."
 
@@ -116,7 +121,12 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
 
-        persistConfig(config)
+        let proxyless = (arguments["proxyless"] as? Bool) ?? false
+        guard persistConfig(config) else {
+            result(flutterError(code: "VPN_CONFIG_PERSIST_FAILED", message: "Failed to store VPN config securely"))
+            return
+        }
+        persistProxyless(proxyless)
         ensureManagerSaved { [weak self] manager, error in
             guard let self else { return }
             if let error {
@@ -295,7 +305,11 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
 
-        persistConfig(config)
+        let proxyless = arguments["proxyless"] as? Bool
+        guard persistConfig(config) else {
+            result(flutterError(code: "VPN_CONFIG_PERSIST_FAILED", message: "Failed to store VPN config securely"))
+            return
+        }
         loadManager { [weak self] manager, error in
             guard let self else { return }
             if let error {
@@ -303,13 +317,23 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 return
             }
             guard let manager, self.isConnectedStatus(manager.connection.status) else {
+                if let proxyless {
+                    self.persistProxyless(proxyless)
+                }
                 result(true)
                 return
             }
-            self.sendProviderCommand(["action": "updateConfig", "config": config], manager: manager) { commandError, _ in
+            var command: [String: Any] = ["action": "updateConfig", "config": config]
+            if let proxyless {
+                command["proxyless"] = proxyless
+            }
+            self.sendProviderCommand(command, manager: manager) { commandError, _ in
                 if let commandError {
                     result(self.flutterError(code: "VPN_UPDATE_CONFIG_FAILED", message: commandError.localizedDescription))
                     return
+                }
+                if let proxyless {
+                    self.persistProxyless(proxyless)
                 }
                 result(true)
             }
@@ -383,9 +407,11 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             proto.disconnectOnSleep = false
             proto.providerConfiguration = [
                 Self.appGroupInfoKey: self.appGroupIdentifier(),
-                "configKey": Self.configDefaultsKey,
+                "configKey": Self.secureConfigDefaultsKey,
+                "legacyConfigKey": Self.configDefaultsKey,
                 "statusKey": Self.statusDefaultsKey,
                 "statsKey": Self.statsDefaultsKey,
+                "proxylessKey": Self.proxylessDefaultsKey,
             ]
 
             manager.protocolConfiguration = proto
@@ -454,8 +480,41 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
-    private func persistConfig(_ config: String) {
-        sharedDefaults()?.set(config, forKey: Self.configDefaultsKey)
+    @discardableResult
+    private func persistConfig(_ config: String) -> Bool {
+        guard let sealed = sealConfig(config), let defaults = sharedDefaults() else {
+            return false
+        }
+        defaults.set(sealed, forKey: Self.secureConfigDefaultsKey)
+        defaults.removeObject(forKey: Self.configDefaultsKey)
+        return true
+    }
+
+    private func persistProxyless(_ proxyless: Bool) {
+        sharedDefaults()?.set(proxyless, forKey: Self.proxylessDefaultsKey)
+    }
+
+    private func loadProxyless() -> Bool {
+        sharedDefaults()?.bool(forKey: Self.proxylessDefaultsKey) ?? false
+    }
+
+    private func sealConfig(_ config: String) -> String? {
+        do {
+            let sealedBox = try AES.GCM.seal(
+                Data(config.utf8),
+                using: configSealingKey()
+            )
+            return sealedBox.combined?.base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
+    private func configSealingKey() -> SymmetricKey {
+        let digest = SHA256.hash(
+            data: Data(Self.configEncryptionKeyMaterial.utf8)
+        )
+        return SymmetricKey(data: Data(digest))
     }
 
     private func persistStatus(_ status: [String: Any]) {
@@ -469,13 +528,15 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private func statusPayload(manager: NETunnelProviderManager?) -> [String: Any] {
         let status = manager?.connection.status ?? .invalid
         let sharedStatus = sharedDefaults()?.dictionary(forKey: Self.statusDefaultsKey) ?? [:]
+        let running = isConnectedStatus(status)
         var payload: [String: Any] = [
-            "running": isConnectedStatus(status),
+            "running": running,
             "status": statusString(status),
             "connected_at": sharedStatus["connected_at"] ?? 0,
             "uptime": sharedStatus["uptime"] ?? 0,
         ]
         payload["message"] = sharedStatus["message"] ?? NSNull()
+        payload["proxyless"] = running && ((sharedStatus["proxyless"] as? Bool) ?? loadProxyless())
         return payload
     }
 

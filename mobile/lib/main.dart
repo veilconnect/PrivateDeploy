@@ -32,14 +32,21 @@ void main() async {
   // connection can immediately apply CN split-routing rules.
   await BundledRuleSetRegistry.ensureInstalled();
 
-  runApp(const PrivateDeployApp());
+  final appSettingsProvider = AppSettingsProvider();
+  await appSettingsProvider.ready;
+
+  runApp(PrivateDeployApp(appSettingsProvider: appSettingsProvider));
 }
 
 class PrivateDeployApp extends StatelessWidget {
-  const PrivateDeployApp({Key? key}) : super(key: key);
+  const PrivateDeployApp({Key? key, this.appSettingsProvider})
+      : super(key: key);
+
+  final AppSettingsProvider? appSettingsProvider;
 
   @override
   Widget build(BuildContext context) {
+    final appSettings = appSettingsProvider;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
@@ -47,8 +54,14 @@ class PrivateDeployApp extends StatelessWidget {
         // AppSettingsProvider is created BEFORE the VpnProvider proxy so the
         // auto-failover handler below can read the current routing settings
         // (it must re-apply the WireGuard overlay / custom rules to each
-        // failover node's config).
-        ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
+        // failover node's config). The real app injects a pre-loaded instance
+        // from main(); tests can still construct PrivateDeployApp() directly.
+        if (appSettings == null)
+          ChangeNotifierProvider(create: (_) => AppSettingsProvider())
+        else
+          ChangeNotifierProvider<AppSettingsProvider>.value(
+            value: appSettings,
+          ),
         ChangeNotifierProxyProvider2<CloudProvider, ProfileProvider,
             VpnProvider>(
           create: (_) => VpnProvider(),

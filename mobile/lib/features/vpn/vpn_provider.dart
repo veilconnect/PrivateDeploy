@@ -15,6 +15,18 @@ import 'vpn_status_helpers.dart';
 export 'vpn_models.dart';
 export 'vpn_diagnostics.dart';
 
+class VpnSessionSnapshot {
+  const VpnSessionSnapshot({
+    required this.configJson,
+    required this.profileName,
+    required this.proxyless,
+  });
+
+  final String configJson;
+  final String? profileName;
+  final bool proxyless;
+}
+
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
       'VPN permission was revoked or another VPN app/system VPN interrupted this connection. Disable the other VPN and try again.';
@@ -90,6 +102,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // string-matching.
   VpnHealth _health = VpnHealth.healthy;
   String? _activeProfile;
+  String? _activeConfigJson;
   // True while the active tunnel has NO proxy upstream — i.e. the WG-only /
   // intranet config (egress = `direct`, only LAN flows through WireGuard). The
   // native health probe is proxy-oriented (it tests reachability of a public-IP
@@ -167,6 +180,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _status == VpnStatus.connected && _health == VpnHealth.degraded;
   bool get needsCdnGuidance => _needsCdnGuidance;
   String? get activeProfile => _activeProfile;
+
+  VpnSessionSnapshot? get activeSessionSnapshot {
+    final config = _activeConfigJson;
+    if (_status != VpnStatus.connected || config == null || config.isEmpty) {
+      return null;
+    }
+    return VpnSessionSnapshot(
+      configJson: config,
+      profileName: _activeProfile,
+      proxyless: _proxylessTunnel,
+    );
+  }
 
   /// True when the active tunnel has no proxy upstream (WG-only / intranet).
   /// Authoritative for "is a proxy node in the tunnel?" — survives app restart
@@ -495,6 +520,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // back to the running session's mode — and the native `proxyless` status
     // echo corrects any residual drift on the next status event.
     final previousActiveProfile = _activeProfile;
+    final previousActiveConfigJson = _activeConfigJson;
     final previousProxyless = _proxylessTunnel;
     _proxylessTunnel = proxyless;
     // Failover history is scoped to a single auto-failover episode. A new
@@ -546,6 +572,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           // Persist the session identity only once the tunnel is verified up,
           // so a failed start never leaves stale state to be restored on the
           // next app launch.
+          _activeConfigJson = config;
           _persistSessionState(profileName, proxyless,
               intranetWg: _intranetWgLive);
           _isLoading = false;
@@ -555,6 +582,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         }
 
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _error = _normalizeVpnError(
               _nativeService.lastError ??
                   _error ??
@@ -569,6 +597,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         // instead of locally marking it disconnected.
         if (_isAlreadyRunningStartRejection(startError)) {
           _activeProfile = previousActiveProfile;
+          _activeConfigJson = previousActiveConfigJson;
           _proxylessTunnel = previousProxyless;
           _intranetWgLive = previousIntranetWgLive;
           await loadStatus();
@@ -578,6 +607,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           }
         }
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _stopStatsPolling();
         // The native side never adopted this start — if a previous session is
         // still running it kept its own mode, so restore our copy of it.
@@ -590,6 +620,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _error = _normalizeVpnError(e.toString()) ??
           'Failed to start VPN: ${e.toString()}';
       _status = VpnStatus.disconnected;
+      _activeConfigJson = null;
       _stopStatsPolling();
       // Same rollback as the rejected branch: this start never took effect,
       // so a still-running previous session keeps its mode in our copy too.
@@ -597,6 +628,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _intranetWgLive = previousIntranetWgLive;
       if (_isAlreadyRunningStartRejection(e.toString())) {
         _activeProfile = previousActiveProfile;
+        _activeConfigJson = previousActiveConfigJson;
       }
       AppLogger.error('[VpnProvider] Start error', e);
       return false;
@@ -633,6 +665,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
         _proxylessTunnel = false;
         _intranetWgLive = false;
         _clearSessionState();
@@ -681,6 +714,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
         _proxylessTunnel = false;
         _intranetWgLive = false;
         _clearSessionState();
@@ -1289,6 +1323,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     _status = VpnStatus.disconnected;
     _activeProfile = null;
+    _activeConfigJson = null;
     _proxylessTunnel = false;
     _intranetWgLive = false;
     _clearSessionState();
@@ -1554,6 +1589,15 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
             !isDirectRouteDegraded,
       );
     } else {
+      if (previousStatus == VpnStatus.connected &&
+          (normalizedStatus == 'disconnected' ||
+              normalizedStatus == 'revoked')) {
+        _activeProfile = null;
+        _activeConfigJson = null;
+        _proxylessTunnel = false;
+        _intranetWgLive = false;
+        _clearSessionState();
+      }
       _stopStatsPolling();
       _deferredStartupDiagnosticsTimer?.cancel();
       _deferredStartupDiagnosticsTimer = null;

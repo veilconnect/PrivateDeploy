@@ -1,9 +1,3 @@
-import 'package:flutter/widgets.dart';
-import 'package:provider/provider.dart';
-
-import '../profiles/profile_config_normalizer.dart';
-import '../profiles/profile_provider.dart';
-import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 
 class NodesPreviousVpnSession {
@@ -29,27 +23,18 @@ class NodesPreviousVpnSession {
 }
 
 NodesPreviousVpnSession capturePreviousVpnSession({
-  required BuildContext context,
-  required ProfileProvider profileProvider,
   required VpnProvider vpnProvider,
 }) {
-  if (vpnProvider.status != VpnStatus.connected) {
+  final snapshot = vpnProvider.activeSessionSnapshot;
+  if (snapshot == null) {
     return const NodesPreviousVpnSession.disconnected();
   }
 
-  final routingSettings =
-      context.read<AppSettingsProvider>().vpnRoutingSettings;
-  final proxyless = vpnProvider.isProxylessTunnel;
-  final wg = routingSettings.wireGuardIntranet;
-  final configJson = proxyless
-      ? buildWireguardIntranetOnlyConfig(wg.copyWith(enabled: true))
-      : profileProvider.getActiveConfigJson(routingSettings: routingSettings);
-
   return NodesPreviousVpnSession(
     connected: true,
-    profileName: vpnProvider.activeProfile,
-    configJson: configJson,
-    proxyless: proxyless,
+    profileName: snapshot.profileName,
+    configJson: snapshot.configJson,
+    proxyless: snapshot.proxyless,
   );
 }
 

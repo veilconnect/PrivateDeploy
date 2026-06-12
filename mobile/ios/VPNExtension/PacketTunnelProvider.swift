@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NetworkExtension
 import os.log
 
@@ -11,8 +12,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         static let appGroup = "group.com.privatedeploy.mobile"
         static let appGroupConfigKey = "PrivateDeployVPNAppGroup"
         static let configDefaultsKey = "vpn_config"
+        static let secureConfigDefaultsKey = "vpn_config_secure_v1"
+        static let proxylessDefaultsKey = "vpn_proxyless"
         static let statusDefaultsKey = "vpn_status"
         static let statsDefaultsKey = "vpn_stats"
+        static let configEncryptionKeyMaterial =
+            "PrivateDeploy iOS VPN config sealing v1"
     }
 
     private enum TunnelError {
@@ -25,6 +30,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private let logger = OSLog(subsystem: "com.privatedeploy.mobile.vpnextension", category: "VPN")
+    private var proxylessTunnel = false
 
 #if canImport(VPNCore)
     private var vpnCore: VPNCoreVPNService?
@@ -34,6 +40,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         os_log("[PacketTunnelProvider] Starting tunnel...", log: logger, type: .info)
 
+        proxylessTunnel = loadProxyless()
         let config = loadConfig()
         if config.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let error = NSError(
@@ -80,6 +87,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             os_log("[PacketTunnelProvider] Failed to stop VPN core: %{public}@", log: logger, type: .error, error.localizedDescription)
         }
         vpnCore = nil
+        proxylessTunnel = false
         persistStatus(disconnectedStatusPayload())
         persistStats(defaultStatsPayload())
 #else
@@ -130,7 +138,70 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func loadConfig() -> String {
-        sharedDefaults()?.string(forKey: SharedKeys.configDefaultsKey) ?? ""
+        guard let defaults = sharedDefaults() else {
+            return ""
+        }
+        if let sealed = defaults.string(forKey: SharedKeys.secureConfigDefaultsKey),
+           let opened = openConfig(sealed) {
+            return opened
+        }
+
+        let legacy = defaults.string(forKey: SharedKeys.configDefaultsKey) ?? ""
+        if !legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           persistConfig(legacy) {
+            defaults.removeObject(forKey: SharedKeys.configDefaultsKey)
+        }
+        return legacy
+    }
+
+    @discardableResult
+    private func persistConfig(_ config: String) -> Bool {
+        guard let sealed = sealConfig(config), let defaults = sharedDefaults() else {
+            return false
+        }
+        defaults.set(sealed, forKey: SharedKeys.secureConfigDefaultsKey)
+        defaults.removeObject(forKey: SharedKeys.configDefaultsKey)
+        return true
+    }
+
+    private func loadProxyless() -> Bool {
+        sharedDefaults()?.bool(forKey: SharedKeys.proxylessDefaultsKey) ?? false
+    }
+
+    private func persistProxyless(_ proxyless: Bool) {
+        sharedDefaults()?.set(proxyless, forKey: SharedKeys.proxylessDefaultsKey)
+    }
+
+    private func sealConfig(_ config: String) -> String? {
+        do {
+            let sealedBox = try AES.GCM.seal(
+                Data(config.utf8),
+                using: configSealingKey()
+            )
+            return sealedBox.combined?.base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
+    private func openConfig(_ sealedConfig: String) -> String? {
+        guard let data = Data(base64Encoded: sealedConfig) else {
+            return nil
+        }
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: data)
+            let opened = try AES.GCM.open(sealedBox, using: configSealingKey())
+            return String(data: opened, encoding: .utf8)
+        } catch {
+            return nil
+        }
+    }
+
+    private func configSealingKey() -> SymmetricKey {
+        let digest = SHA256.hash(
+            data: Data(SharedKeys.configEncryptionKeyMaterial.utf8)
+        )
+        return SymmetricKey(data: Data(digest))
     }
 
     private func persistStatus(_ status: [String: Any]) {
@@ -148,6 +219,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             "message": NSNull(),
             "connected_at": 0,
             "uptime": 0,
+            "proxyless": false,
         ]
     }
 
@@ -158,6 +230,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             "message": message,
             "connected_at": 0,
             "uptime": 0,
+            "proxyless": false,
         ]
     }
 
@@ -245,9 +318,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func readStatusPayload() -> [String: Any] {
         guard let statusJson = vpnCore?.getStatus(),
-              let payload = decodeJsonString(statusJson) else {
+              var payload = decodeJsonString(statusJson) else {
             return disconnectedStatusPayload()
         }
+        let status = (payload["status"] as? String)?.lowercased() ?? ""
+        let running = (payload["running"] as? Bool) ??
+            (status == "connected" || status == "connecting" || status == "reasserting")
+        payload["proxyless"] = running && proxylessTunnel
         return payload
     }
 
@@ -289,8 +366,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     NSLocalizedDescriptionKey: "VPN config is empty",
                 ])
             }
-            sharedDefaults()?.set(config, forKey: SharedKeys.configDefaultsKey)
+            guard persistConfig(config) else {
+                throw NSError(domain: TunnelError.domain, code: 1009, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to store VPN config securely",
+                ])
+            }
+            let requestedProxyless = message["proxyless"] as? Bool
             try vpnCore?.updateConfig(config)
+            if let requestedProxyless {
+                proxylessTunnel = requestedProxyless
+                persistProxyless(requestedProxyless)
+            }
             persistRuntimeState()
             return ["ok": true]
         case "restart":
