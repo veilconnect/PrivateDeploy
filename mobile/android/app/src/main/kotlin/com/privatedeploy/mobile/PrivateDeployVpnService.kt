@@ -1188,6 +1188,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 val currentHandle = lastObservedUnderlyingNetworkHandle
                 val currentType = lastObservedUnderlyingNetworkType
                 if (currentHandle != handleAtStart || currentType != typeAtStart) {
+                    if (proxylessTunnel) {
+                        Log.i(
+                            TAG,
+                            "Underlying network changed during WG-only restart " +
+                                "(${formatInterfaceType(typeAtStart)}@$handleAtStart -> " +
+                                "${formatInterfaceType(currentType)}@$currentHandle); " +
+                                "skipping follow-up restart so long-lived LAN flows stay up",
+                        )
+                        return@thread
+                    }
                     Log.i(
                         TAG,
                         "Underlying network changed during restart " +
@@ -1214,9 +1224,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun scheduleFollowUpRestart(delayMs: Long) {
         cancelFollowUpRestart()
+        if (proxylessTunnel) {
+            Log.i(TAG, "Skipping follow-up restart for WG-only tunnel")
+            return
+        }
         val runnable = Runnable {
             followUpRestartRunnable = null
             if (!desiredRunning.get()) return@Runnable
+            if (proxylessTunnel) {
+                Log.i(TAG, "Follow-up restart skipped: WG-only tunnel is active")
+                return@Runnable
+            }
             restartVpn()
         }
         followUpRestartRunnable = runnable
@@ -2642,6 +2660,26 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // of which physical network the VPN is actually riding.
         publishUnderlyingNetwork("change/$reason", connectivityManager)
 
+        // WG-only / intranet mode has no proxy upstream sockets to flush.
+        // Restarting the VPN here tears down the TUN and drops long-lived LAN
+        // TCP sessions such as Termux `ssh user@10.0.0.12`. The official
+        // WireGuard app stays stable because it lets WireGuard keep the peer
+        // alive across ordinary network capability churn. Match that behavior:
+        // keep Android's underlying-network attribution fresh, but do not
+        // rebuild sing-box/WireGuard unless the tunnel actually goes down.
+        if (proxylessTunnel) {
+            pendingUnderlyingNetworkRestart?.let(mainHandler::removeCallbacks)
+            pendingUnderlyingNetworkRestart = null
+            Log.i(
+                TAG,
+                "Underlying network changed ($reason): " +
+                    "${formatInterfaceType(previousType)}@$previousHandle -> " +
+                    "${formatInterfaceType(snapshot.type)}@${snapshot.handle}; " +
+                    "WG-only tunnel stays running to preserve long-lived LAN flows",
+            )
+            return
+        }
+
         // Gate on user-intent (activeConfig is set by startVpn() and never
         // cleared except on app process death), not on isRunning. Otherwise a
         // previous handover-restart that hit RESTART_MAX_ATTEMPTS leaves
@@ -2675,6 +2713,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
             // Re-check user intent at fire time — stopVpn could have
             // happened during the debounce window.
             if (!desiredRunning.get()) {
+                return@Runnable
+            }
+            if (proxylessTunnel) {
+                Log.i(TAG, "Underlying-network restart skipped: WG-only tunnel is active")
                 return@Runnable
             }
             if (activeConfig.isNullOrBlank() || restartInProgress.get()) {
