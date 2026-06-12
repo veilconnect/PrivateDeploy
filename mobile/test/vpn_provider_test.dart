@@ -208,6 +208,66 @@ void main() {
       );
     });
 
+    test('already-running start rejection preserves the live session',
+        () async {
+      var startCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            startCalls += 1;
+            if (startCalls == 1) {
+              return true;
+            }
+            throw PlatformException(
+              code: 'ALREADY_RUNNING',
+              message: 'VPN is already running',
+            );
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+              'proxyless': true,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 1024,
+              'download_bytes': 2048,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final first = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Live WG',
+        proxyless: true,
+      );
+      expect(first, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live WG');
+      expect(vpnProvider.isProxylessTunnel, isTrue);
+
+      final second = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Other profile',
+      );
+
+      expect(second, false);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live WG');
+      expect(vpnProvider.isProxylessTunnel, isTrue);
+      expect(vpnProvider.error, contains('already running'));
+    });
+
     test('connect only reports success after confirmed running status',
         () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -406,8 +466,7 @@ void main() {
           reason: 'WG-only tunnel must not be judged by the proxy probe');
     });
 
-    test(
-        'native proxyless echo rebuilds the Dart flag after a process restart',
+    test('native proxyless echo rebuilds the Dart flag after a process restart',
         () async {
       // The Dart process died before its session state landed; the surviving
       // native WG-only tunnel echoes proxyless=true in its status, and a

@@ -159,6 +159,7 @@ class CustomRoutingRule {
 }
 
 @immutable
+
 /// Independent "intranet VPN" overlay: a WireGuard tunnel that runs *alongside*
 /// the proxy nodes inside the same sing-box instance, but only claims traffic
 /// destined for the private LAN behind the WireGuard server. It is controlled
@@ -251,7 +252,8 @@ class WireGuardIntranet {
       privateKey: privateKey ?? this.privateKey,
       peerPublicKey: peerPublicKey ?? this.peerPublicKey,
       localAddress: localAddress ?? this.localAddress,
-      preSharedKey: clearPreSharedKey ? null : (preSharedKey ?? this.preSharedKey),
+      preSharedKey:
+          clearPreSharedKey ? null : (preSharedKey ?? this.preSharedKey),
       mtu: clearMtu ? null : (mtu ?? this.mtu),
       persistentKeepalive: persistentKeepalive ?? this.persistentKeepalive,
       extraCidrs: extraCidrs ?? this.extraCidrs,
@@ -561,8 +563,7 @@ class VpnRoutingSettings {
       if (value is List) {
         return value
             .whereType<Map>()
-            .map((item) =>
-                Map<String, dynamic>.from(item))
+            .map((item) => Map<String, dynamic>.from(item))
             .where((item) =>
                 item['tag']?.toString().trim().isNotEmpty == true &&
                 item['type']?.toString().trim().isNotEmpty == true)
@@ -575,8 +576,8 @@ class VpnRoutingSettings {
       if (value is List) {
         return value
             .whereType<Map>()
-            .map((item) => CustomRoutingRule.fromJson(
-                Map<String, dynamic>.from(item)))
+            .map((item) =>
+                CustomRoutingRule.fromJson(Map<String, dynamic>.from(item)))
             .where((rule) => rule.value.isNotEmpty && rule.outbound.isNotEmpty)
             .toList(growable: false);
       }
@@ -817,12 +818,17 @@ List<String> _subtractPackages(
 }
 
 class AppSettingsProvider with ChangeNotifier {
-  static const String _vpnRoutingSettingsKey = 'mobile_vpn_routing_settings';
+  static const String _vpnRoutingSettingsLegacyKey =
+      'mobile_vpn_routing_settings';
+  static const String _vpnRoutingSettingsSecureKey =
+      'mobile_vpn_routing_settings_secure_v1';
 
   VpnRoutingSettings _vpnRoutingSettings = VpnRoutingSettings.defaults;
+  bool _settingsMutated = false;
+  late final Future<void> ready;
 
   AppSettingsProvider() {
-    _load();
+    ready = _load();
   }
 
   VpnRoutingSettings get vpnRoutingSettings => _vpnRoutingSettings;
@@ -849,6 +855,7 @@ class AppSettingsProvider with ChangeNotifier {
   }
 
   Future<void> updateVpnRoutingSettings(VpnRoutingSettings settings) async {
+    _settingsMutated = true;
     _vpnRoutingSettings = settings;
     await _persist();
     notifyListeners();
@@ -858,31 +865,63 @@ class AppSettingsProvider with ChangeNotifier {
     await updateVpnRoutingSettings(VpnRoutingSettings.defaults);
   }
 
-  void _load() {
-    final raw = StorageService.getString(_vpnRoutingSettingsKey);
+  Future<void> _load() async {
+    if (!StorageService.isInitialized) {
+      await StorageService.init();
+    }
+
+    var migratedLegacy = false;
+    var raw = await StorageService.getSecureStringStrict(
+      _vpnRoutingSettingsSecureKey,
+    );
     if (raw == null || raw.trim().isEmpty) {
-      _vpnRoutingSettings = VpnRoutingSettings.defaults;
+      raw = StorageService.getString(_vpnRoutingSettingsLegacyKey);
+      migratedLegacy = raw != null && raw.trim().isNotEmpty;
+    }
+
+    final loaded = _decodeRoutingSettings(raw) ?? VpnRoutingSettings.defaults;
+    if (_settingsMutated) {
       return;
+    }
+
+    _vpnRoutingSettings = loaded;
+    if (migratedLegacy) {
+      try {
+        await _persist();
+      } catch (error) {
+        debugPrint(
+          '[AppSettingsProvider] Failed to migrate VPN routing settings to secure storage: $error',
+        );
+      }
+    }
+    notifyListeners();
+  }
+
+  VpnRoutingSettings? _decodeRoutingSettings(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
     }
 
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
-        _vpnRoutingSettings = VpnRoutingSettings.fromJson(decoded);
-        return;
+        return VpnRoutingSettings.fromJson(decoded);
       }
     } catch (_) {}
-
-    _vpnRoutingSettings = VpnRoutingSettings.defaults;
+    return null;
   }
 
   Future<void> _persist() async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    await StorageService.saveString(
-      _vpnRoutingSettingsKey,
+    final saved = await StorageService.saveSecureStringStrict(
+      _vpnRoutingSettingsSecureKey,
       jsonEncode(_vpnRoutingSettings.toJson()),
     );
+    if (!saved) {
+      throw StateError('Secure storage is required for VPN routing settings');
+    }
+    await StorageService.remove(_vpnRoutingSettingsLegacyKey);
   }
 }

@@ -494,6 +494,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // session is already running), the rejected branch below rolls the flag
     // back to the running session's mode — and the native `proxyless` status
     // echo corrects any residual drift on the next status event.
+    final previousActiveProfile = _activeProfile;
     final previousProxyless = _proxylessTunnel;
     _proxylessTunnel = proxyless;
     // Failover history is scoped to a single auto-failover episode. A new
@@ -524,7 +525,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // which is the more useful semantic for any caller asking
       // "which profile is the user trying to use".
       _activeProfile = profileName;
-      final success = await _nativeService.startVpn(config, proxyless: proxyless);
+      final success =
+          await _nativeService.startVpn(config, proxyless: proxyless);
 
       if (success) {
         // Keep the explicit assignment on success too so we stay
@@ -561,14 +563,27 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
             'VPN did not reach connected state';
         return false;
       } else {
+        final startError = _nativeService.lastError;
+        // Duplicate starts are rejected by native without stopping the existing
+        // tunnel. Keep this provider attached to that still-running session
+        // instead of locally marking it disconnected.
+        if (_isAlreadyRunningStartRejection(startError)) {
+          _activeProfile = previousActiveProfile;
+          _proxylessTunnel = previousProxyless;
+          _intranetWgLive = previousIntranetWgLive;
+          await loadStatus();
+          if (_status == VpnStatus.connected) {
+            _error = _normalizeVpnError(startError);
+            return false;
+          }
+        }
         _status = VpnStatus.disconnected;
         _stopStatsPolling();
         // The native side never adopted this start — if a previous session is
         // still running it kept its own mode, so restore our copy of it.
         _proxylessTunnel = previousProxyless;
         _intranetWgLive = previousIntranetWgLive;
-        _error = _normalizeVpnError(_nativeService.lastError) ??
-            'Failed to start VPN';
+        _error = _normalizeVpnError(startError) ?? 'Failed to start VPN';
         return false;
       }
     } catch (e) {
@@ -580,6 +595,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // so a still-running previous session keeps its mode in our copy too.
       _proxylessTunnel = previousProxyless;
       _intranetWgLive = previousIntranetWgLive;
+      if (_isAlreadyRunningStartRejection(e.toString())) {
+        _activeProfile = previousActiveProfile;
+      }
       AppLogger.error('[VpnProvider] Start error', e);
       return false;
     } finally {
@@ -1366,6 +1384,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   bool _isBenignAndroidPrivateDnsProbeError(String message) {
     return message.contains('operation not permitted') &&
         message.contains('open outbound connection');
+  }
+
+  bool _isAlreadyRunningStartRejection(String? message) {
+    final normalized = message?.trim().toLowerCase() ?? '';
+    return normalized.contains('already_running') ||
+        normalized.contains('already running') ||
+        normalized.contains('start already in progress');
   }
 
   Duration _currentConnectionTime() {

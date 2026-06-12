@@ -63,6 +63,17 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                     val status = intent.getStringExtra("status")
                     val message = intent.getStringExtra("message")
 
+                    if (status == "already_running") {
+                        if (pendingStartResult != null) {
+                            failPendingStart(
+                                code = "ALREADY_RUNNING",
+                                message = message ?: "VPN is already running",
+                                stopVpn = false
+                            )
+                        }
+                        return
+                    }
+
                     eventSink?.success(
                         mapOf(
                             "type" to "status",
@@ -313,11 +324,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         result.success(true)
     }
 
-    private fun failPendingStart(code: String, message: String) {
-        val shouldStopVpn = pendingStartDispatched
+    private fun failPendingStart(
+        code: String,
+        message: String,
+        stopVpn: Boolean = pendingStartDispatched
+    ) {
         val result = pendingStartResult ?: return
         clearPendingStart()
-        if (shouldStopVpn) {
+        if (stopVpn) {
             sendVpnAction(ACTION_STOP)
         }
         result.error(code, message, null)

@@ -393,6 +393,25 @@ void main() {
       expect(tags, containsAll(<String>['home-wg', WireGuardIntranet.tag]));
     });
 
+    test('a same-peer custom WG with a DIFFERENT PSK is NOT collapsed', () {
+      // PSK participates in the WireGuard peer identity. Reusing the endpoint
+      // with a different PSK is not equivalent and must not be merged into the
+      // managed intranet peer.
+      final otherPsk = sameKeyCustomWg()..['pre_shared_key'] = 'other-psk';
+      final out = normalizeProfileConfigForCurrentPlatform(
+        baseProxyConfig(),
+        targetPlatform: TargetPlatform.fuchsia,
+        routingSettings: VpnRoutingSettings(
+          wireGuardIntranet: wg,
+          customOutbounds: [otherPsk],
+        ),
+      );
+      final cfg = jsonDecode(out) as Map<String, dynamic>;
+      final tags =
+          (cfg['endpoints'] as List).map((e) => (e as Map)['tag']).toSet();
+      expect(tags, containsAll(<String>['home-wg', WireGuardIntranet.tag]));
+    });
+
     test('overlay is SKIPPED when a same-key WG node is the primary tunnel',
         () {
       // A full-tunnel `wireguard-out` profile (route.final = wireguard-out)
@@ -488,6 +507,20 @@ void main() {
       ((((base['endpoints'] as List)[1] as Map)['peers'] as List).first
               as Map)['public_key'] =
           'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=';
+      final out = normalizeProfileConfigForCurrentPlatform(
+        jsonEncode(base),
+        targetPlatform: TargetPlatform.fuchsia,
+      );
+      final cfg = jsonDecode(out) as Map<String, dynamic>;
+      final tags =
+          (cfg['endpoints'] as List).map((e) => (e as Map)['tag']).toSet();
+      expect(tags, containsAll(<String>['wg-a', 'wg-b']));
+    });
+
+    test('does NOT collapse two DIFFERENT PSKs', () {
+      final base = twoEndpointBase(portA: 51820, portB: 51820);
+      ((((base['endpoints'] as List)[1] as Map)['peers'] as List).first
+          as Map)['pre_shared_key'] = 'other-psk';
       final out = normalizeProfileConfigForCurrentPlatform(
         jsonEncode(base),
         targetPlatform: TargetPlatform.fuchsia,

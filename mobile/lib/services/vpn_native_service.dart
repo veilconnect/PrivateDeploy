@@ -82,7 +82,10 @@ class VpnNativeService {
       }
       return result ?? false;
     } on PlatformException catch (e) {
-      _recordLastError(e.message ?? 'Native VPN start failed');
+      final message = e.message ?? 'Native VPN start failed';
+      _recordLastError(
+        e.code == 'ALREADY_RUNNING' ? 'ALREADY_RUNNING: $message' : message,
+      );
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {

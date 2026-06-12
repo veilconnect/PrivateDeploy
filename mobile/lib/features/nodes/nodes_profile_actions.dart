@@ -330,47 +330,58 @@ Future<ProfileSpeedResult> testProfileSpeed({
     vpnProvider: vpnProvider,
   );
 
-  if (previousSession.connected) {
-    await vpnProvider.disconnect();
-  }
-
-  final benchmarkConfig = normalizeProfileConfigForCurrentPlatform(configJson);
-  final connected = await vpnProvider.connect(
-    configJson: benchmarkConfig,
-    profileName: profile.name,
-    stabilityCheckDuration: const Duration(seconds: 3),
-    statusPollInterval: const Duration(milliseconds: 500),
+  var result = ProfileSpeedResult(
+    error: l10nEarly.failedToConnectSpeedTestTunnel,
   );
+  try {
+    if (previousSession.connected) {
+      await vpnProvider.disconnect();
+    }
 
-  ProfileSpeedResult result;
-  if (connected) {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    final probe = throughputProbe ?? runCloudThroughputProbe;
-    final sample = await probe();
-    result = ProfileSpeedResult(
-      throughputMbps: sample.speedMbps,
-      error: sample.hasSample ? null : sample.error,
+    final benchmarkConfig =
+        normalizeProfileConfigForCurrentPlatform(configJson);
+    final connected = await vpnProvider.connect(
+      configJson: benchmarkConfig,
+      profileName: profile.name,
+      stabilityCheckDuration: const Duration(seconds: 3),
+      statusPollInterval: const Duration(milliseconds: 500),
     );
-    await vpnProvider.disconnect();
-  } else {
-    final l10n = AppLocalizations.of(context)!;
-    result = ProfileSpeedResult(
-      error: vpnProvider.error == null
-          ? l10n.failedToConnectSpeedTestTunnel
-          : localizeVpnStatusMessage(vpnProvider.error, l10n),
-    );
+
+    if (connected) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final probe = throughputProbe ?? runCloudThroughputProbe;
+      final sample = await probe();
+      result = ProfileSpeedResult(
+        throughputMbps: sample.speedMbps,
+        error: sample.hasSample ? null : sample.error,
+      );
+      await vpnProvider.disconnect();
+    } else {
+      final l10n = AppLocalizations.of(context)!;
+      result = ProfileSpeedResult(
+        error: vpnProvider.error == null
+            ? l10n.failedToConnectSpeedTestTunnel
+            : localizeVpnStatusMessage(vpnProvider.error, l10n),
+      );
+    }
+  } finally {
+    if (previousSession.canRestore) {
+      if (vpnProvider.status == VpnStatus.connected) {
+        await vpnProvider.disconnect();
+      }
+      await restorePreviousVpnSession(
+        session: previousSession,
+        vpnProvider: vpnProvider,
+      );
+    } else if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
   }
 
   // The speed-test result is shown inline on the profile card. Clearing the
   // sticky banner here avoids the failure lingering on the connection card
   // after the user has already seen the inline result.
   vpnProvider.clearError();
-
-  // Restore previous VPN connection if one was active.
-  await restorePreviousVpnSession(
-    session: previousSession,
-    vpnProvider: vpnProvider,
-  );
 
   return result;
 }

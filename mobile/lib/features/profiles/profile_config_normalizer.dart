@@ -1148,11 +1148,12 @@ String? buildWireguardIntranetOnlyConfig(
 }
 
 /// A WireGuard endpoint's peer identity for grouping: private key + peer server
-/// address + peer public key (NOT the port — see
+/// address + peer public key + PSK (NOT the port — see
 /// [_collapseDuplicateWireguardPeers], which treats a missing port as a
 /// wildcard so a port-less paste still matches a fully specified peer, while
 /// two DIFFERENT explicit ports stay distinct). Returns null for non-WireGuard
-/// endpoints or ones missing a key/peer address/public key.
+/// endpoints or ones missing a key/peer address/public key. Missing and blank
+/// PSK are normalized to the same value.
 String? _wireguardPeerIdentity(Map endpoint) {
   if (endpoint['type']?.toString() != 'wireguard') return null;
   final pk = endpoint['private_key']?.toString().trim();
@@ -1165,7 +1166,8 @@ String? _wireguardPeerIdentity(Map endpoint) {
   if (addr.isEmpty) return null; // no server address — not a groupable peer
   final peerKey = p0['public_key']?.toString().trim() ?? '';
   if (peerKey.isEmpty) return null;
-  return '$pk|$addr|$peerKey';
+  final psk = p0['pre_shared_key']?.toString().trim() ?? '';
+  return '$pk|$addr|$peerKey|$psk';
 }
 
 /// Whether [allowed] already carries a full route for [cidr]'s address family
@@ -1462,9 +1464,9 @@ bool _applyWireGuardIntranet(
   // endpoint already dials THIS server with THIS local+peer keypair, the two endpoints
   // fight over that one session (each handshake evicts the other's) and the
   // tunnel keeps dropping. Identify those true duplicates precisely — same
-  // private key, peer public key, and same peer server+port — so we never touch
-  // an unrelated endpoint that merely reuses the client key against a different
-  // server or peer identity.
+  // private key, peer public key, PSK, and same peer server+port — so we never
+  // touch an unrelated endpoint that merely reuses the client key against a
+  // different server or peer identity.
   bool isSameWgPeer(Map<String, dynamic> e) {
     if (ownKey.isEmpty) return false;
     if (e['type']?.toString() != 'wireguard') return false;
@@ -1475,6 +1477,11 @@ bool _applyWireGuardIntranet(
     if (p0 is! Map) return false;
     if (p0['address']?.toString().trim() != ownServer) return false;
     if (p0['public_key']?.toString().trim() != wg.peerPublicKey.trim()) {
+      return false;
+    }
+    final peerPsk = p0['pre_shared_key']?.toString().trim() ?? '';
+    final wgPsk = wg.preSharedKey?.trim() ?? '';
+    if (peerPsk != wgPsk) {
       return false;
     }
     // A pasted custom outbound may omit server_port (the peer ends up with no

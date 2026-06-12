@@ -390,13 +390,13 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     CloudInstance instance,
   ) {
-    return testCloudNodeLatency(
-      context: context,
-      cloudProvider: cloudProvider,
-      instance: instance,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
+    return _runBusyExclusive(() => testCloudNodeLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+          instance: instance,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+        ));
   }
 
   Future<void> _testAllCloudNodesLatency(
@@ -404,12 +404,12 @@ class _NodesScreenState extends State<NodesScreen> {
     ProfileProvider profileProvider,
     VpnProvider vpnProvider,
   ) {
-    return testAllCloudNodesLatency(
-      context: context,
-      cloudProvider: cloudProvider,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
+    return _runBusyExclusive(() => testAllCloudNodesLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+        ));
   }
 
   Future<void> _activateProfile(
@@ -456,23 +456,25 @@ class _NodesScreenState extends State<NodesScreen> {
     ProfileProvider profileProvider,
     VpnProvider vpnProvider,
     Profile profile,
-  ) async {
-    setState(() {
-      _profileSpeedResults[profile.id] = const ProfileSpeedResult.testing();
-    });
-
-    final result = await testProfileSpeed(
-      context: context,
-      profile: profile,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
-
-    if (mounted) {
+  ) {
+    return _runBusyExclusive(() async {
       setState(() {
-        _profileSpeedResults[profile.id] = result;
+        _profileSpeedResults[profile.id] = const ProfileSpeedResult.testing();
       });
-    }
+
+      final result = await testProfileSpeed(
+        context: context,
+        profile: profile,
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+      );
+
+      if (mounted) {
+        setState(() {
+          _profileSpeedResults[profile.id] = result;
+        });
+      }
+    });
   }
 
   Future<void> _showImportProfileDialog() {
@@ -635,8 +637,8 @@ class _NodesScreenState extends State<NodesScreen> {
                   onConnect: () => _handleProxyConnect(
                       cloudProvider, profileProvider, vpnProvider),
                   onDisconnect: () => _handleProxyDisconnect(vpnProvider),
-                  onRestart: () => _runBusyExclusive(() =>
-                      _handleRestart(cloudProvider, profileProvider, vpnProvider)),
+                  onRestart: () => _runBusyExclusive(() => _handleRestart(
+                      cloudProvider, profileProvider, vpnProvider)),
                   onConfigureApiKey: () =>
                       _showCloudApiKeyDialog(cloudProvider),
                   onImportProfile: _showImportProfileDialog,

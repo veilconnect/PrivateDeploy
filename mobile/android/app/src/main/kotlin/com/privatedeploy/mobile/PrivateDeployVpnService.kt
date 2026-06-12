@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.IpPrefix
@@ -20,6 +21,8 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.privatedeploy.mobile.vpncore.gomobile.Gomobile
 import com.privatedeploy.mobile.vpncore.gomobile.Platform
 import com.privatedeploy.mobile.vpncore.gomobile.TunConfig
@@ -465,6 +468,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         synchronized(teardownLock) { /* barrier */ }
         if (isRunning) {
             Log.w(TAG, "VPN is already running")
+            broadcastStatus("already_running", "VPN is already running")
             return
         }
         if (config.isBlank()) {
@@ -506,6 +510,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // finally-clause clears it.
         if (!startInProgress.compareAndSet(false, true)) {
             Log.i(TAG, "VPN start ignored — another start is already in progress")
+            broadcastStatus("already_running", "VPN start already in progress")
             return
         }
 
@@ -1891,28 +1896,80 @@ class PrivateDeployVpnService : VpnService(), Platform {
     // null-action branch in onStartCommand calls
     // [attemptResumeFromPersistedIntent] which reads this file and
     // resumes if the user previously wanted VPN active.
-    private val persistedIntentPrefsName = "vpn_intent_v1"
+    private val persistedIntentSecurePrefsName = "vpn_intent_secure_v1"
+    private val persistedIntentLegacyPrefsName = "vpn_intent_v1"
     private val persistedIntentKeyConfig = "config"
     private val persistedIntentKeyDesiredRunning = "desired_running"
     private val persistedIntentKeyProxyless = "proxyless"
 
+    private data class PersistedVpnIntent(
+        val hasData: Boolean,
+        val wantsRunning: Boolean = false,
+        val config: String = "",
+        val proxyless: Boolean = false,
+    )
+
+    private fun securePersistedIntentPrefs(): SharedPreferences? {
+        return try {
+            val masterKey = MasterKey.Builder(this)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                this,
+                persistedIntentSecurePrefsName,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Secure VPN intent storage unavailable", e)
+            null
+        }
+    }
+
+    private fun legacyPersistedIntentPrefs(): SharedPreferences =
+        getSharedPreferences(persistedIntentLegacyPrefsName, MODE_PRIVATE)
+
+    private fun readPersistedVpnIntent(prefs: SharedPreferences): PersistedVpnIntent {
+        val hasData = prefs.contains(persistedIntentKeyDesiredRunning) ||
+            prefs.contains(persistedIntentKeyConfig)
+        if (!hasData) {
+            return PersistedVpnIntent(hasData = false)
+        }
+        return PersistedVpnIntent(
+            hasData = true,
+            wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false),
+            config = prefs.getString(persistedIntentKeyConfig, null).orEmpty(),
+            proxyless = prefs.getBoolean(persistedIntentKeyProxyless, false),
+        )
+    }
+
+    private fun writePersistedVpnIntent(
+        prefs: SharedPreferences,
+        config: String,
+        proxyless: Boolean,
+    ): Boolean = prefs.edit()
+        .putString(persistedIntentKeyConfig, config)
+        .putBoolean(persistedIntentKeyDesiredRunning, true)
+        .putBoolean(persistedIntentKeyProxyless, proxyless)
+        .commit()
+
     private fun persistVpnIntent(config: String, proxyless: Boolean) {
         try {
             // Synchronous commit() (not apply()): the intent + proxyless flag
-            // MUST be durable before the tunnel comes up — otherwise an
-            // OS-redelivered/resumed WG-only start reads a missing flag,
-            // reverts to proxy health, and tears the tunnel down. NB: the
-            // startVpn call site runs this on the MAIN thread (inside
-            // onStartCommand, before the start worker spawns) — a deliberate
-            // StrictMode trade-off: the file is tiny (sub-ms write) and
-            // durability-before-start is the whole point. The updateConfig
-            // call site runs on its worker thread.
-            getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-                .edit()
-                .putString(persistedIntentKeyConfig, config)
-                .putBoolean(persistedIntentKeyDesiredRunning, true)
-                .putBoolean(persistedIntentKeyProxyless, proxyless)
-                .commit()
+            // MUST be durable before the tunnel comes up. Store the full runtime
+            // config only in encrypted prefs; if secure storage is unavailable,
+            // do not fall back to plaintext because the config contains keys.
+            val securePrefs = securePersistedIntentPrefs()
+            if (securePrefs == null) {
+                Log.e(TAG, "VPN intent not persisted: secure storage unavailable")
+                return
+            }
+            if (!writePersistedVpnIntent(securePrefs, config, proxyless)) {
+                Log.e(TAG, "VPN intent not persisted: secure commit failed")
+                return
+            }
+            legacyPersistedIntentPrefs().edit().clear().commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist VPN intent", e)
         }
@@ -1920,28 +1977,38 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun clearPersistedVpnIntent() {
         try {
-            // Synchronous .commit() rather than async .apply(). User-initiated
-            // Stop is the critical call site (line 833); .apply() returns
-            // immediately and the actual disk write is deferred to a
-            // background queue. If lmkd kills the process before that queue
-            // flushes, the persisted intent stays "active" on disk and the
-            // OS-recreated service auto-resumes the tunnel the user explicitly
-            // stopped — a "zombie VPN" violation of user intent that gemini
-            // flagged on 2026-06-01 (round-6 review).
-            //
-            // .commit() blocks the caller until the write completes against
-            // the filesystem journal/page cache. For our tiny prefs file
-            // that's typically sub-millisecond; the 5-second ANR threshold
-            // is multiple orders of magnitude away. Synchronous writes
-            // also survive lmkd kills because the kernel keeps page-cached
-            // data and flushes it after the process dies.
-            getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-                .edit()
-                .clear()
-                .commit()
+            // Clear both secure and legacy stores. Legacy is read only for
+            // migration, but clearing it here prevents a stopped tunnel from
+            // being resurrected by an old plaintext snapshot.
+            securePersistedIntentPrefs()?.edit()?.clear()?.commit()
+            legacyPersistedIntentPrefs().edit().clear().commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to clear persisted VPN intent", e)
         }
+    }
+
+    private fun loadPersistedVpnIntent(): PersistedVpnIntent {
+        val securePrefs = securePersistedIntentPrefs()
+        if (securePrefs != null) {
+            val secure = readPersistedVpnIntent(securePrefs)
+            if (secure.hasData) {
+                return secure
+            }
+        }
+
+        val legacyPrefs = legacyPersistedIntentPrefs()
+        val legacy = readPersistedVpnIntent(legacyPrefs)
+        if (!legacy.hasData) {
+            return legacy
+        }
+
+        // One-time migration from the historical plaintext prefs. Delete the
+        // legacy copy only after the encrypted write succeeds.
+        if (securePrefs != null &&
+            writePersistedVpnIntent(securePrefs, legacy.config, legacy.proxyless)) {
+            legacyPrefs.edit().clear().commit()
+        }
+        return legacy
     }
 
     private fun attemptResumeFromPersistedIntent() {
@@ -1956,11 +2023,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 // worker-spawned-but-not-yet-running window.
                 return
             }
-            val prefs = getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-            val wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false)
-            val config = prefs.getString(persistedIntentKeyConfig, null).orEmpty()
-            val resumeProxyless = prefs.getBoolean(persistedIntentKeyProxyless, false)
-            if (!wantsRunning || config.isBlank()) {
+            val persistedIntent = loadPersistedVpnIntent()
+            val config = persistedIntent.config
+            val resumeProxyless = persistedIntent.proxyless
+            if (!persistedIntent.wantsRunning || config.isBlank()) {
                 Log.i(TAG, "Resume skipped: no persisted active VPN intent.")
                 return
             }
