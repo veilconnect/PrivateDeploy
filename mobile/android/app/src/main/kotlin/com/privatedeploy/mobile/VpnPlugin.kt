@@ -49,6 +49,9 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     private var pendingPermissionResult: MethodChannel.Result? = null
     private var pendingStartResult: MethodChannel.Result? = null
     private var pendingStartConfig: String? = null
+    // Whether the pending start is a proxyless (WG-only / intranet) tunnel —
+    // forwarded to the service so its proxy-oriented health checks are skipped.
+    private var pendingStartProxyless: Boolean = false
     private var pendingStartDispatched = false
     private var pendingStartTimeout: Runnable? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -66,7 +69,8 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                             "data" to mapOf(
                                 "running" to (status == "connected"),
                                 "status" to status,
-                                "message" to message
+                                "message" to message,
+                                "proxyless" to intent.getBooleanExtra("proxyless", false)
                             )
                         )
                     )
@@ -241,6 +245,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
 
         pendingStartResult = result
         pendingStartConfig = config
+        pendingStartProxyless = call.argument<Boolean>("proxyless") ?: false
         pendingStartDispatched = false
 
         val intent = VpnService.prepare(context)
@@ -263,6 +268,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         val intent = Intent(context, PrivateDeployVpnService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_CONFIG, config)
+            putExtra(EXTRA_PROXYLESS, pendingStartProxyless)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -322,6 +328,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         pendingStartTimeout = null
         pendingStartResult = null
         pendingStartConfig = null
+        pendingStartProxyless = false
         pendingStartDispatched = false
     }
 
@@ -554,8 +561,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             result.error("INVALID_CONFIG", "VPN config is empty", null)
             return
         }
+        // Tri-state mode declaration: absent = the swap doesn't change the
+        // tunnel mode (the service keeps its current proxylessTunnel).
+        val proxyless = call.argument<Boolean>("proxyless")
         sendVpnAction(ACTION_UPDATE_CONFIG) {
             putExtra(EXTRA_CONFIG, config)
+            if (proxyless != null) {
+                putExtra(EXTRA_PROXYLESS, proxyless)
+            }
         }
         result.success(true)
     }

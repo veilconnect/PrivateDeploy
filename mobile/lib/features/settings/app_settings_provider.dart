@@ -316,7 +316,17 @@ String? wireGuardCidrNetwork(String raw) {
   final host = slash >= 0 ? value.substring(0, slash) : value;
   final prefixPart = slash >= 0 ? value.substring(slash + 1) : null;
   if (host.contains(':')) {
-    // IPv6 — keep as-is with a default /128 when no prefix given.
+    // IPv6 — validate the address and prefix, then keep as-is with a default
+    // /128 when no prefix given (host-bit zeroing is left to the kernel).
+    try {
+      Uri.parseIPv6Address(host);
+    } on FormatException {
+      return null;
+    }
+    if (prefixPart != null) {
+      final prefix = int.tryParse(prefixPart);
+      if (prefix == null || prefix < 0 || prefix > 128) return null;
+    }
     return slash >= 0 ? value : '$value/128';
   }
   final octets = host.split('.');
@@ -659,6 +669,11 @@ const reservedOutboundTags = {
   'dns-out',
   'select',
   'auto',
+  // Reserved for the managed WireGuard tunnels so a user-pasted custom
+  // outbound can't collide with the intranet overlay / full-tunnel WG node
+  // (which would inject a second endpoint dialing the same server).
+  WireGuardIntranet.tag,
+  'wireguard-out',
 };
 
 String? validateVpnRoutingOutboundTag(String value) {
@@ -712,10 +727,10 @@ Map<String, dynamic> buildWireguardOutbound({
   if (mtu != null && mtu > 0) {
     outbound['mtu'] = mtu;
   }
-  // Note: the bundled sing-box (v1.11) legacy WireGuard outbound has no
-  // `persistent_keepalive_interval` field (it only exists on the 1.12+ endpoint
-  // format). Emitting it makes sing-box reject the entire config, so it is
-  // intentionally not set here; the normalizer also strips it defensively.
+  // Keepalive is intentionally not set on this outbound-shaped map: the legacy
+  // 1.11 outbound has no such field. The normalizer converts this into a 1.12
+  // `endpoint` via _buildWireguardEndpoint, which — because the field is absent
+  // here — applies the 25s default so the tunnel doesn't drop on NAT timeout.
   return outbound;
 }
 

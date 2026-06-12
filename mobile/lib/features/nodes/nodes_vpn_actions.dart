@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../profiles/bundled_rule_set_registry.dart';
+import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
@@ -29,6 +31,7 @@ Future<bool> autoFailoverToNextCloudNode({
   required ProfileProvider profileProvider,
   required VpnProvider vpnProvider,
   required Set<String> triedProfileNames,
+  VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
 }) async {
   final candidates = connectableCloudInstances(cloudProvider)
       .where((inst) => !triedProfileNames.contains(cloudProfileName(inst)))
@@ -79,7 +82,17 @@ Future<bool> autoFailoverToNextCloudNode({
       await vpnProvider.disconnect();
     }
     final connected = await vpnProvider.connect(
-      configJson: config,
+      // Normalize with the user's routing settings so the failover node keeps
+      // the WireGuard overlay / custom rules (connecting the raw node config
+      // would silently drop them). Bundled rule-set paths must come along
+      // too — without them the normalizer cannot emit the pd-geosite-cn /
+      // pd-geoip-cn direct rules and split-mode users lose CN routing after
+      // a failover.
+      configJson: normalizeProfileConfigForCurrentPlatform(
+        config,
+        routingSettings: routingSettings,
+        bundledRuleSetPaths: BundledRuleSetRegistry.paths,
+      ),
       profileName: profileName,
       stabilityCheckDuration: const Duration(seconds: 6),
       statusPollInterval: const Duration(milliseconds: 500),
@@ -114,7 +127,11 @@ Future<bool> autoFailoverToNextCloudNode({
       await vpnProvider.disconnect();
     }
     final connected = await vpnProvider.connect(
-      configJson: config,
+      configJson: normalizeProfileConfigForCurrentPlatform(
+        config,
+        routingSettings: routingSettings,
+        bundledRuleSetPaths: BundledRuleSetRegistry.paths,
+      ),
       profileName: profile.name,
       stabilityCheckDuration: const Duration(seconds: 6),
       statusPollInterval: const Duration(milliseconds: 500),
@@ -353,6 +370,7 @@ Future<void> handleNodesConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
       triedProfileNames: tried,
+      routingSettings: context.read<AppSettingsProvider>().vpnRoutingSettings,
     );
     if (switched ||
         (vpnProvider.status == VpnStatus.connected &&

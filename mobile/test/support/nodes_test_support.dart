@@ -695,6 +695,15 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
   final String? activeProfile;
 
   @override
+  bool get isProxylessTunnel => false;
+
+  // Mirrors the real provider's behavior for a plain proxy tunnel: the test
+  // workspace connects regular cloud-node configs, which carry no intranet
+  // WireGuard overlay.
+  @override
+  bool get intranetWireguardLive => false;
+
+  @override
   final bool isSupported;
 
   @override

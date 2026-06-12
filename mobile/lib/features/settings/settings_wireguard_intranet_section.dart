@@ -4,6 +4,27 @@ import 'package:provider/provider.dart';
 
 import 'app_settings_provider.dart';
 
+/// Opens the intranet-WireGuard config form and persists the result. Shared by
+/// the settings section and the home-screen WireGuard card so both edit the
+/// same independent overlay.
+Future<void> showWireguardIntranetConfigDialog(BuildContext context) async {
+  final settings = context.read<AppSettingsProvider>();
+  final result = await showDialog<WireGuardIntranet>(
+    context: context,
+    builder: (_) => _WireguardIntranetDialog(current: settings.wireGuardIntranet),
+  );
+  if (result != null) {
+    await settings.setWireGuardIntranet(result);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('内网 WireGuard 已保存 / Intranet WireGuard saved'),
+        ),
+      );
+    }
+  }
+}
+
 /// Independent "Intranet VPN (WireGuard)" control. This is deliberately a
 /// SEPARATE section from the proxy node list: WireGuard here only carries LAN
 /// traffic (to reach a home/office network), runs alongside the 网络访问 proxy
@@ -77,7 +98,7 @@ class SettingsWireguardIntranetSection extends StatelessWidget {
                 label: Text(wg.isConfigured
                     ? '编辑 WireGuard 配置 / Edit'
                     : '配置 WireGuard / Configure'),
-                onPressed: () => _showConfigDialog(context, settings, wg),
+                onPressed: () => showWireguardIntranetConfigDialog(context),
               ),
             ),
           ],
@@ -86,26 +107,6 @@ class SettingsWireguardIntranetSection extends StatelessWidget {
     );
   }
 
-  Future<void> _showConfigDialog(
-    BuildContext context,
-    AppSettingsProvider settings,
-    WireGuardIntranet current,
-  ) async {
-    final result = await showDialog<WireGuardIntranet>(
-      context: context,
-      builder: (_) => _WireguardIntranetDialog(current: current),
-    );
-    if (result != null) {
-      await settings.setWireGuardIntranet(result);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('内网 WireGuard 已保存 / Intranet WireGuard saved'),
-          ),
-        );
-      }
-    }
-  }
 }
 
 class _WireguardIntranetDialog extends StatefulWidget {
@@ -169,6 +170,23 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
       .where((e) => e.isNotEmpty)
       .toList(growable: false);
 
+  /// Every entry must be a parseable IPv4/IPv6 address or CIDR. An invalid
+  /// entry is silently dropped by [WireGuardIntranet.intranetCidrs] later —
+  /// which can leave the overlay with NOTHING to route and yield a tunnel
+  /// that looks connected but never carries the LAN. Reject it here instead.
+  String? _validateCidrList(String? v, {required bool required}) {
+    final entries = _splitList(v ?? '');
+    if (entries.isEmpty) {
+      return required ? '必填 / Required' : null;
+    }
+    for (final entry in entries) {
+      if (wireGuardCidrNetwork(entry) == null) {
+        return '无效地址: $entry / Invalid address';
+      }
+    }
+    return null;
+  }
+
   Widget _field(
     TextEditingController controller,
     String label, {
@@ -177,6 +195,7 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
     bool obscure = false,
     TextInputType? keyboard,
     int maxLines = 1,
+    String? Function(String?)? validator,
   }) {
     return Padding(
       padding: EdgeInsets.only(bottom: 12.h),
@@ -191,9 +210,11 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
           border: const OutlineInputBorder(),
           isDense: true,
         ),
-        validator: required
-            ? (v) => (v == null || v.trim().isEmpty) ? '必填 / Required' : null
-            : null,
+        validator: validator ??
+            (required
+                ? (v) =>
+                    (v == null || v.trim().isEmpty) ? '必填 / Required' : null
+                : null),
       ),
     );
   }
@@ -211,7 +232,12 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
     }
     final psk = _preSharedKey.text.trim();
     final mtu = int.tryParse(_mtu.text.trim());
-    final keepalive = int.tryParse(_keepalive.text.trim()) ?? 25;
+    // Keepalive: blank/garbage -> the 25s default (don't silently disable NAT
+    // refresh on a typo); a negative is clamped to 0 = explicit opt-out.
+    final keepaliveText = _keepalive.text.trim();
+    final keepalive = keepaliveText.isEmpty
+        ? 25
+        : (int.tryParse(keepaliveText) ?? 25).clamp(0, 65535);
     final wg = widget.current.copyWith(
       server: _server.text.trim(),
       serverPort: port,
@@ -251,12 +277,24 @@ class _WireguardIntranetDialogState extends State<_WireguardIntranetDialog> {
                 _field(_peerPublicKey, '对端公钥 / Peer public key',
                     required: true),
                 _field(_localAddress, '本地地址 / Local address',
-                    hint: '10.8.0.2/24', required: true),
+                    hint: '10.8.0.2/24',
+                    validator: (v) => _validateCidrList(v, required: true)),
                 _field(_extraCidrs, '额外内网网段 / Extra LAN CIDRs (可选)',
-                    hint: '192.168.1.0/24, 10.0.0.0/8', maxLines: 2),
+                    hint: '192.168.1.0/24, 10.0.0.0/8',
+                    maxLines: 2,
+                    validator: (v) => _validateCidrList(v, required: false)),
                 _field(_preSharedKey, '预共享密钥 / Pre-shared key (可选)',
                     obscure: true),
-                _field(_mtu, 'MTU (可选)', keyboard: TextInputType.number),
+                _field(_mtu, 'MTU (可选)',
+                    keyboard: TextInputType.number,
+                    validator: (v) {
+                      final t = v?.trim() ?? '';
+                      if (t.isEmpty) return null;
+                      final n = int.tryParse(t);
+                      return (n == null || n < 576 || n > 9000)
+                          ? '576–9000 或留空 / 576–9000 or blank'
+                          : null;
+                    }),
                 _field(_keepalive, '保活间隔秒 / Keepalive',
                     keyboard: TextInputType.number),
                 Text(

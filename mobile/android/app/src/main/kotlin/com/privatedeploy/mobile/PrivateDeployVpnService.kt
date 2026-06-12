@@ -270,6 +270,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
     // banner moments after the user connects to a blocked node.
     @Volatile
     private var latestStatusMessage: String? = null
+
+    // True when the active tunnel has NO proxy upstream (WG-only / intranet).
+    // The health probes ([checkTunnelHealth]) are proxy-oriented — they test
+    // reachability of a public-IP node THROUGH the tunnel. A WG-only tunnel
+    // egresses `direct`, so those probes would falsely report UpstreamDegraded
+    // (especially on cellular) and tear the tunnel down. When this is set we
+    // skip the upstream probe entirely and report Healthy, so the tunnel is
+    // never torn down / restarted for a non-existent proxy upstream.
+    @Volatile
+    private var proxylessTunnel = false
+
     private val mainHandler = Handler(Looper.getMainLooper())
     // Runnable that fires the deferred peer-VPN probe + actual startVpn
     // when resuming from a persisted intent. We hold the reference so
@@ -394,12 +405,23 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // gemini flagged this gap on 2026-06-01.)
                     attemptResumeFromPersistedIntent()
                 } else {
-                    startVpn(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
+                    startVpn(
+                        intent.getStringExtra(EXTRA_CONFIG).orEmpty(),
+                        intent.getBooleanExtra(EXTRA_PROXYLESS, false),
+                    )
                 }
             }
             ACTION_STOP -> stopVpn()
             ACTION_RESTART -> restartVpn()
-            ACTION_UPDATE_CONFIG -> updateConfig(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
+            ACTION_UPDATE_CONFIG -> updateConfig(
+                intent.getStringExtra(EXTRA_CONFIG).orEmpty(),
+                // Tri-state: absent extra = keep the running session's mode.
+                if (intent.hasExtra(EXTRA_PROXYLESS)) {
+                    intent.getBooleanExtra(EXTRA_PROXYLESS, false)
+                } else {
+                    null
+                },
+            )
             ACTION_RESET_STATS -> resetStats()
             null -> {
                 // OS recreated without a redelivered intent. onCreate
@@ -418,7 +440,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         return START_REDELIVER_INTENT
     }
 
-    private fun startVpn(config: String) {
+    private fun startVpn(config: String, proxyless: Boolean = false) {
+        // NB: do NOT set proxylessTunnel here. A duplicate/rejected start
+        // (isRunning, or startInProgress already set) must not clobber the
+        // ACTIVE session's mode — that would flip a live WG-only tunnel's
+        // health policy to proxy and tear it down. We set it only once this
+        // start is ACCEPTED (after the gates below), next to persistVpnIntent.
         // Cancel any pending delayed-restart backoff — the user just
         // expressed intent to start, the staged retry would only
         // confuse the state machine.
@@ -490,7 +517,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // to "restart" using a stale activeConfig that had nothing to
         // do with what the user just attempted.
         desiredRunning.set(true)
-        persistVpnIntent(runtimeConfig)
+        // Start accepted — NOW commit the tunnel mode for this session's health
+        // policy (and persist it for process-kill recovery).
+        proxylessTunnel = proxyless
+        persistVpnIntent(runtimeConfig, proxyless)
 
         activeConfig = runtimeConfig
         clearRecentLogs()
@@ -1316,6 +1346,22 @@ class PrivateDeployVpnService : VpnService(), Platform {
             )
             return TunnelHealth.TunnelDown
         }
+        // Proxyless (WG-only / intranet) tunnel: there is NO proxy upstream for
+        // the public-IP probe to assess, so running it would falsely report
+        // UpstreamDegraded (the tunnel egresses `direct`) and tear the tunnel
+        // down — the exact "WG keeps dropping on cellular" bug. The tun exists
+        // (checked above), so report Healthy and let WireGuard manage its own
+        // peer liveness via keepalive.
+        if (proxylessTunnel) {
+            // Log.d: this fires on every 30s health tick for the lifetime of a
+            // WG-only session — info level would flood the log buffer.
+            Log.d(
+                TAG,
+                "checkTunnelHealth: proxyless (WG-only) tunnel — skipping the " +
+                    "proxy-oriented upstream probe; reporting Healthy",
+            )
+            return TunnelHealth.Healthy
+        }
         val connectivityManager =
             getSystemService(ConnectivityManager::class.java) ?: return TunnelHealth.Unreachable
 
@@ -1445,7 +1491,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         )
     }
 
-    private fun updateConfig(config: String) {
+    private fun updateConfig(config: String, proxyless: Boolean? = null) {
         if (config.isBlank()) {
             broadcastError("VPN config is empty")
             return
@@ -1462,13 +1508,20 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 val core = ensureVpnCore()
                 core.updateConfig(runtimeConfig)
                 activeConfig = runtimeConfig
+                // A live config swap can change the tunnel mode (proxy <->
+                // WG-only); adopt the caller's declaration only after the
+                // swap actually succeeded, mirroring startVpn's accept-point
+                // discipline. Null = caller didn't change the mode.
+                if (proxyless != null) {
+                    proxylessTunnel = proxyless
+                }
                 // Persist the NEW config too. Without this, a process
                 // recreate after UPDATE_CONFIG would resume from the
                 // original ACTION_START config, not the user's most
                 // recent edit — silently rolling back changes the user
                 // explicitly applied (e.g. switching cloud nodes).
                 if (desiredRunning.get()) {
-                    persistVpnIntent(runtimeConfig)
+                    persistVpnIntent(runtimeConfig, proxylessTunnel)
                 }
                 Log.i(TAG, "VPN config updated")
             } catch (e: Exception) {
@@ -1690,7 +1743,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 "status" to if (isRunning) "connected" else "disconnected",
                 "message" to if (isRunning) latestStatusMessage else null,
                 "connected_at" to 0,
-                "uptime" to 0
+                "uptime" to 0,
+                // Echo the tunnel mode so a relaunched Dart process can rebuild
+                // isProxylessTunnel from the running service (its own session
+                // state may not have been persisted before it was killed).
+                "proxyless" to (isRunning && proxylessTunnel)
             )
         }
 
@@ -1720,6 +1777,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         } else {
             parsedStatus["message"] = null
         }
+
+        // Echo the tunnel mode (see the no-core branch above): authoritative
+        // native truth, gated on running so a stale flag never leaks into a
+        // disconnected status.
+        parsedStatus["proxyless"] =
+            parseBooleanValue(parsedStatus["running"], false) && proxylessTunnel
 
         return parsedStatus
     }
@@ -1781,6 +1844,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
             setPackage(packageName)
             putExtra("status", status)
             putExtra("message", message)
+            // Tunnel-mode echo, same as statusMap(): lets the Dart layer keep
+            // its isProxylessTunnel in sync from push events too.
+            putExtra("proxyless", status == "connected" && proxylessTunnel)
         })
     }
 
@@ -1828,14 +1894,25 @@ class PrivateDeployVpnService : VpnService(), Platform {
     private val persistedIntentPrefsName = "vpn_intent_v1"
     private val persistedIntentKeyConfig = "config"
     private val persistedIntentKeyDesiredRunning = "desired_running"
+    private val persistedIntentKeyProxyless = "proxyless"
 
-    private fun persistVpnIntent(config: String) {
+    private fun persistVpnIntent(config: String, proxyless: Boolean) {
         try {
+            // Synchronous commit() (not apply()): the intent + proxyless flag
+            // MUST be durable before the tunnel comes up — otherwise an
+            // OS-redelivered/resumed WG-only start reads a missing flag,
+            // reverts to proxy health, and tears the tunnel down. NB: the
+            // startVpn call site runs this on the MAIN thread (inside
+            // onStartCommand, before the start worker spawns) — a deliberate
+            // StrictMode trade-off: the file is tiny (sub-ms write) and
+            // durability-before-start is the whole point. The updateConfig
+            // call site runs on its worker thread.
             getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
                 .edit()
                 .putString(persistedIntentKeyConfig, config)
                 .putBoolean(persistedIntentKeyDesiredRunning, true)
-                .apply()
+                .putBoolean(persistedIntentKeyProxyless, proxyless)
+                .commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist VPN intent", e)
         }
@@ -1882,6 +1959,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             val prefs = getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
             val wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false)
             val config = prefs.getString(persistedIntentKeyConfig, null).orEmpty()
+            val resumeProxyless = prefs.getBoolean(persistedIntentKeyProxyless, false)
             if (!wantsRunning || config.isBlank()) {
                 Log.i(TAG, "Resume skipped: no persisted active VPN intent.")
                 return
@@ -1954,7 +2032,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     return@Runnable
                 }
                 Log.i(TAG, "Resuming VPN from persisted intent after process recreate.")
-                startVpn(config)
+                startVpn(config, resumeProxyless)
             }
             pendingResumeRunnable = runnable
             mainHandler.postDelayed(runnable, PEER_VPN_RESUME_PROBE_DELAY_MS)
@@ -2824,3 +2902,4 @@ const val ACTION_VPN_STATUS = "com.privatedeploy.mobile.VPN_STATUS"
 const val ACTION_VPN_LOG = "com.privatedeploy.mobile.VPN_LOG"
 
 const val EXTRA_CONFIG = "config"
+const val EXTRA_PROXYLESS = "proxyless"

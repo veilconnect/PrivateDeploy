@@ -65,12 +65,16 @@ class VpnNativeService {
   }
 
   /// 启动 VPN
-  Future<bool> startVpn(String configJson) async {
+  Future<bool> startVpn(String configJson, {bool proxyless = false}) async {
     try {
       AppLogger.info('[VpnNativeService] Starting VPN...');
       _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('startVpn', {
         'config': configJson,
+        // WG-only / intranet tunnel: tells the native service to skip its
+        // proxy-oriented upstream health probe (which would otherwise tear a
+        // proxyless tunnel down on cellular).
+        'proxyless': proxyless,
       });
       AppLogger.info('[VpnNativeService] Start result: $result');
       if (result != true && _lastError == null) {
@@ -317,13 +321,15 @@ class VpnNativeService {
     }
   }
 
-  /// 更新 VPN 配置
-  Future<bool> updateConfig(String configJson) async {
+  /// 更新 VPN 配置。[proxyless] 声明换入的配置是否为无代理(WG-only)模式;
+  /// null 表示这次换配置不改变隧道模式(原生侧保持现状)。
+  Future<bool> updateConfig(String configJson, {bool? proxyless}) async {
     try {
       AppLogger.info('[VpnNativeService] Updating config...');
       _clearLastError();
       final result = await _methodChannel.invokeMethod<bool>('updateConfig', {
         'config': configJson,
+        if (proxyless != null) 'proxyless': proxyless,
       });
       if (result != true && _lastError == null) {
         _recordLastError('Native VPN config update was rejected');
@@ -539,12 +545,19 @@ class VpnNativeStatus {
   final int connectedAt;
   final int uptime;
 
+  /// Whether the running tunnel has no proxy upstream (WG-only / intranet).
+  /// Echoed by the native service so a relaunched Dart process can rebuild
+  /// its tunnel-mode flag from the service. Null when the platform side
+  /// doesn't report it (older native build / iOS).
+  final bool? proxyless;
+
   VpnNativeStatus({
     required this.running,
     required this.status,
     this.message,
     required this.connectedAt,
     required this.uptime,
+    this.proxyless,
   });
 
   factory VpnNativeStatus.fromJson(Map<String, dynamic> json) {
@@ -561,6 +574,9 @@ class VpnNativeStatus {
       message: message == null || message.isEmpty ? null : message,
       connectedAt: (json['connected_at'] as num?)?.toInt() ?? 0,
       uptime: (json['uptime'] as num?)?.toInt() ?? 0,
+      proxyless: json.containsKey('proxyless')
+          ? _toBool(json['proxyless'], defaultValue: false)
+          : null,
     );
   }
 
@@ -571,6 +587,7 @@ class VpnNativeStatus {
       'message': message,
       'connected_at': connectedAt,
       'uptime': uptime,
+      if (proxyless != null) 'proxyless': proxyless,
     };
   }
 }

@@ -15,7 +15,6 @@ class NodesWireguardCard extends StatelessWidget {
     Key? key,
     required this.onSetEnabled,
     this.busy = false,
-    this.proxyActive = false,
   }) : super(key: key);
 
   /// Persists the enabled flag and applies it (reconnect if running, otherwise
@@ -26,35 +25,37 @@ class NodesWireguardCard extends StatelessWidget {
   /// When true the switch is disabled (a connect/restart is in flight).
   final bool busy;
 
-  /// Whether the proxy (网络访问) node is the active tunnel. Used to tell apart
-  /// proxy+WG from WireGuard-only: in WG-only mode the proxy-oriented "connected"
-  /// status doesn't fire, but the tunnel (and WireGuard) are live.
-  final bool proxyActive;
-
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettingsProvider>();
     final vpn = context.watch<VpnProvider>();
     final wg = settings.wireGuardIntranet;
     final cidrs = wg.intranetCidrs;
-    // WireGuard is "running" whenever it's enabled and its traffic is actually
-    // in the tunnel. That's true when the proxy+WG tunnel is connected, OR when
-    // the tunnel is up carrying only WireGuard (proxy disconnected) — the latter
-    // doesn't reach the proxy-oriented "connected" status, so detect it via
-    // "no proxy active + tunnel not down".
-    final tunnelLive = vpn.status != VpnStatus.disconnected;
-    final running =
-        wg.enabled && (vpn.isConnected || (!proxyActive && tunnelLive));
+    final connecting = vpn.status == VpnStatus.connecting;
+    // "Running" means the LIVE tunnel actually carries the intranet WireGuard
+    // overlay — NOT merely "the preference is on while some tunnel is up". The
+    // settings page can flip `wg.enabled` without rebuilding the live tunnel
+    // ("saved — reconnect to apply"), so preference and reality can disagree
+    // in both directions; vpn.intranetWireguardLive is the reality.
+    final running = vpn.intranetWireguardLive;
     final theme = Theme.of(context);
 
     final Color? accent = running ? Colors.green : null;
     final String status;
     if (!wg.isConfigured) {
       status = '未配置 — 点下方按钮设置内网 WireGuard\nNot configured yet';
+    } else if (running) {
+      status = wg.enabled
+          ? '内网已连接 · 走 ${cidrs.join(', ')}\nConnected — LAN via WireGuard'
+          // Disabled in settings but the live tunnel still carries it.
+          : '运行中(设置已关) — 重新连接后停止\nStill routing — stops after reconnect';
     } else if (!wg.enabled) {
       status = '已关闭 / Off';
-    } else if (running) {
-      status = '内网已连接 · 走 ${cidrs.join(', ')}\nConnected — LAN via WireGuard';
+    } else if (connecting) {
+      status = '连接中… / Connecting…';
+    } else if (vpn.isConnected) {
+      // Enabled in settings but the live tunnel was built without it.
+      status = '已启用,重新连接后生效 / Enabled — reconnect to apply';
     } else {
       status = '已启用,主连接建立后生效 / Enabled — applies once the VPN is up';
     }

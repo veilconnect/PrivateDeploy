@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
@@ -9,6 +11,7 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_throughput_probe.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_cloud_actions.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -555,6 +558,56 @@ void main() {
       expect(vpnProvider.connectCalls, 0);
       expect(cloudProvider.storedChecks, isEmpty);
     });
+
+    testWidgets(
+        'testCloudNodeLatency restores a proxyless WireGuard-only tunnel',
+        (tester) async {
+      final cloudProvider = _FakeCloudProvider(
+        instances: [_instance(label: 'fra-node')],
+      );
+      final profileProvider = _FakeProfileProvider();
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.connected,
+        activeProfileName: 'Intranet WireGuard',
+        proxylessTunnel: true,
+      );
+      final settingsProvider = _FakeAppSettingsProvider(
+        VpnRoutingSettings(
+          wireGuardIntranet: _testWireGuard.copyWith(enabled: false),
+        ),
+      );
+
+      await _pumpCloudActionHarness(
+        tester,
+        cloudProvider: cloudProvider,
+        appSettingsProvider: settingsProvider,
+        onRun: (context) => testCloudNodeLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+          instance: cloudProvider.instances.single,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+          throughputProbe: () async => const CloudThroughputSample(
+            bytes: 1000000,
+            elapsedMs: 250,
+            speedMbps: 32.0,
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectProxylessHistory, <bool>[false, true]);
+      expect(vpnProvider.connectProfileNames,
+          <String?>['Cloud: fra-node', 'Intranet WireGuard']);
+      final restored =
+          jsonDecode(vpnProvider.connectConfigs.last!) as Map<String, dynamic>;
+      expect((restored['route'] as Map)['final'], 'direct');
+      final endpointTags =
+          (restored['endpoints'] as List).map((e) => (e as Map)['tag']).toSet();
+      expect(endpointTags, contains(WireGuardIntranet.tag));
+    });
   });
 }
 
@@ -562,6 +615,7 @@ Future<void> _pumpCloudActionHarness(
   WidgetTester tester, {
   required _FakeCloudProvider cloudProvider,
   required Future<void> Function(BuildContext context) onRun,
+  AppSettingsProvider? appSettingsProvider,
 }) async {
   tester.view.physicalSize = const Size(1440, 2400);
   tester.view.devicePixelRatio = 3.0;
@@ -572,6 +626,10 @@ Future<void> _pumpCloudActionHarness(
       providers: [
         ChangeNotifierProvider<CloudProvider>.value(value: cloudProvider),
         ChangeNotifierProvider<CdnProvider>.value(value: CdnProvider()),
+        ChangeNotifierProvider<AppSettingsProvider>.value(
+          value: appSettingsProvider ??
+              _FakeAppSettingsProvider(VpnRoutingSettings.defaults),
+        ),
       ],
       child: ScreenUtilInit(
         designSize: const Size(375, 812),
@@ -633,6 +691,15 @@ CloudInstance _instance({
     ),
   );
 }
+
+final _testWireGuard = WireGuardIntranet(
+  enabled: true,
+  server: 'wg.example.com',
+  serverPort: 51820,
+  privateKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+  peerPublicKey: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
+  localAddress: const ['10.8.0.2/24'],
+);
 
 Profile _profile({
   required String id,
@@ -931,6 +998,18 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeAppSettingsProvider extends AppSettingsProvider {
+  _FakeAppSettingsProvider(this._routingSettings);
+
+  final VpnRoutingSettings _routingSettings;
+
+  @override
+  VpnRoutingSettings get vpnRoutingSettings => _routingSettings;
+
+  @override
+  WireGuardIntranet get wireGuardIntranet => _routingSettings.wireGuardIntranet;
+}
+
 class _FakeProfileProvider extends Fake implements ProfileProvider {
   _FakeProfileProvider({
     this.activeProfile,
@@ -972,15 +1051,22 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   _FakeVpnProvider({
     required this.status,
     this.disconnectResult = true,
+    this.activeProfileName,
+    this.proxylessTunnel = false,
   });
 
   @override
   VpnStatus status;
 
   final bool disconnectResult;
+  String? activeProfileName;
+  bool proxylessTunnel;
   int connectCalls = 0;
   int disconnectCalls = 0;
   String? lastConfigJson;
+  final connectConfigs = <String?>[];
+  final connectProfileNames = <String?>[];
+  final connectProxylessHistory = <bool>[];
 
   @override
   String? get error => null;
@@ -1019,7 +1105,10 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   List<VpnRouteDecision> get recentRouteDecisions => const [];
 
   @override
-  String? get activeProfile => null;
+  String? get activeProfile => activeProfileName;
+
+  @override
+  bool get isProxylessTunnel => proxylessTunnel;
 
   @override
   Future<bool> connect({
@@ -1027,9 +1116,15 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     String? profileName,
     Duration stabilityCheckDuration = Duration.zero,
     Duration statusPollInterval = const Duration(milliseconds: 250),
+    bool proxyless = false,
   }) async {
     connectCalls += 1;
     lastConfigJson = configJson;
+    connectConfigs.add(configJson);
+    connectProfileNames.add(profileName);
+    connectProxylessHistory.add(proxyless);
+    activeProfileName = profileName;
+    proxylessTunnel = proxyless;
     status = VpnStatus.connected;
     return true;
   }

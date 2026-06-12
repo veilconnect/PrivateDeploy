@@ -11,12 +11,12 @@ import '../cloud/cloud_provider_id.dart';
 import '../cloud/cloud_throughput_probe.dart';
 import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
-import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 import '../vpn/vpn_status_messages.dart';
 import '../settings/settings_api_key_dialog.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_dialogs.dart';
+import 'nodes_vpn_session_restore.dart';
 
 bool isCloudManagedProfile(Profile profile) {
   return ProfileProvider.isCloudManagedProfileName(profile.name);
@@ -434,16 +434,13 @@ Future<void> testCloudNodeLatency({
     return;
   }
 
-  final previouslyConnected = vpnProvider.status == VpnStatus.connected;
-  final previousProfileName = vpnProvider.activeProfile;
-  final previousConfigJson = previouslyConnected
-      ? profileProvider.getActiveConfigJson(
-          routingSettings:
-              context.read<AppSettingsProvider>().vpnRoutingSettings,
-        )
-      : null;
+  final previousSession = capturePreviousVpnSession(
+    context: context,
+    profileProvider: profileProvider,
+    vpnProvider: vpnProvider,
+  );
 
-  if (previouslyConnected) {
+  if (previousSession.connected) {
     await vpnProvider.disconnect();
   }
 
@@ -483,14 +480,10 @@ Future<void> testCloudNodeLatency({
   cloudProvider.saveLatencyCheck(instance.id, benchmarkResult);
 
   // Restore previous VPN connection if one was active.
-  if (previouslyConnected && previousConfigJson != null) {
-    await vpnProvider.connect(
-      configJson: previousConfigJson,
-      profileName: previousProfileName,
-      stabilityCheckDuration: const Duration(seconds: 1),
-      statusPollInterval: const Duration(milliseconds: 250),
-    );
-  }
+  await restorePreviousVpnSession(
+    session: previousSession,
+    vpnProvider: vpnProvider,
+  );
 
   if (context.mounted && benchmarkResult.error != null) {
     showNodesActionSnackBar(
@@ -534,13 +527,11 @@ Future<void> testAllCloudNodesLatency({
     }
   }
 
-  final previousProfileName = vpnProvider.activeProfile;
-  final previousConfigJson = previouslyConnected
-      ? profileProvider.getActiveConfigJson(
-          routingSettings:
-              context.read<AppSettingsProvider>().vpnRoutingSettings,
-        )
-      : null;
+  final previousSession = capturePreviousVpnSession(
+    context: context,
+    profileProvider: profileProvider,
+    vpnProvider: vpnProvider,
+  );
   final runThroughputProbe = throughputProbe ?? runCloudThroughputProbe;
   var restoreFailed = false;
 
@@ -635,12 +626,10 @@ Future<void> testAllCloudNodesLatency({
     cloudProvider.markBenchmarkAllEnd();
     // When the user aborted to start their own connection, don't restore the
     // previous tunnel — the new connect flow will handle it.
-    if (!aborted && previouslyConnected && previousConfigJson != null) {
-      final restored = await vpnProvider.connect(
-        configJson: previousConfigJson,
-        profileName: previousProfileName,
-        stabilityCheckDuration: const Duration(seconds: 1),
-        statusPollInterval: const Duration(milliseconds: 250),
+    if (!aborted && previousSession.canRestore) {
+      final restored = await restorePreviousVpnSession(
+        session: previousSession,
+        vpnProvider: vpnProvider,
       );
       restoreFailed = !restored;
     } else if (!aborted && vpnProvider.status == VpnStatus.connected) {

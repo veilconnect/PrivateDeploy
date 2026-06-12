@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
@@ -9,13 +8,13 @@ import '../../shared/utils/logger.dart';
 import '../cloud/cloud_throughput_probe.dart';
 import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
-import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 import '../vpn/vpn_status_messages.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
 import 'nodes_profile_widgets.dart';
+import 'nodes_vpn_session_restore.dart';
 
 Future<void> confirmDeleteProfile({
   required BuildContext context,
@@ -325,16 +324,13 @@ Future<ProfileSpeedResult> testProfileSpeed({
     return ProfileSpeedResult(error: preflightError);
   }
 
-  final previouslyConnected = vpnProvider.status == VpnStatus.connected;
-  final previousProfileName = vpnProvider.activeProfile;
-  final previousConfigJson = previouslyConnected
-      ? profileProvider.getActiveConfigJson(
-          routingSettings:
-              context.read<AppSettingsProvider>().vpnRoutingSettings,
-        )
-      : null;
+  final previousSession = capturePreviousVpnSession(
+    context: context,
+    profileProvider: profileProvider,
+    vpnProvider: vpnProvider,
+  );
 
-  if (previouslyConnected) {
+  if (previousSession.connected) {
     await vpnProvider.disconnect();
   }
 
@@ -371,14 +367,10 @@ Future<ProfileSpeedResult> testProfileSpeed({
   vpnProvider.clearError();
 
   // Restore previous VPN connection if one was active.
-  if (previouslyConnected && previousConfigJson != null) {
-    await vpnProvider.connect(
-      configJson: previousConfigJson,
-      profileName: previousProfileName,
-      stabilityCheckDuration: const Duration(seconds: 1),
-      statusPollInterval: const Duration(milliseconds: 250),
-    );
-  }
+  await restorePreviousVpnSession(
+    session: previousSession,
+    vpnProvider: vpnProvider,
+  );
 
   return result;
 }
