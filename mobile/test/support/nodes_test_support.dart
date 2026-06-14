@@ -94,6 +94,15 @@ class TestAppSettingsProvider extends ChangeNotifier
   }
 
   @override
+  Future<void> setWireGuardIntranetEnabled(bool enabled) async {
+    _vpnRoutingSettings = _vpnRoutingSettings.copyWith(
+      wireGuardIntranet:
+          _vpnRoutingSettings.wireGuardIntranet.copyWith(enabled: enabled),
+    );
+    notifyListeners();
+  }
+
+  @override
   Future<void> updateVpnRoutingSettings(VpnRoutingSettings settings) async {
     _vpnRoutingSettings = settings;
     notifyListeners();

@@ -9,7 +9,8 @@ import '../vpn/vpn_provider.dart';
 /// Home-screen control for the independent intranet WireGuard tunnel. It sits
 /// next to the main connect card and lets the user turn the LAN tunnel on/off
 /// directly — separate from the proxy node selection. Toggling applies live:
-/// the caller (nodes screen) reconnects the VPN so the overlay merges in/out.
+/// the caller (nodes screen) hot-swaps the running tunnel so the overlay merges
+/// in/out without bouncing an active proxy session (and vice versa).
 class NodesWireguardCard extends StatelessWidget {
   const NodesWireguardCard({
     Key? key,

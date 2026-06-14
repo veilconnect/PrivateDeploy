@@ -542,6 +542,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _intranetWgLive = proxyless || _configCarriesIntranetWireguard(config);
 
     try {
+      if (_intranetWgLive) {
+        // Long-lived intranet WG sessions behave like SSH/VPN infrastructure,
+        // not short foreground work. On Samsung/Android builds with aggressive
+        // battery policy, ask once for an OS-level exemption before starting;
+        // failure/cancel is non-fatal and the tunnel still starts.
+        await _nativeService.requestIgnoreBatteryOptimizations();
+      }
+
       // Set _activeProfile *before* awaiting the native start so a
       // failure path (e.g. cellular connectivity failure where the native side
       // refuses to install a black-hole tun) still leaves the profile
@@ -631,6 +639,113 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _activeConfigJson = previousActiveConfigJson;
       }
       AppLogger.error('[VpnProvider] Start error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
+        _handleUpstreamDegradedSignal(degraded: true);
+      }
+      _safeNotifyListeners();
+    }
+  }
+
+  /// Hot-swaps the configuration of an ALREADY-CONNECTED tunnel in place,
+  /// without tearing down the Android VpnService interface. The native side
+  /// reloads sing-box on the SAME tun fd, so flows already established through
+  /// the tunnel — notably an SSH session over the intranet WireGuard overlay —
+  /// survive the swap. This is what lets the WireGuard control and the proxy
+  /// control change one without interrupting the other.
+  ///
+  /// Returns false WITHOUT touching native state when there is no live tunnel
+  /// to update — the caller must fall back to a full [connect]. On a failed
+  /// swap the mode flags roll back to the still-running session, mirroring
+  /// [connect]'s optimistic/rollback discipline. Startup verification runs the
+  /// same way as [connect], so a swap onto an unreachable node tears the tunnel
+  /// down rather than leaving it wedged.
+  Future<bool> swapRunningConfig({
+    required String configJson,
+    String? profileName,
+    bool proxyless = false,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      _safeNotifyListeners();
+      return false;
+    }
+    if (_status != VpnStatus.connected) {
+      // Nothing live to hot-swap. Don't fabricate a tunnel here — let the
+      // caller decide to do a cold connect instead.
+      return false;
+    }
+
+    _cancelStartupVerification();
+    // Deliberately DO NOT flip _status to connecting: the tunnel stays up
+    // across the swap, and a connecting flash would make the UI (and the
+    // stats poller) think the session bounced.
+    _isLoading = true;
+    _error = null;
+    _diagnosticsEgressIp = null;
+    _diagnosticsError = null;
+    _diagnosticsUpdatedAt = null;
+    _upstreamDegradedRestartAttempts = 0;
+
+    final previousActiveProfile = _activeProfile;
+    final previousActiveConfigJson = _activeConfigJson;
+    final previousProxyless = _proxylessTunnel;
+    final previousIntranetWgLive = _intranetWgLive;
+    _proxylessTunnel = proxyless;
+    _intranetWgLive = proxyless || _configCarriesIntranetWireguard(configJson);
+    _safeNotifyListeners();
+
+    try {
+      if (_intranetWgLive && !previousIntranetWgLive) {
+        await _nativeService.requestIgnoreBatteryOptimizations();
+      }
+
+      final updated =
+          await _nativeService.updateConfig(configJson, proxyless: proxyless);
+      if (!updated) {
+        // Native kept running the previous config — restore our copy of it.
+        _proxylessTunnel = previousProxyless;
+        _intranetWgLive = previousIntranetWgLive;
+        _error = _normalizeVpnError(_nativeService.lastError) ??
+            'Failed to update VPN config';
+        return false;
+      }
+
+      _activeProfile = profileName;
+      // The tunnel stays connected across an in-place swap, so don't refresh
+      // status here: native's updateConfig is dispatched asynchronously and
+      // hasn't yet flipped its proxyless echo, so an immediate loadStatus()
+      // would transiently clobber our optimistic mode flag. Verification below
+      // polls status over time and self-corrects once the swap thread lands;
+      // a swap that actually drops the tunnel is caught there too (stability
+      // poll for proxy swaps, egress probe for WG-only) and torn down cleanly.
+      final generation = ++_startupVerificationGeneration;
+      final verified = await _runStartupVerification(
+        generation: generation,
+        stabilityCheckDuration: stabilityCheckDuration,
+        statusPollInterval: statusPollInterval,
+      );
+      if (!verified) {
+        return false;
+      }
+      _activeConfigJson = configJson;
+      _persistSessionState(profileName, proxyless, intranetWg: _intranetWgLive);
+      _isLoading = false;
+      _safeNotifyListeners();
+      AppLogger.info('[VpnProvider] VPN config hot-swapped');
+      return true;
+    } catch (e) {
+      _proxylessTunnel = previousProxyless;
+      _intranetWgLive = previousIntranetWgLive;
+      _activeProfile = previousActiveProfile;
+      _activeConfigJson = previousActiveConfigJson;
+      _error = _normalizeVpnError(e.toString()) ??
+          'Failed to update VPN config: ${e.toString()}';
+      AppLogger.error('[VpnProvider] Config swap error', e);
       return false;
     } finally {
       _isLoading = false;

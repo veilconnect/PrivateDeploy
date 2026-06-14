@@ -76,6 +76,23 @@ class _NodesScreenState extends State<NodesScreen> {
       if (initializeVpn) vpnProvider.initialize() else vpnProvider.loadStatus(),
     ]);
 
+    // Reconcile the persisted WireGuard switch with reality. The enabled flag
+    // survives a phone reboot, but the tunnel does not — so on a fresh launch
+    // the home switch would sit "on" while no WireGuard network is actually
+    // connected. Clear the stale flag so the switch is honest. Scoped to a
+    // FULLY disconnected launch only: a surviving proxy tunnel legitimately
+    // keeps WG "armed" to merge in on the next (re)connect, and we must not
+    // stomp that. Only at bootstrap (initializeVpn) so a pull-to-refresh mid
+    // (re)connect never races the flag off.
+    if (initializeVpn &&
+        mounted &&
+        vpnProvider.status == VpnStatus.disconnected) {
+      final appSettings = context.read<AppSettingsProvider>();
+      if (appSettings.wireGuardIntranet.enabled) {
+        await appSettings.setWireGuardIntranetEnabled(false);
+      }
+    }
+
     if (!cloudProvider.hasApiKey) {
       // No saved access credentials — nothing to sync remotely.
       await cloudProvider.refreshCloudConfig();
@@ -266,9 +283,18 @@ class _NodesScreenState extends State<NodesScreen> {
       return;
     }
     if (vpnProvider.isConnected) {
-      await vpnProvider.disconnect();
-      if (!mounted) return;
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // Hot-swap the live tunnel down to WG-only in place. Dropping the proxy
+      // this way keeps the intranet WireGuard overlay (and any SSH over it)
+      // alive instead of bouncing the whole tunnel — the proxy control and the
+      // WG control stay independent.
+      await vpnProvider.swapRunningConfig(
+        configJson: config,
+        profileName: kIntranetWireguardProfileName,
+        // No proxy upstream: tells VpnProvider to skip the proxy-oriented
+        // health watchdog so it doesn't restart this tunnel every ~30-60s.
+        proxyless: true,
+      );
+      return;
     }
     await vpnProvider.connect(
       configJson: config,
@@ -322,20 +348,19 @@ class _NodesScreenState extends State<NodesScreen> {
       }
       if (enabled) {
         if (_proxyActive) {
-          // Proxy wanted — (re)build proxy + WireGuard.
-          if (vpnProvider.isConnected) {
-            await _handleRestart(cloudProvider, profileProvider, vpnProvider);
-          } else {
-            await _handleConnect(cloudProvider, profileProvider, vpnProvider);
-          }
+          // Proxy wanted — add WireGuard alongside it. _handleConnect hot-swaps
+          // when a tunnel is already up (proxy traffic isn't interrupted) and
+          // does a cold connect otherwise.
+          await _handleConnect(cloudProvider, profileProvider, vpnProvider);
         } else {
           // No proxy — run WireGuard on its own.
           await _connectWireguardOnly(vpnProvider);
         }
       } else if (vpnProvider.isConnected) {
         if (_proxyActive) {
-          // Keep the proxy, drop WireGuard.
-          await _handleRestart(cloudProvider, profileProvider, vpnProvider);
+          // Keep the proxy, drop WireGuard. _handleConnect hot-swaps the live
+          // tunnel down to proxy-only without bouncing the proxy session.
+          await _handleConnect(cloudProvider, profileProvider, vpnProvider);
         } else {
           // Was WireGuard-only — turning it off stops the tunnel.
           await handleNodesDisconnect(
