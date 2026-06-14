@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ModeOptions } from '@/constant/kernel'
-import { useEnvStore, useAppStore, useKernelApiStore } from '@/stores'
+import {
+  useEnvStore,
+  useAppStore,
+  useAppSettingsStore,
+  useKernelApiStore,
+  useProfilesStore,
+} from '@/stores'
 import { formatBytes, handleChangeMode, message } from '@/utils'
 
 import { useModal } from '@/components/Modal'
@@ -26,6 +32,52 @@ const [Modal, modalApi] = useModal({})
 const appStore = useAppStore()
 const envStore = useEnvStore()
 const kernelApiStore = useKernelApiStore()
+const profilesStore = useProfilesStore()
+const appSettingsStore = useAppSettingsStore()
+
+// Local proxy (mixed) port the app listens on — shown so users know what to
+// point their browser/system proxy at, and editable inline.
+const proxyPort = computed(() => kernelApiStore.config['mixed-port'] || 0)
+const portEditing = ref(false)
+const portDraft = ref(0)
+const portApplying = ref(false)
+
+const startEditPort = () => {
+  portDraft.value = proxyPort.value
+  portEditing.value = true
+}
+
+const applyPort = async () => {
+  const next = Number(portDraft.value)
+  if (!Number.isInteger(next) || next < 1 || next > 65535) {
+    message.error('端口需为 1-65535 的整数 / Port must be 1-65535')
+    return
+  }
+  if (next === proxyPort.value) {
+    portEditing.value = false
+    return
+  }
+  const rp = profilesStore.getProfileById(appSettingsStore.app.kernel.profile)
+  const mixed = rp?.inbounds?.find((i: any) => i.type === 'mixed')
+  if (!rp || !mixed?.mixed?.listen) {
+    message.error('当前无运行中的 mixed 入站,无法改端口 / No active mixed inbound')
+    return
+  }
+  portApplying.value = true
+  try {
+    mixed.mixed.listen.listen_port = next
+    await profilesStore.editProfile(rp.id, rp)
+    await kernelApiStore.restartCore()
+    portEditing.value = false
+    message.success(`代理端口已改为 ${next} / Proxy port changed to ${next}`)
+  } catch (error: any) {
+    console.error(error)
+    message.error(error)
+  } finally {
+    portApplying.value = false
+  }
+}
+
 const handleRestartKernel = async () => {
   try {
     await kernelApiStore.restartCore()
@@ -179,6 +231,20 @@ onUnmounted(() => {
             @change="handleChangeMode"
             size="small"
           />
+        </div>
+      </Card>
+      <Card :title="t('kernel.inbounds.listen.listen_port')" class="flex-1">
+        <div
+          v-if="!portEditing"
+          v-tips="'点击修改端口 / Click to edit'"
+          class="py-8 text-12 cursor-pointer"
+          @click="startEditPort"
+        >
+          127.0.0.1:{{ proxyPort }}
+        </div>
+        <div v-else class="py-8 flex items-center gap-4">
+          <Input v-model="portDraft" type="number" size="small" style="width: 70px" />
+          <Button @click="applyPort" :loading="portApplying" type="primary" size="small" icon="selected" />
         </div>
       </Card>
       <Card :title="t('home.overview.realtimeTraffic')" class="flex-1">
