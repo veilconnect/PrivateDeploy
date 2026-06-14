@@ -128,6 +128,7 @@ jobs:
       - name: Build & Pack Windows
         shell: pwsh
         run: |
+          $ver = "1.12.12"
           function Build-And-Pack {
             param([string]$arch)
             $env:GOOS="windows"
@@ -136,9 +137,20 @@ jobs:
             Write-Host "==> Building Windows $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
 
+            # Bundle the sing-box core so the app works out of the box — users
+            # behind the GFW cannot download it at runtime before connecting.
+            Write-Host "==> Bundling sing-box $script:ver (windows-$arch)..."
+            $url = "https://github.com/SagerNet/sing-box/releases/download/v$script:ver/sing-box-$script:ver-windows-$arch.zip"
+            Invoke-WebRequest -Uri $url -OutFile sb.zip
+            Expand-Archive -Path sb.zip -DestinationPath sbtmp -Force
+            New-Item -ItemType Directory -Force -Path "build/bin/data/sing-box" | Out-Null
+            Copy-Item "sbtmp/sing-box-$script:ver-windows-$arch/sing-box.exe" "build/bin/data/sing-box/sing-box.exe" -Force
+            Remove-Item sb.zip,sbtmp -Recurse -Force
+
             cd build/bin
             $zipName = "$env:APP_NAME-windows-$arch.zip"
-            Compress-Archive -Path "$env:APP_NAME.exe" -DestinationPath $zipName -Force
+            Compress-Archive -Path "$env:APP_NAME.exe","data" -DestinationPath $zipName -Force
+            Remove-Item data -Recurse -Force
             cd ../..
           }
 
@@ -172,12 +184,23 @@ jobs:
 
       - name: Build & Pack macOS
         run: |
+          ver=1.12.12
           build_and_pack() {
             arch=$1
             export GOOS=darwin GOARCH=$arch
 
             echo "==> Building macOS $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+
+            # Bundle sing-box inside the .app so it works offline (GFW users
+            # can't fetch the core at runtime before the VPN is up).
+            echo "==> Bundling sing-box $ver (darwin-$arch)..."
+            curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v$ver/sing-box-$ver-darwin-$arch.tar.gz" -o sb.tgz
+            tar -xzf sb.tgz -C /tmp
+            mkdir -p "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box"
+            cp "/tmp/sing-box-$ver-darwin-$arch/sing-box" "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
+            chmod +x "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
+            rm -rf sb.tgz "/tmp/sing-box-$ver-darwin-$arch"
 
             cd build/bin
             zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
@@ -213,6 +236,7 @@ jobs:
 
       - name: Build & Pack Linux
         run: |
+          ver=1.12.12
           build_and_pack() {
             arch=$1
             export GOOS=linux GOARCH=$arch
@@ -220,9 +244,19 @@ jobs:
             echo "==> Building Linux $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
+            # Bundle sing-box so the app works offline (GFW users can't fetch the
+            # core at runtime before the VPN is up).
+            echo "==> Bundling sing-box $ver (linux-$arch)..."
+            curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v$ver/sing-box-$ver-linux-$arch.tar.gz" -o sb.tgz
+            tar -xzf sb.tgz -C /tmp
+            mkdir -p build/bin/data/sing-box
+            cp "/tmp/sing-box-$ver-linux-$arch/sing-box" build/bin/data/sing-box/sing-box
+            chmod +x build/bin/data/sing-box/sing-box
+            rm -rf sb.tgz "/tmp/sing-box-$ver-linux-$arch"
+
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
-            zip $APP_NAME-linux-$arch.zip $APP_NAME
+            zip -r $APP_NAME-linux-$arch.zip $APP_NAME data
             cd ../..
           }
 
