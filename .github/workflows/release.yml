@@ -151,10 +151,16 @@ jobs:
             Copy-Item "sbtmp/sing-box-$script:ver-windows-$arch/sing-box.exe" "build/bin/data/sing-box/sing-box.exe" -Force
             Remove-Item sb.zip,sbtmp -Recurse -Force
 
+            # Bundle the tray sidecar next to the exe; without it the app has no
+            # system-tray icon (CreateTray's spawn fails -> "running without tray").
+            Write-Host "==> Building tray sidecar (windows-$arch)..."
+            go build -trimpath -buildvcs=false -ldflags "-H windowsgui -s -w" -o "build/bin/privatedeploy-tray.exe" ./cmd/privatedeploy-tray/
+
             cd build/bin
             $zipName = "$env:APP_NAME-windows-$arch.zip"
-            Compress-Archive -Path "$env:APP_NAME.exe","data" -DestinationPath $zipName -Force
+            Compress-Archive -Path "$env:APP_NAME.exe","privatedeploy-tray.exe","data" -DestinationPath $zipName -Force
             Remove-Item data -Recurse -Force
+            Remove-Item privatedeploy-tray.exe -Force
             cd ../..
           }
 
@@ -205,6 +211,12 @@ jobs:
             cp "/tmp/sing-box-$ver-darwin-$arch/sing-box" "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
             chmod +x "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
             rm -rf sb.tgz "/tmp/sing-box-$ver-darwin-$arch"
+
+            # Bundle the tray sidecar inside the .app next to the executable
+            # (no system-tray icon without it). Built natively on the mac runner.
+            echo "==> Building tray sidecar (darwin-$arch)..."
+            CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags "-s -w" -o "build/bin/$APP_NAME.app/Contents/MacOS/privatedeploy-tray" ./cmd/privatedeploy-tray/
+            chmod +x "build/bin/$APP_NAME.app/Contents/MacOS/privatedeploy-tray"
 
             cd build/bin
             zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
@@ -258,9 +270,15 @@ jobs:
             chmod +x build/bin/data/sing-box/sing-box
             rm -rf sb.tgz "/tmp/sing-box-$ver-linux-$arch"
 
+            # Bundle the tray sidecar next to the binary (no icon without it).
+            echo "==> Building tray sidecar (linux-$arch)..."
+            CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o build/bin/privatedeploy-tray ./cmd/privatedeploy-tray/
+            chmod +x build/bin/privatedeploy-tray
+
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
-            zip -r $APP_NAME-linux-$arch.zip $APP_NAME data
+            zip -r $APP_NAME-linux-$arch.zip $APP_NAME privatedeploy-tray data
+            rm -f privatedeploy-tray
             cd ../..
           }
 

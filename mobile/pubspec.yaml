@@ -1,7 +1,7 @@
 name: privatedeploy_mobile
 description: PrivateDeploy Mobile Application - Cross-platform VPN management app
 publish_to: 'none'
-version: 2.0.4+2072
+version: 2.0.5+2073
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
