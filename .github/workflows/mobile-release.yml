@@ -31,6 +31,11 @@ jobs:
   check-signing:
     name: Check signing secrets
     runs-on: ubuntu-latest
+    # This job does not check out the repo, so the workflow-level
+    # `working-directory: mobile` default would point at a nonexistent dir.
+    defaults:
+      run:
+        working-directory: .
     outputs:
       signed: ${{ steps.c.outputs.signed }}
     steps:
