@@ -102,6 +102,10 @@ jobs:
       - run: |
           cd frontend
           pnpm install --frozen-lockfile
+          # Inject the real version so the UI shows it (instead of the stale
+          # VITE_APP_VERSION baked into frontend/.env).
+          export VITE_APP_VERSION="v$(cat ../VERSION)"
+          echo "Building frontend with VITE_APP_VERSION=$VITE_APP_VERSION"
           pnpm build-only
       - uses: actions/upload-artifact@v4
         with:
