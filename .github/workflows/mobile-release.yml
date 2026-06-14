@@ -94,17 +94,28 @@ jobs:
         run: echo "${{ secrets.PRIVATEDEPLOY_ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - run: flutter pub get
       - run: flutter pub run build_runner build --delete-conflicting-outputs
-      - name: Build signed universal APK
+      - name: Build signed APKs (arm64 split + universal)
         env:
           PRIVATEDEPLOY_ANDROID_KEY_ALIAS: ${{ secrets.PRIVATEDEPLOY_ANDROID_KEY_ALIAS }}
           PRIVATEDEPLOY_ANDROID_KEY_PASSWORD: ${{ secrets.PRIVATEDEPLOY_ANDROID_KEY_PASSWORD }}
           PRIVATEDEPLOY_ANDROID_STORE_PASSWORD: ${{ secrets.PRIVATEDEPLOY_ANDROID_STORE_PASSWORD }}
           PRIVATEDEPLOY_ANDROID_STORE_FILE: ${{ runner.temp }}/release.jks
-        run: flutter build apk --release
-      - name: Stage APK with friendly name
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/PrivateDeploy-android.apk
-      - name: Attach APK to the release
+        run: |
+          flutter build apk --release --split-per-abi
+          flutter build apk --release
+      - name: Stage APKs with friendly names
+        run: |
+          cd build/app/outputs/flutter-apk
+          cp app-arm64-v8a-release.apk PrivateDeploy-android-arm64.apk
+          cp app-release.apk PrivateDeploy-android-universal.apk
+      - name: Remove stale single-name APK asset (migration from older releases)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete-asset "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" PrivateDeploy-android.apk -y || true
+      - name: Attach APKs to the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          files: mobile/build/app/outputs/flutter-apk/PrivateDeploy-android.apk
+          files: |
+            mobile/build/app/outputs/flutter-apk/PrivateDeploy-android-arm64.apk
+            mobile/build/app/outputs/flutter-apk/PrivateDeploy-android-universal.apk
