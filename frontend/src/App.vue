@@ -44,7 +44,17 @@ const showStartupError = (error: unknown) => {
 }
 
 EventsOn('onLaunchApp', async (args: string[]) => {
-  const url = new URL(args[0])
+  const raw = args?.[0]
+  if (!raw) return
+  // Normal launches deliver the exe path / non-URL args here; only a deep link
+  // (privatedeploy://import-remote-profile?...) is a real URL. Guard the parse
+  // so a plain restart never crashes the frontend with "Invalid URL".
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return
+  }
   if (url.pathname.startsWith('//import-remote-profile')) {
     const _url = url.searchParams.get('url')
     const _name = decodeURIComponent(url.hash).slice(1) || sampleID()
