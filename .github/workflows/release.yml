@@ -266,6 +266,7 @@ jobs:
             | **Mac · Apple 芯片**(M1/M2/M3/M4,2020 年后) | `PrivateDeploy-darwin-arm64.zip` |
             | Mac · Intel 芯片(2020 年前的旧 Mac) | `PrivateDeploy-darwin-amd64.zip` |
             | **Linux**(64 位) | `PrivateDeploy-linux-amd64.zip` |
+            | **安卓手机 Android**(直接装,通用包) | `PrivateDeploy-android.apk` |
 
             > 不确定 Mac 是哪种芯片?点屏幕左上角苹果菜单 →「关于本机」:看到「Apple M…」选 Apple 芯片,看到「Intel」选 Intel。
 
