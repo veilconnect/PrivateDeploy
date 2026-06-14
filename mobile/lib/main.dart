@@ -32,44 +32,65 @@ void main() async {
   // connection can immediately apply CN split-routing rules.
   await BundledRuleSetRegistry.ensureInstalled();
 
-  runApp(const PrivateDeployApp());
+  final appSettingsProvider = AppSettingsProvider();
+  await appSettingsProvider.ready;
+
+  runApp(PrivateDeployApp(appSettingsProvider: appSettingsProvider));
 }
 
 class PrivateDeployApp extends StatelessWidget {
-  const PrivateDeployApp({Key? key}) : super(key: key);
+  const PrivateDeployApp({Key? key, this.appSettingsProvider})
+      : super(key: key);
+
+  final AppSettingsProvider? appSettingsProvider;
 
   @override
   Widget build(BuildContext context) {
+    final appSettings = appSettingsProvider;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => CloudProvider()),
+        // AppSettingsProvider is created BEFORE the VpnProvider proxy so the
+        // auto-failover handler below can read the current routing settings
+        // (it must re-apply the WireGuard overlay / custom rules to each
+        // failover node's config). The real app injects a pre-loaded instance
+        // from main(); tests can still construct PrivateDeployApp() directly.
+        if (appSettings == null)
+          ChangeNotifierProvider(create: (_) => AppSettingsProvider())
+        else
+          ChangeNotifierProvider<AppSettingsProvider>.value(
+            value: appSettings,
+          ),
         ChangeNotifierProxyProvider2<CloudProvider, ProfileProvider,
             VpnProvider>(
           create: (_) => VpnProvider(),
-          update: (_, cloudProvider, profileProvider, vpnProvider) {
+          update: (ctx, cloudProvider, profileProvider, vpnProvider) {
             vpnProvider?.setFallbackEgressIpResolver(
               cloudProvider.resolveEgressIpForProfileName,
             );
+            final appSettings = ctx.read<AppSettingsProvider>();
             // Auto-failover: when the same-node restart budget for an
             // UpstreamDegraded condition is exhausted, cycle through the
             // remaining ready cloud nodes instead of leaving the user
             // stranded on a broken tunnel. The handler is context-free so
             // the watchdog (which runs without a BuildContext) can invoke
             // it directly. Profile state and cloud node discovery come
-            // from the providers we just wired in.
+            // from the providers we just wired in. Routing settings are read
+            // at failover time so the new node keeps the user's WG overlay /
+            // custom rules instead of connecting a raw, un-normalized config.
             vpnProvider?.setOnDegradedExhausted(
               (triedProfileNames) => autoFailoverToNextCloudNode(
                 cloudProvider: cloudProvider,
                 profileProvider: profileProvider,
                 vpnProvider: vpnProvider,
                 triedProfileNames: triedProfileNames,
+                routingSettings: appSettings.vpnRoutingSettings,
               ),
             );
             return vpnProvider!;
           },
         ),
-        ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
         ChangeNotifierProxyProvider3<CloudProvider, VpnProvider,
             ProfileProvider, CdnProvider>(
           // lazy: false so CdnProvider's create+update fire on app boot,

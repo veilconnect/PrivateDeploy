@@ -284,7 +284,9 @@ class _SettingsRoutingRulesDialogState
               ),
               SizedBox(height: 4.h),
               Text(
-                '可定义额外出站（如 WireGuard 隧道到内网），并用自定义规则把指定流量指向它。',
+                '可定义额外出站（如 WireGuard 隧道到内网），并用自定义规则把指定流量指向它。'
+                '注意：如已在首页/设置里配了「内网 WireGuard」，不要在这里再粘一份相同密钥的 WireGuard——'
+                '同一套密钥同时上线会互相抢会话、频繁断线。',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               SizedBox(height: 12.h),
@@ -292,7 +294,7 @@ class _SettingsRoutingRulesDialogState
                 controller: _customOutboundsController,
                 label: '自定义出站 (sing-box 出站 JSON)',
                 hint:
-                    '粘贴单个 JSON 对象或数组，每个须含 tag 与 type。例（WireGuard）：\n{"type":"wireguard","tag":"home-wg","server":"1.2.3.4","server_port":51820,"local_address":["10.0.0.20/32"],"private_key":"<私钥>","peer_public_key":"<对端公钥>"}',
+                    '粘贴单个 JSON 对象或数组，每个须含 tag 与 type。例（WireGuard）：\n{"type":"wireguard","tag":"home-wg","server":"1.2.3.4","server_port":51820,"local_address":["10.0.0.2/32"],"private_key":"<私钥>","peer_public_key":"<对端公钥>","persistent_keepalive_interval":25}',
               ),
               SizedBox(height: 12.h),
               _buildTextField(

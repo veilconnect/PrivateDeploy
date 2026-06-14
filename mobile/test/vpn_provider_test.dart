@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -207,6 +208,66 @@ void main() {
       );
     });
 
+    test('already-running start rejection preserves the live session',
+        () async {
+      var startCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            startCalls += 1;
+            if (startCalls == 1) {
+              return true;
+            }
+            throw PlatformException(
+              code: 'ALREADY_RUNNING',
+              message: 'VPN is already running',
+            );
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+              'proxyless': true,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 1024,
+              'download_bytes': 2048,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final first = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Live WG',
+        proxyless: true,
+      );
+      expect(first, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live WG');
+      expect(vpnProvider.isProxylessTunnel, isTrue);
+
+      final second = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Other profile',
+      );
+
+      expect(second, false);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live WG');
+      expect(vpnProvider.isProxylessTunnel, isTrue);
+      expect(vpnProvider.error, contains('already running'));
+    });
+
     test('connect only reports success after confirmed running status',
         () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -337,6 +398,229 @@ void main() {
       expect(success, true);
       expect(vpnProvider.status, VpnStatus.connected);
       expect(vpnProvider.isConnected, true);
+    });
+
+    test('proxy tunnel: an upstream-degraded message DOES mark degraded',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': '1',
+              'status': 'connected',
+              'message': VpnProvider.tunnelUpstreamDegradedMessage,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(vpnProvider.isConnected, true);
+      expect(vpnProvider.isDegraded, true,
+          reason: 'a proxy tunnel must still surface upstream degradation');
+    });
+
+    test('intranet WG connect requests battery optimization exemption first',
+        () async {
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'requestIgnoreBatteryOptimizations':
+            calls.add(call.method);
+            return false;
+          case 'startVpn':
+            calls.add(call.method);
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+              'proxyless': true,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Intranet WireGuard',
+        proxyless: true,
+      );
+
+      expect(success, true);
+      expect(calls, [
+        'requestIgnoreBatteryOptimizations',
+        'startVpn',
+      ]);
+    });
+
+    test('proxyless (WG-only) tunnel: upstream-degraded message is ignored',
+        () async {
+      // The native probe is proxy-oriented; for a WG-only tunnel (egress =
+      // direct) its "upstream degraded" verdict is meaningless and must NOT
+      // mark degraded or arm the restart watchdog (which would drop WireGuard
+      // every ~30-60s).
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': '1',
+              'status': 'connected',
+              'message': VpnProvider.tunnelUpstreamDegradedMessage,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Intranet WireGuard',
+        proxyless: true,
+      );
+
+      expect(vpnProvider.isConnected, true);
+      expect(vpnProvider.isDegraded, false,
+          reason: 'WG-only tunnel must not be judged by the proxy probe');
+    });
+
+    test('native proxyless echo rebuilds the Dart flag after a process restart',
+        () async {
+      // The Dart process died before its session state landed; the surviving
+      // native WG-only tunnel echoes proxyless=true in its status, and a
+      // fresh provider must adopt it — otherwise the home screen mislabels
+      // the tunnel as a proxy and the WG-off toggle would connect a proxy.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+              'proxyless': true,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      expect(vpnProvider.isProxylessTunnel, false);
+      await vpnProvider.loadStatus();
+      expect(vpnProvider.isProxylessTunnel, true,
+          reason: 'the native echo is authoritative for the tunnel mode');
+      expect(vpnProvider.intranetWireguardLive, true,
+          reason: 'a WG-only tunnel always carries the intranet WireGuard');
+    });
+
+    test('a rejected native start rolls the proxyless flag back', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return false; // native refused (e.g. another session running)
+          case 'getStatus':
+            return {
+              'running': false,
+              'status': 'disconnected',
+              'message': null,
+              'connected_at': 0,
+              'uptime': 0,
+            };
+          case 'isRunning':
+            return false;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Intranet WireGuard',
+        proxyless: true,
+      );
+
+      expect(success, false);
+      expect(vpnProvider.isProxylessTunnel, false,
+          reason: 'native never adopted the start — the optimistic flip '
+              'must not survive');
+    });
+
+    test('intranetWireguardLive tracks the config actually connected',
+        () async {
+      var running = true;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'stopVpn':
+            running = false;
+            return true;
+          case 'getStatus':
+            return {
+              'running': running,
+              'status': running ? 'connected' : 'disconnected',
+              'message': null,
+              'connected_at': running ? 123 : 0,
+              'uptime': running ? 5 : 0,
+            };
+          case 'isRunning':
+            return running;
+          default:
+            return null;
+        }
+      });
+
+      final overlayConfig = jsonEncode({
+        'endpoints': [
+          {
+            'type': 'wireguard',
+            'tag': 'wireguard-intranet',
+            'private_key': 'x',
+            'peers': <Map<String, dynamic>>[],
+          },
+        ],
+        'outbounds': [
+          {'type': 'direct', 'tag': 'direct'},
+        ],
+      });
+
+      await vpnProvider.connect(
+          configJson: overlayConfig, profileName: 'Proxy+WG');
+      expect(vpnProvider.intranetWireguardLive, true,
+          reason: 'the connected config carries the overlay endpoint');
+
+      await vpnProvider.disconnect();
+      expect(vpnProvider.intranetWireguardLive, false,
+          reason: 'cleared with the session');
     });
 
     test('shows explicit conflict message when another VPN revokes connection',

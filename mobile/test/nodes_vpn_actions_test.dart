@@ -6,6 +6,8 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_vpn_actions.dart';
+import 'package:privatedeploy_mobile/features/profiles/bundled_rule_set_registry.dart';
+import 'package:privatedeploy_mobile/features/profiles/profile_config_normalizer.dart';
 import 'package:privatedeploy_mobile/l10n/app_localizations.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
 import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
@@ -48,7 +50,59 @@ void main() {
       expect(vpnProvider.disconnectCalls, 1);
       expect(vpnProvider.connectCalls, 1);
       expect(vpnProvider.lastProfileName, 'Cloud: backup-node');
-      expect(vpnProvider.lastConfigJson, '{"outbounds":[{"type":"direct"}]}');
+      // Failover now normalizes the saved config with the routing settings
+      // (so the WG overlay / custom rules carry over), not the raw bytes.
+      expect(
+        vpnProvider.lastConfigJson,
+        normalizeProfileConfigForCurrentPlatform(
+            '{"outbounds":[{"type":"direct"}]}'),
+      );
+    });
+
+    testWidgets('failover keeps CN split-routing (bundled rule-set paths)',
+        (tester) async {
+      // The connect path passes BundledRuleSetRegistry.paths so the
+      // normalizer can emit the pd-geosite-cn/pd-geoip-cn direct rules.
+      // Failover must do the same — without it, split-mode users silently
+      // lose ALL domestic routing after an auto-failover until the next
+      // manual connect.
+      BundledRuleSetRegistry.setPathsForTesting(const BundledRuleSetPaths(
+        geositeCnPath: '/tmp/test-geosite-cn.srs',
+        geoipCnPath: '/tmp/test-geoip-cn.srs',
+      ));
+      addTearDown(() => BundledRuleSetRegistry.setPathsForTesting(
+          const BundledRuleSetPaths()));
+
+      const splitConfig = '{"outbounds":['
+          '{"type":"shadowsocks","tag":"proxy","server":"203.0.113.9",'
+          '"server_port":8388,"method":"aes-256-gcm","password":"x"},'
+          '{"type":"direct","tag":"direct"}],'
+          '"route":{"final":"proxy"}}';
+      final backup = _profile(
+        id: 'backup-profile',
+        name: 'Cloud: backup-node',
+        content: splitConfig,
+      );
+      final profileProvider = _FakeProfileProvider(profiles: [backup]);
+      final vpnProvider = _FakeVpnProvider(status: VpnStatus.connected);
+
+      final switched = await autoFailoverToNextCloudNode(
+        cloudProvider: _FakeCloudProvider(),
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+        triedProfileNames: {},
+      );
+
+      expect(switched, true);
+      expect(vpnProvider.lastConfigJson, contains('pd-geosite-cn'),
+          reason: 'CN direct rules must survive auto-failover');
+      expect(
+        vpnProvider.lastConfigJson,
+        normalizeProfileConfigForCurrentPlatform(
+          splitConfig,
+          bundledRuleSetPaths: BundledRuleSetRegistry.paths,
+        ),
+      );
     });
   });
 
@@ -79,6 +133,50 @@ void main() {
 
       expect(find.text('VPN is busy, please wait a moment'), findsOneWidget);
       expect(usedNode, isNull);
+    });
+
+    testWidgets('hot-swaps the proxy in without bouncing a live WG tunnel',
+        (tester) async {
+      const config = '{"outbounds":[{"type":"direct","tag":"direct"}],'
+          '"endpoints":[{"type":"wireguard","tag":"wireguard-intranet",'
+          '"private_key":"x","peers":[]}]}';
+      final profile = _profile(
+        id: 'cloud-profile',
+        name: 'Cloud: primary-node',
+        content: config,
+      );
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.connected,
+        proxylessTunnel: true,
+        intranetWireguardLive: true,
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: _FakeProfileProvider(
+            activeConfigJson: config,
+            activeProfile: profile,
+            profiles: [profile],
+          ),
+          cloudProvider: _FakeCloudProvider(),
+          onUseCloudNode: (_) async {},
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pump();
+
+      // The live WG tunnel is reloaded in place — never torn down — so the
+      // user is no longer told to manually close WireGuard first.
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(vpnProvider.connectCalls, 0);
+      expect(vpnProvider.swapCalls, 1);
+      expect(vpnProvider.lastConfigJson, config);
+      expect(find.textContaining('内网 WireGuard 将保持连接'), findsOneWidget);
     });
 
     testWidgets('uses the only ready cloud node when no local config exists',
@@ -340,7 +438,7 @@ void main() {
         status: VpnStatus.disconnected,
         connectResult: true,
         disconnectResult: true,
-        diagnosticsEgressIp: '198.51.100.16',
+        diagnosticsEgressIp: '198.51.100.31',
       );
 
       await _pumpActionHarness(
@@ -821,6 +919,8 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     this.isLoading = false,
     this.connectResult = true,
     this.disconnectResult = true,
+    this.proxylessTunnel = false,
+    bool intranetWireguardLive = false,
     bool isDegraded = false,
     this.errorMessage,
     List<bool>? degradedResults,
@@ -828,6 +928,7 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     this.diagnosticsEgressIp,
     this.diagnosticsError,
   })  : _status = status,
+        _intranetWireguardLive = intranetWireguardLive,
         _isDegraded = isDegraded,
         _errorMessage = errorMessage,
         degradedResults = degradedResults ?? const [],
@@ -840,6 +941,16 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   final bool connectResult;
   final bool disconnectResult;
+  bool proxylessTunnel;
+  bool _intranetWireguardLive;
+
+  @override
+  bool get isProxylessTunnel => proxylessTunnel;
+
+  @override
+  bool get intranetWireguardLive =>
+      _status == VpnStatus.connected && _intranetWireguardLive;
+
   @override
   bool get isDegraded => _status == VpnStatus.connected && _isDegraded;
 
@@ -869,6 +980,7 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   List<VpnRouteDecision> get recentRouteDecisions => const [];
 
   int connectCalls = 0;
+  int swapCalls = 0;
   int disconnectCalls = 0;
   int stopDegradedSessionCalls = 0;
   String? lastConfigJson;
@@ -895,11 +1007,39 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     String? profileName,
     Duration stabilityCheckDuration = Duration.zero,
     Duration statusPollInterval = const Duration(milliseconds: 250),
+    bool proxyless = false,
   }) async {
     final resultIndex = connectCalls;
     connectCalls += 1;
     lastConfigJson = configJson;
     lastProfileName = profileName;
+    _status = connectResult ? VpnStatus.connected : VpnStatus.disconnected;
+    _isDegraded = resultIndex < degradedResults.length
+        ? degradedResults[resultIndex]
+        : _isDegraded;
+    _errorMessage = resultIndex < errorResults.length
+        ? errorResults[resultIndex]
+        : _errorMessage;
+    return connectResult;
+  }
+
+  @override
+  Future<bool> swapRunningConfig({
+    required String configJson,
+    String? profileName,
+    bool proxyless = false,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
+    // Hot-swap leaves the tunnel connected. Tracked on its own counter so
+    // tests can tell an in-place swap from a teardown+reconnect.
+    final resultIndex = swapCalls;
+    swapCalls += 1;
+    lastConfigJson = configJson;
+    lastProfileName = profileName;
+    proxylessTunnel = proxyless;
+    _intranetWireguardLive =
+        proxyless || configJson.contains('wireguard-intranet');
     _status = connectResult ? VpnStatus.connected : VpnStatus.disconnected;
     _isDegraded = resultIndex < degradedResults.length
         ? degradedResults[resultIndex]
