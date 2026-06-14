@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../core/security/encrypted_share.dart';
 import '../../l10n/app_localizations.dart';
@@ -9,13 +8,13 @@ import '../../shared/utils/logger.dart';
 import '../cloud/cloud_throughput_probe.dart';
 import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
-import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
 import '../vpn/vpn_status_messages.dart';
 import 'nodes_action_feedback.dart';
 import 'nodes_config_validation.dart';
 import 'nodes_dialogs.dart';
 import 'nodes_profile_widgets.dart';
+import 'nodes_vpn_session_restore.dart';
 
 Future<void> confirmDeleteProfile({
   required BuildContext context,
@@ -325,60 +324,62 @@ Future<ProfileSpeedResult> testProfileSpeed({
     return ProfileSpeedResult(error: preflightError);
   }
 
-  final previouslyConnected = vpnProvider.status == VpnStatus.connected;
-  final previousProfileName = vpnProvider.activeProfile;
-  final previousConfigJson = previouslyConnected
-      ? profileProvider.getActiveConfigJson(
-          routingSettings:
-              context.read<AppSettingsProvider>().vpnRoutingSettings,
-        )
-      : null;
-
-  if (previouslyConnected) {
-    await vpnProvider.disconnect();
-  }
-
-  final benchmarkConfig = normalizeProfileConfigForCurrentPlatform(configJson);
-  final connected = await vpnProvider.connect(
-    configJson: benchmarkConfig,
-    profileName: profile.name,
-    stabilityCheckDuration: const Duration(seconds: 3),
-    statusPollInterval: const Duration(milliseconds: 500),
+  final previousSession = capturePreviousVpnSession(
+    vpnProvider: vpnProvider,
   );
 
-  ProfileSpeedResult result;
-  if (connected) {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    final probe = throughputProbe ?? runCloudThroughputProbe;
-    final sample = await probe();
-    result = ProfileSpeedResult(
-      throughputMbps: sample.speedMbps,
-      error: sample.hasSample ? null : sample.error,
+  var result = ProfileSpeedResult(
+    error: l10nEarly.failedToConnectSpeedTestTunnel,
+  );
+  try {
+    if (previousSession.connected) {
+      await vpnProvider.disconnect();
+    }
+
+    final benchmarkConfig =
+        normalizeProfileConfigForCurrentPlatform(configJson);
+    final connected = await vpnProvider.connect(
+      configJson: benchmarkConfig,
+      profileName: profile.name,
+      stabilityCheckDuration: const Duration(seconds: 3),
+      statusPollInterval: const Duration(milliseconds: 500),
     );
-    await vpnProvider.disconnect();
-  } else {
-    final l10n = AppLocalizations.of(context)!;
-    result = ProfileSpeedResult(
-      error: vpnProvider.error == null
-          ? l10n.failedToConnectSpeedTestTunnel
-          : localizeVpnStatusMessage(vpnProvider.error, l10n),
-    );
+
+    if (connected) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final probe = throughputProbe ?? runCloudThroughputProbe;
+      final sample = await probe();
+      result = ProfileSpeedResult(
+        throughputMbps: sample.speedMbps,
+        error: sample.hasSample ? null : sample.error,
+      );
+      await vpnProvider.disconnect();
+    } else {
+      final l10n = AppLocalizations.of(context)!;
+      result = ProfileSpeedResult(
+        error: vpnProvider.error == null
+            ? l10n.failedToConnectSpeedTestTunnel
+            : localizeVpnStatusMessage(vpnProvider.error, l10n),
+      );
+    }
+  } finally {
+    if (previousSession.canRestore) {
+      if (vpnProvider.status == VpnStatus.connected) {
+        await vpnProvider.disconnect();
+      }
+      await restorePreviousVpnSession(
+        session: previousSession,
+        vpnProvider: vpnProvider,
+      );
+    } else if (vpnProvider.status == VpnStatus.connected) {
+      await vpnProvider.disconnect();
+    }
   }
 
   // The speed-test result is shown inline on the profile card. Clearing the
   // sticky banner here avoids the failure lingering on the connection card
   // after the user has already seen the inline result.
   vpnProvider.clearError();
-
-  // Restore previous VPN connection if one was active.
-  if (previouslyConnected && previousConfigJson != null) {
-    await vpnProvider.connect(
-      configJson: previousConfigJson,
-      profileName: previousProfileName,
-      stabilityCheckDuration: const Duration(seconds: 1),
-      statusPollInterval: const Duration(milliseconds: 250),
-    );
-  }
 
   return result;
 }

@@ -59,6 +59,29 @@ class StorageService {
     }
   }
 
+  static Future<bool> saveSecureStringStrict(String key, String value) async {
+    try {
+      await _secureStorage.write(key: key, value: value);
+      return true;
+    } catch (error) {
+      AppLogger.warning(
+        '[StorageService] Strict secure storage write failed for "$key"; refusing plaintext fallback: $error',
+      );
+      return false;
+    }
+  }
+
+  static Future<String?> getSecureStringStrict(String key) async {
+    try {
+      return await _secureStorage.read(key: key);
+    } catch (error) {
+      AppLogger.warning(
+        '[StorageService] Strict secure storage read failed for "$key": $error',
+      );
+      return null;
+    }
+  }
+
   static Future<void> removeSecure(String key) async {
     try {
       await _secureStorage.delete(key: key);

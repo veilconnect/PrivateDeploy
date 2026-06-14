@@ -1,16 +1,31 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/widgets.dart';
 
+import '../../core/storage/storage_service.dart';
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
+import '../settings/app_settings_provider.dart' show WireGuardIntranet;
 import 'vpn_diagnostics.dart';
 import 'vpn_models.dart';
 import 'vpn_status_helpers.dart';
 
 export 'vpn_models.dart';
 export 'vpn_diagnostics.dart';
+
+class VpnSessionSnapshot {
+  const VpnSessionSnapshot({
+    required this.configJson,
+    required this.profileName,
+    required this.proxyless,
+  });
+
+  final String configJson;
+  final String? profileName;
+  final bool proxyless;
+}
 
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
@@ -87,6 +102,21 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // string-matching.
   VpnHealth _health = VpnHealth.healthy;
   String? _activeProfile;
+  String? _activeConfigJson;
+  // True while the active tunnel has NO proxy upstream — i.e. the WG-only /
+  // intranet config (egress = `direct`, only LAN flows through WireGuard). The
+  // native health probe is proxy-oriented (it tests reachability of a public-IP
+  // node through the tunnel), so for a proxyless tunnel its "upstream degraded"
+  // verdict is meaningless. We use this to suppress the degraded badge and —
+  // crucially — the restart watchdog, which would otherwise tear down and
+  // rebuild the tunnel every ~30-60s, killing the WireGuard handshake each time
+  // ("connects but constantly drops").
+  bool _proxylessTunnel = false;
+  // True while the LIVE tunnel config carries the intranet WireGuard overlay
+  // endpoint. Tracked from the config actually handed to connect() — NOT from
+  // the saved settings, which the user can flip without reconnecting (the
+  // settings page only persists; it never rebuilds the live tunnel).
+  bool _intranetWgLive = false;
   TrafficStats _stats = TrafficStats.zero();
   bool _isLoading = false;
   String? _error;
@@ -150,6 +180,31 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _status == VpnStatus.connected && _health == VpnHealth.degraded;
   bool get needsCdnGuidance => _needsCdnGuidance;
   String? get activeProfile => _activeProfile;
+
+  VpnSessionSnapshot? get activeSessionSnapshot {
+    final config = _activeConfigJson;
+    if (_status != VpnStatus.connected || config == null || config.isEmpty) {
+      return null;
+    }
+    return VpnSessionSnapshot(
+      configJson: config,
+      profileName: _activeProfile,
+      proxyless: _proxylessTunnel,
+    );
+  }
+
+  /// True when the active tunnel has no proxy upstream (WG-only / intranet).
+  /// Authoritative for "is a proxy node in the tunnel?" — survives app restart
+  /// via the persisted session state, so callers shouldn't infer it from the
+  /// profile name alone.
+  bool get isProxylessTunnel => _proxylessTunnel;
+
+  /// True when the CONNECTED tunnel is actually carrying the intranet
+  /// WireGuard overlay (WG-only tunnels always are). This is the honest signal
+  /// for "is my LAN reachable right now" — `wireGuardIntranet.enabled` is only
+  /// the saved preference, which takes effect on the next (re)connect.
+  bool get intranetWireguardLive =>
+      _status == VpnStatus.connected && (_proxylessTunnel || _intranetWgLive);
   TrafficStats get stats => _stats;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -330,6 +385,67 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  // Persisted so a tunnel that outlives the Dart process keeps its identity on
+  // the next app start (see _restoreSessionStateIfRunning / loadStatus).
+  static const String _sessionStateKey = 'vpn_session_state';
+
+  void _persistSessionState(
+    String? profileName,
+    bool proxyless, {
+    required bool intranetWg,
+  }) {
+    if (!StorageService.isInitialized) return;
+    unawaited(StorageService.saveString(
+      _sessionStateKey,
+      jsonEncode({
+        'profile': profileName,
+        'proxyless': proxyless,
+        'intranetWg': intranetWg,
+      }),
+    ));
+  }
+
+  /// Whether [config] carries the intranet WireGuard overlay endpoint. Tag
+  /// match only — a full-tunnel WG node uses its own tag and is a different
+  /// feature (the home card talks about the intranet overlay specifically).
+  static bool _configCarriesIntranetWireguard(String config) {
+    try {
+      final decoded = jsonDecode(config);
+      if (decoded is! Map) return false;
+      final endpoints = decoded['endpoints'];
+      if (endpoints is! List) return false;
+      return endpoints
+          .whereType<Map>()
+          .any((e) => e['tag']?.toString() == WireGuardIntranet.tag);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _clearSessionState() {
+    if (!StorageService.isInitialized) return;
+    unawaited(StorageService.remove(_sessionStateKey));
+  }
+
+  void _restoreSessionStateIfRunning() {
+    if (_activeProfile != null) return;
+    final raw = StorageService.getString(_sessionStateKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final profile = decoded['profile'];
+        if (profile is String && profile.isNotEmpty) {
+          _activeProfile = profile;
+        }
+        _proxylessTunnel = decoded['proxyless'] == true;
+        _intranetWgLive = decoded['intranetWg'] == true;
+      }
+    } catch (_) {
+      // Corrupt state — ignore; a fresh connect overwrites it.
+    }
+  }
+
   Future<void> loadStatus() async {
     if (!_isSupported) {
       _status = VpnStatus.disconnected;
@@ -340,6 +456,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
     try {
       final nativeStatus = await _nativeService.getStatus();
+      // The native tunnel can outlive the Dart process (foreground service). On
+      // a fresh app start _activeProfile/_proxylessTunnel are unset, so restore
+      // the persisted session identity BEFORE interpreting the status — else a
+      // surviving WG-only tunnel would be mistaken for a proxy and get judged
+      // (and restarted) by the proxy-oriented health watchdog.
+      if (nativeStatus?.running ?? false) {
+        _restoreSessionStateIfRunning();
+      }
       if (nativeStatus != null) {
         _applyNativeStatus(nativeStatus, notify: false);
       } else {
@@ -372,6 +496,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     String? profileName,
     Duration stabilityCheckDuration = Duration.zero,
     Duration statusPollInterval = const Duration(milliseconds: 250),
+    bool proxyless = false,
   }) async {
     if (!_isSupported) {
       _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
@@ -388,6 +513,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _diagnosticsError = null;
     _diagnosticsUpdatedAt = null;
     _upstreamDegradedRestartAttempts = 0;
+    // Record whether this tunnel has a proxy upstream. A WG-only / intranet
+    // tunnel must not be judged by (or restarted because of) the proxy-oriented
+    // health probe. Optimistic: if the native side rejects this start (e.g. a
+    // session is already running), the rejected branch below rolls the flag
+    // back to the running session's mode — and the native `proxyless` status
+    // echo corrects any residual drift on the next status event.
+    final previousActiveProfile = _activeProfile;
+    final previousActiveConfigJson = _activeConfigJson;
+    final previousProxyless = _proxylessTunnel;
+    _proxylessTunnel = proxyless;
     // Failover history is scoped to a single auto-failover episode. A new
     // connect() call (either user-initiated or from the failover handler
     // itself) starts fresh — except when the failover handler is the one
@@ -398,8 +533,23 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
     _safeNotifyListeners();
 
+    // Track whether this tunnel carries the intranet WG overlay, from the
+    // config actually being started (same optimistic/rollback discipline as
+    // _proxylessTunnel above). Hoisted out of the try so the catch branch can
+    // roll it back too.
+    final config = configJson ?? '{}';
+    final previousIntranetWgLive = _intranetWgLive;
+    _intranetWgLive = proxyless || _configCarriesIntranetWireguard(config);
+
     try {
-      final config = configJson ?? '{}';
+      if (_intranetWgLive) {
+        // Long-lived intranet WG sessions behave like SSH/VPN infrastructure,
+        // not short foreground work. On Samsung/Android builds with aggressive
+        // battery policy, ask once for an OS-level exemption before starting;
+        // failure/cancel is non-fatal and the tunnel still starts.
+        await _nativeService.requestIgnoreBatteryOptimizations();
+      }
+
       // Set _activeProfile *before* awaiting the native start so a
       // failure path (e.g. cellular SYN-block where the native side
       // refuses to install a black-hole tun) still leaves the profile
@@ -409,7 +559,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // which is the more useful semantic for any caller asking
       // "which profile is the user trying to use".
       _activeProfile = profileName;
-      final success = await _nativeService.startVpn(config);
+      final success =
+          await _nativeService.startVpn(config, proxyless: proxyless);
 
       if (success) {
         // Keep the explicit assignment on success too so we stay
@@ -426,6 +577,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           if (!verified) {
             return false;
           }
+          // Persist the session identity only once the tunnel is verified up,
+          // so a failed start never leaves stale state to be restored on the
+          // next app launch.
+          _activeConfigJson = config;
+          _persistSessionState(profileName, proxyless,
+              intranetWg: _intranetWgLive);
           _isLoading = false;
           _safeNotifyListeners();
           AppLogger.info('[VpnProvider] VPN connected');
@@ -433,6 +590,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         }
 
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _error = _normalizeVpnError(
               _nativeService.lastError ??
                   _error ??
@@ -441,18 +599,153 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
             'VPN did not reach connected state';
         return false;
       } else {
+        final startError = _nativeService.lastError;
+        // Duplicate starts are rejected by native without stopping the existing
+        // tunnel. Keep this provider attached to that still-running session
+        // instead of locally marking it disconnected.
+        if (_isAlreadyRunningStartRejection(startError)) {
+          _activeProfile = previousActiveProfile;
+          _activeConfigJson = previousActiveConfigJson;
+          _proxylessTunnel = previousProxyless;
+          _intranetWgLive = previousIntranetWgLive;
+          await loadStatus();
+          if (_status == VpnStatus.connected) {
+            _error = _normalizeVpnError(startError);
+            return false;
+          }
+        }
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _stopStatsPolling();
-        _error = _normalizeVpnError(_nativeService.lastError) ??
-            'Failed to start VPN';
+        // The native side never adopted this start — if a previous session is
+        // still running it kept its own mode, so restore our copy of it.
+        _proxylessTunnel = previousProxyless;
+        _intranetWgLive = previousIntranetWgLive;
+        _error = _normalizeVpnError(startError) ?? 'Failed to start VPN';
         return false;
       }
     } catch (e) {
       _error = _normalizeVpnError(e.toString()) ??
           'Failed to start VPN: ${e.toString()}';
       _status = VpnStatus.disconnected;
+      _activeConfigJson = null;
       _stopStatsPolling();
+      // Same rollback as the rejected branch: this start never took effect,
+      // so a still-running previous session keeps its mode in our copy too.
+      _proxylessTunnel = previousProxyless;
+      _intranetWgLive = previousIntranetWgLive;
+      if (_isAlreadyRunningStartRejection(e.toString())) {
+        _activeProfile = previousActiveProfile;
+        _activeConfigJson = previousActiveConfigJson;
+      }
       AppLogger.error('[VpnProvider] Start error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
+        _handleUpstreamDegradedSignal(degraded: true);
+      }
+      _safeNotifyListeners();
+    }
+  }
+
+  /// Hot-swaps the configuration of an ALREADY-CONNECTED tunnel in place,
+  /// without tearing down the Android VpnService interface. The native side
+  /// reloads sing-box on the SAME tun fd, so flows already established through
+  /// the tunnel — notably an SSH session over the intranet WireGuard overlay —
+  /// survive the swap. This is what lets the WireGuard control and the proxy
+  /// control change one without interrupting the other.
+  ///
+  /// Returns false WITHOUT touching native state when there is no live tunnel
+  /// to update — the caller must fall back to a full [connect]. On a failed
+  /// swap the mode flags roll back to the still-running session, mirroring
+  /// [connect]'s optimistic/rollback discipline. Startup verification runs the
+  /// same way as [connect], so a swap onto an unreachable node tears the tunnel
+  /// down rather than leaving it wedged.
+  Future<bool> swapRunningConfig({
+    required String configJson,
+    String? profileName,
+    bool proxyless = false,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      _safeNotifyListeners();
+      return false;
+    }
+    if (_status != VpnStatus.connected) {
+      // Nothing live to hot-swap. Don't fabricate a tunnel here — let the
+      // caller decide to do a cold connect instead.
+      return false;
+    }
+
+    _cancelStartupVerification();
+    // Deliberately DO NOT flip _status to connecting: the tunnel stays up
+    // across the swap, and a connecting flash would make the UI (and the
+    // stats poller) think the session bounced.
+    _isLoading = true;
+    _error = null;
+    _diagnosticsEgressIp = null;
+    _diagnosticsError = null;
+    _diagnosticsUpdatedAt = null;
+    _upstreamDegradedRestartAttempts = 0;
+
+    final previousActiveProfile = _activeProfile;
+    final previousActiveConfigJson = _activeConfigJson;
+    final previousProxyless = _proxylessTunnel;
+    final previousIntranetWgLive = _intranetWgLive;
+    _proxylessTunnel = proxyless;
+    _intranetWgLive = proxyless || _configCarriesIntranetWireguard(configJson);
+    _safeNotifyListeners();
+
+    try {
+      if (_intranetWgLive && !previousIntranetWgLive) {
+        await _nativeService.requestIgnoreBatteryOptimizations();
+      }
+
+      final updated =
+          await _nativeService.updateConfig(configJson, proxyless: proxyless);
+      if (!updated) {
+        // Native kept running the previous config — restore our copy of it.
+        _proxylessTunnel = previousProxyless;
+        _intranetWgLive = previousIntranetWgLive;
+        _error = _normalizeVpnError(_nativeService.lastError) ??
+            'Failed to update VPN config';
+        return false;
+      }
+
+      _activeProfile = profileName;
+      // The tunnel stays connected across an in-place swap, so don't refresh
+      // status here: native's updateConfig is dispatched asynchronously and
+      // hasn't yet flipped its proxyless echo, so an immediate loadStatus()
+      // would transiently clobber our optimistic mode flag. Verification below
+      // polls status over time and self-corrects once the swap thread lands;
+      // a swap that actually drops the tunnel is caught there too (stability
+      // poll for proxy swaps, egress probe for WG-only) and torn down cleanly.
+      final generation = ++_startupVerificationGeneration;
+      final verified = await _runStartupVerification(
+        generation: generation,
+        stabilityCheckDuration: stabilityCheckDuration,
+        statusPollInterval: statusPollInterval,
+      );
+      if (!verified) {
+        return false;
+      }
+      _activeConfigJson = configJson;
+      _persistSessionState(profileName, proxyless, intranetWg: _intranetWgLive);
+      _isLoading = false;
+      _safeNotifyListeners();
+      AppLogger.info('[VpnProvider] VPN config hot-swapped');
+      return true;
+    } catch (e) {
+      _proxylessTunnel = previousProxyless;
+      _intranetWgLive = previousIntranetWgLive;
+      _activeProfile = previousActiveProfile;
+      _activeConfigJson = previousActiveConfigJson;
+      _error = _normalizeVpnError(e.toString()) ??
+          'Failed to update VPN config: ${e.toString()}';
+      AppLogger.error('[VpnProvider] Config swap error', e);
       return false;
     } finally {
       _isLoading = false;
@@ -487,6 +780,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
+        _proxylessTunnel = false;
+        _intranetWgLive = false;
+        _clearSessionState();
         _lastKnownEgressIp = null;
         _lastKnownEgressIpAt = null;
         _stopStatsPolling();
@@ -532,6 +829,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
+        _proxylessTunnel = false;
+        _intranetWgLive = false;
+        _clearSessionState();
         _lastKnownEgressIp = null;
         _lastKnownEgressIpAt = null;
         _diagnosticsEgressIp = null;
@@ -1095,6 +1396,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   }
 
   void _markStartupProbeInconclusive() {
+    // A proxyless (WG-only) tunnel egresses direct; the public-IP startup probe
+    // doesn't assess it, so a missing/inconclusive result is not a degradation.
+    // Skip entirely so it neither badges degraded nor (via the finally blocks)
+    // arms the restart watchdog.
+    if (_proxylessTunnel) {
+      return;
+    }
     _diagnosticsEgressIp = null;
     _diagnosticsError = startupProbeInconclusiveMessage;
     _diagnosticsUpdatedAt = DateTime.now();
@@ -1130,6 +1438,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     _status = VpnStatus.disconnected;
     _activeProfile = null;
+    _activeConfigJson = null;
+    _proxylessTunnel = false;
+    _intranetWgLive = false;
+    _clearSessionState();
     _stopStatsPolling();
     _isLoading = false;
     _safeNotifyListeners();
@@ -1224,6 +1536,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         message.contains('open outbound connection');
   }
 
+  bool _isAlreadyRunningStartRejection(String? message) {
+    final normalized = message?.trim().toLowerCase() ?? '';
+    return normalized.contains('already_running') ||
+        normalized.contains('already running') ||
+        normalized.contains('start already in progress');
+  }
+
   Duration _currentConnectionTime() {
     if (_status != VpnStatus.connected) {
       return Duration.zero;
@@ -1264,6 +1583,21 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _status = vpnStatusFromNative(nativeStatus);
     _updateConnectionClock(nativeStatus, previousStatus: previousStatus);
 
+    // The native side is the authority on the tunnel mode — it sets the flag
+    // only at the accepted-start point and persists it durably. Adopt its echo
+    // whenever the tunnel is running, which (a) rebuilds isProxylessTunnel
+    // after the Dart process was killed before its own session state landed,
+    // and (b) corrects connect()'s optimistic flip when native rejected a
+    // duplicate start and kept the previous session's mode.
+    final nativeProxyless = nativeStatus.proxyless;
+    if (nativeProxyless != null &&
+        nativeStatus.running &&
+        _proxylessTunnel != nativeProxyless) {
+      _proxylessTunnel = nativeProxyless;
+      _persistSessionState(_activeProfile, nativeProxyless,
+          intranetWg: _intranetWgLive);
+    }
+
     final message = nativeStatus.message?.trim();
     final normalizedStatus = nativeStatus.status.trim().toLowerCase();
     final preserveConflictMessage = _error == vpnConflictMessage &&
@@ -1282,7 +1616,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     )) {
       _error = vpnConflictMessage;
     } else if (message != null && message.isNotEmpty) {
-      _error = _normalizeVpnError(message);
+      // A proxyless (WG-only) tunnel has no proxy upstream, so the native
+      // probe's upstream-degraded / cellular-SYN-block verdicts don't apply —
+      // don't surface them as an error banner the user can't act on.
+      final isProxyHealthVerdict = message == tunnelUpstreamDegradedMessage ||
+          message == cellularCarrierSynBlockMessage;
+      if (_proxylessTunnel &&
+          _status == VpnStatus.connected &&
+          isProxyHealthVerdict) {
+        _error = null;
+      } else {
+        _error = _normalizeVpnError(message);
+      }
     } else if (nativeStatus.status != 'error' &&
         nativeStatus.status != 'revoked' &&
         !preserveConflictMessage &&
@@ -1322,7 +1667,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // condition self-resolves once domestic probes start passing on the
       // next health-monitor cycle (~30 s).
       final isDirectRouteDegraded = message == tunnelDirectRouteDegradedMessage;
-      _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
+      // A proxyless (WG-only / intranet) tunnel has no proxy upstream for the
+      // native probe to assess, so its "upstream degraded" verdict doesn't
+      // apply: never badge degraded and never arm the restart watchdog for it.
+      // (Without this, the proxy-oriented probe flags WG-only as degraded and
+      // the watchdog restarts the tunnel every ~30-60s, dropping WireGuard.)
+      _health = (!_proxylessTunnel &&
+              (hasNativeDegradedMessage || _hasStartupProbeWarning))
           ? VpnHealth.degraded
           : VpnHealth.healthy;
       // A healthy connected transition resolves the previous SYN-block:
@@ -1348,9 +1699,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         unawaited(_refreshConnectedDiagnosticsEgressIp());
       }
       _handleUpstreamDegradedSignal(
-        degraded: hasNativeDegradedMessage && !isDirectRouteDegraded,
+        degraded: !_proxylessTunnel &&
+            hasNativeDegradedMessage &&
+            !isDirectRouteDegraded,
       );
     } else {
+      if (previousStatus == VpnStatus.connected &&
+          (normalizedStatus == 'disconnected' ||
+              normalizedStatus == 'revoked')) {
+        _activeProfile = null;
+        _activeConfigJson = null;
+        _proxylessTunnel = false;
+        _intranetWgLive = false;
+        _clearSessionState();
+      }
       _stopStatsPolling();
       _deferredStartupDiagnosticsTimer?.cancel();
       _deferredStartupDiagnosticsTimer = null;
@@ -1402,7 +1764,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   /// we kick a native restart so urltest re-probes every pool member from
   /// scratch and (hopefully) lands on a healthy one.
   void _handleUpstreamDegradedSignal({required bool degraded}) {
-    if (!degraded) {
+    // A proxyless (WG-only / intranet) tunnel has no proxy upstream to restart
+    // toward, so it must NEVER arm this watchdog — regardless of how the caller
+    // computed `degraded` (e.g. a startup-probe-inconclusive marking _health
+    // degraded in connect()/restart()'s finally block). Treat it as not
+    // degraded so the timer is cancelled rather than scheduled.
+    final effectiveDegraded = degraded && !_proxylessTunnel;
+    if (!effectiveDegraded) {
       _upstreamDegradedWatchdog?.cancel();
       _upstreamDegradedWatchdog = null;
       return;

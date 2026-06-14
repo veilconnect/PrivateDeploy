@@ -65,6 +65,12 @@ String normalizeProfileConfigForCurrentPlatform(
           isAndroid: isAndroid,
         ) ||
         changed;
+    // Collapse any true-duplicate WireGuard endpoints (same key + server + port)
+    // down to one survivor, retargeting references. Runs independently of the
+    // overlay so it also covers the overlay-OFF case (a full-tunnel WG node plus
+    // a same-key custom outbound), where two live endpoints would steal the
+    // single per-pubkey session from each other and the tunnel keeps dropping.
+    changed = _collapseDuplicateWireguardPeers(decoded) || changed;
     // Overlay the independent intranet WireGuard tunnel last, so its LAN rule
     // sits above the proxy/direct routing produced above.
     changed = _applyWireGuardIntranet(
@@ -72,6 +78,12 @@ String normalizeProfileConfigForCurrentPlatform(
           routingSettings.wireGuardIntranet,
         ) ||
         changed;
+    // Whenever the config carries ANY WireGuard endpoint — including legacy
+    // full-tunnel profiles saved before tun MTU was baked in, and the overlay
+    // early-return paths above — clamp the TUN MTU to fit the WG path. A TUN
+    // left at sing-box's 9000 default lets large packets enter and stall
+    // against the (typically 1408) WireGuard MTU, which reads as random drops.
+    changed = _clampTunMtuForWireguard(decoded) || changed;
 
     if (!changed) {
       return content;
@@ -945,11 +957,24 @@ Map<String, dynamic> _buildWireguardEndpoint(Map<String, dynamic> outbound) {
   // to LAN ranges only); otherwise default to a full route and let the route
   // layer decide what reaches the tunnel.
   final explicitAllowed = _coerceStringList(outbound['allowed_ips']);
-  peer['allowed_ips'] =
-      explicitAllowed.isNotEmpty ? explicitAllowed : const ['0.0.0.0/0', '::/0'];
-  final keepalive = _asIntOrNull(outbound['persistent_keepalive_interval']);
-  if (keepalive != null && keepalive > 0) {
-    peer['persistent_keepalive_interval'] = keepalive;
+  peer['allowed_ips'] = explicitAllowed.isNotEmpty
+      ? explicitAllowed
+      : const ['0.0.0.0/0', '::/0'];
+  // Keepalive: a WireGuard peer behind NAT whose mapping isn't refreshed goes
+  // silent after a minute or two of idle — the classic "WireGuard keeps
+  // disconnecting". So default to 25s (the wg-quick default) when the source
+  // OMITS the field (the custom-outbound builder and pasted routing-rules JSON
+  // both omit it, so without a default those tunnels drop on idle). Only an
+  // EXPLICIT non-positive value counts as an opt-out — callers that want no
+  // keepalive must pass `persistent_keepalive_interval: 0`, not drop the key.
+  if (outbound.containsKey('persistent_keepalive_interval')) {
+    final keepalive = _asIntOrNull(outbound['persistent_keepalive_interval']);
+    if (keepalive != null && keepalive > 0) {
+      peer['persistent_keepalive_interval'] = keepalive;
+    }
+    // present and <= 0 (explicit opt-out), or unparseable: emit no keepalive.
+  } else {
+    peer['persistent_keepalive_interval'] = 25;
   }
 
   final endpoint = <String, dynamic>{
@@ -1008,9 +1033,10 @@ String buildWireguardProfileConfig({
   if (mtu != null && mtu > 0) {
     outboundShaped['mtu'] = mtu;
   }
-  if (persistentKeepalive > 0) {
-    outboundShaped['persistent_keepalive_interval'] = persistentKeepalive;
-  }
+  // Pass the value through verbatim — including 0/negative — so
+  // _buildWireguardEndpoint can honor an explicit opt-out. Omitting the key
+  // there would make it fall back to the 25s default.
+  outboundShaped['persistent_keepalive_interval'] = persistentKeepalive;
 
   final endpoint = _buildWireguardEndpoint(outboundShaped);
   final config = <String, dynamic>{
@@ -1036,6 +1062,10 @@ String buildWireguardProfileConfig({
         'auto_route': true,
         'stack': 'gvisor',
         'sniff': true,
+        // Match the WireGuard endpoint's 1408 MTU. Without it the TUN defaults
+        // to 9000, so large packets enter the tunnel and stall against the WG
+        // path MTU — reads as random "drops" on cellular/PPPoE links.
+        'mtu': 1408,
       },
     ],
     'endpoints': <Map<String, dynamic>>[endpoint],
@@ -1051,6 +1081,8 @@ String buildWireguardProfileConfig({
       'final': tag,
     },
   };
+  // A user-set endpoint MTU below 1408 must pull the TUN down with it.
+  _clampTunMtuForWireguard(config);
   return const JsonEncoder.withIndent('  ').convert(config);
 }
 
@@ -1065,27 +1097,32 @@ String? buildWireguardIntranetOnlyConfig(
   if (!wg.isActive) {
     return null;
   }
+  final cidrs = wg.intranetCidrs;
+  if (cidrs.isEmpty) {
+    return null;
+  }
   final config = <String, dynamic>{
     'log': <String, dynamic>{'level': 'info'},
-    'dns': <String, dynamic>{
-      'servers': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'tag': 'dns-direct',
-          'address': '223.5.5.5',
-          'detour': 'direct',
-        },
-      ],
-      'strategy': 'prefer_ipv4',
-    },
+    // Deliberately omit DNS for WG-only. Android treats VPN-provided DNS as
+    // the device resolver while the VPN is active; for a split intranet tunnel
+    // that can make public apps look offline even though only LAN CIDRs should
+    // use WireGuard. Let the underlying network keep its own resolver.
     'inbounds': <Map<String, dynamic>>[
       <String, dynamic>{
         'type': 'tun',
         'tag': 'tun-in',
         'interface_name': 'tun0',
         'inet4_address': '172.19.0.1/30',
+        // WG-only must not install a device-wide default route. Only the
+        // intranet CIDRs enter the VPN; all public traffic stays on Android's
+        // underlying network even if direct DNS/protect is flaky.
+        'route_address': cidrs,
         'auto_route': true,
         'stack': 'gvisor',
         'sniff': true,
+        // Match the WireGuard endpoint's 1408 MTU (TUN defaults to 9000, which
+        // stalls large packets against the WG path MTU — looks like "drops").
+        'mtu': 1408,
       },
     ],
     'outbounds': <Map<String, dynamic>>[
@@ -1098,9 +1135,309 @@ String? buildWireguardIntranetOnlyConfig(
       'final': 'direct',
     },
   };
-  // Inject the WireGuard endpoint + the LAN -> WireGuard rule.
-  _applyWireGuardIntranet(config, wg);
+  // Inject the WireGuard endpoint + the LAN -> WireGuard rule. If the overlay
+  // declines (e.g. every configured address failed to parse into a routable
+  // CIDR), there is no WireGuard in this config at all — starting it would
+  // bring up a direct-only tunnel that LOOKS connected but never carries the
+  // LAN. Fail loudly instead.
+  if (!_applyWireGuardIntranet(config, wg)) {
+    return null;
+  }
+  // Clamp the TUN to the endpoint's effective MTU (a user-set MTU below 1408
+  // must pull the TUN down with it, or mid-size packets still stall).
+  _clampTunMtuForWireguard(config);
   return const JsonEncoder.withIndent('  ').convert(config);
+}
+
+/// A WireGuard endpoint's peer identity for grouping: private key + peer server
+/// address + peer public key + PSK (NOT the port — see
+/// [_collapseDuplicateWireguardPeers], which treats a missing port as a
+/// wildcard so a port-less paste still matches a fully specified peer, while
+/// two DIFFERENT explicit ports stay distinct). Returns null for non-WireGuard
+/// endpoints or ones missing a key/peer address/public key. Missing and blank
+/// PSK are normalized to the same value.
+String? _wireguardPeerIdentity(Map endpoint) {
+  if (endpoint['type']?.toString() != 'wireguard') return null;
+  final pk = endpoint['private_key']?.toString().trim();
+  if (pk == null || pk.isEmpty) return null;
+  final peers = endpoint['peers'];
+  if (peers is! List || peers.isEmpty) return null;
+  final p0 = peers.first;
+  if (p0 is! Map) return null;
+  final addr = p0['address']?.toString().trim() ?? '';
+  if (addr.isEmpty) return null; // no server address — not a groupable peer
+  final peerKey = p0['public_key']?.toString().trim() ?? '';
+  if (peerKey.isEmpty) return null;
+  final psk = p0['pre_shared_key']?.toString().trim() ?? '';
+  return '$pk|$addr|$peerKey|$psk';
+}
+
+/// Whether [allowed] already carries a full route for [cidr]'s address family
+/// (`0.0.0.0/0` for IPv4, `::/0` for IPv6). Used when widening a peer's
+/// allowed_ips: an IPv4 full route must NOT swallow IPv6 intranet CIDRs — the
+/// route rule would send IPv6 LAN traffic to the peer but WireGuard would
+/// silently drop it.
+bool _allowedIpsCoverFamily(List<String> allowed, String cidr) {
+  return cidr.contains(':')
+      ? allowed.contains('::/0')
+      : allowed.contains('0.0.0.0/0');
+}
+
+/// The peer port of a WireGuard endpoint, or null when absent.
+int? _wireguardPeerPort(Map endpoint) {
+  final peers = endpoint['peers'];
+  if (peers is! List || peers.isEmpty) return null;
+  final p0 = peers.first;
+  if (p0 is! Map) return null;
+  return _asIntOrNull(p0['port']);
+}
+
+/// Rewrites every reference to outbound tag [from] -> [to] across the places
+/// sing-box resolves outbound tags: route.final, route.rules[].outbound, DNS
+/// server detours, and selector/urltest member lists. Used after deleting a
+/// duplicate endpoint so no dangling tag remains (sing-box rejects those).
+bool _retargetOutboundReferences(
+  Map<String, dynamic> decoded, {
+  required String from,
+  required String to,
+}) {
+  if (from == to) return false;
+  var changed = false;
+
+  final route = decoded['route'];
+  if (route is Map) {
+    if (route['final']?.toString() == from) {
+      route['final'] = to;
+      changed = true;
+    }
+    final rules = route['rules'];
+    if (rules is List) {
+      for (final r in rules.whereType<Map>()) {
+        if (r['outbound']?.toString() == from) {
+          r['outbound'] = to;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  final dns = decoded['dns'];
+  if (dns is Map) {
+    final servers = dns['servers'];
+    if (servers is List) {
+      for (final s in servers.whereType<Map>()) {
+        if (s['detour']?.toString() == from) {
+          s['detour'] = to;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  final outbounds = decoded['outbounds'];
+  if (outbounds is List) {
+    for (final o in outbounds.whereType<Map>()) {
+      final members = o['outbounds'];
+      if (members is List) {
+        for (var i = 0; i < members.length; i++) {
+          if (members[i]?.toString() == from) {
+            members[i] = to;
+            changed = true;
+          }
+        }
+      }
+      if (o['detour']?.toString() == from) {
+        o['detour'] = to;
+        changed = true;
+      }
+      if (o['default']?.toString() == from) {
+        o['default'] = to;
+        changed = true;
+      }
+    }
+  }
+
+  // Endpoints accept dial fields too — an endpoint dialing through another
+  // tag via `detour` must not be left dangling either.
+  final endpoints = decoded['endpoints'];
+  if (endpoints is List) {
+    for (final e in endpoints.whereType<Map>()) {
+      if (e['detour']?.toString() == from) {
+        e['detour'] = to;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+/// Lowers every tun inbound's `mtu` to at most [maxMtu], leaving smaller
+/// explicit values alone. Returns true when anything changed.
+bool _clampTunMtu(Map<String, dynamic> decoded, int maxMtu) {
+  final inbounds = decoded['inbounds'];
+  if (inbounds is! List) return false;
+  var changed = false;
+  for (final inbound in inbounds.whereType<Map>()) {
+    if (inbound['type']?.toString() != 'tun') continue;
+    final current = _asIntOrNull(inbound['mtu']);
+    if (current == null || current > maxMtu) {
+      inbound['mtu'] = maxMtu;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/// Clamps the TUN MTU to fit through the WireGuard endpoints present in the
+/// config: each endpoint's effective MTU is its explicit `mtu` (sing-box
+/// defaults to 1408 when absent), and the TUN must not exceed the smallest of
+/// them. No-op when the config has no WireGuard endpoint. Returns true when
+/// anything changed.
+bool _clampTunMtuForWireguard(Map<String, dynamic> decoded) {
+  final endpoints = decoded['endpoints'];
+  if (endpoints is! List) return false;
+  int? lowest;
+  for (final e in endpoints.whereType<Map>()) {
+    if (e['type']?.toString() != 'wireguard') continue;
+    final mtu = _asIntOrNull(e['mtu']);
+    final effective = (mtu != null && mtu > 0) ? mtu : 1408;
+    if (lowest == null || effective < lowest) {
+      lowest = effective;
+    }
+  }
+  if (lowest == null) return false;
+  return _clampTunMtu(decoded, lowest);
+}
+
+/// Collapses true-duplicate WireGuard endpoints (same [_wireguardPeerIdentity])
+/// to a single survivor, retargeting all references onto it. Survivor priority:
+/// the route.final endpoint (never demote a full tunnel), then any referenced
+/// tag, then the first — so the config stays valid and only one peer dials the
+/// server. Independent of the intranet overlay.
+bool _collapseDuplicateWireguardPeers(Map<String, dynamic> decoded) {
+  final endpoints = decoded['endpoints'];
+  if (endpoints is! List || endpoints.length < 2) return false;
+
+  final groups = <String, List<Map<String, dynamic>>>{};
+  for (final e in endpoints.whereType<Map<String, dynamic>>()) {
+    final id = _wireguardPeerIdentity(e);
+    if (id == null) continue;
+    (groups[id] ??= <Map<String, dynamic>>[]).add(e);
+  }
+  // A group (same key+address) is a true duplicate only if its peers don't
+  // disagree on the port: a missing port is a wildcard, but two DIFFERENT
+  // explicit ports are genuinely different peers and must NOT be collapsed.
+  final dupGroups = groups.values.where((g) {
+    if (g.length < 2) return false;
+    final explicitPorts = g.map(_wireguardPeerPort).whereType<int>().toSet();
+    return explicitPorts.length <= 1;
+  }).toList();
+  if (dupGroups.isEmpty) return false;
+
+  final route = decoded['route'];
+  final routeFinal = route is Map ? route['final']?.toString() : null;
+  final referenced = <String>{};
+  void addRef(dynamic t) {
+    final s = t?.toString();
+    if (s != null && s.isNotEmpty) referenced.add(s);
+  }
+
+  addRef(routeFinal);
+  final dns = decoded['dns'];
+  if (dns is Map) {
+    final servers = dns['servers'];
+    if (servers is List) {
+      for (final s in servers.whereType<Map>()) {
+        addRef(s['detour']);
+      }
+    }
+  }
+  final outbounds = decoded['outbounds'];
+  if (outbounds is List) {
+    for (final o in outbounds.whereType<Map>()) {
+      final members = o['outbounds'];
+      if (members is List) members.forEach(addRef);
+      addRef(o['detour']);
+      addRef(o['default']);
+    }
+  }
+  // Endpoints can dial through another tag via `detour` too.
+  for (final e in endpoints.whereType<Map>()) {
+    addRef(e['detour']);
+  }
+  // Tags owned by NON-endpoint outbounds (direct/block/dns-out/select/auto and
+  // any real outbound). If a WG endpoint's tag collides with one of these (only
+  // possible in a hand-crafted import — generated configs use reserved tags),
+  // retargeting its references would rewrite legitimate non-WG routing, so skip
+  // collapsing that group. NB: the managed WG tags (wireguard-out /
+  // wireguard-intranet) are intentionally NOT here — they are WG endpoints and
+  // must collapse normally.
+  final nonEndpointTags = <String>{
+    'direct',
+    'block',
+    'dns-out',
+    'select',
+    'auto',
+  };
+  if (outbounds is List) {
+    for (final o in outbounds.whereType<Map>()) {
+      final t = o['tag']?.toString();
+      if (t != null && t.isNotEmpty) nonEndpointTags.add(t);
+    }
+  }
+
+  var changed = false;
+  for (final group in dupGroups) {
+    if (group.any((e) => nonEndpointTags.contains(e['tag']?.toString()))) {
+      continue; // tag collides with a non-WG outbound/reserved tag — unsafe.
+    }
+    final survivor = group.firstWhere(
+      (e) => e['tag']?.toString() == routeFinal,
+      orElse: () => group.firstWhere(
+        (e) => referenced.contains(e['tag']?.toString()),
+        orElse: () => group.first,
+      ),
+    );
+    final survivorTag = survivor['tag']?.toString();
+    final survivorPeers = survivor['peers'];
+    final survivorPeer = (survivorPeers is List && survivorPeers.isNotEmpty)
+        ? survivorPeers.first
+        : null;
+    for (final dup in group) {
+      if (identical(dup, survivor)) continue;
+      final dupTag = dup['tag']?.toString();
+      // Union the duplicate peer's allowed_ips into the survivor — per address
+      // family (an existing 0.0.0.0/0 covers IPv4 but must not swallow IPv6
+      // CIDRs) — so traffic retargeted onto the survivor isn't dropped by a
+      // narrower allowed_ips than the duplicate had.
+      if (survivorPeer is Map) {
+        final survAllowed = _coerceStringList(survivorPeer['allowed_ips']);
+        final dupPeers = dup['peers'];
+        final dupPeer =
+            (dupPeers is List && dupPeers.isNotEmpty) ? dupPeers.first : null;
+        if (dupPeer is Map) {
+          final toAdd = _coerceStringList(dupPeer['allowed_ips'])
+              .where((c) => !_allowedIpsCoverFamily(survAllowed, c))
+              .toList();
+          if (toAdd.isNotEmpty) {
+            final merged = _dedupeStrings([...survAllowed, ...toAdd]);
+            if (merged.length != survAllowed.length) {
+              survivorPeer['allowed_ips'] = merged;
+            }
+          }
+        }
+      }
+      endpoints.remove(dup);
+      changed = true;
+      if (dupTag != null &&
+          dupTag.isNotEmpty &&
+          survivorTag != null &&
+          survivorTag.isNotEmpty) {
+        _retargetOutboundReferences(decoded, from: dupTag, to: survivorTag);
+      }
+    }
+  }
+  return changed;
 }
 
 /// Overlays the independent intranet WireGuard tunnel onto an already-built
@@ -1122,20 +1459,229 @@ bool _applyWireGuardIntranet(
     return false;
   }
   const tag = WireGuardIntranet.tag;
+  final ownKey = wg.privateKey.trim();
+  final ownServer = wg.server.trim();
 
+  // A WireGuard server keeps a single session per public key. If another
+  // endpoint already dials THIS server with THIS local+peer keypair, the two endpoints
+  // fight over that one session (each handshake evicts the other's) and the
+  // tunnel keeps dropping. Identify those true duplicates precisely — same
+  // private key, peer public key, PSK, and same peer server+port — so we never
+  // touch an unrelated endpoint that merely reuses the client key against a
+  // different server or peer identity.
+  bool isSameWgPeer(Map<String, dynamic> e) {
+    if (ownKey.isEmpty) return false;
+    if (e['type']?.toString() != 'wireguard') return false;
+    if (e['private_key']?.toString().trim() != ownKey) return false;
+    final peers = e['peers'];
+    if (peers is! List || peers.isEmpty) return false;
+    final p0 = peers.first;
+    if (p0 is! Map) return false;
+    if (p0['address']?.toString().trim() != ownServer) return false;
+    if (p0['public_key']?.toString().trim() != wg.peerPublicKey.trim()) {
+      return false;
+    }
+    final peerPsk = p0['pre_shared_key']?.toString().trim() ?? '';
+    final wgPsk = wg.preSharedKey?.trim() ?? '';
+    if (peerPsk != wgPsk) {
+      return false;
+    }
+    // A pasted custom outbound may omit server_port (the peer ends up with no
+    // port). Same key + same server is still the same WireGuard peer, so treat
+    // a missing port as a match rather than letting the duplicate slip through.
+    final port = _asIntOrNull(p0['port']);
+    return port == null || port == wg.serverPort;
+  }
+
+  // Tags the rest of the config structurally points at. An endpoint referenced
+  // here (route.final / DNS detour / selector member) must never be deleted —
+  // doing so leaves a dangling reference that sing-box rejects outright.
+  final referencedTags = <String>{};
+  void addRef(dynamic t) {
+    final s = t?.toString();
+    if (s != null && s.isNotEmpty) referencedTags.add(s);
+  }
+
+  final routeForRefs = decoded['route'];
+  if (routeForRefs is Map) {
+    addRef(routeForRefs['final']);
+  }
+  final dnsForRefs = decoded['dns'];
+  if (dnsForRefs is Map) {
+    final servers = dnsForRefs['servers'];
+    if (servers is List) {
+      for (final s in servers.whereType<Map>()) {
+        addRef(s['detour']);
+      }
+    }
+  }
+  final outboundsForRefs = decoded['outbounds'];
+  if (outboundsForRefs is List) {
+    for (final o in outboundsForRefs.whereType<Map>()) {
+      final members = o['outbounds'];
+      if (members is List) {
+        members.forEach(addRef);
+      }
+      addRef(o['detour']);
+      addRef(o['default']);
+    }
+  }
+
+  final endpoints = _ensureList<Map<String, dynamic>>(decoded, 'endpoints');
+  // Endpoints can dial through another tag via `detour` too — such a target
+  // must never be deleted out from under them.
+  for (final e in endpoints) {
+    addRef(e['detour']);
+  }
+  final route = _ensureMap(decoded, 'route');
+  final routeFinal = route['final']?.toString();
+
+  // A same-peer WireGuard endpoint that is route.final is a FULL tunnel already
+  // carrying the LAN — overlaying a second same-key endpoint would only trigger
+  // the session-steal drops, so skip entirely.
+  if (endpoints.any((e) =>
+      e['tag']?.toString() != tag &&
+      e['tag']?.toString() == routeFinal &&
+      isSameWgPeer(e))) {
+    return false;
+  }
+
+  // NB: the TUN MTU clamp for the overlayed endpoint is NOT done here — every
+  // caller runs _clampTunMtuForWireguard afterwards, which also covers the
+  // early-return paths above (full-tunnel same-peer skip, legacy profiles).
+
+  // A same-peer endpoint that is referenced elsewhere (selector member / DNS
+  // detour) but is NOT the full tunnel: we can't delete it (dangling ref) and
+  // must not add a duplicate. Instead REUSE it — widen its allowed_ips to cover
+  // the LAN and route the intranet CIDRs to its tag — so LAN actually flows
+  // through WireGuard without reintroducing a second same-key endpoint.
+  final reusable = endpoints.firstWhere(
+    (e) =>
+        e['tag']?.toString() != tag &&
+        referencedTags.contains(e['tag']?.toString()) &&
+        isSameWgPeer(e),
+    orElse: () => const <String, dynamic>{},
+  );
+  if (reusable.isNotEmpty) {
+    final reuseTag = reusable['tag']!.toString();
+    final peers = reusable['peers'];
+    if (peers is List && peers.isNotEmpty && peers.first is Map) {
+      final peer0 = peers.first as Map;
+      final allowed = _coerceStringList(peer0['allowed_ips']);
+      // A full-route peer already covers the LAN — per address family: an
+      // IPv4-only 0.0.0.0/0 must still union in IPv6 intranet CIDRs (and vice
+      // versa) or WireGuard silently drops that family's routed traffic.
+      final toAdd =
+          cidrs.where((c) => !_allowedIpsCoverFamily(allowed, c)).toList();
+      if (toAdd.isNotEmpty) {
+        peer0['allowed_ips'] = _dedupeStrings([...allowed, ...toAdd]);
+      }
+    }
+    final rules = _ensureList<Map<String, dynamic>>(route, 'rules');
+    rules.removeWhere((r) => r['outbound']?.toString() == tag);
+    var at = 0;
+    for (var i = 0; i < rules.length; i++) {
+      final ob = rules[i]['outbound']?.toString();
+      final action = rules[i]['action']?.toString();
+      if (rules[i]['protocol']?.toString() == 'dns' ||
+          ob == 'dns-out' ||
+          ob == 'block' ||
+          action == 'sniff' ||
+          action == 'hijack-dns') {
+        at = i + 1;
+      } else {
+        break;
+      }
+    }
+    // Idempotent: don't stack a fresh LAN -> reuseTag rule on every normalize
+    // pass. Only insert if an identical one isn't already present.
+    final alreadyRouted = rules.any((r) =>
+        r.length == 2 &&
+        r['outbound']?.toString() == reuseTag &&
+        _sameStringSet(r['ip_cidr'], cidrs.toSet()));
+    if (!alreadyRouted) {
+      rules.insert(
+          at, <String, dynamic>{'ip_cidr': cidrs, 'outbound': reuseTag});
+    }
+    return true;
+  }
+
+  // Collapse any NON-structural same-peer duplicate (e.g. a custom-outbound WG
+  // pasted into the routing-rules dialog) onto this single overlay endpoint.
+  // Remember their tags so their routed CIDRs fold into the overlay and their
+  // now-orphaned rules are stripped.
+  final supersededTags = <String>{};
+  endpoints.removeWhere((e) {
+    final t = e['tag']?.toString();
+    if (t == tag) return true;
+    if (isSameWgPeer(e) && !referencedTags.contains(t)) {
+      if (t != null && t.isNotEmpty) supersededTags.add(t);
+      return true;
+    }
+    return false;
+  });
+
+  // Rebuild the route rules: drop the prior intranet rule and any rule pointing
+  // at a superseded duplicate, but FOLD that rule's ip_cidr targets into the
+  // overlay's coverage so the user's routing intent isn't silently lost (e.g. a
+  // `10.0.0.0/24 -> home-wg` rule wider than the auto-derived WG subnet).
+  final rules = _ensureList<Map<String, dynamic>>(route, 'rules');
+  // Two separate folds, so we don't silently broaden a constrained rule:
+  //  - allowedFold: every superseded ip_cidr must be permitted by the peer's
+  //    allowed_ips, or WireGuard drops the packets even for retargeted rules.
+  //  - broadFold: only PURE `ip_cidr -> tag` rules may widen the single broad
+  //    overlay route rule. A rule with extra matchers (domain_suffix, port…)
+  //    keeps its exact match by being retargeted, NOT collapsed into the broad
+  //    CIDR rule (which would route its CIDR on ALL ports/domains).
+  final allowedFold = <String>[];
+  final broadFold = <String>[];
+  final retargetedRules = <Map<String, dynamic>>[];
+  rules.removeWhere((r) {
+    final ob = r['outbound']?.toString();
+    // Treat a stale overlay rule (ob == tag, from a prior normalize pass) the
+    // SAME as a superseded-duplicate rule: fold its CIDRs back in rather than
+    // dropping them. Otherwise re-normalizing loses folded coverage and the
+    // output isn't idempotent (the custom CIDR a prior pass folded would be
+    // silently dropped on the next pass).
+    final isOwnOrSuperseded =
+        ob == tag || (ob != null && supersededTags.contains(ob));
+    if (!isOwnOrSuperseded) return false;
+    final cidrList = _coerceStringList(r['ip_cidr']);
+    allowedFold.addAll(cidrList);
+    final hasOtherMatcher =
+        r.keys.any((k) => k != 'ip_cidr' && k != 'outbound');
+    if (hasOtherMatcher) {
+      retargetedRules.add(Map<String, dynamic>.from(r)..['outbound'] = tag);
+    } else {
+      broadFold.addAll(cidrList);
+    }
+    return true;
+  });
+  // Dedupe retargeted rules by content so re-normalizing can't accumulate
+  // identical copies of a constrained (e.g. domain_suffix/port) rule.
+  final seenRetargeted = <String>{};
+  retargetedRules.retainWhere((r) => seenRetargeted.add(jsonEncode(r)));
+  final routeCidrs = _dedupeStrings([...cidrs, ...broadFold]);
+  final allowedCidrs = _dedupeStrings([...cidrs, ...allowedFold]);
+
+  // Build the endpoint now that the full CIDR coverage is known.
   final outboundShaped = <String, dynamic>{
     'type': 'wireguard',
     'tag': tag,
-    'server': wg.server.trim(),
+    'server': ownServer,
     'server_port': wg.serverPort,
     'local_address': wg.localAddress
         .map((address) => address.trim())
         .where((address) => address.isNotEmpty)
         .toList(growable: false),
-    'private_key': wg.privateKey.trim(),
+    'private_key': ownKey,
     'peer_public_key': wg.peerPublicKey.trim(),
-    // Scope the tunnel to the intranet ranges only — NOT a full route.
-    'allowed_ips': cidrs,
+    // The peer must accept every routed range (broad + retargeted-constrained),
+    // otherwise WireGuard drops them — but routing still scopes what arrives.
+    'allowed_ips': allowedCidrs,
+    // Pass keepalive through verbatim (incl. 0 = explicit opt-out); the
+    // endpoint builder applies the 25s default only when the key is absent.
+    'persistent_keepalive_interval': wg.persistentKeepalive,
   };
   final psk = wg.preSharedKey?.trim();
   if (psk != null && psk.isNotEmpty) {
@@ -1144,21 +1690,11 @@ bool _applyWireGuardIntranet(
   if (wg.mtu != null && wg.mtu! > 0) {
     outboundShaped['mtu'] = wg.mtu;
   }
-  if (wg.persistentKeepalive > 0) {
-    outboundShaped['persistent_keepalive_interval'] = wg.persistentKeepalive;
-  }
-
-  // 1. Inject the WireGuard endpoint (replace any stale intranet endpoint).
-  final endpoints = _ensureList<Map<String, dynamic>>(decoded, 'endpoints');
-  endpoints.removeWhere((e) => e['tag']?.toString() == tag);
   endpoints.add(_buildWireguardEndpoint(outboundShaped));
 
-  // 2. Front-load a single LAN -> WireGuard rule, just after any leading DNS /
-  // sniff / block infrastructure rules so DNS handling is preserved but the
-  // intranet rule still outranks the proxy/direct routing.
-  final route = _ensureMap(decoded, 'route');
-  final rules = _ensureList<Map<String, dynamic>>(route, 'rules');
-  rules.removeWhere((r) => r['outbound']?.toString() == tag);
+  // Front-load the LAN -> WireGuard rule, just after any leading DNS / sniff /
+  // block infrastructure rules so DNS handling is preserved but the intranet
+  // rule still outranks the proxy/direct routing.
   var insertAt = 0;
   for (var i = 0; i < rules.length; i++) {
     final r = rules[i];
@@ -1176,9 +1712,14 @@ bool _applyWireGuardIntranet(
     }
   }
   rules.insert(insertAt, <String, dynamic>{
-    'ip_cidr': cidrs,
+    'ip_cidr': routeCidrs,
     'outbound': tag,
   });
+  // Re-add any non-ip_cidr rules inherited from a collapsed duplicate, right
+  // after the consolidated rule so they keep the same high priority.
+  if (retargetedRules.isNotEmpty) {
+    rules.insertAll(insertAt + 1, retargetedRules);
+  }
   return true;
 }
 
@@ -1586,6 +2127,15 @@ bool _isManagedDnsRule(Map<String, dynamic> rule) {
     return true;
   }
   if (server == _dnsBootstrapTag && _isCloudProviderApiDnsBypassRule(rule)) {
+    return true;
+  }
+  // The managed remote-fallback suffix rule is re-emitted for every proxy
+  // config; recognize it so re-normalizing treats it as managed (rebuilt) and
+  // doesn't preserve+accumulate a duplicate each pass (config-churn / breaks
+  // idempotency). Matched by tag + the exact managed suffix set.
+  if (server == _dnsRemoteFallbackTag &&
+      _sameStringSet(rule['domain_suffix'],
+          managedDnsRemoteFallbackDomainSuffixes.toSet())) {
     return true;
   }
   if (ruleSet == _managedGeositeCnTag &&

@@ -510,6 +510,20 @@ class _NodesWireguardProfileDialogState
     return null;
   }
 
+  /// Keepalive accepts 0 as an explicit opt-out (the config builder honors
+  /// 0 = no keepalive), unlike MTU which must stay strictly positive.
+  String? _validateOptionalNonNegativeInt(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0) {
+      return '需为 0 或正整数 / Must be 0 or a positive number';
+    }
+    return null;
+  }
+
   Widget _field({
     required TextEditingController controller,
     required String label,
@@ -577,7 +591,7 @@ class _NodesWireguardProfileDialogState
               _field(
                 controller: _localAddressController,
                 label: '本地地址 / Local Address (CIDR)',
-                hint: '10.0.0.20/32 (多个用逗号分隔)',
+                hint: '10.0.0.2/32 (多个用逗号分隔)',
                 validator: (value) => _validateRequired(
                   value,
                   '请输入本地地址 / Local address is required',
@@ -615,10 +629,10 @@ class _NodesWireguardProfileDialogState
               ),
               _field(
                 controller: _keepaliveController,
-                label: '保活间隔秒 / Keepalive (可选)',
+                label: '保活间隔秒 / Keepalive (可选, 0=关闭)',
                 hint: '25',
                 keyboardType: TextInputType.number,
-                validator: _validateOptionalPositiveInt,
+                validator: _validateOptionalNonNegativeInt,
               ),
             ],
           ),

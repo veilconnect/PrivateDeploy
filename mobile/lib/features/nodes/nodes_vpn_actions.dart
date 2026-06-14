@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
+import '../profiles/bundled_rule_set_registry.dart';
+import '../profiles/profile_config_normalizer.dart';
 import '../profiles/profile_provider.dart';
 import '../settings/app_settings_provider.dart';
 import '../vpn/vpn_provider.dart';
@@ -29,6 +31,7 @@ Future<bool> autoFailoverToNextCloudNode({
   required ProfileProvider profileProvider,
   required VpnProvider vpnProvider,
   required Set<String> triedProfileNames,
+  VpnRoutingSettings routingSettings = VpnRoutingSettings.defaults,
 }) async {
   final candidates = connectableCloudInstances(cloudProvider)
       .where((inst) => !triedProfileNames.contains(cloudProfileName(inst)))
@@ -79,7 +82,17 @@ Future<bool> autoFailoverToNextCloudNode({
       await vpnProvider.disconnect();
     }
     final connected = await vpnProvider.connect(
-      configJson: config,
+      // Normalize with the user's routing settings so the failover node keeps
+      // the WireGuard overlay / custom rules (connecting the raw node config
+      // would silently drop them). Bundled rule-set paths must come along
+      // too — without them the normalizer cannot emit the pd-geosite-cn /
+      // pd-geoip-cn direct rules and split-mode users lose CN routing after
+      // a failover.
+      configJson: normalizeProfileConfigForCurrentPlatform(
+        config,
+        routingSettings: routingSettings,
+        bundledRuleSetPaths: BundledRuleSetRegistry.paths,
+      ),
       profileName: profileName,
       stabilityCheckDuration: const Duration(seconds: 6),
       statusPollInterval: const Duration(milliseconds: 500),
@@ -114,7 +127,11 @@ Future<bool> autoFailoverToNextCloudNode({
       await vpnProvider.disconnect();
     }
     final connected = await vpnProvider.connect(
-      configJson: config,
+      configJson: normalizeProfileConfigForCurrentPlatform(
+        config,
+        routingSettings: routingSettings,
+        bundledRuleSetPaths: BundledRuleSetRegistry.paths,
+      ),
       profileName: profile.name,
       stabilityCheckDuration: const Duration(seconds: 6),
       statusPollInterval: const Duration(milliseconds: 500),
@@ -353,6 +370,7 @@ Future<void> handleNodesConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
       triedProfileNames: tried,
+      routingSettings: context.read<AppSettingsProvider>().vpnRoutingSettings,
     );
     if (switched ||
         (vpnProvider.status == VpnStatus.connected &&
@@ -555,35 +573,71 @@ Future<void> connectSelectedProfile({
     return;
   }
 
-  if (vpnProvider.status == VpnStatus.connected) {
-    final disconnected = await vpnProvider.disconnect();
-    if (!disconnected) {
-      if (context.mounted) {
-        final l10nSwitch = AppLocalizations.of(context)!;
-        showNodesActionSnackBar(
-          context,
-          message: vpnProvider.error == null
-              ? l10nSwitch.failedToSwitchActiveVpnNode
-              : localizeVpnStatusMessage(vpnProvider.error, l10nSwitch),
-          backgroundColor: Colors.red,
-        );
-      }
-      return;
-    }
-    if (!context.mounted) {
-      return;
-    }
-    if (!forceReconnect) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
+  final bool alreadyConnected = vpnProvider.status == VpnStatus.connected;
+
+  if (alreadyConnected &&
+      !forceReconnect &&
+      vpnProvider.isProxylessTunnel &&
+      vpnProvider.intranetWireguardLive) {
+    // A live WG-only intranet tunnel is up and the user tapped the proxy
+    // connect button. Merging the proxy in is a hot-swap (below) on the same
+    // tun fd, so the intranet WireGuard / SSH session keeps running — just
+    // reassure the user instead of forcing a manual WG-off step.
+    showNodesActionSnackBar(
+      context,
+      message: '内网 WireGuard 将保持连接，无需手动关闭。',
+      backgroundColor: Colors.blue,
+      replaceCurrent: true,
+    );
   }
 
-  final connected = await vpnProvider.connect(
-    configJson: configJson,
-    profileName: activeProfile?.name,
-    stabilityCheckDuration: const Duration(seconds: 6),
-    statusPollInterval: const Duration(milliseconds: 500),
-  );
+  // Hot-swap (vs teardown+reconnect) only when the LIVE tunnel is currently
+  // carrying the intranet WireGuard overlay — that's the session (and any SSH
+  // riding it) worth preserving across the change. A plain proxy↔proxy node
+  // switch has nothing to protect and stays on the proven disconnect+reconnect
+  // path. The explicit Restart button (forceReconnect) always does a full
+  // teardown+reconnect for a clean rebuild.
+  final bool hotSwap =
+      alreadyConnected && !forceReconnect && vpnProvider.intranetWireguardLive;
+
+  final bool connected;
+  if (hotSwap) {
+    // Reload sing-box on the same tun fd, so the intranet WireGuard overlay
+    // and flows already running through it survive switching the proxy in/out.
+    connected = await vpnProvider.swapRunningConfig(
+      configJson: configJson,
+      profileName: activeProfile?.name,
+      stabilityCheckDuration: const Duration(seconds: 6),
+      statusPollInterval: const Duration(milliseconds: 500),
+    );
+  } else {
+    if (alreadyConnected) {
+      final disconnected = await vpnProvider.disconnect();
+      if (!disconnected) {
+        if (context.mounted) {
+          final l10nSwitch = AppLocalizations.of(context)!;
+          showNodesActionSnackBar(
+            context,
+            message: vpnProvider.error == null
+                ? l10nSwitch.failedToSwitchActiveVpnNode
+                : localizeVpnStatusMessage(vpnProvider.error, l10nSwitch),
+            backgroundColor: Colors.red,
+          );
+        }
+        return;
+      }
+      if (!context.mounted) {
+        return;
+      }
+    }
+
+    connected = await vpnProvider.connect(
+      configJson: configJson,
+      profileName: activeProfile?.name,
+      stabilityCheckDuration: const Duration(seconds: 6),
+      statusPollInterval: const Duration(milliseconds: 500),
+    );
+  }
   if (!context.mounted) {
     return;
   }
