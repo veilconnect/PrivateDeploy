@@ -256,9 +256,20 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            Auto-generated release from GitHub Actions.
+            ## 下载哪个? / Which file should I download?
 
-            ## Verify Downloads
+            | 你的系统 Your system | 下载 Download |
+            |---|---|
+            | **Windows**(大多数电脑,64 位 Intel/AMD) | `PrivateDeploy-windows-amd64.zip` |
+            | Windows on ARM(骁龙笔记本 / Surface Pro X) | `PrivateDeploy-windows-arm64.zip` |
+            | Windows 32 位(很老的电脑) | `PrivateDeploy-windows-386.zip` |
+            | **Mac · Apple 芯片**(M1/M2/M3/M4,2020 年后) | `PrivateDeploy-darwin-arm64.zip` |
+            | Mac · Intel 芯片(2020 年前的旧 Mac) | `PrivateDeploy-darwin-amd64.zip` |
+            | **Linux**(64 位) | `PrivateDeploy-linux-amd64.zip` |
+
+            > 不确定 Mac 是哪种芯片?点屏幕左上角苹果菜单 →「关于本机」:看到「Apple M…」选 Apple 芯片,看到「Intel」选 Intel。
+
+            ## 校验下载 / Verify downloads
             ```
             sha256sum -c checksums.sha256
             ```
