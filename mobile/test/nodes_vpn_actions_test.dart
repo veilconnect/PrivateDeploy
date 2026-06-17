@@ -170,13 +170,14 @@ void main() {
       await tester.tap(find.text('Run'));
       await tester.pump();
 
-      // The live WG tunnel is reloaded in place — never torn down — so the
-      // user is no longer told to manually close WireGuard first.
+      // Adding the proxy onto a live WG tunnel goes through swapRunningConfig
+      // (which reconnects internally) rather than the caller tearing the tunnel
+      // down, so the user is no longer told to manually close WireGuard first.
       expect(vpnProvider.disconnectCalls, 0);
       expect(vpnProvider.connectCalls, 0);
       expect(vpnProvider.swapCalls, 1);
       expect(vpnProvider.lastConfigJson, config);
-      expect(find.textContaining('内网 WireGuard 将保持连接'), findsOneWidget);
+      expect(find.textContaining('内网 WireGuard 会随隧道一起自动重连'), findsOneWidget);
     });
 
     testWidgets('uses the only ready cloud node when no local config exists',

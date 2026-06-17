@@ -429,6 +429,47 @@ void main() {
           reason: 'a proxy tunnel must still surface upstream degradation');
     });
 
+    test('intranet WG connect requests battery optimization exemption first',
+        () async {
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'requestIgnoreBatteryOptimizations':
+            calls.add(call.method);
+            return false;
+          case 'startVpn':
+            calls.add(call.method);
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+              'proxyless': true,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final success = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Intranet WireGuard',
+        proxyless: true,
+      );
+
+      expect(success, true);
+      expect(calls, [
+        'requestIgnoreBatteryOptimizations',
+        'startVpn',
+      ]);
+    });
+
     test('proxyless (WG-only) tunnel: upstream-degraded message is ignored',
         () async {
       // The native probe is proxy-oriented; for a WG-only tunnel (egress =

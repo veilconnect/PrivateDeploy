@@ -114,6 +114,8 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     }
   }
@@ -131,11 +133,80 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     } catch (e) {
       // Background sync failure is non-critical — cached nodes remain usable.
       AppLogger.warning('[NodesScreen] Background cloud sync failed: $e');
     }
+  }
+
+  /// After a successful provider sync, if the API confirmed any cached nodes
+  /// are gone, ask the user once whether to remove them. Deleted nodes are
+  /// never purged silently — only after this confirmation.
+  Future<void> _maybePromptRemoveMissingNodes(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) async {
+    final missing = cloudProvider.unpromptedMissingInstances;
+    if (missing.isEmpty || !mounted) {
+      return;
+    }
+    // Only surface each detected set once, even if the dialog is dismissed.
+    cloudProvider.markMissingPrompted();
+
+    final labels = missing.map((node) => '• ${node.label}').join('\n');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('节点已在云端删除 / Nodes deleted'),
+        content: Text(
+          '以下节点已通过云服务商确认不存在,是否从列表中移除?\n'
+          'These nodes no longer exist on the provider. Remove them from the list?\n\n'
+          '$labels',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('暂不 / Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('移除 / Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    var removed = 0;
+    for (final node in missing) {
+      final profileName = cloudProfileName(node);
+      final linkedProfile = profileProvider.getProfileByName(profileName);
+      final isActive = linkedProfile != null &&
+          profileProvider.activeProfile?.id == linkedProfile.id;
+      if (isActive && vpnProvider.status != VpnStatus.disconnected) {
+        await vpnProvider.disconnect();
+      }
+      if (await cloudProvider.purgeMissingInstance(node.id)) {
+        removed++;
+        if (linkedProfile != null) {
+          await profileProvider.deleteProfileByName(profileName);
+        }
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    showNodesActionSnackBar(
+      context,
+      message: '已移除 $removed 个已删除节点 / Removed $removed deleted node(s)',
+      backgroundColor: Colors.green,
+    );
   }
 
   Future<void> _reconcileCloudProfiles(
@@ -287,22 +358,43 @@ class _NodesScreenState extends State<NodesScreen> {
       // this way keeps the intranet WireGuard overlay (and any SSH over it)
       // alive instead of bouncing the whole tunnel — the proxy control and the
       // WG control stay independent.
-      await vpnProvider.swapRunningConfig(
+      final swapped = await vpnProvider.swapRunningConfig(
         configJson: config,
         profileName: kIntranetWireguardProfileName,
         // No proxy upstream: tells VpnProvider to skip the proxy-oriented
         // health watchdog so it doesn't restart this tunnel every ~30-60s.
         proxyless: true,
       );
+      if (!swapped && mounted) {
+        showNodesActionSnackBar(
+          context,
+          message: '内网 WireGuard 切换失败 / Failed to switch to WireGuard-only',
+          backgroundColor: Colors.orange,
+        );
+      }
       return;
     }
-    await vpnProvider.connect(
+    final connected = await vpnProvider.connect(
       configJson: config,
       profileName: kIntranetWireguardProfileName,
       // No proxy upstream: tells VpnProvider to skip the proxy-oriented health
       // watchdog so it doesn't restart this tunnel every ~30-60s.
       proxyless: true,
     );
+    // Don't fail silently: if the WG-only tunnel never reaches connected, tell
+    // the user instead of leaving the switch stuck on "已启用，主连接建立后".
+    // Surface the real reason (native lastError / "did not reach connected")
+    // so a failure is diagnosable from the screen, not just from logcat.
+    if (!connected && mounted) {
+      final reason = vpnProvider.error?.trim();
+      showNodesActionSnackBar(
+        context,
+        message: reason != null && reason.isNotEmpty
+            ? '内网 WireGuard 连接失败:$reason / WireGuard failed: $reason'
+            : '内网 WireGuard 连接失败,请重试 / WireGuard connection failed — retry',
+        backgroundColor: Colors.orange,
+      );
+    }
   }
 
   /// Main connect button: the user wants the proxy node in the tunnel.

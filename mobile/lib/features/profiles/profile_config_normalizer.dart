@@ -1103,16 +1103,10 @@ String? buildWireguardIntranetOnlyConfig(
   }
   final config = <String, dynamic>{
     'log': <String, dynamic>{'level': 'info'},
-    'dns': <String, dynamic>{
-      'servers': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'tag': 'dns-direct',
-          'address': '223.5.5.5',
-          'detour': 'direct',
-        },
-      ],
-      'strategy': 'prefer_ipv4',
-    },
+    // Deliberately omit DNS for WG-only. Android treats VPN-provided DNS as
+    // the device resolver while the VPN is active; for a split intranet tunnel
+    // that can make public apps look offline even though only LAN CIDRs should
+    // use WireGuard. Let the underlying network keep its own resolver.
     'inbounds': <Map<String, dynamic>>[
       <String, dynamic>{
         'type': 'tun',

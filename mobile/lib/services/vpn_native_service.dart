@@ -366,6 +366,46 @@ class VpnNativeService {
     }
   }
 
+  Future<bool> isIgnoringBatteryOptimizations() async {
+    try {
+      final result = await _methodChannel
+          .invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to query battery optimization state: ${e.message}',
+      );
+      return false;
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to query battery optimization state: $e',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    try {
+      final result = await _methodChannel
+          .invokeMethod<bool>('requestIgnoreBatteryOptimizations');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to request battery optimization exemption: ${e.message}',
+      );
+      return false;
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to request battery optimization exemption: $e',
+      );
+      return false;
+    }
+  }
+
   /// 请求 VPN 权限 (Android)
   Future<bool> requestPermission() async {
     try {

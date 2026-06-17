@@ -159,6 +159,8 @@ void main() {
       final obTags =
           (cfg['outbounds'] as List).map((o) => (o as Map)['tag']).toSet();
       expect(obTags, equals(<dynamic>{'direct'}));
+      expect(cfg.containsKey('dns'), isFalse,
+          reason: 'WG-only must not publish VPN DNS and break public apps');
       // Default route is direct inside sing-box, but Android should only
       // route intranet CIDRs into the VPN instead of capturing 0.0.0.0/0.
       final tun = (cfg['inbounds'] as List)

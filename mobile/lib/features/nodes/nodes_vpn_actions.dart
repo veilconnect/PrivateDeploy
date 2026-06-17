@@ -585,7 +585,7 @@ Future<void> connectSelectedProfile({
     // reassure the user instead of forcing a manual WG-off step.
     showNodesActionSnackBar(
       context,
-      message: '内网 WireGuard 将保持连接，无需手动关闭。',
+      message: '内网 WireGuard 会随隧道一起自动重连，无需手动关闭。',
       backgroundColor: Colors.blue,
       replaceCurrent: true,
     );

@@ -73,11 +73,34 @@ class CloudProvider extends CloudProviderBase {
   // the UI can show all nodes from every configured provider in one list.
   // Populated by loadInstances alongside the active provider's live fetch.
   final Map<CloudProviderId, List<CloudInstance>> _otherProviderInstances = {};
+  // Nodes a successful provider API list call confirmed are gone, but a local
+  // cached record still references. Kept (flagged), never auto-deleted — the
+  // user is prompted and only a confirm removes them. Re-derived each refresh.
+  List<CloudInstance> _missingInstances = [];
+  // Ids already surfaced in the "confirmed deleted" prompt this session, so we
+  // don't nag on every refresh after the user chose to keep them.
+  final Set<String> _missingPrompted = {};
   Timer? _pendingPollTimer;
   DateTime? _pendingPollStartedAt;
   bool _disposed = false;
 
   List<CloudInstance> get instances => _instances;
+
+  /// Nodes confirmed deleted upstream (via the provider key) but still cached
+  /// locally. Surfaced flagged in [allInstances]; removed only on user confirm.
+  List<CloudInstance> get missingInstances => List.unmodifiable(_missingInstances);
+
+  /// Confirmed-missing nodes the user hasn't yet been prompted about this
+  /// session. Drives the one-time "remove deleted nodes?" prompt.
+  List<CloudInstance> get unpromptedMissingInstances => _missingInstances
+      .where((instance) => !_missingPrompted.contains(instance.id))
+      .toList();
+
+  /// Mark every current confirmed-missing node as already prompted, so the
+  /// removal prompt isn't shown again until a newly-deleted node appears.
+  void markMissingPrompted() {
+    _missingPrompted.addAll(_missingInstances.map((instance) => instance.id));
+  }
 
   /// Merged view: active provider's live instances + cached instances from
   /// every other configured provider. Deduped by id; sorted newest-first.
@@ -90,6 +113,12 @@ class CloudProvider extends CloudProviderBase {
       for (final inst in other) {
         merged.putIfAbsent(inst.id, () => inst);
       }
+    }
+    // Confirmed-deleted nodes still pending the user's removal decision are
+    // shown flagged alongside the live ones (and override any stale cached
+    // copy of the same id from the merge above).
+    for (final inst in _missingInstances) {
+      merged[inst.id] = inst;
     }
     final list = merged.values.toList()
       ..sort((a, b) =>
@@ -1139,20 +1168,28 @@ class CloudProvider extends CloudProviderBase {
         parsed.add(CloudInstance.fromJson(merged));
       }
 
-      // The API call above succeeded, so an empty instance list is
-      // authoritative: the user may have deleted every node in the cloud.
-      // Keep cached records only on request failure (handled by catch), not on
-      // successful empty responses, otherwise deleted nodes linger forever.
-      final stale = knownRecords.keys
+      // The API call above succeeded, so any cached record NOT in the live
+      // list is a node the provider confirmed is gone. Do NOT silently delete
+      // it: surface it flagged so the user is prompted and only a confirm
+      // removes it (see [missingInstances] / [purgeMissingInstance]). The
+      // record is kept on disk until then so the flag survives across refreshes
+      // and restarts; a transient API failure can't reach here (it throws into
+      // the catch, leaving the cached records untouched).
+      final staleIds = knownRecords.keys
           .where((id) => !liveInstanceIds.contains(id))
+          .toSet();
+      _missingInstances = knownRecords.values
+          .where((record) =>
+              record.instanceId.isNotEmpty &&
+              staleIds.contains(record.instanceId))
+          .map((record) => record.toCloudInstance().copyWith(missing: true))
           .toList();
-      if (stale.isNotEmpty) {
-        for (final id in stale) {
-          knownRecords.remove(id);
-        }
-        recordsChanged = true;
+      // Drop prompted-state for ids that have reappeared (e.g. repaired), so a
+      // future deletion of the same id prompts again.
+      _missingPrompted.removeWhere((id) => !staleIds.contains(id));
+      if (_missingInstances.isNotEmpty) {
         AppLogger.info(
-          '[CloudProvider] Pruned ${stale.length} local record(s) for instances no longer on cloud',
+          '[CloudProvider] ${_missingInstances.length} cached node(s) confirmed deleted upstream — awaiting user removal',
         );
       }
 
@@ -2027,6 +2064,44 @@ class CloudProvider extends CloudProviderBase {
       return false;
     } finally {
       _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Remove a node the provider API already confirmed is gone. This only
+  /// clears the local cached record/labels — it deliberately does NOT call the
+  /// provider delete API (the instance no longer exists upstream). Returns
+  /// false for an id that isn't a tracked confirmed-missing node.
+  Future<bool> purgeMissingInstance(String id) async {
+    final instance =
+        _missingInstances.where((node) => node.id == id).firstOrNull;
+    if (instance == null) {
+      return false;
+    }
+    final owner = CloudProviderId.tryParse(instance.provider) ?? _providerId;
+    try {
+      await _removeNodeRecordFor(owner, id);
+      if (owner == _providerId) {
+        _nodeRecords.remove(id);
+      }
+      _latencyChecks.remove(id);
+      await _removePreferredEndpointLabelForInstance(owner, id);
+      _missingInstances =
+          _missingInstances.where((node) => node.id != id).toList();
+      _missingPrompted.remove(id);
+      _instances = _instances.where((node) => node.id != id).toList();
+      final cached = _otherProviderInstances[owner];
+      if (cached != null) {
+        _otherProviderInstances[owner] =
+            cached.where((node) => node.id != id).toList();
+      }
+      AppLogger.info('[CloudProvider] Purged confirmed-deleted node $id');
+      return true;
+    } catch (e) {
+      _error = 'Failed to remove deleted node: ${cloudProviderMessageFromError(e)}';
+      AppLogger.error('[CloudProvider] Purge missing node error', e);
+      return false;
+    } finally {
       notifyListeners();
     }
   }

@@ -1751,7 +1751,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("PrivateDeploy VPN")
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_vpn_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -2176,7 +2176,27 @@ class PrivateDeployVpnService : VpnService(), Platform {
         return false
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(
+            TAG,
+            "VPN task removed; foreground service remains active " +
+                "(running=$isRunning, proxyless=$proxylessTunnel)",
+        )
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        val wasRunning = isRunning
+        val wantedRunning = desiredRunning.get()
+        val wasProxyless = proxylessTunnel
+        if (wasRunning || wantedRunning) {
+            val message =
+                "network service destroyed by Android lifecycle; tearing down " +
+                    "active tunnel (wantedRunning=$wantedRunning, " +
+                    "proxyless=$wasProxyless)"
+            Log.w(TAG, message)
+            broadcastLog(message, System.currentTimeMillis())
+        }
         // Clear in-memory user intent FIRST so any thread still running
         // (start/restart worker, probe thread) sees desiredRunning=false
         // on its next re-check and bails. Disk-persisted intent stays
@@ -2441,18 +2461,29 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
         builder.allowBypass()
 
+        val routeAddressList = options.getRouteAddressList()
+        val isProxyless = proxylessTunnel
+
         applyAddressList(builder, options.getInet4AddressList())
         applyAddressList(builder, options.getInet6AddressList())
-        applyDns(builder, options.getDNSServerAddress())
-        applyRouteList(builder, options.getRouteAddressList())
+        if (isProxyless) {
+            Log.i(TAG, "WG-only tunnel: leaving Android DNS on the underlying network")
+        } else {
+            applyDns(builder, options.getDNSServerAddress())
+        }
+        applyRouteList(builder, routeAddressList)
         applyExcludedRouteList(builder, options.getRouteExcludeAddressList())
         applyPackages(builder, options.getIncludePackageList(), options.getExcludePackageList())
         applyHttpProxy(builder, options)
 
-        if (options.getAutoRoute() && options.getRouteAddressList().isBlank()) {
-            builder.addRoute("0.0.0.0", 0)
-            if (options.getInet6AddressList().isNotBlank()) {
-                builder.addRoute("::", 0)
+        if (options.getAutoRoute() && routeAddressList.isBlank()) {
+            if (isProxyless) {
+                Log.w(TAG, "WG-only tunnel received no route_address; refusing to install a device-wide default route")
+            } else {
+                builder.addRoute("0.0.0.0", 0)
+                if (options.getInet6AddressList().isNotBlank()) {
+                    builder.addRoute("::", 0)
+                }
             }
         }
 
