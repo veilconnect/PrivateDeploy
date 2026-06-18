@@ -275,44 +275,6 @@ subscribesStore.subscribes.forEach(async ({ id, name, proxies }) => {
     <template v-if="fields.type === Outbound.Direct">
       <Empty :description="t('kernel.outbounds.directDesc')" />
     </template>
-    <template v-else-if="fields.type === Outbound.WireGuard">
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_server') }}
-        <Input v-model="fields.server" placeholder="vpn.example.com" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_server_port') }}
-        <Input v-model="fields.server_port" type="number" placeholder="51820" />
-      </div>
-      <div :class="{ 'items-start': fields.local_address?.length }" class="form-item">
-        {{ t('kernel.outbounds.wireguard_local_address') }}
-        <InputList v-model="fields.local_address" placeholder="10.0.0.20/32" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_private_key') }}
-        <Input v-model="fields.private_key" placeholder="base64" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_peer_public_key') }}
-        <Input v-model="fields.peer_public_key" placeholder="base64" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_pre_shared_key') }}
-        <Input v-model="fields.pre_shared_key" placeholder="base64 (optional)" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_mtu') }}
-        <Input v-model="fields.mtu" type="number" placeholder="1408 (optional)" />
-      </div>
-      <div class="form-item">
-        {{ t('kernel.outbounds.wireguard_persistent_keepalive_interval') }}
-        <Input
-          v-model="fields.persistent_keepalive_interval"
-          type="number"
-          placeholder="25 (optional)"
-        />
-      </div>
-    </template>
     <template v-else-if="fields.type === Outbound.Urltest">
       <div class="form-item">
         {{ t('kernel.outbounds.url') }}
