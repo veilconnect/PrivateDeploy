@@ -588,7 +588,7 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     outboundMaps.toList(growable: false),
   );
 
-  // Endpoints (e.g. WireGuard on sing-box 1.12) share the outbound tag
+  // Endpoints share the outbound tag
   // namespace. Fold any already-present endpoint tags into the known-tag set so
   // custom rules can target them and re-normalizing an already-converted config
   // stays idempotent (the conversion below won't append a duplicate endpoint).
@@ -602,7 +602,7 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     }
   }
 
-  // Merge user-defined custom outbounds (e.g. a WireGuard tunnel to a private
+  // Merge user-defined custom outbounds (e.g. a custom proxy to a private
   // network) so custom routing rules can target them. Skip any whose tag
   // already exists to avoid clobbering node/proxy/structural outbounds.
   for (final customOutbound in routingSettings.customOutbounds) {

@@ -53,7 +53,7 @@ class PrivateDeployApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => CloudProvider()),
         // AppSettingsProvider is created BEFORE the VpnProvider proxy so the
         // auto-failover handler below can read the current routing settings
-        // (it must re-apply the WireGuard overlay / custom rules to each
+        // (it must re-apply the custom rules to each
         // failover node's config). The real app injects a pre-loaded instance
         // from main(); tests can still construct PrivateDeployApp() directly.
         if (appSettings == null)

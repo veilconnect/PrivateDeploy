@@ -83,7 +83,7 @@ Future<bool> autoFailoverToNextCloudNode({
     }
     final connected = await vpnProvider.connect(
       // Normalize with the user's routing settings so the failover node keeps
-      // the WireGuard overlay / custom rules (connecting the raw node config
+      // the custom rules (connecting the raw node config
       // would silently drop them). Bundled rule-set paths must come along
       // too — without them the normalizer cannot emit the pd-geosite-cn /
       // pd-geoip-cn direct rules and split-mode users lose CN routing after

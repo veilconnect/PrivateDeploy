@@ -103,7 +103,7 @@ enum CustomRuleMatcher {
 /// A user-defined routing rule that sends traffic matching [value] to the
 /// outbound tagged [outbound]. Unlike the built-in customDirect/customProxy
 /// lists, [outbound] can target any outbound tag, including a user-defined
-/// custom outbound (e.g. a WireGuard tunnel to a private network).
+/// custom outbound (e.g. a proxy to a private network).
 @immutable
 class CustomRoutingRule {
   const CustomRoutingRule({

@@ -100,18 +100,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   VpnHealth _health = VpnHealth.healthy;
   String? _activeProfile;
   String? _activeConfigJson;
-  // True while the active tunnel has NO proxy upstream — i.e. the WG-only /
-  // intranet config (egress = `direct`, only LAN flows through WireGuard). The
-  // native health probe is proxy-oriented (it tests reachability of a public-IP
-  // node through the tunnel), so for a proxyless tunnel its "upstream degraded"
-  // verdict is meaningless. We use this to suppress the degraded badge and —
-  // crucially — the restart watchdog, which would otherwise tear down and
-  // rebuild the tunnel every ~30-60s, killing the WireGuard handshake each time
-  // ("connects but constantly drops").
-  // True while the LIVE tunnel config carries the intranet WireGuard overlay
-  // endpoint. Tracked from the config actually handed to connect() — NOT from
-  // the saved settings, which the user can flip without reconnecting (the
-  // settings page only persists; it never rebuilds the live tunnel).
   TrafficStats _stats = TrafficStats.zero();
   bool _isLoading = false;
   String? _error;
@@ -414,7 +402,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     try {
       final nativeStatus = await _nativeService.getStatus();
       // The native tunnel can outlive the Dart process (foreground service). On
-      // a fresh app start _activeProfile/_proxylessTunnel are unset, so restore
+      // a fresh app start _activeProfile is unset, so restore
       // the persisted session identity BEFORE interpreting the status — else a
       // surviving WG-only tunnel would be mistaken for a proxy and get judged
       // (and restarted) by the proxy-oriented health watchdog.
