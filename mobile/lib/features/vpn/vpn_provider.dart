@@ -7,7 +7,6 @@ import 'package:flutter/widgets.dart';
 import '../../core/storage/storage_service.dart';
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
-import '../settings/app_settings_provider.dart' show WireGuardIntranet;
 import 'vpn_diagnostics.dart';
 import 'vpn_models.dart';
 import 'vpn_status_helpers.dart';
@@ -405,23 +404,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     ));
   }
 
-  /// Whether [config] carries the intranet WireGuard overlay endpoint. Tag
-  /// match only — a full-tunnel WG node uses its own tag and is a different
-  /// feature (the home card talks about the intranet overlay specifically).
-  static bool _configCarriesIntranetWireguard(String config) {
-    try {
-      final decoded = jsonDecode(config);
-      if (decoded is! Map) return false;
-      final endpoints = decoded['endpoints'];
-      if (endpoints is! List) return false;
-      return endpoints
-          .whereType<Map>()
-          .any((e) => e['tag']?.toString() == WireGuardIntranet.tag);
-    } catch (_) {
-      return false;
-    }
-  }
-
   void _clearSessionState() {
     if (!StorageService.isInitialized) return;
     unawaited(StorageService.remove(_sessionStateKey));
@@ -539,7 +521,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // roll it back too.
     final config = configJson ?? '{}';
     final previousIntranetWgLive = _intranetWgLive;
-    _intranetWgLive = proxyless || _configCarriesIntranetWireguard(config);
+    _intranetWgLive = proxyless;
 
     try {
       if (_intranetWgLive) {

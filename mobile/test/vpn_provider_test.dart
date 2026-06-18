@@ -573,56 +573,6 @@ void main() {
               'must not survive');
     });
 
-    test('intranetWireguardLive tracks the config actually connected',
-        () async {
-      var running = true;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(methodChannel, (call) async {
-        switch (call.method) {
-          case 'startVpn':
-            return true;
-          case 'stopVpn':
-            running = false;
-            return true;
-          case 'getStatus':
-            return {
-              'running': running,
-              'status': running ? 'connected' : 'disconnected',
-              'message': null,
-              'connected_at': running ? 123 : 0,
-              'uptime': running ? 5 : 0,
-            };
-          case 'isRunning':
-            return running;
-          default:
-            return null;
-        }
-      });
-
-      final overlayConfig = jsonEncode({
-        'endpoints': [
-          {
-            'type': 'wireguard',
-            'tag': 'wireguard-intranet',
-            'private_key': 'x',
-            'peers': <Map<String, dynamic>>[],
-          },
-        ],
-        'outbounds': [
-          {'type': 'direct', 'tag': 'direct'},
-        ],
-      });
-
-      await vpnProvider.connect(
-          configJson: overlayConfig, profileName: 'Proxy+WG');
-      expect(vpnProvider.intranetWireguardLive, true,
-          reason: 'the connected config carries the overlay endpoint');
-
-      await vpnProvider.disconnect();
-      expect(vpnProvider.intranetWireguardLive, false,
-          reason: 'cleared with the session');
-    });
-
     test('shows explicit conflict message when another VPN revokes connection',
         () async {
       var statusCallCount = 0;

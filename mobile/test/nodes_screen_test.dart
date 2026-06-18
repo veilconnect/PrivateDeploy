@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_screen.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_test_keys.dart';
-import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'support/nodes_test_support.dart';
 
@@ -99,74 +98,6 @@ void main() {
       expect(cloudProvider.refreshCalls, 2);
       expect(cloudProvider.loadInstancesCalls, 2);
       expect(profileProvider.pruneCalls, 2);
-    });
-
-    testWidgets(
-        'clears a stale WireGuard-enabled flag when launching disconnected',
-        (tester) async {
-      final appSettings = TestAppSettingsProvider(
-        vpnRoutingSettings: VpnRoutingSettings.defaults.copyWith(
-          wireGuardIntranet: const WireGuardIntranet(
-            enabled: true,
-            server: '10.0.0.1',
-            serverPort: 51820,
-            privateKey: 'priv',
-            peerPublicKey: 'pub',
-            localAddress: ['10.8.0.2/24'],
-          ),
-        ),
-      );
-      expect(appSettings.wireGuardIntranet.enabled, isTrue);
-
-      await pumpNodesTestApp(
-        tester,
-        wrapInScaffold: false,
-        child: const NodesScreen(),
-        cloudProvider: TestCloudProvider(hasApiKey: false),
-        profileProvider: TestProfileProvider(),
-        vpnProvider: TestVpnProvider(status: VpnStatus.disconnected),
-        appSettingsProvider: appSettings,
-      );
-      await tester.pump();
-      await tester.pumpAndSettle();
-
-      // A reboot kills the tunnel but not the preference. Bootstrap must make
-      // the switch honest by clearing the now-meaningless enabled flag, instead
-      // of leaving the switch sitting "on" over a disconnected tunnel.
-      expect(appSettings.wireGuardIntranet.enabled, isFalse);
-    });
-
-    testWidgets(
-        'keeps WireGuard armed when a tunnel survives the launch',
-        (tester) async {
-      final appSettings = TestAppSettingsProvider(
-        vpnRoutingSettings: VpnRoutingSettings.defaults.copyWith(
-          wireGuardIntranet: const WireGuardIntranet(
-            enabled: true,
-            server: '10.0.0.1',
-            serverPort: 51820,
-            privateKey: 'priv',
-            peerPublicKey: 'pub',
-            localAddress: ['10.8.0.2/24'],
-          ),
-        ),
-      );
-
-      await pumpNodesTestApp(
-        tester,
-        wrapInScaffold: false,
-        child: const NodesScreen(),
-        cloudProvider: TestCloudProvider(hasApiKey: false),
-        profileProvider: TestProfileProvider(),
-        vpnProvider: TestVpnProvider(status: VpnStatus.connected),
-        appSettingsProvider: appSettings,
-      );
-      await tester.pump();
-      await tester.pumpAndSettle();
-
-      // A surviving tunnel legitimately keeps WG armed to merge on the next
-      // (re)connect — the reconciliation must not stomp it.
-      expect(appSettings.wireGuardIntranet.enabled, isTrue);
     });
 
     testWidgets('disconnects and prunes stale active cloud profiles',

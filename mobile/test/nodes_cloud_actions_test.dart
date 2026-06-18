@@ -579,9 +579,7 @@ void main() {
         }),
       );
       final settingsProvider = _FakeAppSettingsProvider(
-        VpnRoutingSettings(
-          wireGuardIntranet: _testWireGuard.copyWith(enabled: false),
-        ),
+        const VpnRoutingSettings(),
       );
 
       await _pumpCloudActionHarness(
@@ -698,15 +696,6 @@ CloudInstance _instance({
     ),
   );
 }
-
-final _testWireGuard = WireGuardIntranet(
-  enabled: true,
-  server: 'wg.example.com',
-  serverPort: 51820,
-  privateKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-  peerPublicKey: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
-  localAddress: const ['10.8.0.2/24'],
-);
 
 Profile _profile({
   required String id,
@@ -1012,9 +1001,6 @@ class _FakeAppSettingsProvider extends AppSettingsProvider {
 
   @override
   VpnRoutingSettings get vpnRoutingSettings => _routingSettings;
-
-  @override
-  WireGuardIntranet get wireGuardIntranet => _routingSettings.wireGuardIntranet;
 }
 
 class _FakeProfileProvider extends Fake implements ProfileProvider {
