@@ -5,19 +5,16 @@ class NodesPreviousVpnSession {
     required this.connected,
     required this.profileName,
     required this.configJson,
-    required this.proxyless,
   });
 
   const NodesPreviousVpnSession.disconnected()
       : connected = false,
         profileName = null,
-        configJson = null,
-        proxyless = false;
+        configJson = null;
 
   final bool connected;
   final String? profileName;
   final String? configJson;
-  final bool proxyless;
 
   bool get canRestore => connected && (configJson?.trim().isNotEmpty ?? false);
 }
@@ -34,7 +31,6 @@ NodesPreviousVpnSession capturePreviousVpnSession({
     connected: true,
     profileName: snapshot.profileName,
     configJson: snapshot.configJson,
-    proxyless: snapshot.proxyless,
   );
 }
 
@@ -50,6 +46,5 @@ Future<bool> restorePreviousVpnSession({
     profileName: session.profileName,
     stabilityCheckDuration: const Duration(seconds: 1),
     statusPollInterval: const Duration(milliseconds: 250),
-    proxyless: session.proxyless,
   );
 }

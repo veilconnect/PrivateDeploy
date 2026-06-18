@@ -557,11 +557,7 @@ class _NodesScreenState extends State<NodesScreen> {
           // proxyless flag (restored from persisted session state) plus the
           // known WG-only profile name so a restored WG-only tunnel is never
           // mistaken for a proxy.
-          if (!vpnProvider.isConnected) {
-            _proxyActive = false;
-          } else {
-            _proxyActive = !vpnProvider.isProxylessTunnel;
-          }
+          _proxyActive = vpnProvider.isConnected;
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
