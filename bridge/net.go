@@ -727,7 +727,17 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	if strings.HasPrefix(proxyURL, "socks5://") || strings.HasPrefix(proxyURL, "socks://") {
 		parsed, err := url.Parse(proxyURL)
 		if err == nil {
-			dialer, dErr := xproxy.FromURL(parsed, xproxy.Direct)
+			// Guard the connection to the SOCKS5 proxy itself: the forward dialer
+			// is what actually dials the proxy address, so attaching the
+			// loopback-allowing control here blocks a proxy that resolves to
+			// LAN/metadata (incl. hostname proxies, checked at the resolved IP)
+			// while still permitting the local sing-box on loopback.
+			guardedForward := &net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+				Control:   ssrfSafeControlAllowLoopback,
+			}
+			dialer, dErr := xproxy.FromURL(parsed, guardedForward)
 			if dErr == nil {
 				// Pass the domain name directly to the SOCKS5 proxy so that
 				// DNS resolution happens on the remote server (via sing-box's
