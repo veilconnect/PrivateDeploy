@@ -90,7 +90,7 @@ interface IInbound {
   }
 }
 
-type OutboundType = 'direct' | 'selector' | 'urltest' | 'wireguard'
+type OutboundType = 'direct' | 'selector' | 'urltest'
 
 type RuleAction = 'route' | 'route-options' | 'reject' | 'hijack-dns' | 'sniff' | 'resolve'
 type DnsRuleAction = 'route' | 'route-options' | 'reject' | 'predefined'
@@ -107,7 +107,6 @@ interface IOutbound {
   // gui
   include: string
   exclude: string
-  // wireguard (sing-box 1.12 endpoint, see generateEndpoints)
   server: string
   server_port: string
   local_address: string[]

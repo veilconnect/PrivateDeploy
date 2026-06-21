@@ -296,6 +296,15 @@ class TestCloudProvider extends ChangeNotifier
   List<CloudInstance> get allInstances => instances;
 
   @override
+  List<CloudInstance> get missingInstances => const [];
+
+  @override
+  List<CloudInstance> get unpromptedMissingInstances => const [];
+
+  @override
+  void markMissingPrompted() {}
+
+  @override
   String? resolveEgressIpForProfileName(String? profileName) {
     final label = _cloudLabelFromProfileName(profileName);
     if (label == null) {

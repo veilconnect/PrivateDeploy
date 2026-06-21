@@ -79,6 +79,12 @@ class CloudInstance {
   final DateTime? createdAt;
   final NodeInfo? nodeInfo;
 
+  /// True when a successful provider API list call confirmed this node no
+  /// longer exists in the account, yet a local cached record still references
+  /// it. Such nodes are shown flagged (not connectable) and only removed from
+  /// the local list after the user confirms — never silently.
+  final bool missing;
+
   CloudInstance({
     required this.id,
     required this.provider,
@@ -90,7 +96,24 @@ class CloudInstance {
     this.ipv6,
     this.createdAt,
     this.nodeInfo,
+    this.missing = false,
   });
+
+  CloudInstance copyWith({bool? missing}) {
+    return CloudInstance(
+      id: id,
+      provider: provider,
+      label: label,
+      status: status,
+      region: region,
+      plan: plan,
+      ipv4: ipv4,
+      ipv6: ipv6,
+      createdAt: createdAt,
+      nodeInfo: nodeInfo,
+      missing: missing ?? this.missing,
+    );
+  }
 
   factory CloudInstance.fromJson(Map<String, dynamic> json) {
     final nodeInfo = NodeInfo.fromInstanceJson(json);

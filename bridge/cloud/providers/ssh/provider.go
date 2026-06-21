@@ -649,7 +649,7 @@ func (p *Provider) loadNodeRecords() (map[string]nodeRecord, error) {
 	}
 
 	records := map[string]nodeRecord{}
-	if err := json.Unmarshal(data, &records); err != nil {
+	if err := cloud.DecodeRecords(data, &records); err != nil {
 		return nil, err
 	}
 	return records, nil
@@ -663,7 +663,7 @@ func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(records, "", "  ")
+	data, err := cloud.EncodeRecords(records)
 	if err != nil {
 		return err
 	}

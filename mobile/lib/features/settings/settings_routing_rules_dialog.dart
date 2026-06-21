@@ -284,7 +284,7 @@ class _SettingsRoutingRulesDialogState
               ),
               SizedBox(height: 4.h),
               Text(
-                '可定义额外出站（如 WireGuard 隧道到内网），并用自定义规则把指定流量指向它。',
+                '可定义额外出站，并用自定义规则把指定流量指向它。',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               SizedBox(height: 12.h),
@@ -292,7 +292,7 @@ class _SettingsRoutingRulesDialogState
                 controller: _customOutboundsController,
                 label: '自定义出站 (sing-box 出站 JSON)',
                 hint:
-                    '粘贴单个 JSON 对象或数组，每个须含 tag 与 type。例（WireGuard）：\n{"type":"wireguard","tag":"home-wg","server":"1.2.3.4","server_port":51820,"local_address":["10.0.0.20/32"],"private_key":"<私钥>","peer_public_key":"<对端公钥>"}',
+                    '粘贴单个 JSON 对象或数组，每个须含 tag 与 type。例（Shadowsocks）：\n{"type":"shadowsocks","tag":"home-ss","server":"1.2.3.4","server_port":8388,"method":"aes-256-gcm","password":"<密码>"}',
               ),
               SizedBox(height: 12.h),
               _buildTextField(

@@ -1,5 +1,7 @@
 import Foundation
+import CryptoKit
 import NetworkExtension
+import Security
 import os.log
 
 #if canImport(VPNCore)
@@ -11,8 +13,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         static let appGroup = "group.com.privatedeploy.mobile"
         static let appGroupConfigKey = "PrivateDeployVPNAppGroup"
         static let configDefaultsKey = "vpn_config"
+        static let secureConfigDefaultsKey = "vpn_config_secure_v1"
+        static let proxylessDefaultsKey = "vpn_proxyless"
         static let statusDefaultsKey = "vpn_status"
         static let statsDefaultsKey = "vpn_stats"
+        // Legacy sealing key material. Retained ONLY to decrypt configs sealed
+        // by builds that predate the per-install keychain key, so they can be
+        // re-sealed under the new key on first read. Never used to seal.
+        static let legacyConfigEncryptionKeyMaterial =
+            "PrivateDeploy iOS VPN config sealing v1"
     }
 
     private enum TunnelError {
@@ -25,6 +34,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private let logger = OSLog(subsystem: "com.privatedeploy.mobile.vpnextension", category: "VPN")
+    private var proxylessTunnel = false
 
 #if canImport(VPNCore)
     private var vpnCore: VPNCoreVPNService?
@@ -34,6 +44,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         os_log("[PacketTunnelProvider] Starting tunnel...", log: logger, type: .info)
 
+        proxylessTunnel = loadProxyless()
         let config = loadConfig()
         if config.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let error = NSError(
@@ -80,6 +91,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             os_log("[PacketTunnelProvider] Failed to stop VPN core: %{public}@", log: logger, type: .error, error.localizedDescription)
         }
         vpnCore = nil
+        proxylessTunnel = false
         persistStatus(disconnectedStatusPayload())
         persistStats(defaultStatsPayload())
 #else
@@ -130,7 +142,91 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func loadConfig() -> String {
-        sharedDefaults()?.string(forKey: SharedKeys.configDefaultsKey) ?? ""
+        guard let defaults = sharedDefaults() else {
+            return ""
+        }
+        if let sealed = defaults.string(forKey: SharedKeys.secureConfigDefaultsKey),
+           let opened = openConfig(sealed) {
+            return opened
+        }
+
+        let legacy = defaults.string(forKey: SharedKeys.configDefaultsKey) ?? ""
+        if !legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           persistConfig(legacy) {
+            defaults.removeObject(forKey: SharedKeys.configDefaultsKey)
+        }
+        return legacy
+    }
+
+    @discardableResult
+    private func persistConfig(_ config: String) -> Bool {
+        guard let sealed = sealConfig(config), let defaults = sharedDefaults() else {
+            return false
+        }
+        defaults.set(sealed, forKey: SharedKeys.secureConfigDefaultsKey)
+        defaults.removeObject(forKey: SharedKeys.configDefaultsKey)
+        return true
+    }
+
+    private func loadProxyless() -> Bool {
+        sharedDefaults()?.bool(forKey: SharedKeys.proxylessDefaultsKey) ?? false
+    }
+
+    private func persistProxyless(_ proxyless: Bool) {
+        sharedDefaults()?.set(proxyless, forKey: SharedKeys.proxylessDefaultsKey)
+    }
+
+    private func sealConfig(_ config: String) -> String? {
+        guard let key = VPNConfigKeyStore.loadOrCreateKey() else {
+            return nil
+        }
+        do {
+            let sealedBox = try AES.GCM.seal(Data(config.utf8), using: key)
+            return sealedBox.combined?.base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
+    private func openConfig(_ sealedConfig: String) -> String? {
+        guard let data = Data(base64Encoded: sealedConfig) else {
+            return nil
+        }
+
+        // Preferred path: the per-install keychain key.
+        if let key = VPNConfigKeyStore.loadOrCreateKey(),
+           let plain = openSealed(data, key: key) {
+            return plain
+        }
+
+        // Migration path: a build prior to the per-install key sealed this
+        // config with a key derived from a compiled-in constant. Decrypt it
+        // once, then immediately re-seal under the per-install key so the
+        // legacy key is never needed again.
+        if let plain = openSealed(data, key: legacySealingKey()) {
+            _ = persistConfig(plain)
+            os_log("[PacketTunnelProvider] Migrated VPN config to per-install sealing key", log: logger, type: .info)
+            return plain
+        }
+
+        return nil
+    }
+
+    private func openSealed(_ data: Data, key: SymmetricKey) -> String? {
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: data)
+            let opened = try AES.GCM.open(sealedBox, using: key)
+            return String(data: opened, encoding: .utf8)
+        } catch {
+            return nil
+        }
+    }
+
+    private func legacySealingKey() -> SymmetricKey {
+        let digest = SHA256.hash(
+            data: Data(SharedKeys.legacyConfigEncryptionKeyMaterial.utf8)
+        )
+        return SymmetricKey(data: Data(digest))
     }
 
     private func persistStatus(_ status: [String: Any]) {
@@ -148,6 +244,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             "message": NSNull(),
             "connected_at": 0,
             "uptime": 0,
+            "proxyless": false,
         ]
     }
 
@@ -158,6 +255,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             "message": message,
             "connected_at": 0,
             "uptime": 0,
+            "proxyless": false,
         ]
     }
 
@@ -245,9 +343,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func readStatusPayload() -> [String: Any] {
         guard let statusJson = vpnCore?.getStatus(),
-              let payload = decodeJsonString(statusJson) else {
+              var payload = decodeJsonString(statusJson) else {
             return disconnectedStatusPayload()
         }
+        let status = (payload["status"] as? String)?.lowercased() ?? ""
+        let running = (payload["running"] as? Bool) ??
+            (status == "connected" || status == "connecting" || status == "reasserting")
+        payload["proxyless"] = running && proxylessTunnel
         return payload
     }
 
@@ -289,8 +391,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     NSLocalizedDescriptionKey: "VPN config is empty",
                 ])
             }
-            sharedDefaults()?.set(config, forKey: SharedKeys.configDefaultsKey)
+            guard persistConfig(config) else {
+                throw NSError(domain: TunnelError.domain, code: 1009, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to store VPN config securely",
+                ])
+            }
+            let requestedProxyless = message["proxyless"] as? Bool
             try vpnCore?.updateConfig(config)
+            if let requestedProxyless {
+                proxylessTunnel = requestedProxyless
+                persistProxyless(requestedProxyless)
+            }
             persistRuntimeState()
             return ["ok": true]
         case "restart":
@@ -453,3 +564,59 @@ extension PacketTunnelProvider: VPNCorePlatform {
     }
 }
 #endif
+
+// VPNConfigKeyStore manages the per-install symmetric key used to seal the VPN
+// config in the shared App Group. The key is random per install and lives in
+// the keychain, shared with the main app through the common
+// `keychain-access-groups` entitlement (the default access group for both
+// targets). This mirrors the helper in the main app's VpnPlugin.swift; the two
+// targets are separate modules so the type is intentionally duplicated.
+fileprivate enum VPNConfigKeyStore {
+    private static let service = "com.privatedeploy.mobile.vpn"
+    private static let account = "vpn_config_sealing_key_v2"
+
+    static func loadOrCreateKey() -> SymmetricKey? {
+        if let existing = loadKey() {
+            return existing
+        }
+
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let data = Data(bytes)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess {
+            return SymmetricKey(data: data)
+        }
+        if status == errSecDuplicateItem {
+            return loadKey()
+        }
+        return nil
+    }
+
+    private static func loadKey() -> SymmetricKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, data.count == 32 else {
+            return nil
+        }
+        return SymmetricKey(data: data)
+    }
+}

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/widgets.dart';
 
+import '../../core/storage/storage_service.dart';
 import '../../services/vpn_native_service.dart';
 import '../../shared/utils/logger.dart';
 import 'vpn_diagnostics.dart';
@@ -11,6 +13,16 @@ import 'vpn_status_helpers.dart';
 
 export 'vpn_models.dart';
 export 'vpn_diagnostics.dart';
+
+class VpnSessionSnapshot {
+  const VpnSessionSnapshot({
+    required this.configJson,
+    required this.profileName,
+  });
+
+  final String configJson;
+  final String? profileName;
+}
 
 class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   static const String vpnConflictMessage =
@@ -87,6 +99,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // string-matching.
   VpnHealth _health = VpnHealth.healthy;
   String? _activeProfile;
+  String? _activeConfigJson;
   TrafficStats _stats = TrafficStats.zero();
   bool _isLoading = false;
   String? _error;
@@ -150,6 +163,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _status == VpnStatus.connected && _health == VpnHealth.degraded;
   bool get needsCdnGuidance => _needsCdnGuidance;
   String? get activeProfile => _activeProfile;
+
+  VpnSessionSnapshot? get activeSessionSnapshot {
+    final config = _activeConfigJson;
+    if (_status != VpnStatus.connected || config == null || config.isEmpty) {
+      return null;
+    }
+    return VpnSessionSnapshot(
+      configJson: config,
+      profileName: _activeProfile,
+    );
+  }
+
   TrafficStats get stats => _stats;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -330,6 +355,42 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  // Persisted so a tunnel that outlives the Dart process keeps its identity on
+  // the next app start (see _restoreSessionStateIfRunning / loadStatus).
+  static const String _sessionStateKey = 'vpn_session_state';
+
+  void _persistSessionState(String? profileName) {
+    if (!StorageService.isInitialized) return;
+    unawaited(StorageService.saveString(
+      _sessionStateKey,
+      jsonEncode({
+        'profile': profileName,
+      }),
+    ));
+  }
+
+  void _clearSessionState() {
+    if (!StorageService.isInitialized) return;
+    unawaited(StorageService.remove(_sessionStateKey));
+  }
+
+  void _restoreSessionStateIfRunning() {
+    if (_activeProfile != null) return;
+    final raw = StorageService.getString(_sessionStateKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final profile = decoded['profile'];
+        if (profile is String && profile.isNotEmpty) {
+          _activeProfile = profile;
+        }
+      }
+    } catch (_) {
+      // Corrupt state — ignore; a fresh connect overwrites it.
+    }
+  }
+
   Future<void> loadStatus() async {
     if (!_isSupported) {
       _status = VpnStatus.disconnected;
@@ -340,6 +401,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
     try {
       final nativeStatus = await _nativeService.getStatus();
+      // The native tunnel can outlive the Dart process (foreground service). On
+      // a fresh app start _activeProfile is unset, so restore
+      // the persisted session identity BEFORE interpreting the status — else a
+      // surviving WG-only tunnel would be mistaken for a proxy and get judged
+      // (and restarted) by the proxy-oriented health watchdog.
+      if (nativeStatus?.running ?? false) {
+        _restoreSessionStateIfRunning();
+      }
       if (nativeStatus != null) {
         _applyNativeStatus(nativeStatus, notify: false);
       } else {
@@ -388,6 +457,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _diagnosticsError = null;
     _diagnosticsUpdatedAt = null;
     _upstreamDegradedRestartAttempts = 0;
+    final previousActiveProfile = _activeProfile;
+    final previousActiveConfigJson = _activeConfigJson;
     // Failover history is scoped to a single auto-failover episode. A new
     // connect() call (either user-initiated or from the failover handler
     // itself) starts fresh — except when the failover handler is the one
@@ -398,8 +469,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
     _safeNotifyListeners();
 
+    final config = configJson ?? '{}';
+
     try {
-      final config = configJson ?? '{}';
       // Set _activeProfile *before* awaiting the native start so a
       // failure path (e.g. cellular connectivity failure where the native side
       // refuses to install a black-hole tun) still leaves the profile
@@ -426,6 +498,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
           if (!verified) {
             return false;
           }
+          // Persist the session identity only once the tunnel is verified up,
+          // so a failed start never leaves stale state to be restored on the
+          // next app launch.
+          _activeConfigJson = config;
+          _persistSessionState(profileName);
           _isLoading = false;
           _safeNotifyListeners();
           AppLogger.info('[VpnProvider] VPN connected');
@@ -433,6 +510,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         }
 
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _error = _normalizeVpnError(
               _nativeService.lastError ??
                   _error ??
@@ -441,17 +519,35 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
             'VPN did not reach connected state';
         return false;
       } else {
+        final startError = _nativeService.lastError;
+        // Duplicate starts are rejected by native without stopping the existing
+        // tunnel. Keep this provider attached to that still-running session
+        // instead of locally marking it disconnected.
+        if (_isAlreadyRunningStartRejection(startError)) {
+          _activeProfile = previousActiveProfile;
+          _activeConfigJson = previousActiveConfigJson;
+          await loadStatus();
+          if (_status == VpnStatus.connected) {
+            _error = _normalizeVpnError(startError);
+            return false;
+          }
+        }
         _status = VpnStatus.disconnected;
+        _activeConfigJson = null;
         _stopStatsPolling();
-        _error = _normalizeVpnError(_nativeService.lastError) ??
-            'Failed to start VPN';
+        _error = _normalizeVpnError(startError) ?? 'Failed to start VPN';
         return false;
       }
     } catch (e) {
       _error = _normalizeVpnError(e.toString()) ??
           'Failed to start VPN: ${e.toString()}';
       _status = VpnStatus.disconnected;
+      _activeConfigJson = null;
       _stopStatsPolling();
+      if (_isAlreadyRunningStartRejection(e.toString())) {
+        _activeProfile = previousActiveProfile;
+        _activeConfigJson = previousActiveConfigJson;
+      }
       AppLogger.error('[VpnProvider] Start error', e);
       return false;
     } finally {
@@ -461,6 +557,75 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       }
       _safeNotifyListeners();
     }
+  }
+
+  /// Applies [configJson] to an ALREADY-CONNECTED tunnel so the WireGuard
+  /// control and the proxy control can be toggled independently — turning the
+  /// proxy on/off without losing WireGuard, and vice-versa.
+  ///
+  /// This used to attempt a zero-downtime in-place reload, but the gomobile
+  /// core can't reload config into a running tunnel (and a WG-only <-> proxy
+  /// change needs the Android tun re-established with new routes regardless), so
+  /// it now applies the change as a clean stop+start via [_restartForConfigChange].
+  /// A momentary reconnect is the trade-off; the combined config is rebuilt by
+  /// the caller so BOTH overlays come back up.
+  ///
+  /// Returns false WITHOUT touching native state when there is no live tunnel to
+  /// update — the caller must fall back to a full [connect].
+  Future<bool> swapRunningConfig({
+    required String configJson,
+    String? profileName,
+    Duration stabilityCheckDuration = Duration.zero,
+    Duration statusPollInterval = const Duration(milliseconds: 250),
+  }) async {
+    if (!_isSupported) {
+      _error = _unsupportedReason ?? 'Native VPN is unavailable on this build';
+      _safeNotifyListeners();
+      return false;
+    }
+    if (_status != VpnStatus.connected) {
+      // Nothing live to swap. Don't fabricate a tunnel here — let the caller
+      // decide to do a cold connect instead.
+      return false;
+    }
+
+    // The gomobile core CANNOT reload config into a running tunnel: its native
+    // UpdateConfig stores the new config but returns "VPN is running, please
+    // restart to apply new config", and the Kotlin bridge reports that
+    // fire-and-forget call as success — so an in-place "hot-swap" silently kept
+    // the OLD tunnel. So apply the change as a clean stop+start. A momentary
+    // reconnect is the unavoidable trade-off on this core — far better than the
+    // change not taking effect.
+    return _restartForConfigChange(
+      configJson: configJson,
+      profileName: profileName,
+      stabilityCheckDuration: stabilityCheckDuration,
+      statusPollInterval: statusPollInterval,
+    );
+  }
+
+  /// Apply [configJson] to the live session by tearing the tunnel down and
+  /// starting it again. Used by [swapRunningConfig] because the native core
+  /// can't reload config in place. A momentary reconnect is the trade-off.
+  Future<bool> _restartForConfigChange({
+    required String configJson,
+    String? profileName,
+    required Duration stabilityCheckDuration,
+    required Duration statusPollInterval,
+  }) async {
+    final tornDown = await disconnect();
+    if (!tornDown) {
+      _error = _normalizeVpnError(_nativeService.lastError) ??
+          'Failed to restart VPN to apply new config';
+      _safeNotifyListeners();
+      return false;
+    }
+    return connect(
+      configJson: configJson,
+      profileName: profileName,
+      stabilityCheckDuration: stabilityCheckDuration,
+      statusPollInterval: statusPollInterval,
+    );
   }
 
   Future<bool> disconnect() async {
@@ -487,6 +652,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
+        _clearSessionState();
         _lastKnownEgressIp = null;
         _lastKnownEgressIpAt = null;
         _stopStatsPolling();
@@ -532,6 +699,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         await _waitForNativeDisconnect();
         _status = VpnStatus.disconnected;
         _activeProfile = null;
+        _activeConfigJson = null;
+        _clearSessionState();
         _lastKnownEgressIp = null;
         _lastKnownEgressIpAt = null;
         _diagnosticsEgressIp = null;
@@ -1130,6 +1299,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     _status = VpnStatus.disconnected;
     _activeProfile = null;
+    _activeConfigJson = null;
+    _clearSessionState();
     _stopStatsPolling();
     _isLoading = false;
     _safeNotifyListeners();
@@ -1224,6 +1395,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         message.contains('open outbound connection');
   }
 
+  bool _isAlreadyRunningStartRejection(String? message) {
+    final normalized = message?.trim().toLowerCase() ?? '';
+    return normalized.contains('already_running') ||
+        normalized.contains('already running') ||
+        normalized.contains('start already in progress');
+  }
+
   Duration _currentConnectionTime() {
     if (_status != VpnStatus.connected) {
       return Duration.zero;
@@ -1264,6 +1442,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _status = vpnStatusFromNative(nativeStatus);
     _updateConnectionClock(nativeStatus, previousStatus: previousStatus);
 
+    // The native side is the authority on the tunnel mode — it sets the flag
+    // only at the accepted-start point and persists it durably. Adopt its echo
+    // whenever the tunnel is running, which (a) rebuilds isProxylessTunnel
+    // after the Dart process was killed before its own session state landed,
+    // and (b) corrects connect()'s optimistic flip when native rejected a
+    // duplicate start and kept the previous session's mode.
     final message = nativeStatus.message?.trim();
     final normalizedStatus = nativeStatus.status.trim().toLowerCase();
     final preserveConflictMessage = _error == vpnConflictMessage &&
@@ -1351,6 +1535,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         degraded: hasNativeDegradedMessage && !isDirectRouteDegraded,
       );
     } else {
+      if (previousStatus == VpnStatus.connected &&
+          (normalizedStatus == 'disconnected' ||
+              normalizedStatus == 'revoked')) {
+        _activeProfile = null;
+        _activeConfigJson = null;
+        _clearSessionState();
+      }
       _stopStatsPolling();
       _deferredStartupDiagnosticsTimer?.cancel();
       _deferredStartupDiagnosticsTimer = null;
@@ -1402,7 +1593,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   /// we kick a native restart so urltest re-probes every pool member from
   /// scratch and (hopefully) lands on a healthy one.
   void _handleUpstreamDegradedSignal({required bool degraded}) {
-    if (!degraded) {
+    final effectiveDegraded = degraded;
+    if (!effectiveDegraded) {
       _upstreamDegradedWatchdog?.cancel();
       _upstreamDegradedWatchdog = null;
       return;

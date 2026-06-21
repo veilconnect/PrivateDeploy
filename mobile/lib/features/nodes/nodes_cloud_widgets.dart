@@ -42,9 +42,13 @@ class NodesCloudInstanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final isReady =
-        instance.isActive && instance.hasIp && instance.nodeInfo != null;
-    final readinessMessage = _readinessMessage(l10n: l10n, isReady: isReady);
+    final isReady = !instance.missing &&
+        instance.isActive &&
+        instance.hasIp &&
+        instance.nodeInfo != null;
+    final readinessMessage = instance.missing
+        ? '已在云端删除,可在右上角菜单移除 / Deleted on the provider'
+        : _readinessMessage(l10n: l10n, isReady: isReady);
     final canUseNode = !isSelected || !isConnected;
     final isLatencyTesting = latencyCheck?.isTesting == true;
     final primaryLabel = isSelected
@@ -76,11 +80,13 @@ class NodesCloudInstanceCard extends StatelessWidget {
                 : (normalizedActiveEndpointLabel?.isNotEmpty == true)
                     ? normalizedActiveEndpointLabel!
                     : l10n.automatic;
-    final accentColor = isSelected
-        ? const Color(0xFF1452CC)
-        : isReady
-            ? const Color(0xFF0E9F6E)
-            : const Color(0xFFF59E0B);
+    final accentColor = instance.missing
+        ? const Color(0xFFDC2626)
+        : isSelected
+            ? const Color(0xFF1452CC)
+            : isReady
+                ? const Color(0xFF0E9F6E)
+                : const Color(0xFFF59E0B);
 
     return Card(
       margin: EdgeInsets.only(bottom: 6.h),
@@ -109,7 +115,11 @@ class NodesCloudInstanceCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12.r),
                   ),
                   child: Icon(
-                    isReady ? Icons.cloud_done : Icons.hourglass_empty,
+                    instance.missing
+                        ? Icons.cloud_off
+                        : isReady
+                            ? Icons.cloud_done
+                            : Icons.hourglass_empty,
                     color: accentColor,
                     size: 18.sp,
                   ),

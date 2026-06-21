@@ -21,11 +21,219 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xproxy "golang.org/x/net/proxy"
 )
+
+// errBlockedOutboundURL is returned when a frontend-supplied URL targets a
+// non-public address or an unsupported scheme.
+var errBlockedOutboundURL = errors.New("blocked outbound request to a non-public or unsupported address")
+
+// validateOutboundURL enforces that a frontend-supplied URL uses http(s) and
+// does not, by hostname alone, obviously target loopback/internal hosts. The
+// authoritative SSRF check happens at dial time in ssrfSafeControl (which sees
+// the resolved IP and is therefore safe against DNS rebinding); this is the
+// cheap up-front guard.
+func validateOutboundURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return errBlockedOutboundURL
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return errBlockedOutboundURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errBlockedOutboundURL
+	}
+	if ip := net.ParseIP(host); ip != nil && isBlockedDialIP(ip) {
+		return errBlockedOutboundURL
+	}
+	if strings.EqualFold(host, "localhost") {
+		return errBlockedOutboundURL
+	}
+	return nil
+}
+
+// resolveProxy returns the proxy function for the transport and the set of
+// dial endpoints ("host:port") those proxies live at. An explicit, parseable
+// options.Proxy wins; otherwise the environment proxies are used. The returned
+// address set is what makeSSRFControl will permit (so a loopback sing-box proxy
+// can be dialed) on top of public addresses.
+func resolveProxy(optProxy string) (func(*http.Request) (*url.URL, error), map[string]struct{}) {
+	allowed := map[string]struct{}{}
+
+	if trimmed := strings.TrimSpace(optProxy); trimmed != "" {
+		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+			addProxyEndpoint(allowed, u)
+			return http.ProxyURL(u), allowed
+		}
+		// Non-empty but unparseable: treat as no explicit proxy (do NOT silently
+		// inherit env here in a way that desyncs the guard — fall through and let
+		// the environment proxy, if any, be resolved consistently below).
+	}
+
+	for _, key := range []string{
+		"HTTP_PROXY", "http_proxy",
+		"HTTPS_PROXY", "https_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			continue
+		}
+		if !strings.Contains(v, "://") {
+			v = "http://" + v
+		}
+		if u, err := url.Parse(v); err == nil && u.Host != "" {
+			addProxyEndpoint(allowed, u)
+		}
+	}
+	return http.ProxyFromEnvironment, allowed
+}
+
+func addProxyEndpoint(set map[string]struct{}, u *url.URL) {
+	host := u.Hostname()
+	if host == "" {
+		return
+	}
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h", "socks", "socks4":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	set[net.JoinHostPort(host, port)] = struct{}{}
+}
+
+// makeSSRFControl returns a dialer Control hook that permits dialing the
+// configured proxy endpoints (so a loopback sing-box proxy works) and otherwise
+// blocks every internal address — including loopback — at the resolved IP. This
+// is per-connection, so requests that bypass the proxy (NO_PROXY, direct) are
+// still strictly guarded.
+func makeSSRFControl(allowedProxyAddrs map[string]struct{}) func(string, string, syscall.RawConn) error {
+	return func(network, address string, _ syscall.RawConn) error {
+		if _, ok := allowedProxyAddrs[address]; ok {
+			return nil
+		}
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if isBlockedDialIP(ip) {
+			return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+		}
+		return nil
+	}
+}
+
+// validateProxyURL rejects a renderer-supplied proxy whose host literal is an
+// internal address other than loopback (the legitimate local sing-box). It is a
+// best-effort up-front check; loopback proxies are allowed.
+func validateProxyURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return errBlockedOutboundURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errBlockedOutboundURL
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Hostname proxy (resolved later); allow — the common case is localhost.
+		return nil
+	}
+	if ip.IsLoopback() {
+		return nil
+	}
+	if isBlockedDialIP(ip) {
+		return errBlockedOutboundURL
+	}
+	return nil
+}
+
+// isBlockedDialIP reports whether an IP must not be reachable from a
+// frontend-driven HTTP request: loopback, RFC1918 private ranges, link-local
+// (incl. the 169.254.169.254 cloud metadata endpoint), unique-local IPv6,
+// multicast and unspecified addresses.
+func isBlockedDialIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified() {
+		return true
+	}
+
+	// IsPrivate covers RFC1918 + fc00::/7, but not these additional
+	// not-publicly-routable ranges that can still reach internal infra.
+	if ip4 := ip.To4(); ip4 != nil {
+		// CGNAT 100.64.0.0/10 (RFC6598).
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+		// Limited broadcast.
+		if ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255 {
+			return true
+		}
+	} else {
+		// NAT64 well-known prefix 64:ff9b::/96 can embed private IPv4 targets.
+		if len(ip) == net.IPv6len && ip[0] == 0x00 && ip[1] == 0x64 && ip[2] == 0xff && ip[3] == 0x9b {
+			return true
+		}
+	}
+	return false
+}
+
+// ssrfSafeControl is wired into the dialer Control hook so it runs against the
+// actual resolved IP immediately before connect, closing the DNS-rebinding
+// TOCTOU window that a URL-string-only check would leave open.
+func ssrfSafeControl(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if isBlockedDialIP(ip) {
+		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+	}
+	return nil
+}
+
+// ssrfSafeControlAllowLoopback is the proxy-dial variant: it blocks the same
+// internal ranges as ssrfSafeControl EXCEPT loopback, because the legitimate
+// egress proxy is the local sing-box bound to 127.0.0.1. It still blocks a
+// renderer-supplied proxy that points at LAN / metadata addresses.
+func ssrfSafeControlAllowLoopback(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	if isBlockedDialIP(ip) {
+		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+	}
+	return nil
+}
 
 var defaultSpeedTestURLs = []string{
 	"https://speed.cloudflare.com/__down?bytes=1000000",
@@ -35,6 +243,10 @@ var defaultSpeedTestURLs = []string{
 
 func (a *App) Requests(method string, url string, headers map[string]string, body string, options RequestOptions) HTTPResult {
 	log.Printf("Requests: %v %v %v %v %v", method, url, headers, body, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	client, ctx, cancel := withRequestOptionsClient(options)
 
@@ -69,6 +281,10 @@ func (a *App) Requests(method string, url string, headers map[string]string, bod
 
 func (a *App) Download(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
 	log.Printf("Download: %s %s %s %v %s %v", method, url, path, headers, event, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	client, ctx, cancel := withRequestOptionsClient(options)
 
@@ -118,6 +334,10 @@ func (a *App) Download(method string, url string, path string, headers map[strin
 
 func (a *App) Upload(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
 	log.Printf("Upload: %s %s %s %v %s %v", method, url, path, headers, event, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	path = GetPath(path)
 
@@ -225,14 +445,30 @@ func wrapWithProgress(r io.Reader, size int64, event string, a *App) io.Reader {
 }
 
 func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc) {
-	client := &http.Client{
-		Timeout: GetTimeout(options.Timeout),
-		Transport: &http.Transport{
-			Proxy: GetProxy(options.Proxy),
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: options.Insecure,
-			},
+	// Resolve the proxy ourselves and derive the exact set of proxy endpoints
+	// the transport may legitimately dial. The dial guard then allows ONLY
+	// those endpoints plus public addresses, and blocks every internal address
+	// (incl. loopback) otherwise. This is correct per-connection: a request
+	// that dials its proxy is allowed; a request that dials direct (no proxy,
+	// or excluded by NO_PROXY) is held to the strict block, so a rebinding host
+	// can never reach loopback/LAN/metadata.
+	proxyFn, allowedProxyAddrs := resolveProxy(options.Proxy)
+
+	transport := &http.Transport{
+		Proxy: proxyFn,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: options.Insecure,
 		},
+	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   makeSSRFControl(allowedProxyAddrs),
+	}
+	transport.DialContext = dialer.DialContext
+	client := &http.Client{
+		Timeout:   GetTimeout(options.Timeout),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !options.Redirect {
 				return http.ErrUseLastResponse
@@ -547,6 +783,19 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		timeoutSec = 15
 	}
 
+	// testURL is renderer-controllable; block internal/metadata targets up front.
+	if err := validateOutboundURL(testURL); err != nil {
+		return speedError(err.Error())
+	}
+
+	// proxyURL is renderer-controllable; a proxy pointing at LAN/metadata (other
+	// than the legitimate loopback sing-box) is an SSRF vector.
+	if proxyURL != "" {
+		if err := validateProxyURL(proxyURL); err != nil {
+			return speedError(err.Error())
+		}
+	}
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
 	}
@@ -554,23 +803,46 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	// Support SOCKS5 proxy via x/net/proxy (http.Transport.Proxy only handles HTTP)
 	if strings.HasPrefix(proxyURL, "socks5://") || strings.HasPrefix(proxyURL, "socks://") {
 		parsed, err := url.Parse(proxyURL)
-		if err == nil {
-			dialer, dErr := xproxy.FromURL(parsed, xproxy.Direct)
-			if dErr == nil {
-				// Pass the domain name directly to the SOCKS5 proxy so that
-				// DNS resolution happens on the remote server (via sing-box's
-				// outbound).  Local DNS resolution can return altered or
-				// unreachable IPs in restricted network environments.
-				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-					if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
-						return ctxDialer.DialContext(ctx, network, addr)
-					}
-					return dialer.Dial(network, addr)
-				}
+		if err != nil {
+			return speedError("invalid proxy url: " + err.Error())
+		}
+		// Guard the connection to the SOCKS5 proxy itself: the forward dialer
+		// is what actually dials the proxy address, so attaching the
+		// loopback-allowing control here blocks a proxy that resolves to
+		// LAN/metadata (incl. hostname proxies, checked at the resolved IP)
+		// while still permitting the local sing-box on loopback.
+		guardedForward := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   ssrfSafeControlAllowLoopback,
+		}
+		dialer, dErr := xproxy.FromURL(parsed, guardedForward)
+		if dErr != nil {
+			// e.g. the unsupported "socks://" scheme. Do NOT fall through to an
+			// unguarded direct dial — that would let a bad proxy scheme bypass
+			// the SSRF guard via a rebinding testURL.
+			return speedError("unsupported or invalid proxy: " + dErr.Error())
+		}
+		// Pass the domain name directly to the SOCKS5 proxy so that DNS
+		// resolution happens on the remote server (via sing-box's outbound).
+		// Local DNS resolution can return altered or unreachable IPs in
+		// restricted network environments.
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
+				return ctxDialer.DialContext(ctx, network, addr)
 			}
+			return dialer.Dial(network, addr)
 		}
 	} else if proxyURL != "" {
 		transport.Proxy = GetProxy(proxyURL)
+		// Guard the dial to the HTTP proxy itself (loopback sing-box allowed).
+		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: ssrfSafeControlAllowLoopback}
+		transport.DialContext = d.DialContext
+	} else {
+		// Direct download: guard the dial against internal targets (TOCTOU-safe,
+		// catches DNS rebinding and redirects to internal hosts).
+		dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: ssrfSafeControl}
+		transport.DialContext = dialer.DialContext
 	}
 
 	client := &http.Client{

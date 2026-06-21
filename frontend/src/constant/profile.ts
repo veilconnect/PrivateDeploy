@@ -140,7 +140,6 @@ export const DefaultOutbound = (): IOutbound => ({
   tolerance: 150,
   include: '',
   exclude: '',
-  // wireguard (sing-box 1.12 endpoint)
   server: '',
   server_port: '',
   local_address: [],

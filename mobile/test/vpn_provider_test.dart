@@ -207,6 +207,62 @@ void main() {
       );
     });
 
+    test('already-running start rejection preserves the live session',
+        () async {
+      var startCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            startCalls += 1;
+            if (startCalls == 1) {
+              return true;
+            }
+            throw PlatformException(
+              code: 'ALREADY_RUNNING',
+              message: 'VPN is already running',
+            );
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 1024,
+              'download_bytes': 2048,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final first = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Live node',
+      );
+      expect(first, true);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live node');
+
+      final second = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Other profile',
+      );
+
+      expect(second, false);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.activeProfile, 'Live node');
+      expect(vpnProvider.error, contains('already running'));
+    });
+
     test('connect only reports success after confirmed running status',
         () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -337,6 +393,35 @@ void main() {
       expect(success, true);
       expect(vpnProvider.status, VpnStatus.connected);
       expect(vpnProvider.isConnected, true);
+    });
+
+    test('proxy tunnel: an upstream-degraded message DOES mark degraded',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': '1',
+              'status': 'connected',
+              'message': VpnProvider.tunnelUpstreamDegradedMessage,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.connect(configJson: '{}', profileName: 'Test');
+
+      expect(vpnProvider.isConnected, true);
+      expect(vpnProvider.isDegraded, true,
+          reason: 'a proxy tunnel must still surface upstream degradation');
     });
 
     test('shows explicit conflict message when another VPN revokes connection',

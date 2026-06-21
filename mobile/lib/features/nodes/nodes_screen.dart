@@ -10,6 +10,7 @@ import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
 import '../cloud/node_detail_screen.dart';
+import 'nodes_action_feedback.dart';
 import 'nodes_cloud_actions.dart';
 import 'nodes_profile_actions.dart';
 import 'nodes_sections.dart';
@@ -88,6 +89,8 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     }
   }
@@ -105,11 +108,80 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     } catch (e) {
       // Background sync failure is non-critical — cached nodes remain usable.
       AppLogger.warning('[NodesScreen] Background cloud sync failed: $e');
     }
+  }
+
+  /// After a successful provider sync, if the API confirmed any cached nodes
+  /// are gone, ask the user once whether to remove them. Deleted nodes are
+  /// never purged silently — only after this confirmation.
+  Future<void> _maybePromptRemoveMissingNodes(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) async {
+    final missing = cloudProvider.unpromptedMissingInstances;
+    if (missing.isEmpty || !mounted) {
+      return;
+    }
+    // Only surface each detected set once, even if the dialog is dismissed.
+    cloudProvider.markMissingPrompted();
+
+    final labels = missing.map((node) => '• ${node.label}').join('\n');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('节点已在云端删除 / Nodes deleted'),
+        content: Text(
+          '以下节点已通过云服务商确认不存在,是否从列表中移除?\n'
+          'These nodes no longer exist on the provider. Remove them from the list?\n\n'
+          '$labels',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('暂不 / Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('移除 / Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    var removed = 0;
+    for (final node in missing) {
+      final profileName = cloudProfileName(node);
+      final linkedProfile = profileProvider.getProfileByName(profileName);
+      final isActive = linkedProfile != null &&
+          profileProvider.activeProfile?.id == linkedProfile.id;
+      if (isActive && vpnProvider.status != VpnStatus.disconnected) {
+        await vpnProvider.disconnect();
+      }
+      if (await cloudProvider.purgeMissingInstance(node.id)) {
+        removed++;
+        if (linkedProfile != null) {
+          await profileProvider.deleteProfileByName(profileName);
+        }
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    showNodesActionSnackBar(
+      context,
+      message: '已移除 $removed 个已删除节点 / Removed $removed deleted node(s)',
+      backgroundColor: Colors.green,
+    );
   }
 
   Future<void> _reconcileCloudProfiles(
@@ -165,6 +237,7 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     CloudInstance instance,
   ) {
+    _proxyActive = true;
     return useCloudNodeAndConnect(
       context: context,
       instance: instance,
@@ -212,6 +285,49 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
+  bool _wgBusy = false;
+
+  /// Serializes the VPN mode transitions triggered from this screen (proxy
+  /// connect/disconnect/restart, WG toggle, cloud-node "use"). The guard is
+  /// engaged synchronously — BEFORE the action's first await — so a second
+  /// tap can never slip through the event-loop yield and interleave two
+  /// transitions. Re-entrant calls (an exclusive action invoking another
+  /// handler internally) must call the unguarded handler directly.
+  Future<void> _runBusyExclusive(Future<void> Function() action) async {
+    if (_wgBusy) return; // a mode transition is already in flight
+    setState(() => _wgBusy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _wgBusy = false);
+    }
+  }
+
+  /// Whether the proxy (网络访问) node is the active connection. Tracked separately
+  /// from the raw tunnel state so the intranet WireGuard overlay can run on its
+  /// own (proxy disconnected, tunnel carrying only WireGuard) and vice versa.
+  bool _proxyActive = false;
+
+  /// Main connect button: the user wants the proxy node in the tunnel.
+  Future<void> _handleProxyConnect(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) {
+    return _runBusyExclusive(() async {
+      _proxyActive = true;
+      await _handleConnect(cloudProvider, profileProvider, vpnProvider);
+    });
+  }
+
+  /// Main disconnect button: stop the proxy tunnel.
+  Future<void> _handleProxyDisconnect(VpnProvider vpnProvider) {
+    return _runBusyExclusive(() async {
+      _proxyActive = false;
+      await handleNodesDisconnect(context: context, vpnProvider: vpnProvider);
+    });
+  }
+
   Future<void> _openCloudNodeDetails(CloudInstance instance) {
     return Navigator.push(
       context,
@@ -257,13 +373,13 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     CloudInstance instance,
   ) {
-    return testCloudNodeLatency(
-      context: context,
-      cloudProvider: cloudProvider,
-      instance: instance,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
+    return _runBusyExclusive(() => testCloudNodeLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+          instance: instance,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+        ));
   }
 
   Future<void> _testAllCloudNodesLatency(
@@ -271,12 +387,12 @@ class _NodesScreenState extends State<NodesScreen> {
     ProfileProvider profileProvider,
     VpnProvider vpnProvider,
   ) {
-    return testAllCloudNodesLatency(
-      context: context,
-      cloudProvider: cloudProvider,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
+    return _runBusyExclusive(() => testAllCloudNodesLatency(
+          context: context,
+          cloudProvider: cloudProvider,
+          profileProvider: profileProvider,
+          vpnProvider: vpnProvider,
+        ));
   }
 
   Future<void> _activateProfile(
@@ -285,6 +401,7 @@ class _NodesScreenState extends State<NodesScreen> {
     VpnProvider vpnProvider,
     Profile profile,
   ) {
+    _proxyActive = true;
     return activateProfileAndConnect(
       context: context,
       profile: profile,
@@ -322,23 +439,25 @@ class _NodesScreenState extends State<NodesScreen> {
     ProfileProvider profileProvider,
     VpnProvider vpnProvider,
     Profile profile,
-  ) async {
-    setState(() {
-      _profileSpeedResults[profile.id] = const ProfileSpeedResult.testing();
-    });
-
-    final result = await testProfileSpeed(
-      context: context,
-      profile: profile,
-      profileProvider: profileProvider,
-      vpnProvider: vpnProvider,
-    );
-
-    if (mounted) {
+  ) {
+    return _runBusyExclusive(() async {
       setState(() {
-        _profileSpeedResults[profile.id] = result;
+        _profileSpeedResults[profile.id] = const ProfileSpeedResult.testing();
       });
-    }
+
+      final result = await testProfileSpeed(
+        context: context,
+        profile: profile,
+        profileProvider: profileProvider,
+        vpnProvider: vpnProvider,
+      );
+
+      if (mounted) {
+        setState(() {
+          _profileSpeedResults[profile.id] = result;
+        });
+      }
+    });
   }
 
   Future<void> _showImportProfileDialog() {
@@ -350,13 +469,6 @@ class _NodesScreenState extends State<NodesScreen> {
 
   Future<void> _showCreateProfileDialog() {
     return showCreateProfileFlow(
-      context: context,
-      profileProvider: context.read<ProfileProvider>(),
-    );
-  }
-
-  Future<void> _showWireguardDialog() {
-    return showCreateWireguardFlow(
       context: context,
       profileProvider: context.read<ProfileProvider>(),
     );
@@ -438,6 +550,14 @@ class _NodesScreenState extends State<NodesScreen> {
       ),
       body: Consumer3<CloudProvider, ProfileProvider, VpnProvider>(
         builder: (context, cloudProvider, profileProvider, vpnProvider, _) {
+          // Reconcile the in-memory proxy-active flag with the real tunnel.
+          // After an app process restart the flag defaults to false even if a
+          // proxy tunnel is still up; without this, toggling WG would wrongly
+          // tear the proxy down (or vice-versa). Use the authoritative
+          // proxyless flag (restored from persisted session state) plus the
+          // known WG-only profile name so a restored WG-only tunnel is never
+          // mistaken for a proxy.
+          _proxyActive = vpnProvider.isConnected;
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
@@ -483,14 +603,13 @@ class _NodesScreenState extends State<NodesScreen> {
                   profileProvider: profileProvider,
                   cloudProvider: cloudProvider,
                   showSetupShortcuts: false,
-                  onConnect: () => _handleConnect(
+                  proxyConnected: _proxyActive,
+                  busy: _wgBusy,
+                  onConnect: () => _handleProxyConnect(
                       cloudProvider, profileProvider, vpnProvider),
-                  onDisconnect: () => handleNodesDisconnect(
-                    context: context,
-                    vpnProvider: vpnProvider,
-                  ),
-                  onRestart: () => _handleRestart(
-                      cloudProvider, profileProvider, vpnProvider),
+                  onDisconnect: () => _handleProxyDisconnect(vpnProvider),
+                  onRestart: () => _runBusyExclusive(() => _handleRestart(
+                      cloudProvider, profileProvider, vpnProvider)),
                   onConfigureApiKey: () =>
                       _showCloudApiKeyDialog(cloudProvider),
                   onImportProfile: _showImportProfileDialog,
@@ -548,11 +667,17 @@ class _NodesScreenState extends State<NodesScreen> {
                     vpnProvider,
                     instance,
                   ),
-                  onUseCloudNode: (instance) => _useCloudNode(
-                    cloudProvider,
-                    profileProvider,
-                    vpnProvider,
-                    instance,
+                  // Exclusive: a cloud-node connect is a multi-second mode
+                  // transition; without the guard the WG toggle stays live
+                  // during it and can fire a concurrent WG-only connect
+                  // against the in-flight proxy start.
+                  onUseCloudNode: (instance) => _runBusyExclusive(
+                    () => _useCloudNode(
+                      cloudProvider,
+                      profileProvider,
+                      vpnProvider,
+                      instance,
+                    ),
                   ),
                   onTestCloudNodeLatency: (instance) => _testCloudNodeLatency(
                     cloudProvider,
@@ -611,7 +736,6 @@ class _NodesScreenState extends State<NodesScreen> {
                 : null,
             onImportProfile: _showImportProfileDialog,
             onCreateProfile: _showCreateProfileDialog,
-            onAddWireguard: _showWireguardDialog,
           );
         },
       ),

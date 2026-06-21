@@ -80,11 +80,17 @@ for apk in "$APK_DIR"/*-release.apk; do
     FAIL=1
     continue
   fi
-  # Split APKs carry an ABI prefix in the versionCode (e.g. 1012, 2012, 4012
-  # for armeabi-v7a/arm64-v8a/x86_64) so we only assert the trailing pubspec
-  # build number actually matches.
-  if [[ "$version_code" != *"$PUBSPEC_CODE" ]]; then
-    echo "  ✗ $short versionCode='$version_code' (expected to end in $PUBSPEC_CODE)"
+  # Split APKs carry an ABI multiplier in the HIGH digits of the versionCode:
+  # Flutter computes (abiMultiplier * 1000 + pubspec build), e.g. for build
+  # 2070 -> 3070 (armeabi-v7a), 4070 (arm64-v8a), 6070 (x86_64); the universal
+  # APK uses the build as-is. So the difference from the pubspec build must be
+  # a non-negative multiple of 1000. (The old "ends in $PUBSPEC_CODE" test
+  # silently broke once the build number itself reached >=1000 — 4070 does not
+  # end in 2070.)
+  if ! [[ "$version_code" =~ ^[0-9]+$ ]] ||
+      (( version_code < PUBSPEC_CODE )) ||
+      (( (version_code - PUBSPEC_CODE) % 1000 != 0 )); then
+    echo "  ✗ $short versionCode='$version_code' (expected $PUBSPEC_CODE + N×1000)"
     FAIL=1
     continue
   fi
@@ -97,3 +103,22 @@ if [ "$FAIL" = 1 ]; then
 fi
 
 echo "✓ all release APKs match pubspec $PUBSPEC_VERSION"
+
+# Always emit a version-stamped copy of the universal release APK so the
+# artifact name carries X.Y.Z+BUILD (e.g. PrivateDeploy-2.0.2+2070.apk).
+# Flutter writes the universal build to a fixed app-release.apk name, which
+# is easy to confuse across version bumps; the stamped copy is the one to
+# hand off / archive. Verified above, so we only ever stamp a matching APK.
+UNIVERSAL_APK="$APK_DIR/app-release.apk"
+if [ -f "$UNIVERSAL_APK" ]; then
+  cp -f "$UNIVERSAL_APK" "$APK_DIR/PrivateDeploy-$PUBSPEC_VERSION.apk"
+  echo "✓ stamped: PrivateDeploy-$PUBSPEC_VERSION.apk (universal, all ABIs)"
+fi
+# Also stamp the lean arm64-only split when present — it's ~1/3 the size of the
+# universal APK (no armv7/x86_64 native libs) and is the right sideload artifact
+# for modern phones.
+ARM64_APK="$APK_DIR/app-arm64-v8a-release.apk"
+if [ -f "$ARM64_APK" ]; then
+  cp -f "$ARM64_APK" "$APK_DIR/PrivateDeploy-$PUBSPEC_VERSION-arm64.apk"
+  echo "✓ stamped: PrivateDeploy-$PUBSPEC_VERSION-arm64.apk (arm64-v8a only, smaller)"
+fi

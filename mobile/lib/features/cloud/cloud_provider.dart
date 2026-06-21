@@ -73,11 +73,34 @@ class CloudProvider extends CloudProviderBase {
   // the UI can show all nodes from every configured provider in one list.
   // Populated by loadInstances alongside the active provider's live fetch.
   final Map<CloudProviderId, List<CloudInstance>> _otherProviderInstances = {};
+  // Nodes a successful provider API list call confirmed are gone, but a local
+  // cached record still references. Kept (flagged), never auto-deleted — the
+  // user is prompted and only a confirm removes them. Re-derived each refresh.
+  List<CloudInstance> _missingInstances = [];
+  // Ids already surfaced in the "confirmed deleted" prompt this session, so we
+  // don't nag on every refresh after the user chose to keep them.
+  final Set<String> _missingPrompted = {};
   Timer? _pendingPollTimer;
   DateTime? _pendingPollStartedAt;
   bool _disposed = false;
 
   List<CloudInstance> get instances => _instances;
+
+  /// Nodes confirmed deleted upstream (via the provider key) but still cached
+  /// locally. Surfaced flagged in [allInstances]; removed only on user confirm.
+  List<CloudInstance> get missingInstances => List.unmodifiable(_missingInstances);
+
+  /// Confirmed-missing nodes the user hasn't yet been prompted about this
+  /// session. Drives the one-time "remove deleted nodes?" prompt.
+  List<CloudInstance> get unpromptedMissingInstances => _missingInstances
+      .where((instance) => !_missingPrompted.contains(instance.id))
+      .toList();
+
+  /// Mark every current confirmed-missing node as already prompted, so the
+  /// removal prompt isn't shown again until a newly-deleted node appears.
+  void markMissingPrompted() {
+    _missingPrompted.addAll(_missingInstances.map((instance) => instance.id));
+  }
 
   /// Merged view: active provider's live instances + cached instances from
   /// every other configured provider. Deduped by id; sorted newest-first.
@@ -90,6 +113,12 @@ class CloudProvider extends CloudProviderBase {
       for (final inst in other) {
         merged.putIfAbsent(inst.id, () => inst);
       }
+    }
+    // Confirmed-deleted nodes still pending the user's removal decision are
+    // shown flagged alongside the live ones (and override any stale cached
+    // copy of the same id from the merge above).
+    for (final inst in _missingInstances) {
+      merged[inst.id] = inst;
     }
     final list = merged.values.toList()
       ..sort((a, b) =>
@@ -635,31 +664,39 @@ class CloudProvider extends CloudProviderBase {
   // cannot drift — historically importBackupJson called _saveApiKey but
   // forgot to set _hasApiKey, leaving Workspace stuck on the empty state
   // until the app was restarted.
-  Future<void> _saveApiKey(String key) async {
+  // Returns false when the secret could not be stored in the keystore. Secure
+  // storage is now fail-closed (no plaintext fallback), so in-memory flags are
+  // only flipped on a successful persist — the UI must never claim a key is
+  // saved when it would be lost on restart.
+  Future<bool> _saveApiKey(String key) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _apiKey = key.trim();
-    _hasApiKey = _apiKey!.isNotEmpty;
+    final normalized = key.trim();
     final savedSecurely =
-        await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
-    if (savedSecurely) {
-      await StorageService.remove(apiKeyStorageKey);
+        await StorageService.saveSecureString(apiKeyStorageKey, normalized);
+    if (!savedSecurely) {
+      return false;
     }
+    _apiKey = normalized;
+    _hasApiKey = _apiKey!.isNotEmpty;
+    return true;
   }
 
-  Future<void> _saveProviderExtra(Map<String, String> extra) async {
+  Future<bool> _saveProviderExtra(Map<String, String> extra) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _providerExtra = Map<String, String>.from(extra);
+    final normalized = Map<String, String>.from(extra);
     final savedSecurely = await StorageService.saveSecureString(
       providerId.configStorageKey,
-      jsonEncode(_providerExtra),
+      jsonEncode(normalized),
     );
-    if (savedSecurely) {
-      await StorageService.remove(providerId.configStorageKey);
+    if (!savedSecurely) {
+      return false;
     }
+    _providerExtra = normalized;
+    return true;
   }
 
   Future<void> _clearApiKey() async {
@@ -759,8 +796,15 @@ class CloudProvider extends CloudProviderBase {
     }
     final savedSecurely = await StorageService.saveSecureString(
         providerId.nodeRecordsStorageKey, jsonEncode(payload));
-    if (savedSecurely) {
-      await StorageService.remove(providerId.nodeRecordsStorageKey);
+    if (!savedSecurely) {
+      // Node records hold per-node credentials. Secure storage is fail-closed,
+      // so on keystore failure they stay only in memory and are gone after a
+      // restart. Unlike the API key they are recoverable (a cloud refresh
+      // re-fetches them), so this is a logged warning rather than a hard error.
+      AppLogger.warning(
+        '[CloudProvider] Node records could not be persisted to the keystore '
+        '(${providerId.nodeRecordsStorageKey}); they will need a cloud refresh after restart.',
+      );
     }
   }
 
@@ -855,7 +899,13 @@ class CloudProvider extends CloudProviderBase {
 
     try {
       final normalizedKey = key.trim();
-      await _saveApiKey(normalizedKey);
+      if (!await _saveApiKey(normalizedKey)) {
+        _error = 'Could not store the API key securely on this device. '
+            'The device keystore is unavailable, so the key was not saved.';
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
 
       final client = await _cloudClient();
       try {
@@ -943,7 +993,11 @@ class CloudProvider extends CloudProviderBase {
 
     try {
       await testSshConnection(normalized);
-      await _saveProviderExtra(normalized);
+      if (!await _saveProviderExtra(normalized)) {
+        _error = 'Could not store SSH credentials securely on this device. '
+            'The device keystore is unavailable, so they were not saved.';
+        return false;
+      }
       _apiKey = null;
       _hasApiKey = true;
       _configLoaded = true;
@@ -1139,20 +1193,28 @@ class CloudProvider extends CloudProviderBase {
         parsed.add(CloudInstance.fromJson(merged));
       }
 
-      // The API call above succeeded, so an empty instance list is
-      // authoritative: the user may have deleted every node in the cloud.
-      // Keep cached records only on request failure (handled by catch), not on
-      // successful empty responses, otherwise deleted nodes linger forever.
-      final stale = knownRecords.keys
+      // The API call above succeeded, so any cached record NOT in the live
+      // list is a node the provider confirmed is gone. Do NOT silently delete
+      // it: surface it flagged so the user is prompted and only a confirm
+      // removes it (see [missingInstances] / [purgeMissingInstance]). The
+      // record is kept on disk until then so the flag survives across refreshes
+      // and restarts; a transient API failure can't reach here (it throws into
+      // the catch, leaving the cached records untouched).
+      final staleIds = knownRecords.keys
           .where((id) => !liveInstanceIds.contains(id))
+          .toSet();
+      _missingInstances = knownRecords.values
+          .where((record) =>
+              record.instanceId.isNotEmpty &&
+              staleIds.contains(record.instanceId))
+          .map((record) => record.toCloudInstance().copyWith(missing: true))
           .toList();
-      if (stale.isNotEmpty) {
-        for (final id in stale) {
-          knownRecords.remove(id);
-        }
-        recordsChanged = true;
+      // Drop prompted-state for ids that have reappeared (e.g. repaired), so a
+      // future deletion of the same id prompts again.
+      _missingPrompted.removeWhere((id) => !staleIds.contains(id));
+      if (_missingInstances.isNotEmpty) {
         AppLogger.info(
-          '[CloudProvider] Pruned ${stale.length} local record(s) for instances no longer on cloud',
+          '[CloudProvider] ${_missingInstances.length} cached node(s) confirmed deleted upstream — awaiting user removal',
         );
       }
 
@@ -2031,6 +2093,44 @@ class CloudProvider extends CloudProviderBase {
     }
   }
 
+  /// Remove a node the provider API already confirmed is gone. This only
+  /// clears the local cached record/labels — it deliberately does NOT call the
+  /// provider delete API (the instance no longer exists upstream). Returns
+  /// false for an id that isn't a tracked confirmed-missing node.
+  Future<bool> purgeMissingInstance(String id) async {
+    final instance =
+        _missingInstances.where((node) => node.id == id).firstOrNull;
+    if (instance == null) {
+      return false;
+    }
+    final owner = CloudProviderId.tryParse(instance.provider) ?? _providerId;
+    try {
+      await _removeNodeRecordFor(owner, id);
+      if (owner == _providerId) {
+        _nodeRecords.remove(id);
+      }
+      _latencyChecks.remove(id);
+      await _removePreferredEndpointLabelForInstance(owner, id);
+      _missingInstances =
+          _missingInstances.where((node) => node.id != id).toList();
+      _missingPrompted.remove(id);
+      _instances = _instances.where((node) => node.id != id).toList();
+      final cached = _otherProviderInstances[owner];
+      if (cached != null) {
+        _otherProviderInstances[owner] =
+            cached.where((node) => node.id != id).toList();
+      }
+      AppLogger.info('[CloudProvider] Purged confirmed-deleted node $id');
+      return true;
+    } catch (e) {
+      _error = 'Failed to remove deleted node: ${cloudProviderMessageFromError(e)}';
+      AppLogger.error('[CloudProvider] Purge missing node error', e);
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
   CloudProviderId? _findInstanceOwner(String id) {
     if (_instances.any((i) => i.id == id)) return _providerId;
     for (final entry in _otherProviderInstances.entries) {
@@ -2128,13 +2228,21 @@ class CloudProvider extends CloudProviderBase {
     );
 
     if (backup.apiKey != null && backup.apiKey!.isNotEmpty) {
-      await _saveApiKey(backup.apiKey!);
+      if (!await _saveApiKey(backup.apiKey!)) {
+        throw StateError(
+          'Could not store the restored API key securely (device keystore unavailable).',
+        );
+      }
     } else {
       await _clearApiKey();
     }
 
     if (backup.extra != null && backup.extra!.isNotEmpty) {
-      await _saveProviderExtra(backup.extra!);
+      if (!await _saveProviderExtra(backup.extra!)) {
+        throw StateError(
+          'Could not store the restored provider credentials securely (device keystore unavailable).',
+        );
+      }
     } else {
       await _clearProviderExtra();
     }

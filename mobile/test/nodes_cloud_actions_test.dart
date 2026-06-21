@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
@@ -9,6 +10,7 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_throughput_probe.dart';
 import 'package:privatedeploy_mobile/features/nodes/nodes_cloud_actions.dart';
 import 'package:privatedeploy_mobile/features/profiles/profile_provider.dart';
+import 'package:privatedeploy_mobile/features/settings/app_settings_provider.dart';
 import 'package:privatedeploy_mobile/features/vpn/vpn_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -562,6 +564,7 @@ Future<void> _pumpCloudActionHarness(
   WidgetTester tester, {
   required _FakeCloudProvider cloudProvider,
   required Future<void> Function(BuildContext context) onRun,
+  AppSettingsProvider? appSettingsProvider,
 }) async {
   tester.view.physicalSize = const Size(1440, 2400);
   tester.view.devicePixelRatio = 3.0;
@@ -572,6 +575,10 @@ Future<void> _pumpCloudActionHarness(
       providers: [
         ChangeNotifierProvider<CloudProvider>.value(value: cloudProvider),
         ChangeNotifierProvider<CdnProvider>.value(value: CdnProvider()),
+        ChangeNotifierProvider<AppSettingsProvider>.value(
+          value: appSettingsProvider ??
+              _FakeAppSettingsProvider(VpnRoutingSettings.defaults),
+        ),
       ],
       child: ScreenUtilInit(
         designSize: const Size(375, 812),
@@ -931,6 +938,15 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeAppSettingsProvider extends AppSettingsProvider {
+  _FakeAppSettingsProvider(this._routingSettings);
+
+  final VpnRoutingSettings _routingSettings;
+
+  @override
+  VpnRoutingSettings get vpnRoutingSettings => _routingSettings;
+}
+
 class _FakeProfileProvider extends Fake implements ProfileProvider {
   _FakeProfileProvider({
     this.activeProfile,
@@ -978,9 +994,13 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   VpnStatus status;
 
   final bool disconnectResult;
+  String? activeProfileName;
+  String? liveConfigJson;
   int connectCalls = 0;
   int disconnectCalls = 0;
   String? lastConfigJson;
+  final connectConfigs = <String?>[];
+  final connectProfileNames = <String?>[];
 
   @override
   String? get error => null;
@@ -1019,7 +1039,19 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   List<VpnRouteDecision> get recentRouteDecisions => const [];
 
   @override
-  String? get activeProfile => null;
+  String? get activeProfile => activeProfileName;
+
+  @override
+  VpnSessionSnapshot? get activeSessionSnapshot {
+    final config = liveConfigJson;
+    if (status != VpnStatus.connected || config == null || config.isEmpty) {
+      return null;
+    }
+    return VpnSessionSnapshot(
+      configJson: config,
+      profileName: activeProfileName,
+    );
+  }
 
   @override
   Future<bool> connect({
@@ -1030,6 +1062,9 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   }) async {
     connectCalls += 1;
     lastConfigJson = configJson;
+    connectConfigs.add(configJson);
+    connectProfileNames.add(profileName);
+    activeProfileName = profileName;
     status = VpnStatus.connected;
     return true;
   }

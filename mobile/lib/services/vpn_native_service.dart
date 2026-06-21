@@ -78,7 +78,10 @@ class VpnNativeService {
       }
       return result ?? false;
     } on PlatformException catch (e) {
-      _recordLastError(e.message ?? 'Native VPN start failed');
+      final message = e.message ?? 'Native VPN start failed';
+      _recordLastError(
+        e.code == 'ALREADY_RUNNING' ? 'ALREADY_RUNNING: $message' : message,
+      );
       AppLogger.error('[VpnNativeService] Platform exception: ${e.message}', e);
       return false;
     } catch (e) {
@@ -317,7 +320,7 @@ class VpnNativeService {
     }
   }
 
-  /// 更新 VPN 配置
+  /// 更新 VPN 配置。
   Future<bool> updateConfig(String configJson) async {
     try {
       AppLogger.info('[VpnNativeService] Updating config...');
@@ -354,6 +357,46 @@ class VpnNativeService {
       _recordLastError('Failed to get VPN version: $e');
       AppLogger.error('[VpnNativeService] Failed to get version', e);
       return null;
+    }
+  }
+
+  Future<bool> isIgnoringBatteryOptimizations() async {
+    try {
+      final result = await _methodChannel
+          .invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to query battery optimization state: ${e.message}',
+      );
+      return false;
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to query battery optimization state: $e',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    try {
+      final result = await _methodChannel
+          .invokeMethod<bool>('requestIgnoreBatteryOptimizations');
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to request battery optimization exemption: ${e.message}',
+      );
+      return false;
+    } catch (e) {
+      AppLogger.warning(
+        '[VpnNativeService] Failed to request battery optimization exemption: $e',
+      );
+      return false;
     }
   }
 
