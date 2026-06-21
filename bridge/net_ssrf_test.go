@@ -1,6 +1,9 @@
 package bridge
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestValidateOutboundURL(t *testing.T) {
 	blocked := []string{
@@ -43,5 +46,53 @@ func TestSSRFSafeControlBlocksInternalIP(t *testing.T) {
 	}
 	if err := ssrfSafeControl("tcp", "1.1.1.1:443", nil); err != nil {
 		t.Fatalf("expected public IP dial to be allowed, got %v", err)
+	}
+}
+
+func TestSSRFSafeControlAllowLoopback(t *testing.T) {
+	// The proxy variant permits the local sing-box (loopback)...
+	if err := ssrfSafeControlAllowLoopback("tcp", "127.0.0.1:7890", nil); err != nil {
+		t.Fatalf("expected loopback proxy dial to be allowed, got %v", err)
+	}
+	// ...but still blocks other internal proxy targets.
+	if err := ssrfSafeControlAllowLoopback("tcp", "192.168.0.1:8080", nil); err == nil {
+		t.Fatal("expected private proxy dial to be blocked")
+	}
+	if err := ssrfSafeControlAllowLoopback("tcp", "169.254.169.254:80", nil); err == nil {
+		t.Fatal("expected metadata proxy dial to be blocked")
+	}
+}
+
+func TestValidateProxyURL(t *testing.T) {
+	allowed := []string{
+		"socks5://127.0.0.1:7890",
+		"http://localhost:8080",
+		"http://proxy.example.com:3128",
+	}
+	for _, u := range allowed {
+		if err := validateProxyURL(u); err != nil {
+			t.Errorf("expected proxy %q allowed, got %v", u, err)
+		}
+	}
+	blocked := []string{
+		"http://192.168.1.1:3128",
+		"socks5://169.254.169.254:1080",
+		"http://10.0.0.1:8080",
+	}
+	for _, u := range blocked {
+		if err := validateProxyURL(u); err == nil {
+			t.Errorf("expected proxy %q blocked", u)
+		}
+	}
+}
+
+func TestCGNATAndBroadcastBlocked(t *testing.T) {
+	for _, s := range []string{"100.64.0.1", "100.127.255.254", "255.255.255.255"} {
+		if !isBlockedDialIP(net.ParseIP(s)) {
+			t.Errorf("expected %s to be blocked", s)
+		}
+	}
+	if isBlockedDialIP(net.ParseIP("100.63.255.255")) {
+		t.Error("100.63.255.255 is public, should not be blocked")
 	}
 }

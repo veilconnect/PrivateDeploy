@@ -60,6 +60,32 @@ func validateOutboundURL(raw string) error {
 	return nil
 }
 
+// validateProxyURL rejects a renderer-supplied proxy whose host literal is an
+// internal address other than loopback (the legitimate local sing-box). It is a
+// best-effort up-front check; loopback proxies are allowed.
+func validateProxyURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return errBlockedOutboundURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errBlockedOutboundURL
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Hostname proxy (resolved later); allow — the common case is localhost.
+		return nil
+	}
+	if ip.IsLoopback() {
+		return nil
+	}
+	if isBlockedDialIP(ip) {
+		return errBlockedOutboundURL
+	}
+	return nil
+}
+
 // isBlockedDialIP reports whether an IP must not be reachable from a
 // frontend-driven HTTP request: loopback, RFC1918 private ranges, link-local
 // (incl. the 169.254.169.254 cloud metadata endpoint), unique-local IPv6,
@@ -106,6 +132,25 @@ func ssrfSafeControl(network, address string, _ syscall.RawConn) error {
 		host = address
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if isBlockedDialIP(ip) {
+		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+	}
+	return nil
+}
+
+// ssrfSafeControlAllowLoopback is the proxy-dial variant: it blocks the same
+// internal ranges as ssrfSafeControl EXCEPT loopback, because the legitimate
+// egress proxy is the local sing-box bound to 127.0.0.1. It still blocks a
+// renderer-supplied proxy that points at LAN / metadata addresses.
+func ssrfSafeControlAllowLoopback(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
 	if isBlockedDialIP(ip) {
 		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
 	}
@@ -328,19 +373,22 @@ func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Con
 			InsecureSkipVerify: options.Insecure,
 		},
 	}
-	// Only guard direct dials. When traffic egresses through a proxy the local
-	// socket connects to the proxy (frequently the loopback sing-box instance),
-	// so a dial-time loopback/private block would wrongly reject it; in that
-	// case the proxy is the egress boundary and the up-front validateOutboundURL
-	// literal check already rejects obvious internal targets.
-	if strings.TrimSpace(options.Proxy) == "" {
-		dialer := &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   ssrfSafeControl,
-		}
-		transport.DialContext = dialer.DialContext
+	// Always guard the dial. For a direct request the dial target is the final
+	// host, so block every internal range including loopback. When a proxy is
+	// configured the local socket connects to the proxy instead — the legitimate
+	// proxy is the loopback sing-box, so loopback is allowed there, but a
+	// renderer-supplied proxy pointing at any OTHER internal address (LAN /
+	// metadata) is still blocked.
+	control := ssrfSafeControl
+	if strings.TrimSpace(options.Proxy) != "" {
+		control = ssrfSafeControlAllowLoopback
 	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   control,
+	}
+	transport.DialContext = dialer.DialContext
 	client := &http.Client{
 		Timeout:   GetTimeout(options.Timeout),
 		Transport: transport,
@@ -663,6 +711,14 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		return speedError(err.Error())
 	}
 
+	// proxyURL is renderer-controllable; a proxy pointing at LAN/metadata (other
+	// than the legitimate loopback sing-box) is an SSRF vector.
+	if proxyURL != "" {
+		if err := validateProxyURL(proxyURL); err != nil {
+			return speedError(err.Error())
+		}
+	}
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
 	}
@@ -687,6 +743,9 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		}
 	} else if proxyURL != "" {
 		transport.Proxy = GetProxy(proxyURL)
+		// Guard the dial to the HTTP proxy itself (loopback sing-box allowed).
+		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: ssrfSafeControlAllowLoopback}
+		transport.DialContext = d.DialContext
 	} else {
 		// Direct download: guard the dial against internal targets (TOCTOU-safe,
 		// catches DNS rebinding and redirects to internal hosts).

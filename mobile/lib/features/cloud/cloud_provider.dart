@@ -796,8 +796,15 @@ class CloudProvider extends CloudProviderBase {
     }
     final savedSecurely = await StorageService.saveSecureString(
         providerId.nodeRecordsStorageKey, jsonEncode(payload));
-    if (savedSecurely) {
-      await StorageService.remove(providerId.nodeRecordsStorageKey);
+    if (!savedSecurely) {
+      // Node records hold per-node credentials. Secure storage is fail-closed,
+      // so on keystore failure they stay only in memory and are gone after a
+      // restart. Unlike the API key they are recoverable (a cloud refresh
+      // re-fetches them), so this is a logged warning rather than a hard error.
+      AppLogger.warning(
+        '[CloudProvider] Node records could not be persisted to the keystore '
+        '(${providerId.nodeRecordsStorageKey}); they will need a cloud refresh after restart.',
+      );
     }
   }
 

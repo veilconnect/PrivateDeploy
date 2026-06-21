@@ -490,7 +490,11 @@ class CdnProvider with ChangeNotifier {
   /// their readiness probe on the next [load].
   Future<void> restoreSnapshot(CdnBackup snap) async {
     if (snap.token != null && snap.token!.isNotEmpty) {
-      await StorageService.saveSecureString(_kTokenKey, snap.token!);
+      if (!await StorageService.saveSecureString(_kTokenKey, snap.token!)) {
+        throw StateError(
+          'Could not store the restored Cloudflare token securely (device keystore unavailable).',
+        );
+      }
     } else {
       await StorageService.removeSecure(_kTokenKey);
     }
