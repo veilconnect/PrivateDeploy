@@ -60,6 +60,22 @@ func validateOutboundURL(raw string) error {
 	return nil
 }
 
+// environmentProxyConfigured reports whether an HTTP(S)/ALL proxy is set in the
+// process environment (operator-controlled). Used to decide whether the
+// loopback-allowing dial guard is warranted when no explicit proxy is given.
+func environmentProxyConfigured() bool {
+	for _, key := range []string{
+		"HTTP_PROXY", "http_proxy",
+		"HTTPS_PROXY", "https_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // validateProxyURL rejects a renderer-supplied proxy whose host literal is an
 // internal address other than loopback (the legitimate local sing-box). It is a
 // best-effort up-front check; loopback proxies are allowed.
@@ -367,20 +383,38 @@ func wrapWithProgress(r io.Reader, size int64, event string, a *App) io.Reader {
 }
 
 func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc) {
+	// Resolve the proxy ourselves so the dial guard matches what actually
+	// happens. GetProxy silently falls back to the environment proxy when
+	// options.Proxy is non-empty but unparseable; if we relaxed the guard to
+	// allow-loopback purely because options.Proxy != "" while the request in
+	// fact dials direct (no env proxy), a rebinding host could reach loopback.
+	proxyInEffect := false
+	var proxyFn func(*http.Request) (*url.URL, error)
+	if trimmed := strings.TrimSpace(options.Proxy); trimmed != "" {
+		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+			proxyFn = http.ProxyURL(u)
+			proxyInEffect = true
+		}
+	}
+	if proxyFn == nil {
+		proxyFn = http.ProxyFromEnvironment
+		proxyInEffect = environmentProxyConfigured()
+	}
+
 	transport := &http.Transport{
-		Proxy: GetProxy(options.Proxy),
+		Proxy: proxyFn,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: options.Insecure,
 		},
 	}
 	// Always guard the dial. For a direct request the dial target is the final
 	// host, so block every internal range including loopback. When a proxy is
-	// configured the local socket connects to the proxy instead — the legitimate
-	// proxy is the loopback sing-box, so loopback is allowed there, but a
-	// renderer-supplied proxy pointing at any OTHER internal address (LAN /
-	// metadata) is still blocked.
+	// actually in effect the local socket connects to the proxy instead — the
+	// legitimate proxy is the loopback sing-box, so loopback is allowed there,
+	// but a renderer-supplied proxy pointing at any OTHER internal address
+	// (LAN / metadata) is still blocked.
 	control := ssrfSafeControl
-	if strings.TrimSpace(options.Proxy) != "" {
+	if proxyInEffect {
 		control = ssrfSafeControlAllowLoopback
 	}
 	dialer := &net.Dialer{
