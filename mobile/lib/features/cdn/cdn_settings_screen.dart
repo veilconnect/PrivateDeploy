@@ -27,31 +27,6 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
   static const _docsUrl =
       'https://github.com/veilconnect/PrivateDeploy/blob/main/docs/cdn-acceleration/README.md';
 
-  // CF dashboard supports prefilling User API token creation via
-  // permissionGroupKeys + name + scope params. We use this to skip the
-  // five-row permission ritual entirely — clicking opens a token form
-  // with the three scopes M1 actually needs already selected.
-  // Source: developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
-  //
-  // accountId pre-filter: when token already verified we know the actual
-  // account; passing it pins the token-creation form to that account so
-  // multi-account users don't accidentally pick another's zones later.
-  static String _cfTokenDeeplinkFor(String? verifiedAccountId) {
-    final perms = Uri.encodeComponent(
-      '[{"key":"workers_scripts","type":"edit"},'
-      '{"key":"account_settings","type":"read"},'
-      '{"key":"zone","type":"read"}]',
-    );
-    final aid = (verifiedAccountId != null && verifiedAccountId.isNotEmpty)
-        ? verifiedAccountId
-        : '*';
-    return 'https://dash.cloudflare.com/profile/api-tokens'
-        '?permissionGroupKeys=$perms'
-        '&name=PrivateDeploy+CDN'
-        '&accountId=$aid'
-        '&zoneId=all';
-  }
-
   final ScrollController _scrollController = ScrollController();
   // GlobalKey on the nodes section so a successful verify can scroll it
   // into view. Without this jump, the section just pops in below the
@@ -116,7 +91,6 @@ class _CdnSettingsScreenState extends State<CdnSettingsScreen> {
                 provider: provider,
                 isZh: isZh,
                 cfTokenDashboard: _cfTokenDashboard,
-                cfTokenDeeplink: _cfTokenDeeplinkFor(provider.accountId),
                 docsUrl: _docsUrl,
               ),
               // verifiedButIncomplete still shows the custom-domain section
@@ -320,13 +294,11 @@ class _SetupSection extends StatelessWidget {
     required this.provider,
     required this.isZh,
     required this.cfTokenDashboard,
-    required this.cfTokenDeeplink,
     required this.docsUrl,
   });
   final CdnProvider provider;
   final bool isZh;
   final String cfTokenDashboard;
-  final String cfTokenDeeplink;
   final String docsUrl;
 
   @override
@@ -349,19 +321,30 @@ class _SetupSection extends StatelessWidget {
                   ? '生成 Cloudflare API Token'
                   : 'Create a Cloudflare API token',
               body: isZh
-                  ? '点下方按钮拷贝链接,在浏览器打开 — Cloudflare 会预填好我们需要的 '
-                      '3 行权限 (Workers Scripts:Edit / Account Settings:Read / '
-                      'Zone:Read),点 Continue → Create Token,然后把 Token 拷回 '
-                      'Step 2。'
-                  : 'Tap below to copy the prefilled URL — Cloudflare will '
-                      'pre-select the three permissions PrivateDeploy needs '
-                      '(Workers Scripts:Edit / Account Settings:Read / '
-                      'Zone:Read). Hit Continue → Create Token in Cloudflare, '
-                      'then paste the token into Step 2.',
+                  ? '在 Cloudflare 后台:My Profile → API Tokens → Create Token，'
+                      '选「Create Custom Token」。在 Permissions 里加这 3 行'
+                      '（用 Add more 加行）:\n'
+                      '① Account · Workers Scripts · Edit\n'
+                      '② Account · Account Settings · Read\n'
+                      '③ Zone · Zone · Read\n'
+                      'Account Resources 选 Include 你的账户 → Continue to '
+                      'summary → Create Token，把生成的 Token 拷回 Step 2。'
+                      '（注意:现成的「Edit Cloudflare Workers」模板缺 Zone:Read,'
+                      '单用它不够。）'
+                  : 'In Cloudflare: My Profile → API Tokens → Create Token, '
+                      'then pick "Create Custom Token". Under Permissions add '
+                      'these three rows (use "Add more"):\n'
+                      '1. Account · Workers Scripts · Edit\n'
+                      '2. Account · Account Settings · Read\n'
+                      '3. Zone · Zone · Read\n'
+                      'Set Account Resources to Include your account, then '
+                      'Continue to summary → Create Token, and paste it into '
+                      'Step 2. (Note: the ready-made "Edit Cloudflare Workers" '
+                      'template lacks Zone:Read, so it is not enough on its own.)',
               actionLabel:
-                  isZh ? '拷贝预填链接 (推荐)' : 'Copy prefilled URL (recommended)',
+                  isZh ? '拷贝 API Tokens 页面链接' : 'Copy API Tokens page link',
               onAction: () =>
-                  _copyToClipboard(context, cfTokenDeeplink, isZh: isZh),
+                  _copyToClipboard(context, cfTokenDashboard, isZh: isZh),
             ),
             _step(
               context,
