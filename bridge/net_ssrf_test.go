@@ -86,6 +86,40 @@ func TestValidateProxyURL(t *testing.T) {
 	}
 }
 
+func TestMakeSSRFControlAllowsOnlyConfiguredProxy(t *testing.T) {
+	// Explicit loopback proxy: its exact endpoint is dialable, but any other
+	// loopback/internal target (e.g. a rebinding host hitting a different port)
+	// is still blocked.
+	_, allowed := resolveProxy("http://127.0.0.1:7890")
+	control := makeSSRFControl(allowed)
+
+	if err := control("tcp", "127.0.0.1:7890", nil); err != nil {
+		t.Fatalf("configured proxy endpoint must be dialable, got %v", err)
+	}
+	if err := control("tcp", "127.0.0.1:9999", nil); err == nil {
+		t.Fatal("a different loopback port must be blocked")
+	}
+	if err := control("tcp", "169.254.169.254:80", nil); err == nil {
+		t.Fatal("metadata must be blocked even with a proxy configured")
+	}
+	if err := control("tcp", "1.1.1.1:443", nil); err != nil {
+		t.Fatalf("public target must be allowed, got %v", err)
+	}
+}
+
+func TestMakeSSRFControlNoProxyBlocksLoopback(t *testing.T) {
+	// No explicit proxy and (assuming) no env proxy → loopback is blocked,
+	// closing the NO_PROXY / unparseable-proxy rebinding gap.
+	for _, k := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
+		t.Setenv(k, "")
+	}
+	_, allowed := resolveProxy("not a valid proxy url ::::")
+	control := makeSSRFControl(allowed)
+	if err := control("tcp", "127.0.0.1:7890", nil); err == nil {
+		t.Fatal("loopback must be blocked when no proxy is actually in effect")
+	}
+}
+
 func TestCGNATAndBroadcastBlocked(t *testing.T) {
 	for _, s := range []string{"100.64.0.1", "100.127.255.254", "255.255.255.255"} {
 		if !isBlockedDialIP(net.ParseIP(s)) {

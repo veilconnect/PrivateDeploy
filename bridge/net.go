@@ -60,20 +60,82 @@ func validateOutboundURL(raw string) error {
 	return nil
 }
 
-// environmentProxyConfigured reports whether an HTTP(S)/ALL proxy is set in the
-// process environment (operator-controlled). Used to decide whether the
-// loopback-allowing dial guard is warranted when no explicit proxy is given.
-func environmentProxyConfigured() bool {
+// resolveProxy returns the proxy function for the transport and the set of
+// dial endpoints ("host:port") those proxies live at. An explicit, parseable
+// options.Proxy wins; otherwise the environment proxies are used. The returned
+// address set is what makeSSRFControl will permit (so a loopback sing-box proxy
+// can be dialed) on top of public addresses.
+func resolveProxy(optProxy string) (func(*http.Request) (*url.URL, error), map[string]struct{}) {
+	allowed := map[string]struct{}{}
+
+	if trimmed := strings.TrimSpace(optProxy); trimmed != "" {
+		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+			addProxyEndpoint(allowed, u)
+			return http.ProxyURL(u), allowed
+		}
+		// Non-empty but unparseable: treat as no explicit proxy (do NOT silently
+		// inherit env here in a way that desyncs the guard — fall through and let
+		// the environment proxy, if any, be resolved consistently below).
+	}
+
 	for _, key := range []string{
 		"HTTP_PROXY", "http_proxy",
 		"HTTPS_PROXY", "https_proxy",
 		"ALL_PROXY", "all_proxy",
 	} {
-		if strings.TrimSpace(os.Getenv(key)) != "" {
-			return true
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			continue
+		}
+		if !strings.Contains(v, "://") {
+			v = "http://" + v
+		}
+		if u, err := url.Parse(v); err == nil && u.Host != "" {
+			addProxyEndpoint(allowed, u)
 		}
 	}
-	return false
+	return http.ProxyFromEnvironment, allowed
+}
+
+func addProxyEndpoint(set map[string]struct{}, u *url.URL) {
+	host := u.Hostname()
+	if host == "" {
+		return
+	}
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h", "socks", "socks4":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	set[net.JoinHostPort(host, port)] = struct{}{}
+}
+
+// makeSSRFControl returns a dialer Control hook that permits dialing the
+// configured proxy endpoints (so a loopback sing-box proxy works) and otherwise
+// blocks every internal address — including loopback — at the resolved IP. This
+// is per-connection, so requests that bypass the proxy (NO_PROXY, direct) are
+// still strictly guarded.
+func makeSSRFControl(allowedProxyAddrs map[string]struct{}) func(string, string, syscall.RawConn) error {
+	return func(network, address string, _ syscall.RawConn) error {
+		if _, ok := allowedProxyAddrs[address]; ok {
+			return nil
+		}
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if isBlockedDialIP(ip) {
+			return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+		}
+		return nil
+	}
 }
 
 // validateProxyURL rejects a renderer-supplied proxy whose host literal is an
@@ -383,23 +445,14 @@ func wrapWithProgress(r io.Reader, size int64, event string, a *App) io.Reader {
 }
 
 func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc) {
-	// Resolve the proxy ourselves so the dial guard matches what actually
-	// happens. GetProxy silently falls back to the environment proxy when
-	// options.Proxy is non-empty but unparseable; if we relaxed the guard to
-	// allow-loopback purely because options.Proxy != "" while the request in
-	// fact dials direct (no env proxy), a rebinding host could reach loopback.
-	proxyInEffect := false
-	var proxyFn func(*http.Request) (*url.URL, error)
-	if trimmed := strings.TrimSpace(options.Proxy); trimmed != "" {
-		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
-			proxyFn = http.ProxyURL(u)
-			proxyInEffect = true
-		}
-	}
-	if proxyFn == nil {
-		proxyFn = http.ProxyFromEnvironment
-		proxyInEffect = environmentProxyConfigured()
-	}
+	// Resolve the proxy ourselves and derive the exact set of proxy endpoints
+	// the transport may legitimately dial. The dial guard then allows ONLY
+	// those endpoints plus public addresses, and blocks every internal address
+	// (incl. loopback) otherwise. This is correct per-connection: a request
+	// that dials its proxy is allowed; a request that dials direct (no proxy,
+	// or excluded by NO_PROXY) is held to the strict block, so a rebinding host
+	// can never reach loopback/LAN/metadata.
+	proxyFn, allowedProxyAddrs := resolveProxy(options.Proxy)
 
 	transport := &http.Transport{
 		Proxy: proxyFn,
@@ -407,20 +460,10 @@ func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Con
 			InsecureSkipVerify: options.Insecure,
 		},
 	}
-	// Always guard the dial. For a direct request the dial target is the final
-	// host, so block every internal range including loopback. When a proxy is
-	// actually in effect the local socket connects to the proxy instead — the
-	// legitimate proxy is the loopback sing-box, so loopback is allowed there,
-	// but a renderer-supplied proxy pointing at any OTHER internal address
-	// (LAN / metadata) is still blocked.
-	control := ssrfSafeControl
-	if proxyInEffect {
-		control = ssrfSafeControlAllowLoopback
-	}
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
-		Control:   control,
+		Control:   makeSSRFControl(allowedProxyAddrs),
 	}
 	transport.DialContext = dialer.DialContext
 	client := &http.Client{
