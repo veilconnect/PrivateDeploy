@@ -664,31 +664,39 @@ class CloudProvider extends CloudProviderBase {
   // cannot drift — historically importBackupJson called _saveApiKey but
   // forgot to set _hasApiKey, leaving Workspace stuck on the empty state
   // until the app was restarted.
-  Future<void> _saveApiKey(String key) async {
+  // Returns false when the secret could not be stored in the keystore. Secure
+  // storage is now fail-closed (no plaintext fallback), so in-memory flags are
+  // only flipped on a successful persist — the UI must never claim a key is
+  // saved when it would be lost on restart.
+  Future<bool> _saveApiKey(String key) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _apiKey = key.trim();
-    _hasApiKey = _apiKey!.isNotEmpty;
+    final normalized = key.trim();
     final savedSecurely =
-        await StorageService.saveSecureString(apiKeyStorageKey, _apiKey!);
-    if (savedSecurely) {
-      await StorageService.remove(apiKeyStorageKey);
+        await StorageService.saveSecureString(apiKeyStorageKey, normalized);
+    if (!savedSecurely) {
+      return false;
     }
+    _apiKey = normalized;
+    _hasApiKey = _apiKey!.isNotEmpty;
+    return true;
   }
 
-  Future<void> _saveProviderExtra(Map<String, String> extra) async {
+  Future<bool> _saveProviderExtra(Map<String, String> extra) async {
     if (!StorageService.isInitialized) {
       await StorageService.init();
     }
-    _providerExtra = Map<String, String>.from(extra);
+    final normalized = Map<String, String>.from(extra);
     final savedSecurely = await StorageService.saveSecureString(
       providerId.configStorageKey,
-      jsonEncode(_providerExtra),
+      jsonEncode(normalized),
     );
-    if (savedSecurely) {
-      await StorageService.remove(providerId.configStorageKey);
+    if (!savedSecurely) {
+      return false;
     }
+    _providerExtra = normalized;
+    return true;
   }
 
   Future<void> _clearApiKey() async {
@@ -884,7 +892,13 @@ class CloudProvider extends CloudProviderBase {
 
     try {
       final normalizedKey = key.trim();
-      await _saveApiKey(normalizedKey);
+      if (!await _saveApiKey(normalizedKey)) {
+        _error = 'Could not store the API key securely on this device. '
+            'The device keystore is unavailable, so the key was not saved.';
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
 
       final client = await _cloudClient();
       try {
@@ -972,7 +986,11 @@ class CloudProvider extends CloudProviderBase {
 
     try {
       await testSshConnection(normalized);
-      await _saveProviderExtra(normalized);
+      if (!await _saveProviderExtra(normalized)) {
+        _error = 'Could not store SSH credentials securely on this device. '
+            'The device keystore is unavailable, so they were not saved.';
+        return false;
+      }
       _apiKey = null;
       _hasApiKey = true;
       _configLoaded = true;
@@ -2203,13 +2221,21 @@ class CloudProvider extends CloudProviderBase {
     );
 
     if (backup.apiKey != null && backup.apiKey!.isNotEmpty) {
-      await _saveApiKey(backup.apiKey!);
+      if (!await _saveApiKey(backup.apiKey!)) {
+        throw StateError(
+          'Could not store the restored API key securely (device keystore unavailable).',
+        );
+      }
     } else {
       await _clearApiKey();
     }
 
     if (backup.extra != null && backup.extra!.isNotEmpty) {
-      await _saveProviderExtra(backup.extra!);
+      if (!await _saveProviderExtra(backup.extra!)) {
+        throw StateError(
+          'Could not store the restored provider credentials securely (device keystore unavailable).',
+        );
+      }
     } else {
       await _clearProviderExtra();
     }

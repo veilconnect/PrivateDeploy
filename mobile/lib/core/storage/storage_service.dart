@@ -35,28 +35,50 @@ class StorageService {
     await _prefs.remove(key);
   }
 
+  // saveSecureString writes a secret to the platform keystore only. It is
+  // fail-closed: if the keystore is unavailable it returns false WITHOUT
+  // mirroring the secret into plaintext SharedPreferences. Callers must treat
+  // a false return as "the secret could not be stored" and surface that to the
+  // user rather than assuming it was persisted.
   static Future<bool> saveSecureString(String key, String value) async {
-    try {
-      await _secureStorage.write(key: key, value: value);
-      return true;
-    } on PlatformException catch (error) {
-      AppLogger.warning(
-        '[StorageService] Secure storage write failed for "$key"; falling back to app preferences: ${error.message ?? error.code}',
-      );
-      await _prefs.setString(key, value);
-      return false;
+    final ok = await saveSecureStringStrict(key, value);
+    if (ok) {
+      // A prior build may have left a plaintext mirror for this key. Now that
+      // the secret lives in the keystore, drop the plaintext copy.
+      await _prefs.remove(key);
     }
+    return ok;
   }
 
+  // getSecureString reads from the platform keystore. For backward
+  // compatibility it performs a one-time migration of any legacy plaintext
+  // value that an older (insecure-fallback) build may have written: on read it
+  // moves the value into the keystore and clears the plaintext mirror. It never
+  // writes new plaintext.
   static Future<String?> getSecureString(String key) async {
-    try {
-      return await _secureStorage.read(key: key) ?? _prefs.getString(key);
-    } on PlatformException catch (error) {
-      AppLogger.warning(
-        '[StorageService] Secure storage read failed for "$key"; treating it as unavailable: ${error.message ?? error.code}',
-      );
-      return _prefs.getString(key);
+    final secure = await getSecureStringStrict(key);
+    if (secure != null) {
+      return secure;
     }
+
+    // Legacy migration path: an older build may have stored this secret in
+    // plaintext SharedPreferences when the keystore threw. Migrate it.
+    final legacy = _prefs.getString(key);
+    if (legacy == null) {
+      return null;
+    }
+    final migrated = await saveSecureStringStrict(key, legacy);
+    if (migrated) {
+      await _prefs.remove(key);
+      AppLogger.info(
+        '[StorageService] Migrated legacy plaintext secret "$key" into the keystore.',
+      );
+    } else {
+      AppLogger.warning(
+        '[StorageService] Keystore unavailable; could not migrate legacy secret "$key" off plaintext. Will retry on next read.',
+      );
+    }
+    return legacy;
   }
 
   static Future<bool> saveSecureStringStrict(String key, String value) async {

@@ -29,6 +29,13 @@ func defaultBackupDirectory() string {
 }
 
 func (a *App) ExportCloudBackup(content string) (string, error) {
+	// The renderer only holds the redacted placeholder for the API key, so the
+	// exported file never contains the cleartext cloud key. We deliberately do
+	// NOT re-inject the real key here (that would write a high-value secret to a
+	// plaintext, user-chosen file). The placeholder is harmless on disk; on
+	// restore SaveCloudConfigTyped re-binds the real key from the secret store
+	// when restoring on the same machine. Restoring onto a different machine
+	// requires re-entering the API key by design.
 	targetPath := strings.TrimSpace(os.Getenv(dialogSavePathEnv))
 	if targetPath == "" {
 		if a.Ctx == nil {

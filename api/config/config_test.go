@@ -107,6 +107,9 @@ func TestLoad_ReadsAPIAuthTokenFromFile(t *testing.T) {
 
 func TestLoad_UsesAllowRemoteBoolEnv(t *testing.T) {
 	t.Setenv("API_ALLOW_REMOTE", "true")
+	// Remote access now requires a token; provide one so this test exercises
+	// only the allow-remote parsing.
+	t.Setenv("API_AUTH_TOKEN", "shared-secret")
 
 	cfg, err := Load()
 	if err != nil {
@@ -114,6 +117,35 @@ func TestLoad_UsesAllowRemoteBoolEnv(t *testing.T) {
 	}
 	if !cfg.Server.AllowRemote {
 		t.Fatal("expected allowRemote to be true")
+	}
+}
+
+func TestLoad_RemoteWithoutTokenFailsClosed(t *testing.T) {
+	t.Setenv("API_ALLOW_REMOTE", "true")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected Load to reject remote API access without an auth token")
+	}
+}
+
+func TestLoad_NonLoopbackHostWithoutTokenFailsClosed(t *testing.T) {
+	t.Setenv("API_HOST", "0.0.0.0")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected Load to reject a non-loopback bind without an auth token")
+	}
+}
+
+func TestLoad_NonLoopbackHostWithTokenSucceeds(t *testing.T) {
+	t.Setenv("API_HOST", "0.0.0.0")
+	t.Setenv("API_AUTH_TOKEN", "shared-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Fatalf("expected configured host, got %q", cfg.Server.Host)
 	}
 }
 

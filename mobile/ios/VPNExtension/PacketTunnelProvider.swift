@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import NetworkExtension
+import Security
 import os.log
 
 #if canImport(VPNCore)
@@ -16,7 +17,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         static let proxylessDefaultsKey = "vpn_proxyless"
         static let statusDefaultsKey = "vpn_status"
         static let statsDefaultsKey = "vpn_stats"
-        static let configEncryptionKeyMaterial =
+        // Legacy sealing key material. Retained ONLY to decrypt configs sealed
+        // by builds that predate the per-install keychain key, so they can be
+        // re-sealed under the new key on first read. Never used to seal.
+        static let legacyConfigEncryptionKeyMaterial =
             "PrivateDeploy iOS VPN config sealing v1"
     }
 
@@ -173,11 +177,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func sealConfig(_ config: String) -> String? {
+        guard let key = VPNConfigKeyStore.loadOrCreateKey() else {
+            return nil
+        }
         do {
-            let sealedBox = try AES.GCM.seal(
-                Data(config.utf8),
-                using: configSealingKey()
-            )
+            let sealedBox = try AES.GCM.seal(Data(config.utf8), using: key)
             return sealedBox.combined?.base64EncodedString()
         } catch {
             return nil
@@ -188,18 +192,39 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let data = Data(base64Encoded: sealedConfig) else {
             return nil
         }
+
+        // Preferred path: the per-install keychain key.
+        if let key = VPNConfigKeyStore.loadOrCreateKey(),
+           let plain = openSealed(data, key: key) {
+            return plain
+        }
+
+        // Migration path: a build prior to the per-install key sealed this
+        // config with a key derived from a compiled-in constant. Decrypt it
+        // once, then immediately re-seal under the per-install key so the
+        // legacy key is never needed again.
+        if let plain = openSealed(data, key: legacySealingKey()) {
+            _ = persistConfig(plain)
+            os_log("[PacketTunnelProvider] Migrated VPN config to per-install sealing key", log: logger, type: .info)
+            return plain
+        }
+
+        return nil
+    }
+
+    private func openSealed(_ data: Data, key: SymmetricKey) -> String? {
         do {
             let sealedBox = try AES.GCM.SealedBox(combined: data)
-            let opened = try AES.GCM.open(sealedBox, using: configSealingKey())
+            let opened = try AES.GCM.open(sealedBox, using: key)
             return String(data: opened, encoding: .utf8)
         } catch {
             return nil
         }
     }
 
-    private func configSealingKey() -> SymmetricKey {
+    private func legacySealingKey() -> SymmetricKey {
         let digest = SHA256.hash(
-            data: Data(SharedKeys.configEncryptionKeyMaterial.utf8)
+            data: Data(SharedKeys.legacyConfigEncryptionKeyMaterial.utf8)
         )
         return SymmetricKey(data: Data(digest))
     }
@@ -539,3 +564,59 @@ extension PacketTunnelProvider: VPNCorePlatform {
     }
 }
 #endif
+
+// VPNConfigKeyStore manages the per-install symmetric key used to seal the VPN
+// config in the shared App Group. The key is random per install and lives in
+// the keychain, shared with the main app through the common
+// `keychain-access-groups` entitlement (the default access group for both
+// targets). This mirrors the helper in the main app's VpnPlugin.swift; the two
+// targets are separate modules so the type is intentionally duplicated.
+fileprivate enum VPNConfigKeyStore {
+    private static let service = "com.privatedeploy.mobile.vpn"
+    private static let account = "vpn_config_sealing_key_v2"
+
+    static func loadOrCreateKey() -> SymmetricKey? {
+        if let existing = loadKey() {
+            return existing
+        }
+
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let data = Data(bytes)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess {
+            return SymmetricKey(data: data)
+        }
+        if status == errSecDuplicateItem {
+            return loadKey()
+        }
+        return nil
+    }
+
+    private static func loadKey() -> SymmetricKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, data.count == 32 else {
+            return nil
+        }
+        return SymmetricKey(data: data)
+    }
+}

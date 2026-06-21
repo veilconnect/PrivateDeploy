@@ -21,11 +21,96 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xproxy "golang.org/x/net/proxy"
 )
+
+// errBlockedOutboundURL is returned when a frontend-supplied URL targets a
+// non-public address or an unsupported scheme.
+var errBlockedOutboundURL = errors.New("blocked outbound request to a non-public or unsupported address")
+
+// validateOutboundURL enforces that a frontend-supplied URL uses http(s) and
+// does not, by hostname alone, obviously target loopback/internal hosts. The
+// authoritative SSRF check happens at dial time in ssrfSafeControl (which sees
+// the resolved IP and is therefore safe against DNS rebinding); this is the
+// cheap up-front guard.
+func validateOutboundURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return errBlockedOutboundURL
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return errBlockedOutboundURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errBlockedOutboundURL
+	}
+	if ip := net.ParseIP(host); ip != nil && isBlockedDialIP(ip) {
+		return errBlockedOutboundURL
+	}
+	if strings.EqualFold(host, "localhost") {
+		return errBlockedOutboundURL
+	}
+	return nil
+}
+
+// isBlockedDialIP reports whether an IP must not be reachable from a
+// frontend-driven HTTP request: loopback, RFC1918 private ranges, link-local
+// (incl. the 169.254.169.254 cloud metadata endpoint), unique-local IPv6,
+// multicast and unspecified addresses.
+func isBlockedDialIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified() {
+		return true
+	}
+
+	// IsPrivate covers RFC1918 + fc00::/7, but not these additional
+	// not-publicly-routable ranges that can still reach internal infra.
+	if ip4 := ip.To4(); ip4 != nil {
+		// CGNAT 100.64.0.0/10 (RFC6598).
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+		// Limited broadcast.
+		if ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255 {
+			return true
+		}
+	} else {
+		// NAT64 well-known prefix 64:ff9b::/96 can embed private IPv4 targets.
+		if len(ip) == net.IPv6len && ip[0] == 0x00 && ip[1] == 0x64 && ip[2] == 0xff && ip[3] == 0x9b {
+			return true
+		}
+	}
+	return false
+}
+
+// ssrfSafeControl is wired into the dialer Control hook so it runs against the
+// actual resolved IP immediately before connect, closing the DNS-rebinding
+// TOCTOU window that a URL-string-only check would leave open.
+func ssrfSafeControl(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if isBlockedDialIP(ip) {
+		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
+	}
+	return nil
+}
 
 var defaultSpeedTestURLs = []string{
 	"https://speed.cloudflare.com/__down?bytes=1000000",
@@ -35,6 +120,10 @@ var defaultSpeedTestURLs = []string{
 
 func (a *App) Requests(method string, url string, headers map[string]string, body string, options RequestOptions) HTTPResult {
 	log.Printf("Requests: %v %v %v %v %v", method, url, headers, body, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	client, ctx, cancel := withRequestOptionsClient(options)
 
@@ -69,6 +158,10 @@ func (a *App) Requests(method string, url string, headers map[string]string, bod
 
 func (a *App) Download(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
 	log.Printf("Download: %s %s %s %v %s %v", method, url, path, headers, event, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	client, ctx, cancel := withRequestOptionsClient(options)
 
@@ -118,6 +211,10 @@ func (a *App) Download(method string, url string, path string, headers map[strin
 
 func (a *App) Upload(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
 	log.Printf("Upload: %s %s %s %v %s %v", method, url, path, headers, event, options)
+
+	if err := validateOutboundURL(url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	path = GetPath(path)
 
@@ -225,14 +322,28 @@ func wrapWithProgress(r io.Reader, size int64, event string, a *App) io.Reader {
 }
 
 func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc) {
-	client := &http.Client{
-		Timeout: GetTimeout(options.Timeout),
-		Transport: &http.Transport{
-			Proxy: GetProxy(options.Proxy),
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: options.Insecure,
-			},
+	transport := &http.Transport{
+		Proxy: GetProxy(options.Proxy),
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: options.Insecure,
 		},
+	}
+	// Only guard direct dials. When traffic egresses through a proxy the local
+	// socket connects to the proxy (frequently the loopback sing-box instance),
+	// so a dial-time loopback/private block would wrongly reject it; in that
+	// case the proxy is the egress boundary and the up-front validateOutboundURL
+	// literal check already rejects obvious internal targets.
+	if strings.TrimSpace(options.Proxy) == "" {
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   ssrfSafeControl,
+		}
+		transport.DialContext = dialer.DialContext
+	}
+	client := &http.Client{
+		Timeout:   GetTimeout(options.Timeout),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !options.Redirect {
 				return http.ErrUseLastResponse
@@ -547,6 +658,11 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		timeoutSec = 15
 	}
 
+	// testURL is renderer-controllable; block internal/metadata targets up front.
+	if err := validateOutboundURL(testURL); err != nil {
+		return speedError(err.Error())
+	}
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
 	}
@@ -571,6 +687,11 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 		}
 	} else if proxyURL != "" {
 		transport.Proxy = GetProxy(proxyURL)
+	} else {
+		// Direct download: guard the dial against internal targets (TOCTOU-safe,
+		// catches DNS rebinding and redirects to internal hosts).
+		dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: ssrfSafeControl}
+		transport.DialContext = dialer.DialContext
 	}
 
 	client := &http.Client{

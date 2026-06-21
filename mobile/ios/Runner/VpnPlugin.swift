@@ -1,6 +1,7 @@
 import Flutter
 import CryptoKit
 import NetworkExtension
+import Security
 import UIKit
 
 #if canImport(VPNCore)
@@ -18,8 +19,6 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private static let proxylessDefaultsKey = "vpn_proxyless"
     private static let statusDefaultsKey = "vpn_status"
     private static let statsDefaultsKey = "vpn_stats"
-    private static let configEncryptionKeyMaterial =
-        "PrivateDeploy iOS VPN config sealing v1"
     private static let unsupportedMessage =
         "iOS VPN core is not available in this build. Build and embed VPNCore.framework before using native VPN control."
 
@@ -499,22 +498,15 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     }
 
     private func sealConfig(_ config: String) -> String? {
+        guard let key = VPNConfigKeyStore.loadOrCreateKey() else {
+            return nil
+        }
         do {
-            let sealedBox = try AES.GCM.seal(
-                Data(config.utf8),
-                using: configSealingKey()
-            )
+            let sealedBox = try AES.GCM.seal(Data(config.utf8), using: key)
             return sealedBox.combined?.base64EncodedString()
         } catch {
             return nil
         }
-    }
-
-    private func configSealingKey() -> SymmetricKey {
-        let digest = SHA256.hash(
-            data: Data(Self.configEncryptionKeyMaterial.utf8)
-        )
-        return SymmetricKey(data: Data(digest))
     }
 
     private func persistStatus(_ status: [String: Any]) {
@@ -643,5 +635,67 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private func flutterError(code: String, message: String) -> FlutterError {
         FlutterError(code: code, message: message, details: nil)
+    }
+}
+
+// VPNConfigKeyStore manages the per-install symmetric key used to seal the VPN
+// config in the shared App Group. The key is random per install and lives in
+// the keychain (the app and the Network Extension share it through their common
+// `keychain-access-groups` entry, which is the default access group for both
+// targets, so no explicit access group needs to be set here). This replaces the
+// previous design where the sealing key was derived from a constant compiled
+// into the binary — identical on every device and therefore reversible by
+// anyone with the source.
+fileprivate enum VPNConfigKeyStore {
+    private static let service = "com.privatedeploy.mobile.vpn"
+    private static let account = "vpn_config_sealing_key_v2"
+
+    static func loadOrCreateKey() -> SymmetricKey? {
+        if let existing = loadKey() {
+            return existing
+        }
+
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let data = Data(bytes)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            // The extension may run while the device is locked (background
+            // reconnect), so AfterFirstUnlock is required; ThisDeviceOnly keeps
+            // the key off iCloud Keychain / encrypted backups.
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess {
+            return SymmetricKey(data: data)
+        }
+        if status == errSecDuplicateItem {
+            // Another target created it concurrently; read the winning value.
+            return loadKey()
+        }
+        return nil
+    }
+
+    private static func loadKey() -> SymmetricKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, data.count == 32 else {
+            return nil
+        }
+        return SymmetricKey(data: data)
     }
 }

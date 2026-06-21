@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,9 +131,18 @@ func (a *App) GetCloudProvider() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-func (a *App) GetCloudConfigTyped() (*cloud.ProviderConfig, error) {
-	log.Printf("[CloudBridge] GetCloudConfigTyped called")
+// redactedAPIKeyPlaceholder is sent to the renderer in place of the real cloud
+// API key. The renderer never needs the cleartext key (deploys use the
+// backend's secret-store-backed config), so this keeps the key out of webview
+// memory while preserving the frontend's "a key is configured" presence checks.
+// SaveCloudConfigTyped recognises the placeholder and leaves the stored key
+// intact.
+const redactedAPIKeyPlaceholder = "__pd_redacted_api_key__"
 
+// loadCloudConfig returns the active provider's config WITH the real API key.
+// It is internal-only (never bound to Wails) so cleartext keys do not reach the
+// renderer; callers that need the real key (save-restore, backup) use this.
+func (a *App) loadCloudConfig() (*cloud.ProviderConfig, error) {
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
 		return nil, err
@@ -156,7 +166,25 @@ func (a *App) GetCloudConfigTyped() (*cloud.ProviderConfig, error) {
 	return cfg, nil
 }
 
+// GetCloudConfigTyped is the Wails-exposed accessor. It returns a clone with the
+// API key redacted so the cleartext key never enters the renderer.
+func (a *App) GetCloudConfigTyped() (*cloud.ProviderConfig, error) {
+	log.Printf("[CloudBridge] GetCloudConfigTyped called")
+
+	cfg, err := a.loadCloudConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	redacted := *cfg
+	if strings.TrimSpace(redacted.APIKey) != "" {
+		redacted.APIKey = redactedAPIKeyPlaceholder
+	}
+	return &redacted, nil
+}
+
 // GetCloudConfig returns the persisted configuration for the active provider
+// (API key redacted, via GetCloudConfigTyped).
 func (a *App) GetCloudConfig() FlagResult {
 	cfg, err := a.GetCloudConfigTyped()
 	if err != nil {
@@ -176,6 +204,17 @@ func (a *App) GetCloudConfig() FlagResult {
 
 func (a *App) SaveCloudConfigTyped(cfg cloud.ProviderConfig) error {
 	log.Printf("[CloudBridge] SaveCloudConfigTyped called")
+
+	// The renderer only ever sees a redacted placeholder for an existing key.
+	// If it sends the placeholder back unchanged, restore the real stored key so
+	// a plain save does not wipe it; never persist the literal placeholder.
+	if strings.TrimSpace(cfg.APIKey) == redactedAPIKeyPlaceholder {
+		if current, err := a.loadCloudConfig(); err == nil && current != nil {
+			cfg.APIKey = current.APIKey
+		} else {
+			cfg.APIKey = ""
+		}
+	}
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {

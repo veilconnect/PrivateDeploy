@@ -1,7 +1,6 @@
 package digitalocean
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ func (p *Provider) loadNodeRecords() (map[string]cloud.InstanceRecord, error) {
 	}
 
 	records := map[string]cloud.InstanceRecord{}
-	if err := json.Unmarshal(data, &records); err != nil {
+	if err := cloud.DecodeRecords(data, &records); err != nil {
 		return nil, err
 	}
 
@@ -41,7 +40,7 @@ func (p *Provider) saveNodeRecords(records map[string]cloud.InstanceRecord) erro
 		return err
 	}
 
-	data, err := json.MarshalIndent(records, "", "  ")
+	data, err := cloud.EncodeRecords(records)
 	if err != nil {
 		return err
 	}

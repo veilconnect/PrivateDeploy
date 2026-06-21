@@ -1,15 +1,16 @@
 package deploy
 
 import (
+	cryptorand "crypto/rand"
 	"fmt"
-	mathrand "math/rand"
+	"math/big"
 	"net/url"
 	"regexp"
 	"strings"
 )
 
 const (
-	DefaultPortProfile            = "random"
+	DefaultPortProfile = "random"
 	// Hysteria2 inbound uses `masquerade`, which is available starting in sing-box 1.11.0.
 	DefaultSingBoxVersion         = "1.11.0"
 	DefaultSingBoxFallbackVersion = "1.11.0"
@@ -50,10 +51,10 @@ type DeploymentTuning struct {
 
 // PortAssignment is the full protocol port layout for a node.
 type PortAssignment struct {
-	SSPort         int
-	HysteriaPort   int
-	VLESSPort      int
-	TrojanPort     int
+	SSPort       int
+	HysteriaPort int
+	VLESSPort    int
+	TrojanPort   int
 	// VLESSRelayPort is a non-Reality, non-TLS plain VLESS inbound used as
 	// the upstream for a Cloudflare Worker WS↔TCP relay. Always allocated
 	// on new deploys so CDN front-ending is available without a re-deploy.
@@ -266,15 +267,30 @@ func normalizeMasqueradeURL(raw, fallbackHost string) string {
 	return normalized
 }
 
+// secureIntn returns a uniformly random int in [0, n) using crypto/rand. It
+// falls back to 0 only if the system CSPRNG fails, which is effectively never.
+// Ports and SNI candidates are part of the node's anti-fingerprinting surface,
+// so they are drawn from a cryptographic source rather than a predictable PRNG.
+func secureIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	v, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0
+	}
+	return int(v.Int64())
+}
+
 func randomHighPort() int {
-	return 20000 + mathrand.Intn(30000)
+	return 20000 + secureIntn(30000)
 }
 
 func pickRandomOrDefault(candidates []string, fallback string) string {
 	if len(candidates) == 0 {
 		return fallback
 	}
-	picked := normalizeHostname(candidates[mathrand.Intn(len(candidates))], fallback)
+	picked := normalizeHostname(candidates[secureIntn(len(candidates))], fallback)
 	if picked == "" {
 		return fallback
 	}
