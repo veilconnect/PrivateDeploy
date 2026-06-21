@@ -726,30 +726,35 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	// Support SOCKS5 proxy via x/net/proxy (http.Transport.Proxy only handles HTTP)
 	if strings.HasPrefix(proxyURL, "socks5://") || strings.HasPrefix(proxyURL, "socks://") {
 		parsed, err := url.Parse(proxyURL)
-		if err == nil {
-			// Guard the connection to the SOCKS5 proxy itself: the forward dialer
-			// is what actually dials the proxy address, so attaching the
-			// loopback-allowing control here blocks a proxy that resolves to
-			// LAN/metadata (incl. hostname proxies, checked at the resolved IP)
-			// while still permitting the local sing-box on loopback.
-			guardedForward := &net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-				Control:   ssrfSafeControlAllowLoopback,
+		if err != nil {
+			return speedError("invalid proxy url: " + err.Error())
+		}
+		// Guard the connection to the SOCKS5 proxy itself: the forward dialer
+		// is what actually dials the proxy address, so attaching the
+		// loopback-allowing control here blocks a proxy that resolves to
+		// LAN/metadata (incl. hostname proxies, checked at the resolved IP)
+		// while still permitting the local sing-box on loopback.
+		guardedForward := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   ssrfSafeControlAllowLoopback,
+		}
+		dialer, dErr := xproxy.FromURL(parsed, guardedForward)
+		if dErr != nil {
+			// e.g. the unsupported "socks://" scheme. Do NOT fall through to an
+			// unguarded direct dial — that would let a bad proxy scheme bypass
+			// the SSRF guard via a rebinding testURL.
+			return speedError("unsupported or invalid proxy: " + dErr.Error())
+		}
+		// Pass the domain name directly to the SOCKS5 proxy so that DNS
+		// resolution happens on the remote server (via sing-box's outbound).
+		// Local DNS resolution can return altered or unreachable IPs in
+		// restricted network environments.
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
+				return ctxDialer.DialContext(ctx, network, addr)
 			}
-			dialer, dErr := xproxy.FromURL(parsed, guardedForward)
-			if dErr == nil {
-				// Pass the domain name directly to the SOCKS5 proxy so that
-				// DNS resolution happens on the remote server (via sing-box's
-				// outbound).  Local DNS resolution can return altered or
-				// unreachable IPs in restricted network environments.
-				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-					if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
-						return ctxDialer.DialContext(ctx, network, addr)
-					}
-					return dialer.Dial(network, addr)
-				}
-			}
+			return dialer.Dial(network, addr)
 		}
 	} else if proxyURL != "" {
 		transport.Proxy = GetProxy(proxyURL)
