@@ -277,7 +277,7 @@ onMounted(async () => {
           type="text"
           icon="link"
           size="small"
-          @click="BrowserOpenURL('https://github.com/veilconnect/PrivateDeploy/blob/main/docs/cdn-acceleration/README.md')"
+          @click="BrowserOpenURL('https://github.com/anthropics/PrivateDeploy/blob/main/docs/cdn-acceleration/README.md')"
         >
           {{ t('cdn.docsLink') }}
         </Button>

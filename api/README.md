@@ -1,85 +1,83 @@
 # PrivateDeploy REST API
 
-**English** | [中文](README.zh-CN.md)
+PrivateDeploy 的 REST API 服务，为桌面端和移动端提供统一的后端接口。
 
-The REST API service for PrivateDeploy, providing a unified backend interface for desktop and mobile clients.
+## 📦 技术栈
 
-## 📦 Tech Stack
+- **Web 框架:** Gin
+- **认证:** 默认仅限本机访问，可选 token 认证
+- **数据库:** SQLite (GORM)
+- **语言:** Go 1.23+
 
-- **Web framework:** Gin
-- **Authentication:** Local-only access by default, with optional token authentication
-- **Database:** SQLite (GORM)
-- **Language:** Go 1.23+
+## 🚀 快速开始
 
-## 🚀 Quick Start
-
-### Install dependencies
+### 安装依赖
 
 ```bash
 cd api
 go mod download
 ```
 
-### Run the server
+### 运行服务器
 
 ```bash
 go run main.go
 ```
 
-By default the server starts at `http://127.0.0.1:8443`.
+服务器默认将在 `http://127.0.0.1:8443` 启动。
 
-### Environment variables
+### 环境变量
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `API_HOST` | `127.0.0.1` | Server listen address |
-| `API_PORT` | `8443` | Server port |
-| `API_ALLOW_REMOTE` | `false` | Whether to allow non-loopback client access |
-| `API_AUTH_TOKEN` | `` | Optional shared token; once set, access requires `Authorization: Bearer <token>` or `X-PrivateDeploy-Token` |
-| `API_AUTH_TOKEN_FILE` | `` | Read the token from a file, suitable for container/secret mounts |
-| `API_WRITE_TIMEOUT` | `120s` | HTTP response write timeout, supports Go duration format |
-| `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Allowed cross-origin origins (comma-separated) |
-| `DB_PATH` | `data/privatedeploy.db` | SQLite database path |
-| `GIN_MODE` | `release` | Gin mode (debug/release) |
+| `API_HOST` | `127.0.0.1` | 服务器监听地址 |
+| `API_PORT` | `8443` | 服务器端口 |
+| `API_ALLOW_REMOTE` | `false` | 是否允许非 loopback 客户端访问 |
+| `API_AUTH_TOKEN` | `` | 可选共享 token，配置后需通过 `Authorization: Bearer <token>` 或 `X-PrivateDeploy-Token` 访问 |
+| `API_AUTH_TOKEN_FILE` | `` | 从文件读取 token，适合容器/secret 挂载 |
+| `API_WRITE_TIMEOUT` | `120s` | HTTP 响应写超时，支持 Go duration 格式 |
+| `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |
+| `DB_PATH` | `data/privatedeploy.db` | SQLite 数据库路径 |
+| `GIN_MODE` | `release` | Gin 模式 (debug/release) |
 
-### Build
+### 编译
 
 ```bash
 go build -o privatedeploy-api
 ./privatedeploy-api
 ```
 
-## 🔓 Access Control
+## 🔓 访问控制
 
-- By default only local requests from `127.0.0.1` / `::1` are accepted.
-- For LAN or remote access, explicitly set `API_ALLOW_REMOTE=true`.
-- For shared access, it is recommended to also set `API_AUTH_TOKEN` or `API_AUTH_TOKEN_FILE`.
-- Even with remote access enabled, exposing it directly to the public internet is not recommended; place it behind a reverse proxy, VPN, or trusted network.
+- 默认只接受 `127.0.0.1` / `::1` 的本机请求。
+- 如需局域网或远程访问，显式设置 `API_ALLOW_REMOTE=true`。
+- 如需共享访问，建议同时设置 `API_AUTH_TOKEN` 或 `API_AUTH_TOKEN_FILE`。
+- 即使开启远程访问，也不建议直接暴露到公网；请放在反向代理、VPN 或受信任网络之后。
 
-## 📖 API Documentation
+## 📖 API 文档
 
-For detailed API documentation, see [API_DESIGN.md](../docs/API_DESIGN.md)
+详细的 API 文档请参阅 [API_DESIGN.md](../API_DESIGN.md)
 
-## ☁️ Cloud Configuration Notes
+## ☁️ 云配置说明
 
-- The API returns `hasApiKey` to tell the client whether the currently active provider already has an API key securely stored on the server side.
-- The actual API key is not returned to the client in the `GET /api/v1/cloud/config` response.
-- The current standalone API only exposes officially supported providers: `vultr`, `digitalocean`, `ssh`.
-- The default active provider is `vultr`.
+- API 会返回 `hasApiKey`，用于告诉客户端当前激活 provider 是否已经在服务端安全存储了 API key。
+- 实际 API key 不会在 `GET /api/v1/cloud/config` 响应中回传给客户端。
+- 当前 standalone API 只对外暴露正式支持的 provider：`vultr`、`digitalocean`、`ssh`。
+- 默认激活 provider 为 `vultr`。
 
-### Health check
+### 健康检查
 
 ```bash
 curl http://localhost:8443/api/v1/health
 ```
 
-### Get system information
+### 获取系统信息
 
 ```bash
 curl http://localhost:8443/api/v1/system/info \
 ```
 
-## 🏗️ Project Structure
+## 🏗️ 项目结构
 
 ```
 api/
@@ -102,56 +100,56 @@ api/
     └── password.go
 ```
 
-## 🧪 Testing
+## 🧪 测试
 
-### Run tests
+### 运行测试
 
 ```bash
 go test ./...
 ```
 
-### Using Postman
+### 使用 Postman
 
-Import the example requests from the API documentation into Postman for testing.
+导入 API 文档中的示例请求到 Postman 进行测试。
 
-## 📝 Development Plan
+## 📝 开发计划
 
-### Current Status
-- [x] Basic HTTP server
-- [x] System information endpoint
-- [x] Cloud provider management API
+### 当前状态
+- [x] 基础 HTTP 服务器
+- [x] 系统信息接口
+- [x] 云服务商管理 API
 - [x] Profiles / Subscriptions CRUD API
-- [x] WebSocket connection entry point
-- [ ] Swagger / OpenAPI automatic documentation
+- [x] WebSocket 连接入口
+- [ ] Swagger / OpenAPI 自动文档
 
-### Known Limitations
-- The standalone API does not provide device-level `/vpn/*` control endpoints.
-- HTTPS termination, reverse proxy, and public-exposure policies should be handled by the deployment environment.
+### 已知限制
+- standalone API 不提供 `/vpn/*` 设备级控制接口。
+- HTTPS 终止、反向代理和外网暴露策略应由部署环境负责。
 
-### Future Directions
-- [ ] More complete WebSocket push events
-- [ ] Rule set / plugin / scheduled task API
-- [ ] Higher-coverage handler / integration tests
-- [ ] Automatic API documentation generation (Swagger / OpenAPI)
+### 后续方向
+- [ ] 更完整的 WebSocket 推送事件
+- [ ] 规则集 / 插件 / 定时任务 API
+- [ ] 更高覆盖率的 handler / integration tests
+- [ ] API 文档自动生成 (Swagger / OpenAPI)
 
-## 🔒 Security
+## 🔒 安全
 
-- ✅ CORS support
-- ✅ Request parameter validation
-- ✅ Local-only access by default
-- ✅ Optional token authentication
-- 🔄 HTTPS support (to be implemented)
-- 🔄 More fine-grained global Rate Limiting (to be implemented)
+- ✅ CORS 支持
+- ✅ 请求参数验证
+- ✅ 默认仅本机访问
+- ✅ 可选 token 认证
+- 🔄 HTTPS 支持 (待实现)
+- 🔄 更细粒度的全局 Rate Limiting (待实现)
 
-## 📄 License
+## 📄 许可证
 
-Same as the main PrivateDeploy project.
+与 PrivateDeploy 主项目相同。
 
-## 🤝 Contributing
+## 🤝 贡献
 
-Issues and Pull Requests are welcome!
+欢迎提交 Issue 和 Pull Request！
 
-## 📞 Contact
+## 📞 联系
 
-- Project homepage: https://github.com/veilconnect/PrivateDeploy
-- Issue reporting: https://github.com/veilconnect/PrivateDeploy/issues
+- 项目主页: https://github.com/veilconnect/PrivateDeploy
+- 问题反馈: https://github.com/veilconnect/PrivateDeploy/issues

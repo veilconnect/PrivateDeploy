@@ -167,7 +167,7 @@ Directory Structure:
 - cloud/          : Cloud service configs (auto-created)
 - .cache/         : UI resources and icons
 
-For more information, visit: https://github.com/veilconnect/PrivateDeploy
+For more information, visit: https://github.com/PrivateDeploy/PrivateDeploy
 DATAEOF
 
     # 从临时目录打包

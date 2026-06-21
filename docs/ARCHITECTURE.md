@@ -1,7 +1,5 @@
 # Architecture
 
-**English** | [中文](ARCHITECTURE.zh-CN.md)
-
 PrivateDeploy is three coordinated pieces that share a Go core:
 
 1. A **desktop app** (Vue 3 + Wails) that runs locally, deploys VPS nodes, and connects via sing-box.

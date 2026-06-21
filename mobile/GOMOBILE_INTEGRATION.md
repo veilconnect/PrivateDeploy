@@ -1,14 +1,12 @@
 # GoMobile Integration Guide
 
-**English** | [中文](GOMOBILE_INTEGRATION.zh-CN.md)
+本文档说明如何将 sing-box VPN 核心集成到 Flutter 移动应用中。
 
-This document explains how to integrate the sing-box VPN core into a Flutter mobile application.
+## 概述
 
-## Overview
+PrivateDeploy 使用 sing-box 作为 VPN 核心引擎。为了在 Android 和 iOS 上运行 sing-box，需要通过 gomobile 将 Go 代码编译为移动平台的原生库。
 
-PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android and iOS, the Go code must be compiled into native libraries for mobile platforms via gomobile.
-
-## Architecture Design
+## 架构设计
 
 ```
 ┌─────────────────────────────────────────┐
@@ -55,16 +53,16 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
 └─────────────────────────────────────────┘
 ```
 
-## Implementation Steps
+## 实现步骤
 
-### Phase 1: Create the Go Mobile Bridge Layer
+### Phase 1: 创建 Go Mobile 桥接层
 
-1. **Create the bridge package** (`~/PrivateDeploy/mobile/gomobile/`)
-   - Define the Go interface that Flutter can call
-   - Encapsulate the sing-box core functionality
-   - Handle configuration file loading and updates
+1. **创建桥接包** (`~/PrivateDeploy/mobile/gomobile/`)
+   - 定义 Flutter 可调用的 Go 接口
+   - 封装 sing-box 核心功能
+   - 处理配置文件加载和更新
 
-2. **Implement the core interface**
+2. **实现核心接口**
    ```go
    // VPNService 接口定义
    type VPNService interface {
@@ -76,7 +74,7 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    }
    ```
 
-3. **Compile the mobile libraries**
+3. **编译移动库**
    ```bash
    # Android
    gomobile bind -target=android -o mobile/android/libs/vpncore.aar ./gomobile
@@ -85,14 +83,14 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    gomobile bind -target=ios -o mobile/ios/VPNCore.framework ./gomobile
    ```
 
-### Phase 2: Android Integration
+### Phase 2: Android 集成
 
-1. **Implement VpnService**
-   - Extend `android.net.VpnService`
-   - Configure the TUN interface
-   - Call the Go bridge layer to start the VPN
+1. **实现 VpnService**
+   - 继承 `android.net.VpnService`
+   - 配置 TUN 接口
+   - 调用 Go 桥接层启动 VPN
 
-2. **Permission configuration** (`AndroidManifest.xml`)
+2. **权限配置** (`AndroidManifest.xml`)
    ```xml
    <uses-permission android:name="android.permission.INTERNET" />
    <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
@@ -106,7 +104,7 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    </service>
    ```
 
-3. **Platform Channel implementation**
+3. **Platform Channel 实现**
    ```kotlin
    class VpnPlugin : FlutterPlugin, MethodCallHandler {
        override fun onMethodCall(call: MethodCall, result: Result) {
@@ -119,14 +117,14 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    }
    ```
 
-### Phase 3: iOS Integration
+### Phase 3: iOS 集成
 
-1. **Implement the Network Extension**
-   - Create the Packet Tunnel Provider
-   - Configure routing rules
-   - Call the Go bridge layer
+1. **实现 Network Extension**
+   - 创建 Packet Tunnel Provider
+   - 配置路由规则
+   - 调用 Go 桥接层
 
-2. **Configure Entitlements**
+2. **配置 Entitlements**
    ```xml
    <key>com.apple.developer.networking.networkextension</key>
    <array>
@@ -134,7 +132,7 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    </array>
    ```
 
-3. **Platform Channel implementation**
+3. **Platform Channel 实现**
    ```swift
    class VpnPlugin: NSObject, FlutterPlugin {
        func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -150,9 +148,9 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    }
    ```
 
-### Phase 4: Flutter Interface Layer
+### Phase 4: Flutter 接口层
 
-1. **Create the Platform Channel**
+1. **创建 Platform Channel**
    ```dart
    class VpnNativeService {
        static const platform = MethodChannel('com.privatedeploy.vpn/native');
@@ -170,27 +168,27 @@ PrivateDeploy uses sing-box as its VPN core engine. To run sing-box on Android a
    }
    ```
 
-2. **Integrate into VpnProvider**
-   - Replace REST API calls with native calls
-   - Handle native event callbacks
-   - Update the UI state
+2. **集成到 VpnProvider**
+   - 替换 REST API 调用为原生调用
+   - 处理原生事件回调
+   - 更新 UI 状态
 
-## Technical Requirements
+## 技术要求
 
-### Development Environment
+### 开发环境
 
 - **Go**: 1.21+
 - **gomobile**: `go install golang.org/x/mobile/cmd/gomobile@latest`
 - **NDK**: Android NDK r25c (for Android)
 - **Xcode**: 14+ (for iOS)
 
-### Dependencies
+### 依赖库
 
-- **sing-box**: VPN core engine
-- **golang.org/x/mobile**: gomobile toolchain
-- **github.com/sagernet/sing**: network protocol library
+- **sing-box**: VPN 核心引擎
+- **golang.org/x/mobile**: gomobile 工具链
+- **github.com/sagernet/sing**: 网络协议库
 
-## Directory Structure
+## 目录结构
 
 ```
 mobile/
@@ -219,9 +217,9 @@ mobile/
         └── vpn_native_service.dart  # Flutter 原生桥接
 ```
 
-## Data Flow
+## 数据流
 
-### Starting the VPN
+### 启动 VPN
 
 ```
 Flutter (VpnProvider)
@@ -236,7 +234,7 @@ sing-box Core
     ↓ 建立 VPN 连接
 ```
 
-### Traffic Statistics
+### 流量统计
 
 ```
 sing-box Core (每秒更新)
@@ -249,23 +247,23 @@ Flutter (VpnProvider)
     ↓ 更新 UI
 ```
 
-## Security Considerations
+## 安全考虑
 
-1. **Configuration file encryption**: Sensitive configuration (passwords, keys) should be stored encrypted
-2. **Communication encryption**: Encrypt data transfers over the Platform Channel
-3. **Certificate validation**: Certificate pinning for TLS connections
-4. **Memory safety**: Memory management between Go and native code
+1. **配置文件加密**: 敏感配置（密码、密钥）应加密存储
+2. **通信加密**: Platform Channel 数据传输加密
+3. **证书校验**: TLS 连接的证书 pinning
+4. **内存安全**: Go 和 Native 代码间的内存管理
 
-## Performance Optimization
+## 性能优化
 
-1. **Reduce cross-language calls**: Transfer data in batches rather than calling frequently
-2. **Asynchronous processing**: Use asynchronous methods for VPN operations to avoid blocking the UI
-3. **Memory management**: Release objects created by gomobile promptly
-4. **Traffic statistics**: Use EventChannel instead of polling
+1. **减少跨语言调用**: 批量传输数据而非频繁调用
+2. **异步处理**: VPN 操作使用异步方法避免阻塞 UI
+3. **内存管理**: 及时释放 gomobile 创建的对象
+4. **流量统计**: 使用 EventChannel 而非轮询
 
-## Debugging Guide
+## 调试指南
 
-### Android Debugging
+### Android 调试
 
 ```bash
 # 查看 VPN 服务日志
@@ -278,7 +276,7 @@ adb logcat | grep GoLog
 adb shell ip addr show tun0
 ```
 
-### iOS Debugging
+### iOS 调试
 
 ```bash
 # 查看 Network Extension 日志
@@ -288,33 +286,33 @@ log stream --predicate 'process == "VPNExtension"'
 networksetup -showpppoestatus "VPN Connection"
 ```
 
-## FAQ
+## 常见问题
 
-### Q: gomobile bind compilation fails
-**A**: Make sure the NDK and Go environment are configured correctly, and check the `ANDROID_HOME` and `ANDROID_NDK_HOME` environment variables.
+### Q: gomobile bind 编译失败
+**A**: 确保 NDK 和 Go 环境正确配置，检查 `ANDROID_HOME` 和 `ANDROID_NDK_HOME` 环境变量。
 
-### Q: Android VPN won't start
-**A**: Check that the VPN permission was requested correctly and that the user has granted it.
+### Q: Android VPN 无法启动
+**A**: 检查是否正确请求了 VPN 权限，并且用户已授权。
 
-### Q: iOS Network Extension crashes
-**A**: Check the memory limit (the Extension has only ~30MB), and make sure the Go code does not exceed the limit.
+### Q: iOS Network Extension 崩溃
+**A**: 检查内存限制（Extension 仅有 ~30MB），确保 Go 代码不会超出限制。
 
-### Q: Poor cross-language call performance
-**A**: Reduce the call frequency, use batch data transfer, and enable gomobile's optimization options.
+### Q: 跨语言调用性能差
+**A**: 减少调用频率，使用批量数据传输，启用 gomobile 的优化选项。
 
-## Next Steps
+## 下一步
 
-1. ✅ Complete Flutter UI and REST API integration
-2. 📝 Implement the Go Mobile bridge layer (current phase)
-3. ⏳ Android VpnService implementation
-4. ⏳ iOS Network Extension implementation
-5. ⏳ Platform Channel integration
-6. ⏳ Full testing and optimization
+1. ✅ 完成 Flutter UI 和 REST API 集成
+2. 📝 实现 Go Mobile 桥接层 (当前阶段)
+3. ⏳ Android VpnService 实现
+4. ⏳ iOS Network Extension 实现
+5. ⏳ Platform Channel 集成
+6. ⏳ 完整测试和优化
 
-## References
+## 参考资料
 
-- [gomobile Official Documentation](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
-- [sing-box Documentation](https://sing-box.sagernet.org/)
-- [Android VpnService Guide](https://developer.android.com/guide/topics/connectivity/vpn)
-- [iOS Network Extension Programming Guide](https://developer.apple.com/documentation/networkextension)
+- [gomobile 官方文档](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+- [sing-box 文档](https://sing-box.sagernet.org/)
+- [Android VpnService 指南](https://developer.android.com/guide/topics/connectivity/vpn)
+- [iOS Network Extension 编程指南](https://developer.apple.com/documentation/networkextension)
 - [Flutter Platform Channels](https://docs.flutter.dev/development/platform-integration/platform-channels)

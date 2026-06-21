@@ -51,8 +51,3 @@ mobile/test/failures/
 .wrangler/
 build/frontend/
 build/bin/
-
-# 预编译移动端核心(由 gomobile build-android.sh 生成,不入库)
-mobile/android/app/libs/vpncore.aar
-mobile/android/app/libs/vpncore-sources.jar
-.vscode/

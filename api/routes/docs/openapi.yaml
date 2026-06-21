@@ -4,7 +4,7 @@ info:
   description: REST API for managing multi-protocol proxy node deployments on cloud infrastructure.
   version: 2.0.0
   license:
-    name: GPL-3.0
+    name: MIT
 
 servers:
   - url: http://127.0.0.1:8443

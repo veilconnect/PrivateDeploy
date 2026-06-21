@@ -1,85 +1,83 @@
-# PrivateDeploy Mobile - Build and Deployment Guide
+# PrivateDeploy Mobile - 构建和部署指南
 
-**English** | [中文](BUILD_AND_DEPLOY.zh-CN.md)
-
-This document provides the complete build, test, and deployment workflow.
+本文档提供完整的构建、测试和部署流程。
 
 ---
 
-## 📋 Table of Contents
+## 📋 目录
 
-1. [Development Environment Setup](#开发环境设置)
-2. [Flutter Project Build](#flutter-项目构建)
-3. [Go Mobile Compilation](#go-mobile-编译)
-4. [Android Build and Deployment](#android-构建和部署)
-5. [iOS Build and Deployment](#ios-构建和部署)
-6. [Continuous Integration](#持续集成)
-7. [Troubleshooting](#故障排除)
+1. [开发环境设置](#开发环境设置)
+2. [Flutter 项目构建](#flutter-项目构建)
+3. [Go Mobile 编译](#go-mobile-编译)
+4. [Android 构建和部署](#android-构建和部署)
+5. [iOS 构建和部署](#ios-构建和部署)
+6. [持续集成](#持续集成)
+7. [故障排除](#故障排除)
 
 ---
 
-## 🔧 Development Environment Setup
+## 🔧 开发环境设置
 
-### Required Tools
+### 必需工具
 
 #### 1. Flutter SDK
 
 ```bash
-# Download Flutter
+# 下载 Flutter
 git clone https://github.com/flutter/flutter.git -b stable
 
-# Add to PATH
+# 添加到 PATH
 export PATH="$PATH:`pwd`/flutter/bin"
 
-# Verify installation
+# 验证安装
 flutter doctor
 
-# Expected output:
+# 预期输出:
 # ✓ Flutter (Channel stable, ...)
 # ✓ Android toolchain
 # ✓ Xcode (macOS only)
 # ✓ VS Code / Android Studio
 ```
 
-#### 2. Go Environment
+#### 2. Go 环境
 
 ```bash
-# Install Go 1.21+
+# 安装 Go 1.21+
 wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
 sudo tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
 
-# Set environment variables
+# 设置环境变量
 export PATH=$PATH:/usr/local/go/bin
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
 
-# Verify
+# 验证
 go version
 ```
 
 #### 3. gomobile
 
 ```bash
-# Install gomobile
+# 安装 gomobile
 go install golang.org/x/mobile/cmd/gomobile@latest
 
-# Initialize
+# 初始化
 gomobile init
 
-# Verify
+# 验证
 gomobile version
 ```
 
-#### 4. Android SDK and NDK
+#### 4. Android SDK 和 NDK
 
 ```bash
-# Set environment variables
+# 设置环境变量
 export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
 export PATH=$PATH:$ANDROID_HOME/platform-tools
 export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
 
-# Install SDK components
+# 安装 SDK 组件
 sdkmanager "platforms;android-34"
 sdkmanager "build-tools;34.0.0"
 sdkmanager "ndk;25.2.9519653"
@@ -88,67 +86,67 @@ sdkmanager "ndk;25.2.9519653"
 #### 5. Xcode (macOS only)
 
 ```bash
-# Install Xcode from the App Store
+# 从 App Store 安装 Xcode
 
-# Install command-line tools
+# 安装命令行工具
 xcode-select --install
 
-# Accept the license
+# 接受许可
 sudo xcodebuild -license accept
 
-# Verify
+# 验证
 xcodebuild -version
 ```
 
 ---
 
-## 🎯 Flutter Project Build
+## 🎯 Flutter 项目构建
 
-### 1. Fetch Dependencies
+### 1. 获取依赖
 
 ```bash
 cd ~/PrivateDeploy/mobile
 
-# Fetch pub dependencies
+# 获取 pub 依赖
 flutter pub get
 
-# Generate code
+# 生成代码
 flutter pub run build_runner build --delete-conflicting-outputs
 ```
 
-### 2. Code Generation
+### 2. 代码生成
 
 ```bash
-# Retrofit API client
+# Retrofit API 客户端
 flutter pub run build_runner watch
 
-# Or generate once
+# 或一次性生成
 flutter pub run build_runner build --delete-conflicting-outputs
 ```
 
-### 3. Asset Preparation
+### 3. 资源准备
 
 ```bash
-# Check asset files
+# 检查资源文件
 flutter pub run flutter_launcher_icons:main
 
-# Update app icon (if needed)
-# Edit the flutter_icons configuration in pubspec.yaml
+# 更新应用图标（如需要）
+# 编辑 pubspec.yaml 中的 flutter_icons 配置
 ```
 
 ---
 
-## 🔨 Go Mobile Compilation
+## 🔨 Go Mobile 编译
 
 ### Android AAR
 
 ```bash
 cd gomobile
 
-# Option 1: Use the script
+# 方式 1: 使用脚本
 ./build-android.sh
 
-# Option 2: Compile manually
+# 方式 2: 手动编译
 gomobile bind \
     -target=android \
     -androidapi=21 \
@@ -156,7 +154,7 @@ gomobile bind \
     -o=../android/app/libs/vpncore.aar \
     .
 
-# Verify
+# 验证
 ls -lh ../android/app/libs/vpncore.aar
 ```
 
@@ -165,26 +163,26 @@ ls -lh ../android/app/libs/vpncore.aar
 ```bash
 cd gomobile
 
-# Option 1: Use the script
+# 方式 1: 使用脚本
 ./build-ios.sh
 
-# Option 2: Compile manually
+# 方式 2: 手动编译
 gomobile bind \
     -target=ios \
     -iosversion=12.0 \
     -o=../ios/VPNCore.framework \
     .
 
-# Verify
+# 验证
 ls -lh ../ios/VPNCore.framework
 lipo -info ../ios/VPNCore.framework/VPNCore
 ```
 
 ---
 
-## 📱 Android Build and Deployment
+## 📱 Android 构建和部署
 
-### Development Build
+### 开发构建
 
 ```bash
 cd ~/PrivateDeploy/mobile
@@ -192,18 +190,18 @@ cd ~/PrivateDeploy/mobile
 # Debug APK
 flutter build apk --debug
 
-# Install to device
+# 安装到设备
 flutter install
 
-# Or run directly
+# 或直接运行
 flutter run
 ```
 
-### Release Build
+### 发布构建
 
-#### 1. Configure Signing
+#### 1. 配置签名
 
-Create `android/key.properties`:
+创建 `android/key.properties`:
 
 ```properties
 storePassword=<your-store-password>
@@ -212,7 +210,7 @@ keyAlias=privatedeploy
 storeFile=<path-to-keystore>
 ```
 
-Modify `android/app/build.gradle`:
+修改 `android/app/build.gradle`:
 
 ```gradle
 def keystoreProperties = new Properties()
@@ -239,113 +237,113 @@ android {
 }
 ```
 
-#### 2. Build the Release Version
+#### 2. 构建发布版本
 
 ```bash
-# Build APK
+# 构建 APK
 flutter build apk --release
 
-# Build App Bundle (recommended for the Play Store)
+# 构建 App Bundle (推荐用于 Play Store)
 flutter build appbundle --release
 
-# Output locations:
+# 输出位置:
 # build/app/outputs/flutter-apk/app-release.apk
 # build/app/outputs/bundle/release/app-release.aab
 ```
 
-#### 3. Test the Release Version
+#### 3. 测试发布版本
 
 ```bash
-# Install the APK
+# 安装 APK
 adb install build/app/outputs/flutter-apk/app-release.apk
 
-# View logs
+# 查看日志
 adb logcat | grep PrivateDeploy
 ```
 
-### Deploy to Google Play
+### 部署到 Google Play
 
-#### 1. Prepare Metadata
+#### 1. 准备元数据
 
-- App name: PrivateDeploy
-- Package name: com.privatedeploy.mobile
-- Version: 1.0.0
-- Category: Tools
-- Privacy policy URL
+- 应用名称: PrivateDeploy
+- 包名: com.privatedeploy.mobile
+- 版本: 1.0.0
+- 类别: 工具
+- 隐私政策 URL
 
-#### 2. Create the Listing
+#### 2. 创建 Listing
 
-1. Sign in to the [Google Play Console](https://play.google.com/console)
-2. Create a new app
-3. Fill in the store information
-4. Upload screenshots (at least 2)
-5. Set the content rating
+1. 登录 [Google Play Console](https://play.google.com/console)
+2. 创建新应用
+3. 填写商店信息
+4. 上传截图（至少 2 张）
+5. 设置内容分级
 
-#### 3. Release Process
+#### 3. 发布流程
 
 ```bash
-# 1. Create an internal testing release
-# Upload app-release.aab to internal testing
+# 1. 创建内部测试版本
+# 上传 app-release.aab 到内部测试
 
-# 2. Closed testing
-# Invite test users and collect feedback
+# 2. 封闭测试
+# 邀请测试用户，收集反馈
 
-# 3. Open testing (optional)
-# Expand the testing scope
+# 3. 开放测试（可选）
+# 扩大测试范围
 
-# 4. Production release
-# Release to production after review approval
+# 4. 正式发布
+# 审核通过后发布到生产环境
 ```
 
 ---
 
-## 🍎 iOS Build and Deployment
+## 🍎 iOS 构建和部署
 
-### Development Build
+### 开发构建
 
 ```bash
-# Open the Xcode project
+# 打开 Xcode 项目
 open ios/Runner.xcworkspace
 
-# Or use the Flutter command
+# 或使用 Flutter 命令
 flutter run -d <device-id>
 
-# View available devices
+# 查看可用设备
 flutter devices
 ```
 
-### Release Build
+### 发布构建
 
-#### 1. Configure Signing
+#### 1. 配置签名
 
-In Xcode:
+在 Xcode 中：
 
-1. Select the **Runner** target
-2. Switch to **Signing & Capabilities**
-3. Choose the development team
-4. Configure the Bundle Identifier: `com.privatedeploy.mobile`
-5. Enable **Automatically manage signing**
+1. 选择 **Runner** target
+2. 切换到 **Signing & Capabilities**
+3. 选择开发团队
+4. 配置 Bundle Identifier: `com.privatedeploy.mobile`
+5. 启用 **Automatically manage signing**
 
-Repeat the steps above for the **VPNExtension** target.
+对 **VPNExtension** target 重复上述步骤。
 
-#### 2. Configure Capabilities
+#### 2. 配置 Capabilities
 
-Make sure the following are enabled:
+确保启用：
 - ✅ Network Extensions (Packet Tunnel)
 - ✅ App Groups
 - ✅ Keychain Sharing
 
-#### 3. Build the IPA
+#### 3. 构建 IPA
 
 ```bash
-# Option 1: Flutter command
+# 方式 1: Flutter 命令
 flutter build ios --release
 
-# Option 2: Xcode
+# 方式 2: Xcode
 # Product → Archive
 # Organizer → Distribute App
 
-# Option 3: xcodebuild
+# 方式 3: xcodebuild
 cd ios
 xcodebuild -workspace Runner.xcworkspace \
            -scheme Runner \
@@ -354,17 +352,17 @@ xcodebuild -workspace Runner.xcworkspace \
            archive
 ```
 
-#### 4. Export the IPA
+#### 4. 导出 IPA
 
 ```bash
-# Use xcodebuild
+# 使用 xcodebuild
 xcodebuild -exportArchive \
            -archivePath build/Runner.xcarchive \
            -exportPath build/ipa \
            -exportOptionsPlist ExportOptions.plist
 ```
 
-`ExportOptions.plist` example:
+`ExportOptions.plist` 示例:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -379,32 +377,32 @@ xcodebuild -exportArchive \
 </plist>
 ```
 
-### Deploy to the App Store
+### 部署到 App Store
 
-#### 1. Prepare Metadata
+#### 1. 准备元数据
 
-- App name: PrivateDeploy
+- 应用名称: PrivateDeploy
 - Bundle ID: com.privatedeploy.mobile
-- Version: 1.0.0
-- Category: Utilities
-- Privacy policy URL
-- Support URL
+- 版本: 1.0.0
+- 类别: Utilities
+- 隐私政策 URL
+- 支持 URL
 
-#### 2. Create an App Store Connect Record
+#### 2. 创建 App Store Connect 记录
 
-1. Sign in to [App Store Connect](https://appstoreconnect.apple.com)
-2. Create a new app
-3. Fill in the app information
-4. Upload screenshots (iPhone + iPad)
-5. Set the age rating
+1. 登录 [App Store Connect](https://appstoreconnect.apple.com)
+2. 创建新应用
+3. 填写应用信息
+4. 上传截图（iPhone + iPad）
+5. 设置年龄分级
 
-#### 3. Upload the Build
+#### 3. 上传构建
 
 ```bash
-# Use the Xcode Organizer
-# Or use Transporter.app
+# 使用 Xcode Organizer
+# 或使用 Transporter.app
 
-# Or use altool (command line)
+# 或使用 altool (命令行)
 xcrun altool --upload-app \
              --type ios \
              --file build/ipa/Runner.ipa \
@@ -412,20 +410,20 @@ xcrun altool --upload-app \
              --password "@keychain:AC_PASSWORD"
 ```
 
-#### 4. Submit for Review
+#### 4. 提交审核
 
-1. Select the build in App Store Connect
-2. Fill in the review information
-3. Submit for review
-4. Wait for the review result (usually 1-3 days)
+1. 在 App Store Connect 中选择构建
+2. 填写审核信息
+3. 提交审核
+4. 等待审核结果（通常 1-3 天）
 
 ---
 
-## 🔄 Continuous Integration
+## 🔄 持续集成
 
 ### GitHub Actions
 
-Create `.github/workflows/build.yml`:
+创建 `.github/workflows/build.yml`:
 
 ```yaml
 name: Build and Test
@@ -528,7 +526,7 @@ jobs:
           flutter test
 ```
 
-### Fastlane (optional)
+### Fastlane (可选)
 
 #### Android
 
@@ -571,151 +569,151 @@ end
 
 ---
 
-## 🐛 Troubleshooting
+## 🐛 故障排除
 
-### Common Errors
+### 常见错误
 
-#### 1. Flutter Dependency Issues
+#### 1. Flutter 依赖问题
 
 ```bash
-# Clean the cache
+# 清理缓存
 flutter clean
 flutter pub cache repair
 
-# Re-fetch dependencies
+# 重新获取依赖
 flutter pub get
 ```
 
-#### 2. Android Build Failure
+#### 2. Android 构建失败
 
 ```bash
-# Clean the Gradle cache
+# 清理 Gradle 缓存
 cd android
 ./gradlew clean
 
-# Check the NDK
+# 检查 NDK
 echo $ANDROID_NDK_HOME
 
-# Rebuild
+# 重新构建
 cd ..
 flutter build apk
 ```
 
-#### 3. iOS Build Failure
+#### 3. iOS 构建失败
 
 ```bash
-# Clean the build
+# 清理构建
 cd ios
 xcodebuild clean -workspace Runner.xcworkspace -scheme Runner
 
-# Re-fetch Pods
+# 重新获取 Pods
 pod deintegrate
 pod install
 
-# Rebuild
+# 重新构建
 cd ..
 flutter build ios
 ```
 
-#### 4. gomobile Compilation Failure
+#### 4. gomobile 编译失败
 
 ```bash
-# Update gomobile
+# 更新 gomobile
 go install golang.org/x/mobile/cmd/gomobile@latest
 gomobile init
 
-# Clean the Go cache
+# 清理 Go 缓存
 go clean -modcache
 
-# Recompile
+# 重新编译
 cd gomobile
 ./build-android.sh
 ```
 
-### Debugging Tips
+### 调试技巧
 
 #### Flutter
 
 ```bash
-# Run in debug mode
+# 运行在调试模式
 flutter run --debug
 
-# View verbose logs
+# 查看详细日志
 flutter run --verbose
 
-# Performance profiling
+# 性能分析
 flutter run --profile
 ```
 
 #### Android
 
 ```bash
-# View logs
+# 查看日志
 adb logcat | grep flutter
 
-# View crashes
+# 查看崩溃
 adb logcat | grep -i crash
 
-# View VPN
+# 查看 VPN
 adb logcat | grep VPN
 ```
 
 #### iOS
 
 ```bash
-# View device logs
+# 查看设备日志
 idevicesyslog
 
-# View a specific app
+# 查看特定应用
 idevicesyslog | grep PrivateDeploy
 
-# Use Console.app (macOS)
+# 使用 Console.app (macOS)
 open /System/Applications/Utilities/Console.app
 ```
 
 ---
 
-## ✅ Release Checklist
+## ✅ 发布检查清单
 
-### Before Release
+### 发布前
 
-- [ ] All functional tests pass
-- [ ] Unit tests pass
-- [ ] UI tests pass
-- [ ] On-device tests pass
-- [ ] Performance tests meet the standard
-- [ ] Memory leak check
-- [ ] Security audit complete
-- [ ] Privacy policy ready
-- [ ] Changelog written
-- [ ] Screenshots and promotional materials prepared
+- [ ] 所有功能测试通过
+- [ ] 单元测试通过
+- [ ] UI 测试通过
+- [ ] 真机测试通过
+- [ ] 性能测试达标
+- [ ] 内存泄漏检查
+- [ ] 安全审计完成
+- [ ] 隐私政策就绪
+- [ ] 更新日志编写完成
+- [ ] 截图和宣传材料准备好
 
-### Android-Specific
+### Android 特定
 
-- [ ] Signing key stored securely
-- [ ] ProGuard rules tested
-- [ ] Multi-device testing
-- [ ] API 24+ compatibility
-- [ ] Play Store metadata complete
+- [ ] 签名密钥安全保存
+- [ ] ProGuard 规则测试
+- [ ] 多设备测试
+- [ ] API 24+ 兼容性
+- [ ] Play Store 元数据完整
 
-### iOS-Specific
+### iOS 特定
 
-- [ ] Certificates and provisioning profiles valid
-- [ ] Network Extension tested
-- [ ] App Groups configured correctly
-- [ ] TestFlight testing complete
-- [ ] App Store metadata complete
-- [ ] Review preparation materials
-
----
-
-## 📚 References
-
-- [Flutter Build Guide](https://docs.flutter.dev/deployment)
-- [Android Release Process](https://developer.android.com/studio/publish)
-- [iOS Release Process](https://developer.apple.com/ios/submit/)
-- [gomobile Documentation](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+- [ ] 证书和描述文件有效
+- [ ] Network Extension 测试
+- [ ] App Groups 配置正确
+- [ ] TestFlight 测试完成
+- [ ] App Store 元数据完整
+- [ ] 审核准备材料
 
 ---
 
-*Last updated: 2024-11-05*
+## 📚 参考资料
+
+- [Flutter 构建指南](https://docs.flutter.dev/deployment)
+- [Android 发布流程](https://developer.android.com/studio/publish)
+- [iOS 发布流程](https://developer.apple.com/ios/submit/)
+- [gomobile 文档](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+
+---
+
+*最后更新: 2024-11-05*

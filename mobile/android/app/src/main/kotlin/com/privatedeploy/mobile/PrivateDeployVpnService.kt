@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.IpPrefix
@@ -20,6 +21,8 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.privatedeploy.mobile.vpncore.gomobile.Gomobile
 import com.privatedeploy.mobile.vpncore.gomobile.Platform
 import com.privatedeploy.mobile.vpncore.gomobile.TunConfig
@@ -270,6 +273,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
     // banner moments after the user connects to a blocked node.
     @Volatile
     private var latestStatusMessage: String? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     // Runnable that fires the deferred peer-VPN probe + actual startVpn
     // when resuming from a persisted intent. We hold the reference so
@@ -399,7 +403,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
             }
             ACTION_STOP -> stopVpn()
             ACTION_RESTART -> restartVpn()
-            ACTION_UPDATE_CONFIG -> updateConfig(intent.getStringExtra(EXTRA_CONFIG).orEmpty())
+            ACTION_UPDATE_CONFIG -> updateConfig(
+                intent.getStringExtra(EXTRA_CONFIG).orEmpty(),
+            )
             ACTION_RESET_STATS -> resetStats()
             null -> {
                 // OS recreated without a redelivered intent. onCreate
@@ -419,6 +425,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     private fun startVpn(config: String) {
+        // (isRunning, or startInProgress already set) must not clobber the
+        // ACTIVE session's mode — that would flip a live WG-only tunnel's
+        // health policy to proxy and tear it down. We set it only once this
+        // start is ACCEPTED (after the gates below), next to persistVpnIntent.
         // Cancel any pending delayed-restart backoff — the user just
         // expressed intent to start, the staged retry would only
         // confuse the state machine.
@@ -438,6 +448,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         synchronized(teardownLock) { /* barrier */ }
         if (isRunning) {
             Log.w(TAG, "VPN is already running")
+            broadcastStatus("already_running", "VPN is already running")
             return
         }
         if (config.isBlank()) {
@@ -479,6 +490,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // finally-clause clears it.
         if (!startInProgress.compareAndSet(false, true)) {
             Log.i(TAG, "VPN start ignored — another start is already in progress")
+            broadcastStatus("already_running", "VPN start already in progress")
             return
         }
 
@@ -490,6 +502,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // to "restart" using a stale activeConfig that had nothing to
         // do with what the user just attempted.
         desiredRunning.set(true)
+        // Start accepted — persist for process-kill recovery.
         persistVpnIntent(runtimeConfig)
 
         activeConfig = runtimeConfig
@@ -1675,7 +1688,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("PrivateDeploy VPN")
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_vpn_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -1781,6 +1794,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             setPackage(packageName)
             putExtra("status", status)
             putExtra("message", message)
+            // Tunnel-mode echo, same as statusMap(): lets the Dart layer keep
         })
     }
 
@@ -1825,17 +1839,80 @@ class PrivateDeployVpnService : VpnService(), Platform {
     // null-action branch in onStartCommand calls
     // [attemptResumeFromPersistedIntent] which reads this file and
     // resumes if the user previously wanted VPN active.
-    private val persistedIntentPrefsName = "vpn_intent_v1"
+    private val persistedIntentSecurePrefsName = "vpn_intent_secure_v1"
+    private val persistedIntentLegacyPrefsName = "vpn_intent_v1"
     private val persistedIntentKeyConfig = "config"
     private val persistedIntentKeyDesiredRunning = "desired_running"
 
+    private data class PersistedVpnIntent(
+        val hasData: Boolean,
+        val wantsRunning: Boolean = false,
+        val config: String = "",
+    )
+
+    private fun securePersistedIntentPrefs(): SharedPreferences? {
+        return try {
+            val masterKey = MasterKey.Builder(this)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                this,
+                persistedIntentSecurePrefsName,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Secure VPN intent storage unavailable", e)
+            null
+        }
+    }
+
+    private fun legacyPersistedIntentPrefs(): SharedPreferences =
+        getSharedPreferences(persistedIntentLegacyPrefsName, MODE_PRIVATE)
+
+    private fun readPersistedVpnIntent(prefs: SharedPreferences): PersistedVpnIntent {
+        val hasData = prefs.contains(persistedIntentKeyDesiredRunning) ||
+            prefs.contains(persistedIntentKeyConfig)
+        if (!hasData) {
+            return PersistedVpnIntent(hasData = false)
+        }
+        return PersistedVpnIntent(
+            hasData = true,
+            wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false),
+            config = prefs.getString(persistedIntentKeyConfig, null).orEmpty(),
+        )
+    }
+
+    private fun writePersistedVpnIntent(
+        prefs: SharedPreferences,
+        config: String,
+        desiredRunning: Boolean,
+    ): Boolean = prefs.edit()
+        .putString(persistedIntentKeyConfig, config)
+        .putBoolean(persistedIntentKeyDesiredRunning, desiredRunning)
+        .commit()
+
     private fun persistVpnIntent(config: String) {
         try {
-            getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-                .edit()
-                .putString(persistedIntentKeyConfig, config)
-                .putBoolean(persistedIntentKeyDesiredRunning, true)
-                .apply()
+            // Synchronous commit() (not apply()): the intent MUST be durable
+            // before the tunnel comes up. Store the full runtime
+            // config only in encrypted prefs; if secure storage is unavailable,
+            // do not fall back to plaintext because the config contains keys.
+            val securePrefs = securePersistedIntentPrefs()
+            if (securePrefs == null) {
+                Log.e(TAG, "VPN intent not persisted: secure storage unavailable")
+                return
+            }
+            if (!writePersistedVpnIntent(
+                    securePrefs,
+                    config,
+                    desiredRunning = true,
+                )) {
+                Log.e(TAG, "VPN intent not persisted: secure commit failed")
+                return
+            }
+            legacyPersistedIntentPrefs().edit().clear().commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist VPN intent", e)
         }
@@ -1843,28 +1920,42 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     private fun clearPersistedVpnIntent() {
         try {
-            // Synchronous .commit() rather than async .apply(). User-initiated
-            // Stop is the critical call site (line 833); .apply() returns
-            // immediately and the actual disk write is deferred to a
-            // background queue. If lmkd kills the process before that queue
-            // flushes, the persisted intent stays "active" on disk and the
-            // OS-recreated service auto-resumes the tunnel the user explicitly
-            // stopped — a "zombie VPN" violation of user intent that gemini
-            // flagged on 2026-06-01 (round-6 review).
-            //
-            // .commit() blocks the caller until the write completes against
-            // the filesystem journal/page cache. For our tiny prefs file
-            // that's typically sub-millisecond; the 5-second ANR threshold
-            // is multiple orders of magnitude away. Synchronous writes
-            // also survive lmkd kills because the kernel keeps page-cached
-            // data and flushes it after the process dies.
-            getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-                .edit()
-                .clear()
-                .commit()
+            // Clear both secure and legacy stores. Legacy is read only for
+            // migration, but clearing it here prevents a stopped tunnel from
+            // being resurrected by an old plaintext snapshot.
+            securePersistedIntentPrefs()?.edit()?.clear()?.commit()
+            legacyPersistedIntentPrefs().edit().clear().commit()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to clear persisted VPN intent", e)
         }
+    }
+
+    private fun loadPersistedVpnIntent(): PersistedVpnIntent {
+        val securePrefs = securePersistedIntentPrefs()
+        if (securePrefs != null) {
+            val secure = readPersistedVpnIntent(securePrefs)
+            if (secure.hasData) {
+                return secure
+            }
+        }
+
+        val legacyPrefs = legacyPersistedIntentPrefs()
+        val legacy = readPersistedVpnIntent(legacyPrefs)
+        if (!legacy.hasData) {
+            return legacy
+        }
+
+        // One-time migration from the historical plaintext prefs. Delete the
+        // legacy copy only after the encrypted write succeeds.
+        if (securePrefs != null &&
+            writePersistedVpnIntent(
+                securePrefs,
+                legacy.config,
+                desiredRunning = legacy.wantsRunning,
+            )) {
+            legacyPrefs.edit().clear().commit()
+        }
+        return legacy
     }
 
     private fun attemptResumeFromPersistedIntent() {
@@ -1879,10 +1970,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
                 // worker-spawned-but-not-yet-running window.
                 return
             }
-            val prefs = getSharedPreferences(persistedIntentPrefsName, MODE_PRIVATE)
-            val wantsRunning = prefs.getBoolean(persistedIntentKeyDesiredRunning, false)
-            val config = prefs.getString(persistedIntentKeyConfig, null).orEmpty()
-            if (!wantsRunning || config.isBlank()) {
+            val persistedIntent = loadPersistedVpnIntent()
+            val config = persistedIntent.config
+            if (!persistedIntent.wantsRunning || config.isBlank()) {
                 Log.i(TAG, "Resume skipped: no persisted active VPN intent.")
                 return
             }
@@ -2003,7 +2093,25 @@ class PrivateDeployVpnService : VpnService(), Platform {
         return false
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(
+            TAG,
+            "VPN task removed; foreground service remains active " +
+                "(running=$isRunning)",
+        )
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        val wasRunning = isRunning
+        val wantedRunning = desiredRunning.get()
+        if (wasRunning || wantedRunning) {
+            val message =
+                "network service destroyed by Android lifecycle; tearing down " +
+                    "active tunnel (wantedRunning=$wantedRunning)"
+            Log.w(TAG, message)
+            broadcastLog(message, System.currentTimeMillis())
+        }
         // Clear in-memory user intent FIRST so any thread still running
         // (start/restart worker, probe thread) sees desiredRunning=false
         // on its next re-check and bails. Disk-persisted intent stays
@@ -2268,15 +2376,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
         builder.allowBypass()
 
+        val routeAddressList = options.getRouteAddressList()
+
         applyAddressList(builder, options.getInet4AddressList())
         applyAddressList(builder, options.getInet6AddressList())
         applyDns(builder, options.getDNSServerAddress())
-        applyRouteList(builder, options.getRouteAddressList())
+        applyRouteList(builder, routeAddressList)
         applyExcludedRouteList(builder, options.getRouteExcludeAddressList())
         applyPackages(builder, options.getIncludePackageList(), options.getExcludePackageList())
         applyHttpProxy(builder, options)
 
-        if (options.getAutoRoute() && options.getRouteAddressList().isBlank()) {
+        if (options.getAutoRoute() && routeAddressList.isBlank()) {
             builder.addRoute("0.0.0.0", 0)
             if (options.getInet6AddressList().isNotBlank()) {
                 builder.addRoute("::", 0)
@@ -2487,6 +2597,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // of which physical network the VPN is actually riding.
         publishUnderlyingNetwork("change/$reason", connectivityManager)
 
+        // WG-only / intranet mode has no proxy upstream sockets to flush.
+        // Restarting the VPN here tears down the TUN and drops long-lived LAN
+        // TCP sessions such as Termux `ssh user@10.0.0.12`. The official
+        // WireGuard app stays stable because it lets WireGuard keep the peer
+        // alive across ordinary network capability churn. Match that behavior:
+        // keep Android's underlying-network attribution fresh, but do not
+        // rebuild sing-box/WireGuard unless the tunnel actually goes down.
         // Gate on user-intent (activeConfig is set by startVpn() and never
         // cleared except on app process death), not on isRunning. Otherwise a
         // previous handover-restart that hit RESTART_MAX_ATTEMPTS leaves

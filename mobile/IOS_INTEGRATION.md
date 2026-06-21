@@ -1,120 +1,118 @@
-# iOS Go Mobile Integration Guide
+# iOS Go Mobile 集成指南
 
-**English** | [中文](IOS_INTEGRATION.zh-CN.md)
-
-This document explains in detail how to integrate the Framework compiled by Go Mobile into the PrivateDeploy iOS app.
+本文档详细说明如何将 Go Mobile 编译的 Framework 集成到 PrivateDeploy iOS 应用中。
 
 ---
 
-## 📋 Prerequisites
+## 📋 前提条件
 
-### Development Environment
+### 开发环境
 
-- **macOS**: Monterey (12.0) or later
-- **Xcode**: 14.0 or later
+- **macOS**: Monterey (12.0) 或更高版本
+- **Xcode**: 14.0 或更高版本
 - **iOS SDK**: iOS 12.0+
-- **Go**: 1.21 or later
-- **gomobile**: latest version
-- **CocoaPods**: 1.11.0 or later (optional)
+- **Go**: 1.21 或更高版本
+- **gomobile**: 最新版本
+- **CocoaPods**: 1.11.0 或更高版本 (可选)
 
 ### Apple Developer Account
 
-- A valid Apple Developer account
-- A configured development certificate
-- Network Extension Capability enabled
+- 有效的 Apple Developer 账号
+- 已配置的开发证书
+- 已启用 Network Extension Capability
 
 ---
 
-## 🔧 Step 1: Compile the Go Mobile Library
+## 🔧 步骤 1: 编译 Go Mobile 库
 
-### 1.1 Install gomobile
+### 1.1 安装 gomobile
 
 ```bash
-# Install gomobile
+# 安装 gomobile
 go install golang.org/x/mobile/cmd/gomobile@latest
 
-# Initialize gomobile (requires Xcode)
+# 初始化 gomobile (需要 Xcode)
 gomobile init
 ```
 
-### 1.2 Compile the Framework
+### 1.2 编译 Framework
 
 ```bash
-# Enter the gomobile directory
+# 进入 gomobile 目录
 cd ~/PrivateDeploy/mobile/gomobile
 
-# Run the build script
+# 运行编译脚本
 ./build-ios.sh
 ```
 
-After a successful build, the Framework will be generated at:
+编译成功后，Framework 将生成在：
 ```
 ~/PrivateDeploy/mobile/ios/VPNCore.framework
 ```
 
-### 1.3 Verify the Framework
+### 1.3 验证 Framework
 
 ```bash
-# View the supported architectures
+# 查看支持的架构
 lipo -info ios/VPNCore.framework/VPNCore
 
-# The output should include:
-# arm64 (physical device)
-# x86_64 (simulator, if included during compilation)
+# 输出应该包含:
+# arm64 (真机)
+# x86_64 (模拟器, 如果编译时包含)
 
-# View the exported symbols
+# 查看导出的符号
 nm -g ios/VPNCore.framework/VPNCore | head -20
 ```
 
 ---
 
-## 🔗 Step 2: Integrate into the Xcode Project
+## 🔗 步骤 2: 集成到 Xcode 项目
 
-### 2.1 Open the Xcode Project
+### 2.1 打开 Xcode 项目
 
 ```bash
-# Open the workspace (recommended)
+# 打开 workspace (推荐)
 open ios/Runner.xcworkspace
 
-# Or open the project
+# 或打开 project
 open ios/Runner.xcodeproj
 ```
 
-### 2.2 Add the Framework
+### 2.2 添加 Framework
 
-1. In Xcode, select the **Runner** project
-2. Select the **Runner** target
-3. Switch to the **General** tab
-4. Scroll to **Frameworks, Libraries, and Embedded Content**
-5. Click the **+** button
-6. Choose **Add Other...** → **Add Files...**
-7. Navigate to `ios/VPNCore.framework`
-8. Select it and click **Open**
-9. Make sure it is set to **Embed & Sign**
+1. 在 Xcode 中，选择 **Runner** 项目
+2. 选择 **Runner** target
+3. 切换到 **General** 标签页
+4. 滚动到 **Frameworks, Libraries, and Embedded Content**
+5. 点击 **+** 按钮
+6. 选择 **Add Other...** → **Add Files...**
+7. 导航到 `ios/VPNCore.framework`
+8. 选择并点击 **Open**
+9. 确保设置为 **Embed & Sign**
 
-### 2.3 Configure Build Settings
+### 2.3 配置 Build Settings
 
-In **Build Settings**:
+在 **Build Settings** 中：
 
 ```
 Framework Search Paths: $(PROJECT_DIR)
 ```
 
-### 2.4 Add the Framework for the Network Extension
+### 2.4 为 Network Extension 添加 Framework
 
-Repeat the steps above to add the Framework to the **VPNExtension** target:
+重复上述步骤为 **VPNExtension** target 添加 Framework：
 
-1. Select the **VPNExtension** target
-2. Add `VPNCore.framework`
-3. Set it to **Embed & Sign**
+1. 选择 **VPNExtension** target
+2. 添加 `VPNCore.framework`
+3. 设置为 **Embed & Sign**
 
 ---
 
-## 💻 Step 3: Use the Go Library in Code
+## 💻 步骤 3: 在代码中使用 Go 库
 
-### 3.1 Import the Go Package
+### 3.1 导入 Go 包
 
-In `PacketTunnelProvider.swift`:
+在 `PacketTunnelProvider.swift` 中：
 
 ```swift
 import NetworkExtension
@@ -128,14 +126,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                             completionHandler: @escaping (Error?) -> Void) {
         os_log("[PacketTunnelProvider] Starting tunnel...")
 
-        // Load configuration
+        // 加载配置
         let config = loadConfig()
 
-        // Create the VPN Core instance
+        // 创建 VPN Core 实例
         do {
             vpnCore = VPNCoreNewVPNService()
 
-            // Start the VPN
+            // 启动 VPN
             try vpnCore?.start(config)
 
             os_log("[PacketTunnelProvider] VPN Core started successfully")
@@ -168,7 +166,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 }
 ```
 
-### 3.2 Handle Packets
+### 3.2 处理数据包
 
 ```swift
 private func startPacketProcessing() {
@@ -177,15 +175,15 @@ private func startPacketProcessing() {
               let vpnCore = self.vpnCore else { return }
 
         do {
-            // Process each packet
+            // 处理每个数据包
             for (index, packet) in packets.enumerated() {
                 let protocolNumber = protocols[index].intValue
 
-                // Pass it to the Go Mobile VPN Core
+                // 传递给 Go Mobile VPN Core
                 try vpnCore.handlePacket(packet, protocolNumber)
             }
 
-            // Continue reading
+            // 继续读取
             self.startPacketProcessing()
 
         } catch {
@@ -195,12 +193,12 @@ private func startPacketProcessing() {
     }
 }
 
-// Write packets
+// 写入数据包
 private func writePackets(_ packets: [Data], protocols: [NSNumber]) {
     guard let vpnCore = vpnCore else { return }
 
     do {
-        // Batch write
+        // 批量写入
         packetFlow.writePackets(packets, withProtocols: protocols)
 
     } catch {
@@ -210,17 +208,17 @@ private func writePackets(_ packets: [Data], protocols: [NSNumber]) {
 }
 ```
 
-### 3.3 Retrieve Traffic Statistics
+### 3.3 获取流量统计
 
 ```swift
 private func getStats() -> VPNCoreTrafficStats? {
     guard let vpnCore = vpnCore else { return nil }
 
     do {
-        // Get the statistics in JSON format
+        // 获取 JSON 格式的统计数据
         let statsJSON = try vpnCore.getStats()
 
-        // Parse the JSON
+        // 解析 JSON
         if let data = statsJSON.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
 
@@ -243,36 +241,36 @@ private func getStats() -> VPNCoreTrafficStats? {
 
 ---
 
-## 🔐 Step 4: Configure Capabilities
+## 🔐 步骤 4: 配置 Capabilities
 
-### 4.1 Enable Network Extension
+### 4.1 启用 Network Extension
 
-1. Select the **Runner** target
-2. Switch to the **Signing & Capabilities** tab
-3. Click **+ Capability**
-4. Search for and add **Network Extensions**
-5. Check **Packet Tunnel**
+1. 选择 **Runner** target
+2. 切换到 **Signing & Capabilities** 标签页
+3. 点击 **+ Capability**
+4. 搜索并添加 **Network Extensions**
+5. 勾选 **Packet Tunnel**
 
-### 4.2 Configure App Groups
+### 4.2 配置 App Groups
 
-1. In **Capabilities**, click **+ Capability**
-2. Add **App Groups**
-3. Click **+** to add a new App Group
-4. Enter: `group.com.privatedeploy.mobile`
-5. Repeat the steps above for the **VPNExtension** target
+1. 在 **Capabilities** 中点击 **+ Capability**
+2. 添加 **App Groups**
+3. 点击 **+** 添加新的 App Group
+4. 输入：`group.com.privatedeploy.mobile`
+5. 对 **VPNExtension** target 重复上述步骤
 
-### 4.3 Configure Keychain Sharing
+### 4.3 配置 Keychain Sharing
 
-1. Add the **Keychain Sharing** capability
-2. Add the keychain group: `$(AppIdentifierPrefix)com.privatedeploy.mobile`
+1. 添加 **Keychain Sharing** capability
+2. 添加 keychain group：`$(AppIdentifierPrefix)com.privatedeploy.mobile`
 
 ---
 
-## 🐛 Step 5: Debugging and Testing
+## 🐛 步骤 5: 调试和测试
 
-### 5.1 Enable Logging
+### 5.1 启用日志
 
-In the Network Extension:
+在 Network Extension 中：
 
 ```swift
 import os.log
@@ -283,29 +281,29 @@ let logger = OSLog(subsystem: "com.privatedeploy.mobile.vpnextension",
 os_log("VPN started", log: logger, type: .info)
 ```
 
-### 5.2 View Logs
+### 5.2 查看日志
 
-Use Console.app or the command line:
+使用 Console.app 或命令行：
 
 ```bash
-# View logs in real time
+# 实时查看日志
 log stream --predicate 'process == "VPNExtension"'
 
-# View a specific subsystem
+# 查看特定子系统
 log stream --predicate 'subsystem == "com.privatedeploy.mobile.vpnextension"'
 ```
 
-### 5.3 Debug the Network Extension
+### 5.3 调试 Network Extension
 
-**Note**: The Network Extension cannot be debugged directly in Xcode
+**注意**: Network Extension 无法直接在 Xcode 中调试
 
-Debugging methods:
-1. Use `os_log` to output detailed logs
-2. Save error information to the App Group's shared container
-3. Read and display it in the main app
+调试方法：
+1. 使用 `os_log` 输出详细日志
+2. 将错误信息保存到 App Group 的共享容器
+3. 在主应用中读取并显示
 
 ```swift
-// Write logs to the shared container
+// 写入日志到共享容器
 let fileManager = FileManager.default
 if let containerURL = fileManager.containerURL(
     forSecurityApplicationGroupIdentifier: "group.com.privatedeploy.mobile") {
@@ -315,13 +313,13 @@ if let containerURL = fileManager.containerURL(
 }
 ```
 
-### 5.4 Test the VPN Connection
+### 5.4 测试 VPN 连接
 
 ```swift
-// Test in the main app
+// 在主应用中测试
 let vpnPlugin = VpnPlugin()
 
-// Start the VPN
+// 启动 VPN
 let config = """
 {
     "log": {"level": "debug"},
@@ -342,59 +340,59 @@ vpnPlugin.handle(call) { result in
 
 ---
 
-## ⚠️ Common Issues
+## ⚠️ 常见问题
 
-### Issue 1: Framework Not Found
+### 问题 1: Framework 未找到
 
-**Symptom**: The build fails with `ld: framework not found VPNCore`
+**症状**: Build 失败，提示 `ld: framework not found VPNCore`
 
-**Solution**:
+**解决方案**:
 ```bash
-# Check whether the Framework exists
+# 检查 Framework 是否存在
 ls -la ios/VPNCore.framework
 
-# Recompile
+# 重新编译
 cd gomobile
 ./build-ios.sh
 
-# Check the Framework Search Paths in Xcode
+# 在 Xcode 中检查 Framework Search Paths
 # Build Settings → Framework Search Paths → $(PROJECT_DIR)
 ```
 
-### Issue 2: Symbol Not Found
+### 问题 2: 符号未找到
 
-**Symptom**: Runtime error `dyld: Symbol not found: _VPNCoreNewVPNService`
+**症状**: 运行时错误 `dyld: Symbol not found: _VPNCoreNewVPNService`
 
-**Solution**:
+**解决方案**:
 ```swift
-// Check the import
+// 检查导入
 import VPNCore
 
-// Make sure the Framework is set to Embed & Sign
-// rather than Do Not Embed
+// 确保 Framework 设置为 Embed & Sign
+// 而不是 Do Not Embed
 ```
 
-### Issue 3: Network Extension Permission Error
+### 问题 3: Network Extension 权限错误
 
-**Symptom**: `NEVPNError: Configuration is invalid`
+**症状**: `NEVPNError: Configuration is invalid`
 
-**Solution**:
+**解决方案**:
 ```swift
-// Make sure the following are enabled in Capabilities:
+// 确保在 Capabilities 中启用了:
 // - Network Extensions (Packet Tunnel)
 // - App Groups
 
-// Check the Entitlements files
-// Runner.entitlements and VPNExtension.entitlements
+// 检查 Entitlements 文件
+// Runner.entitlements 和 VPNExtension.entitlements
 ```
 
-### Issue 4: Go Panic Crash
+### 问题 4: Go panic 崩溃
 
-**Symptom**: The Extension crashes and the Console shows a Go panic
+**症状**: Extension 崩溃，Console 显示 Go panic
 
-**Solution**:
+**解决方案**:
 ```swift
-// Add error handling
+// 添加错误处理
 do {
     try vpnCore?.start(config)
 } catch {
@@ -404,37 +402,37 @@ do {
 }
 ```
 
-### Issue 5: Memory Limit
+### 问题 5: 内存限制
 
-**Symptom**: The Extension is terminated by the system due to memory pressure
+**症状**: Extension 因内存压力被系统终止
 
-**Solution**:
+**解决方案**:
 ```swift
-// The Network Extension has a ~30MB memory limit
-// Optimize memory usage:
+// Network Extension 有 ~30MB 内存限制
+// 优化内存使用:
 
-// 1. Use autoreleasepool
+// 1. 使用 autoreleasepool
 autoreleasepool {
-    // Process packets
+    // 处理数据包
 }
 
-// 2. Release large objects promptly
+// 2. 及时释放大对象
 var largeData: Data? = someData
-// After use
+// 使用后
 largeData = nil
 
-// 3. Monitor memory
+// 3. 监控内存
 let memoryUsage = reportMemory()
 os_log("Memory usage: %{public}d MB", memoryUsage)
 ```
 
 ---
 
-## 🔒 Security Considerations
+## 🔒 安全考虑
 
 ### App Transport Security
 
-Configure in `Info.plist` (if needed):
+在 `Info.plist` 中配置（如需要）：
 
 ```xml
 <key>NSAppTransportSecurity</key>
@@ -444,10 +442,10 @@ Configure in `Info.plist` (if needed):
 </dict>
 ```
 
-### Keychain Access
+### Keychain 访问
 
 ```swift
-// Use the Keychain to store sensitive configuration
+// 使用 Keychain 存储敏感配置
 let query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
     kSecAttrAccount as String: "vpn_config",
@@ -458,10 +456,10 @@ let query: [String: Any] = [
 SecItemAdd(query as CFDictionary, nil)
 ```
 
-### Data Encryption
+### 数据加密
 
 ```swift
-// Use CryptoKit to encrypt sensitive data
+// 使用 CryptoKit 加密敏感数据
 import CryptoKit
 
 let key = SymmetricKey(size: .bits256)
@@ -470,9 +468,9 @@ let encrypted = try AES.GCM.seal(data, using: key)
 
 ---
 
-## 📊 Performance Optimization
+## 📊 性能优化
 
-### 1. Batch Process Packets
+### 1. 批量处理数据包
 
 ```swift
 private var packetBuffer: [(Data, NSNumber)] = []
@@ -495,7 +493,7 @@ func flushPackets() {
 }
 ```
 
-### 2. Use DispatchQueue
+### 2. 使用 DispatchQueue
 
 ```swift
 private let processingQueue = DispatchQueue(
@@ -504,11 +502,11 @@ private let processingQueue = DispatchQueue(
 )
 
 processingQueue.async {
-    // Process packets
+    // 处理数据包
 }
 ```
 
-### 3. Memory Pool
+### 3. 内存池
 
 ```swift
 class PacketPool {
@@ -528,45 +526,45 @@ class PacketPool {
 
 ---
 
-## ✅ Verification Checklist
+## ✅ 验证清单
 
-After completing the integration, please verify the following items:
+完成集成后，请验证以下项目：
 
-- [ ] The Framework has been successfully generated
-- [ ] The Framework has been added to Runner and VPNExtension
-- [ ] Embed & Sign is set correctly
-- [ ] The Network Extension capability is enabled
-- [ ] App Groups are configured
-- [ ] The Entitlements files are correct
-- [ ] The app compiles normally
-- [ ] The VPN can start successfully
-- [ ] Packets are forwarded normally
-- [ ] Traffic statistics are correct
-- [ ] Console logs are normal
-- [ ] No memory warnings
-- [ ] Physical device testing passes
+- [ ] Framework 已成功生成
+- [ ] Framework 已添加到 Runner 和 VPNExtension
+- [ ] Embed & Sign 设置正确
+- [ ] Network Extension capability 已启用
+- [ ] App Groups 已配置
+- [ ] Entitlements 文件正确
+- [ ] 应用可以正常编译
+- [ ] VPN 可以成功启动
+- [ ] 数据包正常转发
+- [ ] 流量统计正确
+- [ ] Console 日志正常
+- [ ] 无内存警告
+- [ ] 真机测试通过
 
 ---
 
-## 📚 References
+## 📚 参考资料
 
-- [gomobile Official Documentation](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
-- [Network Extension Programming Guide](https://developer.apple.com/documentation/networkextension)
+- [gomobile 官方文档](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+- [Network Extension 编程指南](https://developer.apple.com/documentation/networkextension)
 - [Packet Tunnel Provider](https://developer.apple.com/documentation/networkextension/nepackettunnelprovider)
 - [App Groups](https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_security_application-groups)
-- [sing-box Documentation](https://sing-box.sagernet.org/)
+- [sing-box 文档](https://sing-box.sagernet.org/)
 
 ---
 
-## 🆘 Getting Help
+## 🆘 获取帮助
 
-If you run into problems, please:
+如遇到问题，请：
 
-1. Check the Console.app logs
-2. Check whether VPNCore.framework is compiled correctly
-3. Refer to GOMOBILE_INTEGRATION.md
-4. Submit an Issue to the project repository
+1. 查看 Console.app 日志
+2. 检查 VPNCore.framework 是否正确编译
+3. 参考 GOMOBILE_INTEGRATION.md
+4. 提交 Issue 到项目仓库
 
 ---
 
-*Last updated: 2024-11-05*
+*最后更新: 2024-11-05*

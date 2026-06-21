@@ -1,72 +1,70 @@
-# Android Go Mobile Integration Guide
+# Android Go Mobile 集成指南
 
-**English** | [中文](ANDROID_INTEGRATION.zh-CN.md)
-
-This document explains in detail how to integrate the AAR library compiled by Go Mobile into the PrivateDeploy Android application.
+本文档详细说明如何将 Go Mobile 编译的 AAR 库集成到 PrivateDeploy Android 应用中。
 
 ---
 
-## 📋 Prerequisites
+## 📋 前提条件
 
-### Development Environment
+### 开发环境
 
-- **Android Studio**: Electric Eel or later
+- **Android Studio**: Electric Eel 或更高版本
 - **Android SDK**: API 24+ (Android 7.0+)
-- **Android NDK**: r25c or later
-- **Go**: 1.21 or later
-- **gomobile**: latest version
+- **Android NDK**: r25c 或更高版本
+- **Go**: 1.21 或更高版本
+- **gomobile**: 最新版本
 
-### Environment Variable Setup
+### 环境变量设置
 
 ```bash
-# Set the Android SDK path
+# 设置 Android SDK 路径
 export ANDROID_HOME=$HOME/Android/Sdk
 
-# Set the Android NDK path
+# 设置 Android NDK 路径
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
 
-# Set the Go path
+# 设置 Go 路径
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
 ```
 
 ---
 
-## 🔧 Step 1: Compile the Go Mobile Library
+## 🔧 步骤 1: 编译 Go Mobile 库
 
-### 1.1 Install gomobile
+### 1.1 安装 gomobile
 
 ```bash
-# Install gomobile
+# 安装 gomobile
 go install golang.org/x/mobile/cmd/gomobile@latest
 
-# Initialize gomobile
+# 初始化 gomobile
 gomobile init
 ```
 
-### 1.2 Compile the AAR File
+### 1.2 编译 AAR 文件
 
 ```bash
-# Enter the gomobile directory
+# 进入 gomobile 目录
 cd ~/PrivateDeploy/mobile/gomobile
 
-# Run the build script
+# 运行编译脚本
 ./build-android.sh
 ```
 
-After a successful compilation, the AAR file will be generated at:
+编译成功后，AAR 文件将生成在：
 ```
 ~/PrivateDeploy/mobile/android/app/libs/vpncore.aar
 ```
 
-### 1.3 Verify the AAR File
+### 1.3 验证 AAR 文件
 
 ```bash
-# View the AAR contents
+# 查看 AAR 内容
 unzip -l android/app/libs/vpncore.aar
 
-# It should contain:
-# - classes.jar (Java classes)
+# 应该包含:
+# - classes.jar (Java 类)
 # - jni/arm64-v8a/libgojni.so
 # - jni/armeabi-v7a/libgojni.so
 # - jni/x86/libgojni.so
@@ -76,11 +74,11 @@ unzip -l android/app/libs/vpncore.aar
 
 ---
 
-## 🔗 Step 2: Integrate into the Android Project
+## 🔗 步骤 2: 集成到 Android 项目
 
-### 2.1 Configure build.gradle
+### 2.1 配置 build.gradle
 
-Open `android/app/build.gradle` and make sure the libs directory is included:
+打开 `android/app/build.gradle`，确保包含 libs 目录：
 
 ```gradle
 android {
@@ -94,7 +92,7 @@ android {
 }
 
 dependencies {
-    // Add the AAR dependency
+    // 添加 AAR 依赖
     implementation(name: 'vpncore', ext: 'aar')
 
     // Kotlin
@@ -106,7 +104,7 @@ dependencies {
 }
 ```
 
-### 2.2 Sync the Project
+### 2.2 同步项目
 
 ```bash
 cd android
@@ -115,11 +113,11 @@ cd android
 
 ---
 
-## 💻 Step 3: Use the Go Library in Code
+## 💻 步骤 3: 在代码中使用 Go 库
 
-### 3.1 Import the Go Package
+### 3.1 导入 Go 包
 
-In `PrivateDeployVpnService.kt`:
+在 `PrivateDeployVpnService.kt` 中：
 
 ```kotlin
 import com.privatedeploy.mobile.vpncore.Vpncore
@@ -132,10 +130,10 @@ class PrivateDeployVpnService : VpnService() {
         // ...
 
         try {
-            // Create the VPN Core instance
+            // 创建 VPN Core 实例
             vpnCore = Vpncore.NewVPNService()
 
-            // Start the VPN
+            // 启动 VPN
             vpnCore?.start(config)
 
             Log.i(TAG, "VPN Core started successfully")
@@ -147,7 +145,7 @@ class PrivateDeployVpnService : VpnService() {
 
     private fun stopVpn() {
         try {
-            // Stop the VPN Core
+            // 停止 VPN Core
             vpnCore?.stop()
             vpnCore = null
 
@@ -160,7 +158,7 @@ class PrivateDeployVpnService : VpnService() {
 }
 ```
 
-### 3.2 Handle Packets
+### 3.2 处理数据包
 
 ```kotlin
 private fun startPacketLoop() {
@@ -172,12 +170,12 @@ private fun startPacketLoop() {
 
         while (!Thread.currentThread().isInterrupted && isRunning) {
             try {
-                // Read a packet
+                // 读取数据包
                 val length = inputStream.read(buffer.array())
                 if (length > 0) {
                     buffer.limit(length)
 
-                    // Pass it to the Go Mobile VPN Core
+                    // 传递给 Go Mobile VPN Core
                     vpnCore?.handlePacket(buffer.array(), length.toLong())
 
                     buffer.clear()
@@ -191,7 +189,7 @@ private fun startPacketLoop() {
 }
 ```
 
-### 3.3 Get Traffic Statistics
+### 3.3 获取流量统计
 
 ```kotlin
 private fun getStats(): TrafficStats {
@@ -217,41 +215,41 @@ private fun parseStatsJson(json: String): TrafficStats {
 
 ---
 
-## 🐛 Step 4: Debug and Test
+## 🐛 步骤 4: 调试和测试
 
-### 4.1 Enable Logcat Filtering
+### 4.1 启用 Logcat 过滤
 
 ```bash
-# View network service logs
+# 查看 VPN 服务日志
 adb logcat | grep PrivateDeployVPN
 
-# View Go logs
+# 查看 Go 日志
 adb logcat | grep GoLog
 
-# View all related logs
+# 查看所有相关日志
 adb logcat | grep -E "PrivateDeployVPN|GoLog|VpnPlugin"
 ```
 
-### 4.2 Inspect the TUN Interface
+### 4.2 检查 TUN 接口
 
 ```bash
-# View network interfaces
+# 查看网络接口
 adb shell ip addr show
 
-# View the routing table
+# 查看路由表
 adb shell ip route
 
-# View VPN status
+# 查看 VPN 状态
 adb shell dumpsys connectivity | grep -A 20 VPN
 ```
 
-### 4.3 Test the VPN Connection
+### 4.3 测试 VPN 连接
 
 ```kotlin
-// Test within the app
+// 在应用中测试
 val vpnService = VpnNativeService.instance
 
-// Start the VPN
+// 启动 VPN
 val config = """
 {
     "log": {"level": "debug"},
@@ -261,40 +259,40 @@ val config = """
 """
 vpnService.startVpn(config)
 
-// Check status
+// 检查状态
 val isRunning = vpnService.isRunning()
 Log.d(TAG, "VPN Running: $isRunning")
 
-// Get statistics
+// 获取统计
 val stats = vpnService.getStats()
 Log.d(TAG, "Upload: ${stats.uploadBytes}, Download: ${stats.downloadBytes}")
 ```
 
 ---
 
-## ⚠️ Common Issues
+## ⚠️ 常见问题
 
-### Issue 1: AAR File Not Found
+### 问题 1: AAR 文件未找到
 
-**Symptom**: Gradle sync fails, reporting that vpncore.aar cannot be found
+**症状**: Gradle 同步失败，提示找不到 vpncore.aar
 
-**Solution**:
+**解决方案**:
 ```bash
-# Check whether the file exists
+# 检查文件是否存在
 ls -lh android/app/libs/vpncore.aar
 
-# If it does not exist, recompile
+# 如果不存在，重新编译
 cd gomobile
 ./build-android.sh
 ```
 
-### Issue 2: JNI Library Not Found
+### 问题 2: 找不到 JNI 库
 
-**Symptom**: Runtime error `UnsatisfiedLinkError: No implementation found for...`
+**症状**: 运行时错误 `UnsatisfiedLinkError: No implementation found for...`
 
-**Solution**:
+**解决方案**:
 ```kotlin
-// Make sure the library is loaded before use
+// 确保在使用前加载库
 companion object {
     init {
         try {
@@ -306,41 +304,41 @@ companion object {
 }
 ```
 
-### Issue 3: VPN Permission Denied
+### 问题 3: VPN 权限被拒绝
 
-**Symptom**: `SecurityException: VPN permission denied`
+**症状**: `SecurityException: VPN permission denied`
 
-**Solution**:
+**解决方案**:
 ```kotlin
-// Request VPN permission
+// 请求 VPN 权限
 val intent = VpnService.prepare(context)
 if (intent != null) {
     activity.startActivityForResult(intent, VPN_REQUEST_CODE)
 }
 ```
 
-### Issue 4: Go panic Crash
+### 问题 4: Go panic 崩溃
 
-**Symptom**: The app crashes and the logs show a Go panic
+**症状**: 应用崩溃，日志显示 Go panic
 
-**Solution**:
+**解决方案**:
 ```kotlin
-// Add error handling
+// 添加错误处理
 try {
     vpnCore?.start(config)
 } catch (e: Exception) {
     Log.e(TAG, "Go panic caught", e)
-    // Recover or restart
+    // 恢复或重启
 }
 ```
 
-### Issue 5: Memory Leak
+### 问题 5: 内存泄漏
 
-**Symptom**: Memory usage keeps growing after running for a long time
+**症状**: 长时间运行后内存占用持续增长
 
-**Solution**:
+**解决方案**:
 ```kotlin
-// Make sure resources are released properly
+// 确保正确释放资源
 override fun onDestroy() {
     super.onDestroy()
     vpnCore?.stop()
@@ -350,111 +348,111 @@ override fun onDestroy() {
 
 ---
 
-## 🔒 Security Considerations
+## 🔒 安全考虑
 
-### ProGuard Configuration
+### ProGuard 配置
 
-In `proguard-rules.pro`:
+在 `proguard-rules.pro` 中：
 
 ```proguard
-# Keep the classes generated by Go Mobile
+# 保留 Go Mobile 生成的类
 -keep class com.privatedeploy.mobile.vpncore.** { *; }
 -keep class gomobile.** { *; }
 
-# Keep native methods
+# 保留 native 方法
 -keepclassmembers class * {
     native <methods>;
 }
 ```
 
-### Permission Minimization
+### 权限最小化
 
-Request only the required permissions:
+只请求必需的权限：
 ```xml
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 ```
 
-### Data Encryption
+### 数据加密
 
-Make sure the configuration file is stored encrypted:
+确保配置文件加密存储：
 ```kotlin
-// Encrypt the configuration using the Android Keystore
+// 使用 Android Keystore 加密配置
 val keyStore = KeyStore.getInstance("AndroidKeyStore")
-// ... encryption logic
+// ... 加密逻辑
 ```
 
 ---
 
-## 📊 Performance Optimization
+## 📊 性能优化
 
-### 1. Reduce Data Copying
+### 1. 减少数据复制
 
 ```kotlin
-// Use a DirectByteBuffer to avoid copying
+// 使用 DirectByteBuffer 避免复制
 val buffer = ByteBuffer.allocateDirect(32767)
 ```
 
-### 2. Thread Optimization
+### 2. 线程优化
 
 ```kotlin
-// Use a dedicated thread pool
+// 使用专用线程池
 private val executor = Executors.newFixedThreadPool(2)
 
 executor.execute {
-    // Handle packets
+    // 处理数据包
 }
 ```
 
-### 3. Memory Management
+### 3. 内存管理
 
 ```kotlin
-// Clean up periodically
+// 定期清理
 System.gc()
 
-// Monitor memory
+// 监控内存
 val runtime = Runtime.getRuntime()
 Log.d(TAG, "Memory: ${runtime.totalMemory() - runtime.freeMemory()}")
 ```
 
 ---
 
-## ✅ Verification Checklist
+## ✅ 验证清单
 
-After completing the integration, please verify the following items:
+完成集成后，请验证以下项目：
 
-- [ ] The AAR file has been generated successfully
-- [ ] Gradle sync has no errors
-- [ ] The app compiles normally
-- [ ] The VPN can start successfully
-- [ ] Packets are forwarded normally
-- [ ] Traffic statistics are correct
-- [ ] Log output is normal
-- [ ] No memory leaks
-- [ ] The ProGuard build succeeds
-- [ ] On-device testing passes
+- [ ] AAR 文件已成功生成
+- [ ] Gradle 同步无错误
+- [ ] 应用可以正常编译
+- [ ] VPN 可以成功启动
+- [ ] 数据包正常转发
+- [ ] 流量统计正确
+- [ ] 日志输出正常
+- [ ] 无内存泄漏
+- [ ] ProGuard 构建成功
+- [ ] 真机测试通过
 
 ---
 
-## 📚 References
+## 📚 参考资料
 
-- [gomobile official documentation](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+- [gomobile 官方文档](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
 - [Android VpnService API](https://developer.android.com/reference/android/net/VpnService)
-- [sing-box documentation](https://sing-box.sagernet.org/)
+- [sing-box 文档](https://sing-box.sagernet.org/)
 - [Go Mobile Wiki](https://github.com/golang/go/wiki/Mobile)
 
 ---
 
-## 🆘 Getting Help
+## 🆘 获取帮助
 
-If you run into problems, please:
+如遇到问题，请：
 
-1. Check the Android Studio Logcat
-2. Inspect the gomobile/vpn_service.go implementation
-3. Refer to GOMOBILE_INTEGRATION.md
-4. Submit an Issue to the project repository
+1. 查看 Android Studio Logcat
+2. 检查 gomobile/vpn_service.go 实现
+3. 参考 GOMOBILE_INTEGRATION.md
+4. 提交 Issue 到项目仓库
 
 ---
 
-*Last updated: 2024-11-05*
+*最后更新: 2024-11-05*

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -63,13 +64,27 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	host := getEnv("API_HOST", "127.0.0.1")
+	allowRemote := getEnvBool("API_ALLOW_REMOTE", false)
+
+	// Fail closed: an API that is reachable from anywhere other than loopback
+	// must not be exposed without a shared token. Otherwise a single
+	// API_ALLOW_REMOTE=true (or a non-loopback bind) would publish the full
+	// cloud-provisioning + credential surface unauthenticated.
+	if (allowRemote || !isLoopbackHost(host)) && strings.TrimSpace(authToken) == "" {
+		return nil, fmt.Errorf(
+			"API_AUTH_TOKEN is required when the API is reachable remotely " +
+				"(API_ALLOW_REMOTE=true or a non-loopback API_HOST); set API_AUTH_TOKEN or API_AUTH_TOKEN_FILE",
+		)
+	}
+
 	return &Config{
 		Server: ServerConfig{
-			Host:         getEnv("API_HOST", "127.0.0.1"),
+			Host:         host,
 			Port:         getEnv("API_PORT", "8443"),
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: writeTimeout,
-			AllowRemote:  getEnvBool("API_ALLOW_REMOTE", false),
+			AllowRemote:  allowRemote,
 			AuthToken:    authToken,
 		},
 		Database: DatabaseConfig{
@@ -90,6 +105,26 @@ func Load() (*Config, error) {
 			Path:    getEnv("API_AUDIT_LOG_PATH", "data/audit.log"),
 		},
 	}, nil
+}
+
+// isLoopbackHost reports whether binding to host only exposes the loopback
+// interface. An empty host or 0.0.0.0/:: (wildcard bind) is treated as
+// non-loopback because it accepts remote connections.
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// A non-IP, non-localhost hostname may resolve anywhere; treat as remote.
+		return false
+	}
+	return ip.IsLoopback()
 }
 
 // getEnv gets environment variable with fallback

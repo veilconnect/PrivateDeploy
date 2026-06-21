@@ -1,4 +1,3 @@
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
@@ -558,63 +557,6 @@ void main() {
       expect(vpnProvider.connectCalls, 0);
       expect(cloudProvider.storedChecks, isEmpty);
     });
-
-    testWidgets(
-        'testCloudNodeLatency restores a proxyless WireGuard-only tunnel',
-        (tester) async {
-      final cloudProvider = _FakeCloudProvider(
-        instances: [_instance(label: 'fra-node')],
-      );
-      final profileProvider = _FakeProfileProvider();
-      final vpnProvider = _FakeVpnProvider(
-        status: VpnStatus.connected,
-        activeProfileName: 'Intranet WireGuard',
-        proxylessTunnel: true,
-        liveConfigJson: jsonEncode({
-          'log': {'level': 'info'},
-          'outbounds': [
-            {'type': 'direct', 'tag': 'direct'},
-          ],
-          'route': {'final': 'snapshot-final'},
-        }),
-      );
-      final settingsProvider = _FakeAppSettingsProvider(
-        VpnRoutingSettings(
-          wireGuardIntranet: _testWireGuard.copyWith(enabled: false),
-        ),
-      );
-
-      await _pumpCloudActionHarness(
-        tester,
-        cloudProvider: cloudProvider,
-        appSettingsProvider: settingsProvider,
-        onRun: (context) => testCloudNodeLatency(
-          context: context,
-          cloudProvider: cloudProvider,
-          instance: cloudProvider.instances.single,
-          profileProvider: profileProvider,
-          vpnProvider: vpnProvider,
-          throughputProbe: () async => const CloudThroughputSample(
-            bytes: 1000000,
-            elapsedMs: 250,
-            speedMbps: 32.0,
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('Run'));
-      await tester.pumpAndSettle();
-
-      expect(vpnProvider.connectProxylessHistory, <bool>[false, true]);
-      expect(vpnProvider.connectProfileNames,
-          <String?>['Cloud: fra-node', 'Intranet WireGuard']);
-      final restored =
-          jsonDecode(vpnProvider.connectConfigs.last!) as Map<String, dynamic>;
-      expect((restored['route'] as Map)['final'], 'snapshot-final');
-      expect(restored.containsKey('endpoints'), isFalse,
-          reason:
-              'restore must use the live snapshot, not rebuild from settings');
-    });
   });
 }
 
@@ -698,15 +640,6 @@ CloudInstance _instance({
     ),
   );
 }
-
-final _testWireGuard = WireGuardIntranet(
-  enabled: true,
-  server: 'wg.example.com',
-  serverPort: 51820,
-  privateKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-  peerPublicKey: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
-  localAddress: const ['10.8.0.2/24'],
-);
 
 Profile _profile({
   required String id,
@@ -1012,9 +945,6 @@ class _FakeAppSettingsProvider extends AppSettingsProvider {
 
   @override
   VpnRoutingSettings get vpnRoutingSettings => _routingSettings;
-
-  @override
-  WireGuardIntranet get wireGuardIntranet => _routingSettings.wireGuardIntranet;
 }
 
 class _FakeProfileProvider extends Fake implements ProfileProvider {
@@ -1058,9 +988,6 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   _FakeVpnProvider({
     required this.status,
     this.disconnectResult = true,
-    this.activeProfileName,
-    this.proxylessTunnel = false,
-    this.liveConfigJson,
   });
 
   @override
@@ -1068,14 +995,12 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
 
   final bool disconnectResult;
   String? activeProfileName;
-  bool proxylessTunnel;
   String? liveConfigJson;
   int connectCalls = 0;
   int disconnectCalls = 0;
   String? lastConfigJson;
   final connectConfigs = <String?>[];
   final connectProfileNames = <String?>[];
-  final connectProxylessHistory = <bool>[];
 
   @override
   String? get error => null;
@@ -1117,9 +1042,6 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
   String? get activeProfile => activeProfileName;
 
   @override
-  bool get isProxylessTunnel => proxylessTunnel;
-
-  @override
   VpnSessionSnapshot? get activeSessionSnapshot {
     final config = liveConfigJson;
     if (status != VpnStatus.connected || config == null || config.isEmpty) {
@@ -1128,7 +1050,6 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     return VpnSessionSnapshot(
       configJson: config,
       profileName: activeProfileName,
-      proxyless: proxylessTunnel,
     );
   }
 
@@ -1138,15 +1059,12 @@ class _FakeVpnProvider extends Fake implements VpnProvider {
     String? profileName,
     Duration stabilityCheckDuration = Duration.zero,
     Duration statusPollInterval = const Duration(milliseconds: 250),
-    bool proxyless = false,
   }) async {
     connectCalls += 1;
     lastConfigJson = configJson;
     connectConfigs.add(configJson);
     connectProfileNames.add(profileName);
-    connectProxylessHistory.add(proxyless);
     activeProfileName = profileName;
-    proxylessTunnel = proxyless;
     status = VpnStatus.connected;
     return true;
   }

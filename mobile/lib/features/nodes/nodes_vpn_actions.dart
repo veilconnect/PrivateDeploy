@@ -83,7 +83,7 @@ Future<bool> autoFailoverToNextCloudNode({
     }
     final connected = await vpnProvider.connect(
       // Normalize with the user's routing settings so the failover node keeps
-      // the WireGuard overlay / custom rules (connecting the raw node config
+      // the custom rules (connecting the raw node config
       // would silently drop them). Bundled rule-set paths must come along
       // too — without them the normalizer cannot emit the pd-geosite-cn /
       // pd-geoip-cn direct rules and split-mode users lose CN routing after
@@ -575,69 +575,32 @@ Future<void> connectSelectedProfile({
 
   final bool alreadyConnected = vpnProvider.status == VpnStatus.connected;
 
-  if (alreadyConnected &&
-      !forceReconnect &&
-      vpnProvider.isProxylessTunnel &&
-      vpnProvider.intranetWireguardLive) {
-    // A live WG-only intranet tunnel is up and the user tapped the proxy
-    // connect button. Merging the proxy in is a hot-swap (below) on the same
-    // tun fd, so the intranet WireGuard / SSH session keeps running — just
-    // reassure the user instead of forcing a manual WG-off step.
-    showNodesActionSnackBar(
-      context,
-      message: '内网 WireGuard 将保持连接，无需手动关闭。',
-      backgroundColor: Colors.blue,
-      replaceCurrent: true,
-    );
-  }
-
-  // Hot-swap (vs teardown+reconnect) only when the LIVE tunnel is currently
-  // carrying the intranet WireGuard overlay — that's the session (and any SSH
-  // riding it) worth preserving across the change. A plain proxy↔proxy node
-  // switch has nothing to protect and stays on the proven disconnect+reconnect
-  // path. The explicit Restart button (forceReconnect) always does a full
-  // teardown+reconnect for a clean rebuild.
-  final bool hotSwap =
-      alreadyConnected && !forceReconnect && vpnProvider.intranetWireguardLive;
-
-  final bool connected;
-  if (hotSwap) {
-    // Reload sing-box on the same tun fd, so the intranet WireGuard overlay
-    // and flows already running through it survive switching the proxy in/out.
-    connected = await vpnProvider.swapRunningConfig(
-      configJson: configJson,
-      profileName: activeProfile?.name,
-      stabilityCheckDuration: const Duration(seconds: 6),
-      statusPollInterval: const Duration(milliseconds: 500),
-    );
-  } else {
-    if (alreadyConnected) {
-      final disconnected = await vpnProvider.disconnect();
-      if (!disconnected) {
-        if (context.mounted) {
-          final l10nSwitch = AppLocalizations.of(context)!;
-          showNodesActionSnackBar(
-            context,
-            message: vpnProvider.error == null
-                ? l10nSwitch.failedToSwitchActiveVpnNode
-                : localizeVpnStatusMessage(vpnProvider.error, l10nSwitch),
-            backgroundColor: Colors.red,
-          );
-        }
-        return;
+  if (alreadyConnected) {
+    final disconnected = await vpnProvider.disconnect();
+    if (!disconnected) {
+      if (context.mounted) {
+        final l10nSwitch = AppLocalizations.of(context)!;
+        showNodesActionSnackBar(
+          context,
+          message: vpnProvider.error == null
+              ? l10nSwitch.failedToSwitchActiveVpnNode
+              : localizeVpnStatusMessage(vpnProvider.error, l10nSwitch),
+          backgroundColor: Colors.red,
+        );
       }
-      if (!context.mounted) {
-        return;
-      }
+      return;
     }
-
-    connected = await vpnProvider.connect(
-      configJson: configJson,
-      profileName: activeProfile?.name,
-      stabilityCheckDuration: const Duration(seconds: 6),
-      statusPollInterval: const Duration(milliseconds: 500),
-    );
+    if (!context.mounted) {
+      return;
+    }
   }
+
+  final connected = await vpnProvider.connect(
+    configJson: configJson,
+    profileName: activeProfile?.name,
+    stabilityCheckDuration: const Duration(seconds: 6),
+    statusPollInterval: const Duration(milliseconds: 500),
+  );
   if (!context.mounted) {
     return;
   }

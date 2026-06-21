@@ -9,9 +9,12 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
+import android.os.PowerManager
+import android.provider.Settings
 import android.os.Looper
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -59,6 +62,17 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                 ACTION_VPN_STATUS -> {
                     val status = intent.getStringExtra("status")
                     val message = intent.getStringExtra("message")
+
+                    if (status == "already_running") {
+                        if (pendingStartResult != null) {
+                            failPendingStart(
+                                code = "ALREADY_RUNNING",
+                                message = message ?: "VPN is already running",
+                                stopVpn = false
+                            )
+                        }
+                        return
+                    }
 
                     eventSink?.success(
                         mapOf(
@@ -197,6 +211,8 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
             "resetStats" -> resetStats(result)
             "updateConfig" -> updateConfig(call, result)
             "getVersion" -> getVersion(result)
+            "isIgnoringBatteryOptimizations" -> isIgnoringBatteryOptimizations(result)
+            "requestIgnoreBatteryOptimizations" -> requestIgnoreBatteryOptimizations(result)
             "requestPermission" -> requestPermission(result)
             else -> result.notImplemented()
         }
@@ -307,11 +323,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         result.success(true)
     }
 
-    private fun failPendingStart(code: String, message: String) {
-        val shouldStopVpn = pendingStartDispatched
+    private fun failPendingStart(
+        code: String,
+        message: String,
+        stopVpn: Boolean = pendingStartDispatched
+    ) {
         val result = pendingStartResult ?: return
         clearPendingStart()
-        if (shouldStopVpn) {
+        if (stopVpn) {
             sendVpnAction(ACTION_STOP)
         }
         result.error(code, message, null)
@@ -573,6 +592,63 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
      */
     private fun getVersion(result: MethodChannel.Result) {
         result.success(PrivateDeployVpnService.currentVersion())
+    }
+
+    private fun isIgnoringBatteryOptimizations(result: MethodChannel.Result) {
+        val appContext = context
+        if (appContext == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            result.success(true)
+            return
+        }
+
+        val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        result.success(powerManager?.isIgnoringBatteryOptimizations(appContext.packageName) == true)
+    }
+
+    private fun requestIgnoreBatteryOptimizations(result: MethodChannel.Result) {
+        val appContext = context
+        if (appContext == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            result.success(true)
+            return
+        }
+
+        val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (powerManager?.isIgnoringBatteryOptimizations(appContext.packageName) == true) {
+            result.success(true)
+            return
+        }
+
+        val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:${appContext.packageName}")
+        }
+        val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+
+        try {
+            val currentActivity = activity
+            val intentToLaunch = when {
+                requestIntent.resolveActivity(appContext.packageManager) != null -> requestIntent
+                fallbackIntent.resolveActivity(appContext.packageManager) != null -> fallbackIntent
+                else -> null
+            }
+
+            if (intentToLaunch == null) {
+                Log.w(TAG, "Battery optimization settings activity unavailable")
+                result.success(false)
+                return
+            }
+
+            if (currentActivity != null) {
+                currentActivity.startActivity(intentToLaunch)
+            } else {
+                intentToLaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                appContext.startActivity(intentToLaunch)
+            }
+            Log.i(TAG, "Battery optimization exemption request launched")
+            result.success(false)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to launch battery optimization exemption request", e)
+            result.success(false)
+        }
     }
 
     /**

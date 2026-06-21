@@ -1,7 +1,6 @@
 module privatedeploy
 
 go 1.25.0
-toolchain go1.26.4
 
 require (
 	github.com/energye/systray v1.0.2

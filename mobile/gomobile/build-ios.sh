@@ -77,7 +77,7 @@ echo ""
 OUTPUT_DIR="../ios"
 FRAMEWORK_NAME="VPNCore.xcframework"
 OUTPUT_PATH="$OUTPUT_DIR/$FRAMEWORK_NAME"
-TAGS="${PRIVATEDEPLOY_IOS_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor,with_wireguard}}"
+TAGS="${PRIVATEDEPLOY_IOS_GOMOBILE_TAGS:-${PRIVATEDEPLOY_GOMOBILE_TAGS:-with_clash_api,with_gvisor}}"
 
 echo -e "${YELLOW}[3/5] 清理旧文件...${NC}"
 mkdir -p "$OUTPUT_DIR"

@@ -60,7 +60,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: latest
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -113,7 +113,7 @@ jobs:
         run: cd frontend && pnpm run test:coverage
 
       - name: Frontend security audit
-        run: cd frontend && pnpm audit --prod --audit-level=high
+        run: cd frontend && pnpm audit --audit-level=high
         continue-on-error: true
 
       - name: Set up Python

@@ -12,7 +12,7 @@ VERSION="${VERSION:-2.0.0}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.12.12}"
 SINGBOX_ARCHIVE_PATH="${SINGBOX_ARCHIVE_PATH:-}"
 DESCRIPTION="Private deployment tool with cloud integration and proxy management"
-HOMEPAGE="https://github.com/veilconnect/PrivateDeploy"
+HOMEPAGE="https://github.com/PrivateDeploy/PrivateDeploy"
 MAINTAINER="PrivateDeploy Team <team@privatedeploy.dev>"
 RUNTIME_DATA_DIR="build/bin/data"
 

@@ -357,8 +357,16 @@ class CdnProvider with ChangeNotifier {
         }
       }
 
-      // Persist + announce.
-      await StorageService.saveSecureString(_kTokenKey, token);
+      // Persist + announce. Fail closed: secure storage no longer falls back to
+      // plaintext, so a failed token write must surface rather than leave the
+      // user believing the token was saved.
+      if (!await StorageService.saveSecureString(_kTokenKey, token)) {
+        _lastError =
+            'Could not store the Cloudflare token securely on this device '
+            '(keystore unavailable). The token was not saved.';
+        notifyListeners();
+        return false;
+      }
       await StorageService.saveString(_kAccountIdKey, accountId);
       await StorageService.saveString(_kAccountEmailKey, email);
       await StorageService.saveString(_kWorkersSubdomainKey, workersSub);
@@ -416,7 +424,15 @@ class CdnProvider with ChangeNotifier {
       // path below — no save, no false hope.
       final message = e.message ?? e.type.name;
       if (shouldKeepCloudApiKeyOnError(e)) {
-        await StorageService.saveSecureString(_kTokenKey, token);
+        if (!await StorageService.saveSecureString(_kTokenKey, token)) {
+          _lastError =
+              'Could not store the Cloudflare token securely on this device '
+              '(keystore unavailable). The token was not saved.';
+          _status = _hadValidTokenBefore(priorStatus)
+              ? CdnStatus.unverified
+              : CdnStatus.disabled;
+          return false;
+        }
         _lastError =
             'Token saved. Could not reach Cloudflare to verify yet ($message) — '
             'we will retry when the network reaches it. Account details and '
@@ -474,7 +490,11 @@ class CdnProvider with ChangeNotifier {
   /// their readiness probe on the next [load].
   Future<void> restoreSnapshot(CdnBackup snap) async {
     if (snap.token != null && snap.token!.isNotEmpty) {
-      await StorageService.saveSecureString(_kTokenKey, snap.token!);
+      if (!await StorageService.saveSecureString(_kTokenKey, snap.token!)) {
+        throw StateError(
+          'Could not store the restored Cloudflare token securely (device keystore unavailable).',
+        );
+      }
     } else {
       await StorageService.removeSecure(_kTokenKey);
     }

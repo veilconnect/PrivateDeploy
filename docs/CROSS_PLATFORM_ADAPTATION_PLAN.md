@@ -1,7 +1,5 @@
 # Cross-Platform Adaptation Plan
 
-**English** | [中文](CROSS_PLATFORM_ADAPTATION_PLAN.zh-CN.md)
-
 ## Goal
 
 Make PrivateDeploy stable and behaviorally consistent across Linux, Windows, and macOS for:

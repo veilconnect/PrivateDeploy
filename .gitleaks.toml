@@ -23,3 +23,15 @@ regexes = [
   '''\$\{?[A-Z_]+\}?''',
   '''abcd1234efgh''',
 ]
+# Historical leak: a real Vultr API key was committed in the commits below and
+# later removed from current files (commit c31c221). It is already public in the
+# pushed git history, so it MUST be rotated in the Vultr console — removing it
+# from history does not undo the exposure. These commits are allowlisted only so
+# a full-history scan does not permanently block CI. DO NOT allowlist new leaks
+# here; fix the code and rotate the credential instead.
+commits = [
+  "a2d1edc69db063827fbbd8966780050956fb5186",
+  "4572040b343149792778703ba9fb89b7f1bb76d3",
+  "bc10674afe4a368043389a11279b5b60d7e66e14",
+  "c31c221f0e8cdad719623eb5d7fee95bbb4cf148",
+]

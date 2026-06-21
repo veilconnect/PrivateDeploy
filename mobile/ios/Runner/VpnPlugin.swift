@@ -1,5 +1,7 @@
 import Flutter
+import CryptoKit
 import NetworkExtension
+import Security
 import UIKit
 
 #if canImport(VPNCore)
@@ -13,6 +15,8 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private static let extensionBundleInfoKey = "PrivateDeployVPNExtensionBundleIdentifier"
     private static let defaultAppGroup = "group.com.privatedeploy.mobile"
     private static let configDefaultsKey = "vpn_config"
+    private static let secureConfigDefaultsKey = "vpn_config_secure_v1"
+    private static let proxylessDefaultsKey = "vpn_proxyless"
     private static let statusDefaultsKey = "vpn_status"
     private static let statsDefaultsKey = "vpn_stats"
     private static let unsupportedMessage =
@@ -116,7 +120,12 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
 
-        persistConfig(config)
+        let proxyless = (arguments["proxyless"] as? Bool) ?? false
+        guard persistConfig(config) else {
+            result(flutterError(code: "VPN_CONFIG_PERSIST_FAILED", message: "Failed to store VPN config securely"))
+            return
+        }
+        persistProxyless(proxyless)
         ensureManagerSaved { [weak self] manager, error in
             guard let self else { return }
             if let error {
@@ -295,7 +304,11 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
 
-        persistConfig(config)
+        let proxyless = arguments["proxyless"] as? Bool
+        guard persistConfig(config) else {
+            result(flutterError(code: "VPN_CONFIG_PERSIST_FAILED", message: "Failed to store VPN config securely"))
+            return
+        }
         loadManager { [weak self] manager, error in
             guard let self else { return }
             if let error {
@@ -303,13 +316,23 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 return
             }
             guard let manager, self.isConnectedStatus(manager.connection.status) else {
+                if let proxyless {
+                    self.persistProxyless(proxyless)
+                }
                 result(true)
                 return
             }
-            self.sendProviderCommand(["action": "updateConfig", "config": config], manager: manager) { commandError, _ in
+            var command: [String: Any] = ["action": "updateConfig", "config": config]
+            if let proxyless {
+                command["proxyless"] = proxyless
+            }
+            self.sendProviderCommand(command, manager: manager) { commandError, _ in
                 if let commandError {
                     result(self.flutterError(code: "VPN_UPDATE_CONFIG_FAILED", message: commandError.localizedDescription))
                     return
+                }
+                if let proxyless {
+                    self.persistProxyless(proxyless)
                 }
                 result(true)
             }
@@ -383,9 +406,11 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             proto.disconnectOnSleep = false
             proto.providerConfiguration = [
                 Self.appGroupInfoKey: self.appGroupIdentifier(),
-                "configKey": Self.configDefaultsKey,
+                "configKey": Self.secureConfigDefaultsKey,
+                "legacyConfigKey": Self.configDefaultsKey,
                 "statusKey": Self.statusDefaultsKey,
                 "statsKey": Self.statsDefaultsKey,
+                "proxylessKey": Self.proxylessDefaultsKey,
             ]
 
             manager.protocolConfiguration = proto
@@ -454,8 +479,34 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
-    private func persistConfig(_ config: String) {
-        sharedDefaults()?.set(config, forKey: Self.configDefaultsKey)
+    @discardableResult
+    private func persistConfig(_ config: String) -> Bool {
+        guard let sealed = sealConfig(config), let defaults = sharedDefaults() else {
+            return false
+        }
+        defaults.set(sealed, forKey: Self.secureConfigDefaultsKey)
+        defaults.removeObject(forKey: Self.configDefaultsKey)
+        return true
+    }
+
+    private func persistProxyless(_ proxyless: Bool) {
+        sharedDefaults()?.set(proxyless, forKey: Self.proxylessDefaultsKey)
+    }
+
+    private func loadProxyless() -> Bool {
+        sharedDefaults()?.bool(forKey: Self.proxylessDefaultsKey) ?? false
+    }
+
+    private func sealConfig(_ config: String) -> String? {
+        guard let key = VPNConfigKeyStore.loadOrCreateKey() else {
+            return nil
+        }
+        do {
+            let sealedBox = try AES.GCM.seal(Data(config.utf8), using: key)
+            return sealedBox.combined?.base64EncodedString()
+        } catch {
+            return nil
+        }
     }
 
     private func persistStatus(_ status: [String: Any]) {
@@ -469,13 +520,15 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private func statusPayload(manager: NETunnelProviderManager?) -> [String: Any] {
         let status = manager?.connection.status ?? .invalid
         let sharedStatus = sharedDefaults()?.dictionary(forKey: Self.statusDefaultsKey) ?? [:]
+        let running = isConnectedStatus(status)
         var payload: [String: Any] = [
-            "running": isConnectedStatus(status),
+            "running": running,
             "status": statusString(status),
             "connected_at": sharedStatus["connected_at"] ?? 0,
             "uptime": sharedStatus["uptime"] ?? 0,
         ]
         payload["message"] = sharedStatus["message"] ?? NSNull()
+        payload["proxyless"] = running && ((sharedStatus["proxyless"] as? Bool) ?? loadProxyless())
         return payload
     }
 
@@ -582,5 +635,67 @@ public class VpnPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private func flutterError(code: String, message: String) -> FlutterError {
         FlutterError(code: code, message: message, details: nil)
+    }
+}
+
+// VPNConfigKeyStore manages the per-install symmetric key used to seal the VPN
+// config in the shared App Group. The key is random per install and lives in
+// the keychain (the app and the Network Extension share it through their common
+// `keychain-access-groups` entry, which is the default access group for both
+// targets, so no explicit access group needs to be set here). This replaces the
+// previous design where the sealing key was derived from a constant compiled
+// into the binary — identical on every device and therefore reversible by
+// anyone with the source.
+fileprivate enum VPNConfigKeyStore {
+    private static let service = "com.privatedeploy.mobile.vpn"
+    private static let account = "vpn_config_sealing_key_v2"
+
+    static func loadOrCreateKey() -> SymmetricKey? {
+        if let existing = loadKey() {
+            return existing
+        }
+
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let data = Data(bytes)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            // The extension may run while the device is locked (background
+            // reconnect), so AfterFirstUnlock is required; ThisDeviceOnly keeps
+            // the key off iCloud Keychain / encrypted backups.
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess {
+            return SymmetricKey(data: data)
+        }
+        if status == errSecDuplicateItem {
+            // Another target created it concurrently; read the winning value.
+            return loadKey()
+        }
+        return nil
+    }
+
+    private static func loadKey() -> SymmetricKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, data.count == 32 else {
+            return nil
+        }
+        return SymmetricKey(data: data)
     }
 }

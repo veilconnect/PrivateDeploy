@@ -1,7 +1,5 @@
 # mobile/scripts
 
-**English** | [中文](README.zh-CN.md)
-
 Build and verification helpers for the Flutter Android client.
 
 ## `build_release.sh`

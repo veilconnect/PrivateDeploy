@@ -84,21 +84,8 @@ class TestAppSettingsProvider extends ChangeNotifier
   VpnRoutingSettings get vpnRoutingSettings => _vpnRoutingSettings;
 
   @override
-  WireGuardIntranet get wireGuardIntranet =>
-      _vpnRoutingSettings.wireGuardIntranet;
-
-  @override
   Future<void> setVpnRoutingMode(VpnRoutingMode mode) async {
     _vpnRoutingSettings = _vpnRoutingSettings.copyWith(mode: mode);
-    notifyListeners();
-  }
-
-  @override
-  Future<void> setWireGuardIntranetEnabled(bool enabled) async {
-    _vpnRoutingSettings = _vpnRoutingSettings.copyWith(
-      wireGuardIntranet:
-          _vpnRoutingSettings.wireGuardIntranet.copyWith(enabled: enabled),
-    );
     notifyListeners();
   }
 
@@ -307,6 +294,15 @@ class TestCloudProvider extends ChangeNotifier
 
   @override
   List<CloudInstance> get allInstances => instances;
+
+  @override
+  List<CloudInstance> get missingInstances => const [];
+
+  @override
+  List<CloudInstance> get unpromptedMissingInstances => const [];
+
+  @override
+  void markMissingPrompted() {}
 
   @override
   String? resolveEgressIpForProfileName(String? profileName) {
@@ -702,15 +698,6 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   final String? activeProfile;
-
-  @override
-  bool get isProxylessTunnel => false;
-
-  // Mirrors the real provider's behavior for a plain proxy tunnel: the test
-  // workspace connects regular cloud-node configs, which carry no intranet
-  // WireGuard overlay.
-  @override
-  bool get intranetWireguardLive => false;
 
   @override
   final bool isSupported;

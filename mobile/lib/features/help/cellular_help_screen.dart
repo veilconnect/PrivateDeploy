@@ -287,8 +287,8 @@ final _zhContent = _HelpContent(
         _CompareTable(
           headers: ('目标 IP', '结果'),
           rows: [
-            ('198.51.100.14 (Vultr)', 'TCP SYN 丢弃,5 秒超时', false),
-            ('198.51.100.12 (Vultr)', '同上', false),
+            ('198.51.100.21 (Vultr)', 'TCP SYN 丢弃,5 秒超时', false),
+            ('198.51.100.19 (Vultr)', '同上', false),
             ('1.1.1.1 (Cloudflare DNS)', '同上', false),
             ('8.8.8.8 (Google DNS)', '同上', false),
           ],
@@ -379,8 +379,8 @@ final _enContent = _HelpContent(
         _CompareTable(
           headers: ('Target IP', 'Result'),
           rows: [
-            ('198.51.100.14 (Vultr)', 'TCP SYN dropped, 5 s timeout', false),
-            ('198.51.100.12 (Vultr)', 'same', false),
+            ('198.51.100.21 (Vultr)', 'TCP SYN dropped, 5 s timeout', false),
+            ('198.51.100.19 (Vultr)', 'same', false),
             ('1.1.1.1 (Cloudflare DNS)', 'same', false),
             ('8.8.8.8 (Google DNS)', 'same', false),
           ],

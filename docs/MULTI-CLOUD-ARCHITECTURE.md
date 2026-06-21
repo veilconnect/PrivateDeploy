@@ -1,43 +1,41 @@
-# Multi-Cloud Architecture Implementation Guide
+# 多云架构实施指南
 
-**English** | [中文](MULTI-CLOUD-ARCHITECTURE.zh-CN.md)
+## 当前进度
 
-## Current Progress
+✅ **已完成**：
+1. 云服务商抽象接口定义 (`bridge/cloud/interface.go`)
+2. 错误定义 (`bridge/cloud/errors.go`)
+3. Provider注册器和管理器 (`bridge/cloud/registry.go`)
 
-✅ **Completed**:
-1. Cloud provider abstraction interface definition (`bridge/cloud/interface.go`)
-2. Error definitions (`bridge/cloud/errors.go`)
-3. Provider registry and manager (`bridge/cloud/registry.go`)
-
-## Architecture Overview
+## 架构概览
 
 ```
 bridge/cloud/
-├── interface.go          # CloudProvider interface definition
-├── errors.go            # Error definitions
-├── registry.go          # Provider registration and management
-├── manager.go           # Unified manager (already included in registry.go)
+├── interface.go          # CloudProvider接口定义
+├── errors.go            # 错误定义
+├── registry.go          # Provider注册和管理
+├── manager.go           # 统一管理器（已包含在registry.go）
 └── providers/
     ├── vultr/
-    │   ├── provider.go      # Vultr implementation entry point
-    │   ├── api.go          # API call wrapper
-    │   ├── config.go       # Configuration management
-    │   ├── deploy.go       # Deployment script generation
-    │   └── types.go        # Vultr-specific types
+    │   ├── provider.go      # Vultr实现入口
+    │   ├── api.go          # API调用封装
+    │   ├── config.go       # 配置管理
+    │   ├── deploy.go       # 部署脚本生成
+    │   └── types.go        # Vultr特定类型
     ├── digitalocean/
     │   ├── provider.go
     │   ├── api.go
     │   ├── config.go
     │   ├── deploy.go
     │   └── types.go
-    └── ... (other providers)
+    └── ... (其他provider)
 ```
 
-## Migration Steps
+## 迁移步骤
 
-### Step 1: Vultr Provider Refactoring
+### 步骤1：Vultr Provider重构
 
-#### 1.1 Create provider.go
+#### 1.1 创建 provider.go
 
 ```go
 package vultr
@@ -50,7 +48,7 @@ import (
 // Provider implements cloud.CloudProvider for Vultr
 type Provider struct {
 	config *cloud.ProviderConfig
-	// Reuse the caching mechanism in the existing vultr.go
+	// 复用现有vultr.go中的缓存机制
 }
 
 // New creates a new Vultr provider
@@ -68,69 +66,69 @@ func (p *Provider) DisplayName() string {
 	return "Vultr"
 }
 
-// ListRegions implements the interface
+// ListRegions 实现接口
 func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
-	// Call the existing listVultrRegions logic
-	// Convert to the unified cloud.Region format
+	// 调用现有的listVultrRegions逻辑
+	// 转换为统一的cloud.Region格式
 }
 
-// ... other interface implementations
+// ... 其他接口实现
 ```
 
-#### 1.2 Migrate Existing Code
+#### 1.2 迁移现有代码
 
-**Extract from `bridge/vultr.go` into modular files**:
+**从 `bridge/vultr.go` 提取到模块化文件**：
 
 - `api.go`:
   - `vultrRequest()`
   - `parseVultrResponse()`
-  - API call helper functions
+  - API调用辅助函数
 
 - `config.go`:
   - `loadVultrConfig()`
   - `saveVultrConfig()`
-  - Configuration-related logic
+  - 配置相关逻辑
 
 - `deploy.go`:
   - `generateInitScript()`
   - `generatePasswordHash()`
   - `generateRealityKeyPair()`
-  - All deployment script generation functions
+  - 所有部署脚本生成函数
 
 - `types.go`:
-  - Vultr API response structs
-  - Internal data structures
+  - Vultr API响应结构体
+  - 内部数据结构
 
-### Step 2: Update bridge/app.go
+### 步骤2：更新 bridge/app.go
 
-Add CloudManager to the App struct:
+在App结构体中添加CloudManager：
 
 ```go
 type App struct {
-	// ... existing fields
+	// ... 现有字段
 	CloudManager *cloud.Manager
 }
 
 func CreateApp(assets fs.FS) *App {
 	registry := cloud.NewRegistry()
 
-	// Register the Vultr provider
-	vultrProvider := vultr.New(nil) // configuration loaded later
+	// 注册Vultr provider
+	vultrProvider := vultr.New(nil) // 配置后续加载
 	registry.Register("vultr", vultrProvider)
 
 	app := &App{
-		// ... existing initialization
+		// ... 现有初始化
 		CloudManager: cloud.NewManager(context.Background(), registry),
 	}
 
-	// Set the default provider
+	// 设置默认provider
 	app.CloudManager.SetActiveProvider("vultr")
 
 	return app
 }
 ```
 
-### Step 3: Expose New Wails Methods
+### 步骤3：暴露新的Wails方法
 
 ```go
 // ListCloudProviders returns all available cloud providers
@@ -166,17 +164,17 @@ func (a *App) GetCloudProvider() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-// Keep existing API compatibility, but use the Manager internally
+// 保持现有API兼容，但内部使用Manager
 func (a *App) ListVultrInstances() FlagResult {
-	// Call through the Manager
+	// 通过Manager调用
 	instances, err := a.CloudManager.ListInstances()
-	// ... convert and return
+	// ... 转换并返回
 }
 ```
 
-### Step 4: Frontend Adaptation
+### 步骤4：前端适配
 
-#### 4.1 Update Type Definitions
+#### 4.1 更新类型定义
 
 ```typescript
 // frontend/src/types/cloud.d.ts
@@ -191,7 +189,7 @@ export interface CloudConfig {
 }
 
 export interface CloudNode {
-  provider: CloudProvider  // newly added
+  provider: CloudProvider  // 新增
   instanceId: string
   label: string
   status: string
@@ -200,11 +198,11 @@ export interface CloudNode {
   osId: number
   ipv4: string
   ipv6?: string
-  // ... other fields remain unchanged
+  // ... 其他字段保持不变
 }
 ```
 
-#### 4.2 Update Store
+#### 4.2 更新Store
 
 ```typescript
 // frontend/src/stores/cloud.ts
@@ -225,13 +223,13 @@ export const useCloudStore = defineStore('cloud', () => {
     const res = await SetCloudProvider(provider)
     if (res.flag) {
       currentProvider.value = provider
-      await loadConfig() // reload configuration
-      await refreshInstances() // refresh the instance list
+      await loadConfig() // 重新加载配置
+      await refreshInstances() // 刷新实例列表
     }
   }
 
   return {
-    // ... existing returns
+    // ... 现有返回
     availableProviders,
     currentProvider,
     loadProviders,
@@ -240,13 +238,13 @@ export const useCloudStore = defineStore('cloud', () => {
 })
 ```
 
-#### 4.3 UI Update
+#### 4.3 UI更新
 
 ```vue
 <!-- frontend/src/views/CloudView/index.vue -->
 <template>
   <div class="cloud-view">
-    <!-- Provider selector -->
+    <!-- Provider选择器 -->
     <Card class="provider-selector">
       <div class="flex items-center gap-8">
         <span>{{ t('cloud.provider') }}:</span>
@@ -258,17 +256,17 @@ export const useCloudStore = defineStore('cloud', () => {
       </div>
     </Card>
 
-    <!-- Vultr configuration (shown when provider==='vultr') -->
+    <!-- Vultr配置 (provider==='vultr'时显示) -->
     <Card v-if="cloudStore.currentProvider === 'vultr'" :title="t('cloud.vultrConfig')">
-      <!-- Existing Vultr configuration UI -->
+      <!-- 现有Vultr配置UI -->
     </Card>
 
-    <!-- DigitalOcean configuration (shown when provider==='digitalocean') -->
+    <!-- DigitalOcean配置 (provider==='digitalocean'时显示) -->
     <Card v-if="cloudStore.currentProvider === 'digitalocean'" :title="t('cloud.doConfig')">
-      <!-- DigitalOcean API configuration -->
+      <!-- DigitalOcean API配置 -->
     </Card>
 
-    <!-- Other content remains unchanged -->
+    <!-- 其他内容保持不变 -->
   </div>
 </template>
 
@@ -282,7 +280,7 @@ const providerOptions = computed(() =>
 </script>
 ```
 
-## DigitalOcean Provider Implementation Example
+## DigitalOcean Provider实现示例
 
 ```go
 // bridge/cloud/providers/digitalocean/provider.go
@@ -353,14 +351,14 @@ func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
 	return regions, nil
 }
 
-// ... other interface implementations
+// ... 其他接口实现
 ```
 
-## Data Migration
+## 数据迁移
 
-### Configuration File Format
+### 配置文件格式
 
-**Old format** (`data/vultr-config.json`):
+**旧格式** (`data/vultr-config.json`):
 ```json
 {
   "apiKey": "xxx",
@@ -369,7 +367,7 @@ func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
 }
 ```
 
-**New format** (`data/cloud-config.json`):
+**新格式** (`data/cloud-config.json`):
 ```json
 {
   "activeProvider": "vultr",
@@ -388,36 +386,36 @@ func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
 }
 ```
 
-### Instance ID Format
+### 实例ID格式
 
-**New format**: `cloud-{provider}-{uuid}`
+**新格式**: `cloud-{provider}-{uuid}`
 
-Examples:
-- `cloud-vultr-<instance-id>`
+示例:
+- `cloud-vultr-0429965d-420b-48da-9653-85ad47278ef9`
 - `cloud-do-a1b2c3d4-e5f6-7890-abcd-ef1234567890`
 
-### Node Record Storage
+### 节点记录存储
 
-**File name**: `data/cloud-nodes.json`
+**文件名**: `data/cloud-nodes.json`
 
 ```json
 {
   "cloud-vultr-xxx": {
     "provider": "vultr",
     "plan": "vc2-1c-1gb",
-    // ... Vultr-specific fields
+    // ... Vultr特定字段
   },
   "cloud-do-yyy": {
     "provider": "digitalocean",
     "plan": "s-1vcpu-1gb",
-    // ... DigitalOcean-specific fields
+    // ... DigitalOcean特定字段
   }
 }
 ```
 
-## Test Plan
+## 测试计划
 
-### Unit Tests
+### 单元测试
 
 ```go
 // bridge/cloud/providers/vultr/provider_test.go
@@ -429,55 +427,55 @@ func TestVultrProvider(t *testing.T) {
 
 	provider := New(config)
 
-	// Test interface implementation
+	// 测试接口实现
 	assert.Equal(t, "vultr", provider.Name())
 	assert.Equal(t, "Vultr", provider.DisplayName())
 }
 ```
 
-### Integration Tests
+### 集成测试
 
-1. Provider registration test
-2. Multi-provider switching test
-3. Configuration persistence test
-4. API call test (using mock)
+1. Provider注册测试
+2. 多Provider切换测试
+3. 配置持久化测试
+4. API调用测试（使用mock）
 
-## Next Steps
+## 下一步行动
 
-### Immediate (1-2 days)
-1. ✅ Create the base architecture (completed)
-2. 🔄 Create the Vultr provider skeleton
-3. 🔄 Migrate core functionality to the new architecture
-4. 🔄 Update the frontend Bridge bindings
+### 立即执行（1-2天）
+1. ✅ 创建基础架构（已完成）
+2. 🔄 创建Vultr provider骨架
+3. 🔄 迁移核心功能到新架构
+4. 🔄 更新前端Bridge绑定
 
-### Short-term (3-5 days)
-1. Complete the Vultr provider migration
-2. Implement the DigitalOcean provider
-3. Update the frontend UI to support provider selection
-4. Data migration script
+### 短期（3-5天）
+1. 完成Vultr provider迁移
+2. 实现DigitalOcean provider
+3. 更新前端UI支持provider选择
+4. 数据迁移脚本
 
-### Mid-term (1-2 weeks)
-1. Add more providers (Linode, Hetzner)
-2. Performance optimization
-3. Improve documentation
-4. User testing
+### 中期（1-2周）
+1. 添加更多provider (Linode, Hetzner)
+2. 性能优化
+3. 完善文档
+4. 用户测试
 
-## Rollback Plan
+## 回滚计划
 
-If issues arise with the new architecture, you can:
-1. Keep the old `vultr.go` file
-2. Control whether to use the new/old architecture via a feature flag
-3. Migrate user data gradually
+如果新架构出现问题，可以：
+1. 保留旧的 `vultr.go` 文件
+2. 通过功能开关控制使用新/旧架构
+3. 逐步迁移用户数据
 
-## Technical Debt
+## 技术债务
 
-- [ ] Fully migrate the Vultr provider
-- [ ] Remove bridge/vultr.go
-- [ ] Unify error handling
-- [ ] Add a logging system
-- [ ] Performance monitoring
+- [ ] Vultr provider完全迁移
+- [ ] 移除bridge/vultr.go
+- [ ] 统一错误处理
+- [ ] 添加日志系统
+- [ ] 性能监控
 
 ---
 
-**Current status**: Base architecture has been set up ✅
-**Next step**: Create the Vultr provider implementation
+**当前状态**: 基础架构已搭建完成 ✅
+**下一步**: 创建Vultr provider实现

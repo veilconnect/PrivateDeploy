@@ -30,6 +30,7 @@ List<CloudInstance> connectableCloudInstances(CloudProvider cloudProvider) {
   return cloudProvider.allInstances
       .where(
         (instance) =>
+            !instance.missing &&
             instance.isActive &&
             cloudProvider.generateNodeConfig(instance) != null,
       )
@@ -88,7 +89,11 @@ Future<void> confirmDeleteCloudNode({
       profileProvider.activeProfile?.id == linkedProfile.id &&
       vpnProvider.status != VpnStatus.disconnected;
 
-  final success = await cloudProvider.deleteInstance(instance.id);
+  // A node the provider already confirmed is gone can't be deleted via the
+  // API (it no longer exists) — just drop the local record/profile.
+  final success = instance.missing
+      ? await cloudProvider.purgeMissingInstance(instance.id)
+      : await cloudProvider.deleteInstance(instance.id);
   var disconnectSuccess = true;
   var profileCleanupSuccess = true;
 

@@ -30,9 +30,9 @@ type MultiProtocolParams struct {
 	// for use behind a Cloudflare Worker WS↔TCP relay. Reuses VLESSUUID so
 	// auth stays the same as the Reality endpoint. Zero disables the inbound
 	// (used by callers that don't want the extra port exposed).
-	VLESSRelayPort   int
-	SingBoxVersion   string
-	SingBoxFallback  string
+	VLESSRelayPort  int
+	SingBoxVersion  string
+	SingBoxFallback string
 }
 
 // GenerateUUID returns RFC-4122 UUID v4.
@@ -197,7 +197,7 @@ echo "=== PrivateDeploy Multi-Protocol Init Started at $(date) ==="
 # Update and install packages
 echo "[1/8] Installing Docker, UFW and required packages..."
 apt-get update -qq
-apt-get install -y docker.io ufw iptables openssl curl ca-certificates net-tools
+apt-get install -y docker.io ufw iptables openssl curl ca-certificates net-tools fail2ban
 
 # Start Docker
 echo "[2/8] Starting Docker service..."
@@ -242,13 +242,35 @@ ufw --force reset
 ufw logging on
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH'
+# Rate-limit SSH (ufw 'limit' drops sources with too many recent connections)
+# to blunt brute-force attempts while keeping the port reachable for the owner.
+ufw limit 22/tcp comment 'SSH (rate-limited)'
 ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
 ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
 ufw allow %[2]d/udp comment 'Hysteria2'
 ufw allow %[3]d/tcp comment 'VLESS-Reality'
 ufw allow %[4]d/tcp comment 'Trojan'
 echo "y" | ufw enable
+
+# Harden the SSH daemon. Password auth is kept because the cloud provider's
+# auto-generated root password is the owner's only credential on these boxes;
+# disabling it would lock the owner out. Everything else is tightened, and
+# fail2ban bans repeat offenders.
+echo "[4b/8] Hardening SSH daemon..."
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-privatedeploy.conf <<'SSHD_EOF'
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowAgentForwarding no
+SSHD_EOF
+chmod 600 /etc/ssh/sshd_config.d/99-privatedeploy.conf
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null || true
+systemctl enable fail2ban 2>/dev/null || true
+systemctl restart fail2ban 2>/dev/null || true
 
 echo "[5/8] Verifying firewall configuration..."
 ufw status verbose
@@ -693,7 +715,7 @@ trap 'chmod 600 "$LOGFILE" 2>/dev/null' EXIT
 echo "=== PrivateDeploy Lightweight Init Started at $(date) ==="
 
 apt-get update -qq
-apt-get install -y docker.io ufw
+apt-get install -y docker.io ufw fail2ban
 
 systemctl enable docker
 systemctl start docker
@@ -702,10 +724,26 @@ ufw --force disable || true
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH'
+ufw limit 22/tcp comment 'SSH (rate-limited)'
 ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
 ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
 echo "y" | ufw enable
+
+# Harden SSH (password auth retained: it is the owner's only credential).
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-privatedeploy.conf <<'SSHD_EOF'
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowAgentForwarding no
+SSHD_EOF
+chmod 600 /etc/ssh/sshd_config.d/99-privatedeploy.conf
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null || true
+systemctl enable fail2ban 2>/dev/null || true
+systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
 docker pull --quiet teddysun/shadowsocks-libev || true

@@ -26,7 +26,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: latest
 
       - uses: actions/setup-node@v4
         with:
@@ -61,7 +61,7 @@ jobs:
         run: cd frontend && pnpm run lint:ci
 
       - name: Frontend security audit
-        run: cd frontend && pnpm audit --prod --audit-level=high
+        run: cd frontend && pnpm audit --audit-level=high
 
       - uses: actions/setup-python@v5
         with:
@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -102,10 +102,6 @@ jobs:
       - run: |
           cd frontend
           pnpm install --frozen-lockfile
-          # Inject the real version so the UI shows it (instead of the stale
-          # VITE_APP_VERSION baked into frontend/.env).
-          export VITE_APP_VERSION="v$(cat ../VERSION)"
-          echo "Building frontend with VITE_APP_VERSION=$VITE_APP_VERSION"
           pnpm build-only
       - uses: actions/upload-artifact@v4
         with:
@@ -132,7 +128,6 @@ jobs:
       - name: Build & Pack Windows
         shell: pwsh
         run: |
-          $ver = "1.12.12"
           function Build-And-Pack {
             param([string]$arch)
             $env:GOOS="windows"
@@ -141,26 +136,9 @@ jobs:
             Write-Host "==> Building Windows $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
 
-            # Bundle the sing-box core so the app works out of the box — users
-            # behind the regional reachability cannot download it at runtime before connecting.
-            Write-Host "==> Bundling sing-box $script:ver (windows-$arch)..."
-            $url = "https://github.com/SagerNet/sing-box/releases/download/v$script:ver/sing-box-$script:ver-windows-$arch.zip"
-            Invoke-WebRequest -Uri $url -OutFile sb.zip
-            Expand-Archive -Path sb.zip -DestinationPath sbtmp -Force
-            New-Item -ItemType Directory -Force -Path "build/bin/data/sing-box" | Out-Null
-            Copy-Item "sbtmp/sing-box-$script:ver-windows-$arch/sing-box.exe" "build/bin/data/sing-box/sing-box.exe" -Force
-            Remove-Item sb.zip,sbtmp -Recurse -Force
-
-            # Bundle the tray sidecar next to the exe; without it the app has no
-            # system-tray icon (CreateTray's spawn fails -> "running without tray").
-            Write-Host "==> Building tray sidecar (windows-$arch)..."
-            go build -trimpath -buildvcs=false -ldflags "-H windowsgui -s -w" -o "build/bin/privatedeploy-tray.exe" ./cmd/privatedeploy-tray/
-
             cd build/bin
             $zipName = "$env:APP_NAME-windows-$arch.zip"
-            Compress-Archive -Path "$env:APP_NAME.exe","privatedeploy-tray.exe","data" -DestinationPath $zipName -Force
-            Remove-Item data -Recurse -Force
-            Remove-Item privatedeploy-tray.exe -Force
+            Compress-Archive -Path "$env:APP_NAME.exe" -DestinationPath $zipName -Force
             cd ../..
           }
 
@@ -194,29 +172,12 @@ jobs:
 
       - name: Build & Pack macOS
         run: |
-          ver=1.12.12
           build_and_pack() {
             arch=$1
             export GOOS=darwin GOARCH=$arch
 
             echo "==> Building macOS $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
-
-            # Bundle sing-box inside the .app so it works offline (regional reachability users
-            # can't fetch the core at runtime before the VPN is up).
-            echo "==> Bundling sing-box $ver (darwin-$arch)..."
-            curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v$ver/sing-box-$ver-darwin-$arch.tar.gz" -o sb.tgz
-            tar -xzf sb.tgz -C /tmp
-            mkdir -p "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box"
-            cp "/tmp/sing-box-$ver-darwin-$arch/sing-box" "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
-            chmod +x "build/bin/$APP_NAME.app/Contents/MacOS/data/sing-box/sing-box"
-            rm -rf sb.tgz "/tmp/sing-box-$ver-darwin-$arch"
-
-            # Bundle the tray sidecar inside the .app next to the executable
-            # (no system-tray icon without it). Built natively on the mac runner.
-            echo "==> Building tray sidecar (darwin-$arch)..."
-            CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags "-s -w" -o "build/bin/$APP_NAME.app/Contents/MacOS/privatedeploy-tray" ./cmd/privatedeploy-tray/
-            chmod +x "build/bin/$APP_NAME.app/Contents/MacOS/privatedeploy-tray"
 
             cd build/bin
             zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
@@ -252,7 +213,6 @@ jobs:
 
       - name: Build & Pack Linux
         run: |
-          ver=1.12.12
           build_and_pack() {
             arch=$1
             export GOOS=linux GOARCH=$arch
@@ -260,25 +220,9 @@ jobs:
             echo "==> Building Linux $arch..."
             bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
 
-            # Bundle sing-box so the app works offline (regional reachability users can't fetch the
-            # core at runtime before the VPN is up).
-            echo "==> Bundling sing-box $ver (linux-$arch)..."
-            curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v$ver/sing-box-$ver-linux-$arch.tar.gz" -o sb.tgz
-            tar -xzf sb.tgz -C /tmp
-            mkdir -p build/bin/data/sing-box
-            cp "/tmp/sing-box-$ver-linux-$arch/sing-box" build/bin/data/sing-box/sing-box
-            chmod +x build/bin/data/sing-box/sing-box
-            rm -rf sb.tgz "/tmp/sing-box-$ver-linux-$arch"
-
-            # Bundle the tray sidecar next to the binary (no icon without it).
-            echo "==> Building tray sidecar (linux-$arch)..."
-            CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o build/bin/privatedeploy-tray ./cmd/privatedeploy-tray/
-            chmod +x build/bin/privatedeploy-tray
-
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
-            zip -r $APP_NAME-linux-$arch.zip $APP_NAME privatedeploy-tray data
-            rm -f privatedeploy-tray
+            zip $APP_NAME-linux-$arch.zip $APP_NAME
             cd ../..
           }
 
@@ -312,22 +256,9 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## 下载哪个? / Which file should I download?
+            Auto-generated release from GitHub Actions.
 
-            | 你的系统 Your system | 下载 Download |
-            |---|---|
-            | **Windows**(大多数电脑,64 位 Intel/AMD) | `PrivateDeploy-windows-amd64.zip` |
-            | Windows on ARM(骁龙笔记本 / Surface Pro X) | `PrivateDeploy-windows-arm64.zip` |
-            | Windows 32 位(很老的电脑) | `PrivateDeploy-windows-386.zip` |
-            | **Mac · Apple 芯片**(M1/M2/M3/M4,2020 年后) | `PrivateDeploy-darwin-arm64.zip` |
-            | Mac · Intel 芯片(2020 年前的旧 Mac) | `PrivateDeploy-darwin-amd64.zip` |
-            | **Linux**(64 位) | `PrivateDeploy-linux-amd64.zip` |
-            | **安卓手机 Android**(一般用这个,小) | `PrivateDeploy-android-arm64.apk` |
-            | 安卓 · 老/特殊设备装不上时(通用包,大) | `PrivateDeploy-android-universal.apk` |
-
-            > 不确定 Mac 是哪种芯片?点屏幕左上角苹果菜单 →「关于本机」:看到「Apple M…」选 Apple 芯片,看到「Intel」选 Intel。
-
-            ## 校验下载 / Verify downloads
+            ## Verify Downloads
             ```
             sha256sum -c checksums.sha256
             ```

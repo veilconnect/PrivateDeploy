@@ -1,22 +1,20 @@
-# PrivateDeploy REST API Design
+# PrivateDeploy REST API 设计
 
-**English** | [中文](API_DESIGN.zh-CN.md)
-
-## 🌐 API Basics
+## 🌐 API 基础信息
 
 **Base URL:** `https://api.privatedeploy.local:8443`
-**Version:** v1
-**Authentication:** No login, local / intranet control
-**Data Format:** JSON
+**版本:** v1
+**认证方式:** 无登录，本地 / 内网控制
+**数据格式:** JSON
 
-> Note: The current standalone API has removed `/api/v1/auth/*` and `/api/v1/vpn/*`.
-> The legacy authentication / VPN control sections in this document represent historical design only and do not reflect the capabilities of the current build.
+> 注意：当前 standalone API 已移除 `/api/v1/auth/*` 和 `/api/v1/vpn/*`。
+> 本文档中旧的认证 / VPN 控制章节仅代表历史设计，不代表当前构建能力。
 
 ---
 
-## 🔐 Authentication Endpoints
+## 🔐 认证接口
 
-### Login
+### 登录
 ```http
 POST /api/v1/auth/login
 Content-Type: application/json
@@ -33,7 +31,7 @@ Response:
 }
 ```
 
-### Token Refresh
+### Token 刷新
 ```http
 POST /api/v1/auth/refresh
 Authorization: Bearer <token>
@@ -47,9 +45,9 @@ Response:
 
 ---
 
-## ☁️ Cloud Provider Management
+## ☁️ 云服务商管理
 
-### Get All Cloud Providers
+### 获取所有云服务商
 ```http
 GET /api/v1/cloud/providers
 Authorization: Bearer <token>
@@ -71,7 +69,7 @@ Response:
 }
 ```
 
-### Set Active Cloud Provider
+### 设置活动云服务商
 ```http
 POST /api/v1/cloud/provider/active
 Authorization: Bearer <token>
@@ -88,7 +86,7 @@ Response:
 }
 ```
 
-### Get Cloud Provider Configuration
+### 获取云服务商配置
 ```http
 GET /api/v1/cloud/config?provider=vultr
 Authorization: Bearer <token>
@@ -102,7 +100,7 @@ Response:
 }
 ```
 
-### Save Cloud Provider Configuration
+### 保存云服务商配置
 ```http
 POST /api/v1/cloud/config
 Authorization: Bearer <token>
@@ -123,9 +121,9 @@ Response:
 
 ---
 
-## 🖥️ Server Management
+## 🖥️ 服务器管理
 
-### Get Server List
+### 获取服务器列表
 ```http
 GET /api/v1/cloud/instances?provider=vultr
 Authorization: Bearer <token>
@@ -139,7 +137,7 @@ Response:
       "status": "active",
       "region": "nrt",
       "plan": "vc2-1c-1gb",
-      "ipv4": "203.0.113.1",
+      "ipv4": "139.162.1.1",
       "ipv6": "2400:8900::1",
       "createdAt": "2025-11-04T10:00:00Z",
       "tags": ["production"]
@@ -148,7 +146,7 @@ Response:
 }
 ```
 
-### Create Server
+### 创建服务器
 ```http
 POST /api/v1/cloud/instances
 Authorization: Bearer <token>
@@ -176,7 +174,7 @@ Response:
 }
 ```
 
-### Delete Server
+### 删除服务器
 ```http
 DELETE /api/v1/cloud/instances/:id
 Authorization: Bearer <token>
@@ -188,7 +186,7 @@ Response:
 }
 ```
 
-### Get Region List
+### 获取区域列表
 ```http
 GET /api/v1/cloud/regions?provider=vultr
 Authorization: Bearer <token>
@@ -206,7 +204,7 @@ Response:
 }
 ```
 
-### Get Plan List
+### 获取套餐列表
 ```http
 GET /api/v1/cloud/plans?provider=vultr&region=nrt
 Authorization: Bearer <token>
@@ -229,9 +227,9 @@ Response:
 
 ---
 
-## 📋 Profile Management
+## 📋 配置文件管理
 
-### Get Profile List
+### 获取配置文件列表
 ```http
 GET /api/v1/profiles
 Authorization: Bearer <token>
@@ -251,7 +249,7 @@ Response:
 }
 ```
 
-### Get Profile Details
+### 获取配置文件详情
 ```http
 GET /api/v1/profiles/:id
 Authorization: Bearer <token>
@@ -261,12 +259,12 @@ Response:
   "profile": {
     "id": "profile-1",
     "name": "Default",
-    "config": { /* sing-box config JSON */ }
+    "config": { /* sing-box 配置 JSON */ }
   }
 }
 ```
 
-### Create/Update Profile
+### 创建/更新配置文件
 ```http
 POST /api/v1/profiles
 Authorization: Bearer <token>
@@ -274,7 +272,7 @@ Content-Type: application/json
 
 {
   "name": "Work Profile",
-  "config": { /* sing-box config */ }
+  "config": { /* sing-box 配置 */ }
 }
 
 Response:
@@ -286,7 +284,7 @@ Response:
 }
 ```
 
-### Delete Profile
+### 删除配置文件
 ```http
 DELETE /api/v1/profiles/:id
 Authorization: Bearer <token>
@@ -299,9 +297,9 @@ Response:
 
 ---
 
-## 📡 Subscription Management
+## 📡 订阅管理
 
-### Get Subscription List
+### 获取订阅列表
 ```http
 GET /api/v1/subscriptions
 Authorization: Bearer <token>
@@ -320,7 +318,7 @@ Response:
 }
 ```
 
-### Add Subscription
+### 添加订阅
 ```http
 POST /api/v1/subscriptions
 Authorization: Bearer <token>
@@ -341,7 +339,7 @@ Response:
 }
 ```
 
-### Update Subscription
+### 更新订阅
 ```http
 PUT /api/v1/subscriptions/:id/refresh
 Authorization: Bearer <token>
@@ -356,9 +354,9 @@ Response:
 
 ---
 
-## 🎯 Rule Set Management
+## 🎯 规则集管理
 
-### Get Rule Set List
+### 获取规则集列表
 ```http
 GET /api/v1/rulesets
 Authorization: Bearer <token>
@@ -376,7 +374,7 @@ Response:
 }
 ```
 
-### Get Rule Set Details
+### 获取规则集详情
 ```http
 GET /api/v1/rulesets/:id
 Authorization: Bearer <token>
@@ -393,11 +391,11 @@ Response:
 
 ---
 
-## 🔌 VPN Control
+## 🔌 VPN 控制
 
-> Deprecated: The standalone API currently does not provide device-level VPN control endpoints.
+> 已过时：standalone API 当前不提供设备级 VPN 控制接口。
 
-### Start VPN
+### 启动 VPN
 ```http
 POST /api/v1/vpn/start
 Authorization: Bearer <token>
@@ -414,7 +412,7 @@ Response:
 }
 ```
 
-### Stop VPN
+### 停止 VPN
 ```http
 POST /api/v1/vpn/stop
 Authorization: Bearer <token>
@@ -426,7 +424,7 @@ Response:
 }
 ```
 
-### Get VPN Status
+### 获取 VPN 状态
 ```http
 GET /api/v1/vpn/status
 Authorization: Bearer <token>
@@ -443,7 +441,7 @@ Response:
 }
 ```
 
-### Get Traffic Statistics
+### 获取流量统计
 ```http
 GET /api/v1/vpn/stats
 Authorization: Bearer <token>
@@ -459,16 +457,16 @@ Response:
 
 ---
 
-## 📊 WebSocket Real-Time Notifications
+## 📊 WebSocket 实时通知
 
-### Connect
+### 连接
 ```
 ws://api.privatedeploy.local:8443/ws
 ```
 
-### Event Types
+### 事件类型
 
-#### VPN Status Change
+#### VPN 状态变化
 ```json
 {
   "type": "vpn_status",
@@ -479,7 +477,7 @@ ws://api.privatedeploy.local:8443/ws
 }
 ```
 
-#### Traffic Update
+#### 流量更新
 ```json
 {
   "type": "traffic_update",
@@ -492,7 +490,7 @@ ws://api.privatedeploy.local:8443/ws
 }
 ```
 
-#### Server Status Change
+#### 服务器状态变化
 ```json
 {
   "type": "instance_status",
@@ -505,9 +503,9 @@ ws://api.privatedeploy.local:8443/ws
 
 ---
 
-## 🛠️ System Management
+## 🛠️ 系统管理
 
-### Get System Information
+### 获取系统信息
 ```http
 GET /api/v1/system/info
 Authorization: Bearer <token>
@@ -522,7 +520,7 @@ Response:
 }
 ```
 
-### Get Network Interfaces
+### 获取网络接口
 ```http
 GET /api/v1/system/interfaces
 Authorization: Bearer <token>
@@ -533,7 +531,7 @@ Response:
 }
 ```
 
-### Exit Application
+### 退出应用
 ```http
 POST /api/v1/system/exit
 Authorization: Bearer <token>
@@ -546,7 +544,7 @@ Response:
 
 ---
 
-## 📝 Error Response Format
+## 📝 错误响应格式
 
 ```json
 {
@@ -558,40 +556,40 @@ Response:
 }
 ```
 
-### Common Error Codes
+### 常见错误代码
 
-| Code | HTTP Status | Description |
+| 代码 | HTTP 状态 | 说明 |
 |------|-----------|------|
-| `INVALID_TOKEN` | 401 | Token is invalid or expired |
-| `UNAUTHORIZED` | 401 | Unauthorized |
-| `NOT_FOUND` | 404 | Resource does not exist |
-| `VALIDATION_ERROR` | 400 | Request parameter validation failed |
-| `PROVIDER_ERROR` | 500 | Cloud provider API error |
-| `VPN_ERROR` | 500 | VPN operation failed |
+| `INVALID_TOKEN` | 401 | Token 无效或过期 |
+| `UNAUTHORIZED` | 401 | 未授权 |
+| `NOT_FOUND` | 404 | 资源不存在 |
+| `VALIDATION_ERROR` | 400 | 请求参数验证失败 |
+| `PROVIDER_ERROR` | 500 | 云服务商 API 错误 |
+| `VPN_ERROR` | 500 | VPN 操作失败 |
 
 ---
 
-## 🚀 Implementation Priority
+## 🚀 实现优先级
 
-### Phase 1 (MVP)
-- ✅ Authentication endpoints
-- ✅ VPN control
-- ✅ Profile management (basic)
-- ✅ Cloud server management (list, create, delete)
+### Phase 1（MVP）
+- ✅ 认证接口
+- ✅ VPN 控制
+- ✅ 配置文件管理（基础）
+- ✅ 云服务器管理（列表、创建、删除）
 
 ### Phase 2
-- ✅ Subscription management
-- ✅ Rule set management
-- ✅ WebSocket real-time notifications
-- ✅ Traffic statistics
+- ✅ 订阅管理
+- ✅ 规则集管理
+- ✅ WebSocket 实时通知
+- ✅ 流量统计
 
 ### Phase 3
-- ✅ Full configuration editing
-- ✅ Plugin system API
-- ✅ Scheduled task API
-- ✅ Advanced system management
+- ✅ 完整的配置编辑
+- ✅ 插件系统 API
+- ✅ 定时任务 API
+- ✅ 高级系统管理
 
 ---
 
-**Document Version:** v1.0
-**Created Date:** 2025-11-04
+**文档版本：** v1.0
+**创建日期：** 2025-11-04

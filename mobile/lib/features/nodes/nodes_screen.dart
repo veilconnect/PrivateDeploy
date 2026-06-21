@@ -22,16 +22,8 @@ import '../profiles/profile_content_screen.dart';
 import '../profiles/profile_provider.dart';
 import '../cdn/cdn_provider.dart';
 import '../cdn/cdn_settings_screen.dart';
-import '../profiles/profile_config_normalizer.dart';
-import '../settings/app_settings_provider.dart';
 import '../settings/settings_screen.dart';
 import '../vpn/vpn_provider.dart';
-import 'nodes_wireguard_card.dart';
-
-/// Profile name used for the standalone WireGuard-only (intranet) tunnel — the
-/// one brought up with no proxy node. Kept here so the connect call and the
-/// proxy-state reconciliation in build() agree on the exact string.
-const String kIntranetWireguardProfileName = 'Intranet WireGuard';
 
 class NodesScreen extends StatefulWidget {
   const NodesScreen({Key? key}) : super(key: key);
@@ -76,23 +68,6 @@ class _NodesScreenState extends State<NodesScreen> {
       if (initializeVpn) vpnProvider.initialize() else vpnProvider.loadStatus(),
     ]);
 
-    // Reconcile the persisted WireGuard switch with reality. The enabled flag
-    // survives a phone reboot, but the tunnel does not — so on a fresh launch
-    // the home switch would sit "on" while no WireGuard network is actually
-    // connected. Clear the stale flag so the switch is honest. Scoped to a
-    // FULLY disconnected launch only: a surviving proxy tunnel legitimately
-    // keeps WG "armed" to merge in on the next (re)connect, and we must not
-    // stomp that. Only at bootstrap (initializeVpn) so a pull-to-refresh mid
-    // (re)connect never races the flag off.
-    if (initializeVpn &&
-        mounted &&
-        vpnProvider.status == VpnStatus.disconnected) {
-      final appSettings = context.read<AppSettingsProvider>();
-      if (appSettings.wireGuardIntranet.enabled) {
-        await appSettings.setWireGuardIntranetEnabled(false);
-      }
-    }
-
     if (!cloudProvider.hasApiKey) {
       // No saved access credentials — nothing to sync remotely.
       await cloudProvider.refreshCloudConfig();
@@ -114,6 +89,8 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     }
   }
@@ -131,11 +108,80 @@ class _NodesScreenState extends State<NodesScreen> {
         unawaited(cloudProvider.loadPlans());
         await _reconcileCloudProfiles(
             cloudProvider, profileProvider, vpnProvider);
+        await _maybePromptRemoveMissingNodes(
+            cloudProvider, profileProvider, vpnProvider);
       }
     } catch (e) {
       // Background sync failure is non-critical — cached nodes remain usable.
       AppLogger.warning('[NodesScreen] Background cloud sync failed: $e');
     }
+  }
+
+  /// After a successful provider sync, if the API confirmed any cached nodes
+  /// are gone, ask the user once whether to remove them. Deleted nodes are
+  /// never purged silently — only after this confirmation.
+  Future<void> _maybePromptRemoveMissingNodes(
+    CloudProvider cloudProvider,
+    ProfileProvider profileProvider,
+    VpnProvider vpnProvider,
+  ) async {
+    final missing = cloudProvider.unpromptedMissingInstances;
+    if (missing.isEmpty || !mounted) {
+      return;
+    }
+    // Only surface each detected set once, even if the dialog is dismissed.
+    cloudProvider.markMissingPrompted();
+
+    final labels = missing.map((node) => '• ${node.label}').join('\n');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('节点已在云端删除 / Nodes deleted'),
+        content: Text(
+          '以下节点已通过云服务商确认不存在,是否从列表中移除?\n'
+          'These nodes no longer exist on the provider. Remove them from the list?\n\n'
+          '$labels',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('暂不 / Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('移除 / Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    var removed = 0;
+    for (final node in missing) {
+      final profileName = cloudProfileName(node);
+      final linkedProfile = profileProvider.getProfileByName(profileName);
+      final isActive = linkedProfile != null &&
+          profileProvider.activeProfile?.id == linkedProfile.id;
+      if (isActive && vpnProvider.status != VpnStatus.disconnected) {
+        await vpnProvider.disconnect();
+      }
+      if (await cloudProvider.purgeMissingInstance(node.id)) {
+        removed++;
+        if (linkedProfile != null) {
+          await profileProvider.deleteProfileByName(profileName);
+        }
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    showNodesActionSnackBar(
+      context,
+      message: '已移除 $removed 个已删除节点 / Removed $removed deleted node(s)',
+      backgroundColor: Colors.green,
+    );
   }
 
   Future<void> _reconcileCloudProfiles(
@@ -262,49 +308,6 @@ class _NodesScreenState extends State<NodesScreen> {
   /// own (proxy disconnected, tunnel carrying only WireGuard) and vice versa.
   bool _proxyActive = false;
 
-  /// Brings up a tunnel that carries ONLY the intranet WireGuard (LAN -> WG,
-  /// everything else direct). Used when WireGuard should run without the proxy.
-  Future<void> _connectWireguardOnly(VpnProvider vpnProvider) async {
-    final appSettings = context.read<AppSettingsProvider>();
-    final config =
-        buildWireguardIntranetOnlyConfig(appSettings.wireGuardIntranet);
-    if (config == null) {
-      // Not configured, or the configured addresses don't yield a routable
-      // CIDR — say so instead of silently doing nothing (or worse, starting
-      // a tunnel with no WireGuard in it).
-      if (mounted) {
-        showNodesActionSnackBar(
-          context,
-          message: 'WireGuard 配置无效,请检查本地地址/网段 / '
-              'Invalid WireGuard config — check local address/CIDRs',
-          backgroundColor: Colors.orange,
-        );
-      }
-      return;
-    }
-    if (vpnProvider.isConnected) {
-      // Hot-swap the live tunnel down to WG-only in place. Dropping the proxy
-      // this way keeps the intranet WireGuard overlay (and any SSH over it)
-      // alive instead of bouncing the whole tunnel — the proxy control and the
-      // WG control stay independent.
-      await vpnProvider.swapRunningConfig(
-        configJson: config,
-        profileName: kIntranetWireguardProfileName,
-        // No proxy upstream: tells VpnProvider to skip the proxy-oriented
-        // health watchdog so it doesn't restart this tunnel every ~30-60s.
-        proxyless: true,
-      );
-      return;
-    }
-    await vpnProvider.connect(
-      configJson: config,
-      profileName: kIntranetWireguardProfileName,
-      // No proxy upstream: tells VpnProvider to skip the proxy-oriented health
-      // watchdog so it doesn't restart this tunnel every ~30-60s.
-      proxyless: true,
-    );
-  }
-
   /// Main connect button: the user wants the proxy node in the tunnel.
   Future<void> _handleProxyConnect(
     CloudProvider cloudProvider,
@@ -317,56 +320,11 @@ class _NodesScreenState extends State<NodesScreen> {
     });
   }
 
-  /// Main disconnect button: drop the proxy from the tunnel. If the intranet
-  /// WireGuard is still on, keep the tunnel up carrying only WireGuard;
-  /// otherwise stop the tunnel entirely.
+  /// Main disconnect button: stop the proxy tunnel.
   Future<void> _handleProxyDisconnect(VpnProvider vpnProvider) {
     return _runBusyExclusive(() async {
       _proxyActive = false;
-      final appSettings = context.read<AppSettingsProvider>();
-      if (appSettings.wireGuardIntranet.isActive) {
-        await _connectWireguardOnly(vpnProvider);
-      } else {
-        await handleNodesDisconnect(context: context, vpnProvider: vpnProvider);
-      }
-    });
-  }
-
-  /// Home-screen intranet WireGuard switch. Controls ONLY whether WireGuard is
-  /// in the tunnel — independent of the proxy node. Applies live.
-  Future<void> _handleWireguardToggle(
-    CloudProvider cloudProvider,
-    ProfileProvider profileProvider,
-    VpnProvider vpnProvider,
-    bool enabled,
-  ) {
-    return _runBusyExclusive(() async {
-      final appSettings = context.read<AppSettingsProvider>();
-      await appSettings.setWireGuardIntranetEnabled(enabled);
-      if (!mounted) {
-        return;
-      }
-      if (enabled) {
-        if (_proxyActive) {
-          // Proxy wanted — add WireGuard alongside it. _handleConnect hot-swaps
-          // when a tunnel is already up (proxy traffic isn't interrupted) and
-          // does a cold connect otherwise.
-          await _handleConnect(cloudProvider, profileProvider, vpnProvider);
-        } else {
-          // No proxy — run WireGuard on its own.
-          await _connectWireguardOnly(vpnProvider);
-        }
-      } else if (vpnProvider.isConnected) {
-        if (_proxyActive) {
-          // Keep the proxy, drop WireGuard. _handleConnect hot-swaps the live
-          // tunnel down to proxy-only without bouncing the proxy session.
-          await _handleConnect(cloudProvider, profileProvider, vpnProvider);
-        } else {
-          // Was WireGuard-only — turning it off stops the tunnel.
-          await handleNodesDisconnect(
-              context: context, vpnProvider: vpnProvider);
-        }
-      }
+      await handleNodesDisconnect(context: context, vpnProvider: vpnProvider);
     });
   }
 
@@ -516,13 +474,6 @@ class _NodesScreenState extends State<NodesScreen> {
     );
   }
 
-  Future<void> _showWireguardDialog() {
-    return showCreateWireguardFlow(
-      context: context,
-      profileProvider: context.read<ProfileProvider>(),
-    );
-  }
-
   void _openSettings() {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
@@ -606,12 +557,7 @@ class _NodesScreenState extends State<NodesScreen> {
           // proxyless flag (restored from persisted session state) plus the
           // known WG-only profile name so a restored WG-only tunnel is never
           // mistaken for a proxy.
-          if (!vpnProvider.isConnected) {
-            _proxyActive = false;
-          } else {
-            _proxyActive = !vpnProvider.isProxylessTunnel &&
-                vpnProvider.activeProfile != kIntranetWireguardProfileName;
-          }
+          _proxyActive = vpnProvider.isConnected;
           final localProfiles = profileProvider.profiles
               .where((profile) => !isCloudManagedProfile(profile))
               .toList();
@@ -670,16 +616,6 @@ class _NodesScreenState extends State<NodesScreen> {
                   onCreateCloudNode: () =>
                       _showCreateCloudNodeDialog(cloudProvider),
                   onRefreshRoutes: _refreshAll,
-                ),
-                SizedBox(height: 12.h),
-                NodesWireguardCard(
-                  busy: _wgBusy,
-                  onSetEnabled: (enabled) => _handleWireguardToggle(
-                    cloudProvider,
-                    profileProvider,
-                    vpnProvider,
-                    enabled,
-                  ),
                 ),
                 SizedBox(height: 20.h),
                 if (showLocalProfilesFirst && localProfiles.isNotEmpty) ...[
@@ -800,7 +736,6 @@ class _NodesScreenState extends State<NodesScreen> {
                 : null,
             onImportProfile: _showImportProfileDialog,
             onCreateProfile: _showCreateProfileDialog,
-            onAddWireguard: _showWireguardDialog,
           );
         },
       ),

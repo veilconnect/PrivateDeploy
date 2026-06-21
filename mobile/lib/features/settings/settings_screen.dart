@@ -11,7 +11,6 @@ import 'settings_cdn_section.dart';
 import 'settings_cloud_dialogs.dart';
 import 'settings_help_section.dart';
 import 'settings_server_section.dart';
-import 'settings_wireguard_intranet_section.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -104,10 +103,6 @@ class SettingsScreen extends StatelessWidget {
                 }),
             SizedBox(height: 16.h),
             const SettingsAppSection(),
-            SizedBox(height: 16.h),
-            // Independent intranet-VPN (WireGuard) control — separate from the
-            // proxy node list, with its own enable switch.
-            const SettingsWireguardIntranetSection(),
             SizedBox(height: 16.h),
             // CDN acceleration sits right after app-level settings and
             // before help, where users browsing for connection-related

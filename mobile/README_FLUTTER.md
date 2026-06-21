@@ -1,46 +1,44 @@
 # PrivateDeploy Mobile
 
-**English** | [中文](README_FLUTTER.zh-CN.md)
+Flutter 移动端应用 - 跨平台 VPN 管理客户端
 
-Flutter mobile app - Cross-platform VPN management client
-
-## 📱 Supported Platforms
+## 📱 支持平台
 
 - Android 7.0+ (API 24+)
 - iOS 12.0+
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Install Dependencies
+### 安装依赖
 
 ```bash
 flutter pub get
 ```
 
-### Generate Code
+### 生成代码
 
 ```bash
-# Generate Retrofit API client code
+# 生成 Retrofit API 客户端代码
 flutter pub run build_runner build --delete-conflicting-outputs
 
-# Or watch mode (for development)
+# 或者监听模式（开发时使用）
 flutter pub run build_runner watch
 ```
 
-### Run the App
+### 运行应用
 
 ```bash
-# Run on a connected device
+# 运行在连接的设备
 flutter run
 
-# Run on a specific device
+# 运行在特定设备
 flutter run -d <device-id>
 
-# List available devices
+# 查看可用设备
 flutter devices
 ```
 
-### Build the App
+### 构建应用
 
 ```bash
 # Android APK
@@ -53,168 +51,168 @@ flutter build appbundle --release
 flutter build ios --release
 ```
 
-## 📁 Project Structure
+## 📁 项目结构
 
 ```
 lib/
-├── main.dart                    # App entry point
-├── core/                        # Core functionality
+├── main.dart                    # 应用入口
+├── core/                        # 核心功能
 │   ├── constants/
-│   │   └── api_constants.dart   # API constants
+│   │   └── api_constants.dart   # API 常量
 │   ├── network/
-│   │   ├── api_client.dart      # Retrofit API client
-│   │   └── websocket_service.dart  # WebSocket service
+│   │   ├── api_client.dart      # Retrofit API 客户端
+│   │   └── websocket_service.dart  # WebSocket 服务
 │   └── storage/
-│       └── storage_service.dart # Local storage
-├── features/                    # Feature modules
+│       └── storage_service.dart # 本地存储
+├── features/                    # 功能模块
 │   ├── auth/
-│   │   ├── auth_provider.dart   # Auth state management
-│   │   └── login_screen.dart    # Login screen
+│   │   ├── auth_provider.dart   # 认证状态管理
+│   │   └── login_screen.dart    # 登录界面
 │   ├── home/
-│   │   └── home_screen.dart     # Home page
+│   │   └── home_screen.dart     # 主页
 │   └── cloud/
-│       ├── cloud_provider.dart  # Cloud service state management
-│       └── cloud_screen.dart    # Cloud server management screen
-└── shared/                      # Shared components
+│       ├── cloud_provider.dart  # 云服务状态管理
+│       └── cloud_screen.dart    # 云服务器管理界面
+└── shared/                      # 共享组件
     ├── utils/
-    │   └── logger.dart          # Logging utility
+    │   └── logger.dart          # 日志工具
     └── widgets/
         ├── loading_indicator.dart
         ├── error_view.dart
         └── empty_view.dart
 ```
 
-## 🔧 Tech Stack
+## 🔧 技术栈
 
-### Core Dependencies
+### 核心依赖
 
-- **flutter_screenutil**: Screen adaptation
-- **provider**: State management
-- **dio**: HTTP client
-- **retrofit**: REST API wrapper
-- **hive**: Local database
-- **shared_preferences**: Key-Value storage
-- **logger**: Logging
-- **web_socket_channel**: WebSocket support
+- **flutter_screenutil**: 屏幕适配
+- **provider**: 状态管理
+- **dio**: HTTP 客户端
+- **retrofit**: REST API 封装
+- **hive**: 本地数据库
+- **shared_preferences**: Key-Value 存储
+- **logger**: 日志记录
+- **web_socket_channel**: WebSocket 支持
 
-### UI Components
+### UI 组件
 
-- **flutter_svg**: SVG icons
-- **fl_chart**: Chart display
-- **flutter_local_notifications**: Local notifications
+- **flutter_svg**: SVG 图标
+- **fl_chart**: 图表显示
+- **flutter_local_notifications**: 本地通知
 
-### Utilities
+### 工具
 
-- **permission_handler**: Permission management
-- **package_info_plus**: App information
-- **path_provider**: File paths
+- **permission_handler**: 权限管理
+- **package_info_plus**: 应用信息
+- **path_provider**: 文件路径
 
-## 🌐 API Configuration
+## 🌐 API 配置
 
-Default API address: `http://localhost:8443/api/v1`
+默认 API 地址：`http://localhost:8443/api/v1`
 
-To change the API address, edit:
+修改 API 地址，编辑：
 ```dart
 // lib/core/constants/api_constants.dart
 static const String baseUrl = 'http://your-api-server:8443/api/v1';
 ```
 
-## 📝 Development Notes
+## 📝 开发说明
 
-### Adding a New API Endpoint
+### 添加新的 API 端点
 
-1. Add the interface definition in `api_client.dart`:
+1. 在 `api_client.dart` 中添加接口定义：
 ```dart
 @GET("/new/endpoint")
 Future<Map<String, dynamic>> getNewData();
 ```
 
-2. Regenerate the code:
+2. 重新生成代码：
 ```bash
 flutter pub run build_runner build --delete-conflicting-outputs
 ```
 
-### Creating a New Provider
+### 创建新的 Provider
 
-1. Create a new Provider class that extends `ChangeNotifier`
-2. Register it in the `MultiProvider` in `main.dart`
-3. Access it in the UI using `Consumer` or `Provider.of`
+1. 创建新的 Provider 类继承 `ChangeNotifier`
+2. 在 `main.dart` 的 `MultiProvider` 中注册
+3. 在界面中使用 `Consumer` 或 `Provider.of` 访问
 
-### Adding a New Screen
+### 添加新界面
 
-1. Create a new module directory under `lib/features/`
-2. Create the screen file and the Provider file
-3. Register the route in the navigation system
+1. 在 `lib/features/` 下创建新模块目录
+2. 创建界面文件和 Provider 文件
+3. 在导航系统中注册路由
 
-## 🔐 Security Considerations
+## 🔐 安全注意事项
 
-- Tokens are stored in encrypted SharedPreferences
-- Do not output sensitive data in logs
-- Use HTTPS in production
-- Implement SSL Pinning (to be done)
+- Token 存储在加密的 SharedPreferences 中
+- 敏感数据不要在日志中输出
+- 生产环境使用 HTTPS
+- 实现 SSL Pinning（待完成）
 
-## 🧪 Testing
+## 🧪 测试
 
 ```bash
-# Run all tests
+# 运行所有测试
 flutter test
 
-# Run a specific test
+# 运行特定测试
 flutter test test/features/auth_test.dart
 
-# Generate test coverage
+# 生成测试覆盖率
 flutter test --coverage
 ```
 
-## 📦 Building Release Versions
+## 📦 构建发布版本
 
 ### Android
 
-1. Configure the signing key
-2. Build:
+1. 配置签名密钥
+2. 构建：
 ```bash
 flutter build appbundle --release
 ```
 
 ### iOS
 
-1. Configure the certificate and provisioning profile
-2. Build:
+1. 配置证书和描述文件
+2. 构建：
 ```bash
 flutter build ios --release
 ```
 
-## 🐛 Debugging
+## 🐛 调试
 
-### View Logs
+### 查看日志
 
 ```bash
 flutter logs
 ```
 
-### Run in Debug Mode
+### 调试模式运行
 
 ```bash
 flutter run --debug
 ```
 
-### Performance Profiling
+### 性能分析
 
 ```bash
 flutter run --profile
 ```
 
-## 📚 Related Documentation
+## 📚 相关文档
 
-- [Flutter Official Docs](https://flutter.dev/docs)
-- [Provider Docs](https://pub.dev/packages/provider)
-- [Dio Docs](https://pub.dev/packages/dio)
-- [Retrofit Docs](https://pub.dev/packages/retrofit)
+- [Flutter 官方文档](https://flutter.dev/docs)
+- [Provider 文档](https://pub.dev/packages/provider)
+- [Dio 文档](https://pub.dev/packages/dio)
+- [Retrofit 文档](https://pub.dev/packages/retrofit)
 
-## 🤝 Contributing
+## 🤝 贡献
 
-Issues and Pull Requests are welcome!
+欢迎提交 Issue 和 Pull Request！
 
-## 📄 License
+## 📄 许可证
 
-Same as the PrivateDeploy main project
+与 PrivateDeploy 主项目相同

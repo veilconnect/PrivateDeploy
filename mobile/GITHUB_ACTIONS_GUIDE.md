@@ -1,57 +1,55 @@
-# GitHub Actions Automated Build Guide
+# GitHub Actions 自动化构建指南
 
-**English** | [中文](GITHUB_ACTIONS_GUIDE.zh-CN.md)
-
-This document explains in detail how to use GitHub Actions to automatically build and test the PrivateDeploy Mobile project.
+本文档详细说明如何使用 GitHub Actions 自动编译和测试 PrivateDeploy Mobile 项目。
 
 ---
 
-## 📋 Table of Contents
+## 📋 目录
 
-1. [Quick Start](#quick-start)
-2. [Workflow Overview](#workflow-overview)
-3. [Trigger Methods](#trigger-methods)
-4. [Build Artifacts](#build-artifacts)
-5. [Release Process](#release-process)
-6. [Troubleshooting](#troubleshooting)
+1. [快速开始](#快速开始)
+2. [工作流说明](#工作流说明)
+3. [触发方式](#触发方式)
+4. [构建产物](#构建产物)
+5. [发布流程](#发布流程)
+6. [故障排除](#故障排除)
 
 ---
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### 1. Push Code to GitHub
+### 1. 推送代码到 GitHub
 
 ```bash
 cd ~/PrivateDeploy/mobile
 
-# Initialize Git repository (if not already done)
+# 初始化 Git 仓库（如果还没有）
 git init
 
-# Add remote repository
+# 添加远程仓库
 git remote add origin https://github.com/YOUR_USERNAME/PrivateDeploy.git
 
-# Add all files
+# 添加所有文件
 git add .
 
-# Commit
+# 提交
 git commit -m "feat: add GitHub Actions CI/CD workflows"
 
-# Push to GitHub
+# 推送到 GitHub
 git push -u origin main
 ```
 
-### 2. Check Build Status
+### 2. 查看构建状态
 
-After pushing, visit the GitHub repository page:
+推送后，访问 GitHub 仓库页面：
 ```
 https://github.com/YOUR_USERNAME/PrivateDeploy/actions
 ```
 
-You will see the automatically triggered workflows start running.
+你会看到自动触发的工作流开始运行。
 
-### 3. Download Build Artifacts
+### 3. 下载构建产物
 
-After the build completes, find the corresponding workflow run in the Actions page. Click into it to download:
+构建完成后，在 Actions 页面找到对应的工作流运行记录，点击进入后可以下载：
 - Android APK (debug/release)
 - Android App Bundle (AAB)
 - iOS IPA
@@ -59,51 +57,51 @@ After the build completes, find the corresponding workflow run in the Actions pa
 
 ---
 
-## 🔧 Workflow Overview
+## 🔧 工作流说明
 
-The project includes 5 main GitHub Actions workflows:
+项目包含 5 个主要的 GitHub Actions 工作流：
 
-### 1. **CI - Continuous Integration** (`ci.yml`)
+### 1. **CI - 持续集成** (`ci.yml`)
 
-**Trigger conditions:**
-- Push to `main`, `develop`, `feature/*` branches
-- Pull Request targeting `main`, `develop`
-- Automatically runs daily at 2 AM (scheduled task)
-- Manual trigger
+**触发条件:**
+- 推送到 `main`, `develop`, `feature/*` 分支
+- 针对 `main`, `develop` 的 Pull Request
+- 每天凌晨 2 点自动运行（定时任务）
+- 手动触发
 
-**Tasks executed:**
+**执行任务:**
 ```
-1. Lint Check (code check)
+1. Lint Check (代码检查)
    ├─ Flutter analyze
    └─ Dart format check
 
-2. Unit Tests (unit tests)
+2. Unit Tests (单元测试)
    ├─ Run tests with coverage
    └─ Upload coverage to Codecov
 
-3. Build Android (build Android)
+3. Build Android (构建 Android)
    ├─ Build Go Mobile AAR
    └─ Build Debug APK
 
-4. Build Web (build Web)
+4. Build Web (构建 Web)
    └─ Build Web release
 
-5. Security Scan (security scan)
+5. Security Scan (安全扫描)
    └─ Trivy vulnerability scan
 ```
 
-**Build time:** about 15-20 minutes
+**构建时间:** 约 15-20 分钟
 
 ---
 
 ### 2. **Build Android** (`build-android.yml`)
 
-**Trigger conditions:**
-- Push to `main`, `develop` branches
+**触发条件:**
+- 推送到 `main`, `develop` 分支
 - Pull Request
-- Manual trigger
+- 手动触发
 
-**Execution steps:**
+**执行步骤:**
 ```
 Job 1: Build Go Mobile AAR
   ├─ Setup Go 1.21
@@ -127,24 +125,24 @@ Job 3: Build Debug APK
   └─ Upload artifact
 ```
 
-**Build artifacts:**
+**构建产物:**
 - `vpncore.aar` (Go Mobile AAR)
 - `app-release.apk` (Android APK)
 - `app-release.aab` (Android App Bundle)
 - `app-debug.apk` (Debug APK)
 
-**Build time:** about 25-30 minutes
+**构建时间:** 约 25-30 分钟
 
 ---
 
 ### 3. **Build iOS** (`build-ios.yml`)
 
-**Trigger conditions:**
-- Push to `main`, `develop` branches
+**触发条件:**
+- 推送到 `main`, `develop` 分支
 - Pull Request
-- Manual trigger
+- 手动触发
 
-**Execution steps:**
+**执行步骤:**
 ```
 Job 1: Build Go Mobile Framework
   ├─ Setup Go 1.21 (macOS)
@@ -166,25 +164,25 @@ Job 3: Build iOS Simulator
   └─ Upload simulator build
 ```
 
-**Build artifacts:**
+**构建产物:**
 - `VPNCore.framework` (Go Mobile Framework)
-- `app-release.ipa` (iOS IPA, unsigned)
+- `app-release.ipa` (iOS IPA, 未签名)
 - `Runner.app` (Simulator build)
 
-**Build time:** about 20-25 minutes
+**构建时间:** 约 20-25 分钟
 
-**Note:** The iOS IPA is unsigned and must be signed manually before it can be installed on a real device.
+**注意:** iOS IPA 未签名，需要手动签名后才能安装到真机。
 
 ---
 
 ### 4. **Test and Analyze** (`test.yml`)
 
-**Trigger conditions:**
-- Push to `main`, `develop` branches
+**触发条件:**
+- 推送到 `main`, `develop` 分支
 - Pull Request
-- Manual trigger
+- 手动触发
 
-**Tasks executed:**
+**执行任务:**
 ```
 1. Flutter Analyze
    ├─ Code analysis
@@ -206,17 +204,17 @@ Job 3: Build iOS Simulator
    └─ Security audit
 ```
 
-**Build time:** about 10-15 minutes
+**构建时间:** 约 10-15 分钟
 
 ---
 
 ### 5. **Release Build** (`release.yml`)
 
-**Trigger conditions:**
-- Push a tag (format: `v*`, e.g. `v1.0.0`)
-- Manual trigger (requires entering a version number)
+**触发条件:**
+- 推送 tag (格式: `v*`, 例如 `v1.0.0`)
+- 手动触发（需要输入版本号）
 
-**Execution steps:**
+**执行步骤:**
 ```
 Job 1: Create GitHub Release
   └─ Create release with tag
@@ -234,171 +232,171 @@ Job 3: Build iOS Release
   └─ Upload to GitHub Release
 ```
 
-**Release artifacts:**
+**发布产物:**
 - `privatedeploy-v1.0.0.apk`
 - `privatedeploy-v1.0.0.aab`
 - `privatedeploy-v1.0.0.ipa`
 
-**Build time:** about 35-40 minutes
+**构建时间:** 约 35-40 分钟
 
 ---
 
-## 🎯 Trigger Methods
+## 🎯 触发方式
 
-### 1. Automatic Triggers
+### 1. 自动触发
 
-**Push code:**
+**推送代码:**
 ```bash
 git add .
 git commit -m "feat: add new feature"
 git push origin main
 ```
-This automatically triggers the CI and build workflows.
+这会自动触发 CI 和构建工作流。
 
-**Create a Pull Request:**
-Create a PR on the GitHub web interface, which automatically triggers the test and build workflows.
+**创建 Pull Request:**
+在 GitHub 网页上创建 PR，会自动触发测试和构建。
 
-**Scheduled task:**
-The CI workflow runs automatically every day at 2 AM (UTC time).
+**定时任务:**
+CI 工作流每天凌晨 2 点自动运行（UTC 时间）。
 
-### 2. Manual Trigger
+### 2. 手动触发
 
-Visit the GitHub Actions page:
+访问 GitHub Actions 页面：
 ```
 https://github.com/YOUR_USERNAME/PrivateDeploy/actions
 ```
 
-Select the workflow you want to run and click the **Run workflow** button.
+选择要运行的工作流，点击 **Run workflow** 按钮。
 
-### 3. Release a New Version
+### 3. 发布新版本
 
-**Method 1: Create a Git Tag**
+**方式 1: 创建 Git Tag**
 ```bash
-# Create tag
+# 创建 tag
 git tag v1.0.0
 
-# Push tag
+# 推送 tag
 git push origin v1.0.0
 ```
 
-**Method 2: GitHub Release**
-1. Visit the repository's Releases page
-2. Click "Draft a new release"
-3. Create a new tag (e.g. v1.0.0)
-4. Fill in the release notes
-5. Click "Publish release"
+**方式 2: GitHub Release**
+1. 访问仓库的 Releases 页面
+2. 点击 "Draft a new release"
+3. 创建新的 tag (例如 v1.0.0)
+4. 填写发布说明
+5. 点击 "Publish release"
 
-**Method 3: Manual Trigger**
-1. Visit the Actions page
-2. Select the "Release Build" workflow
-3. Click "Run workflow"
-4. Enter the version number (e.g. 1.0.0)
-5. Click "Run workflow"
+**方式 3: 手动触发**
+1. 访问 Actions 页面
+2. 选择 "Release Build" 工作流
+3. 点击 "Run workflow"
+4. 输入版本号 (例如 1.0.0)
+5. 点击 "Run workflow"
 
 ---
 
-## 📦 Build Artifacts
+## 📦 构建产物
 
-### Download Methods
+### 下载方式
 
-**Method 1: GitHub Actions Artifacts**
-1. Visit the Actions page
-2. Click the specific workflow run
-3. Scroll to the "Artifacts" section at the bottom
-4. Click to download the desired file
+**方式 1: GitHub Actions Artifacts**
+1. 访问 Actions 页面
+2. 点击具体的工作流运行
+3. 滚动到底部的 "Artifacts" 部分
+4. 点击下载所需的文件
 
-**Method 2: GitHub Releases**
-1. Visit the Releases page
-2. Find the corresponding version
-3. Download the file in the "Assets" section
+**方式 2: GitHub Releases**
+1. 访问 Releases 页面
+2. 找到对应版本
+3. 在 "Assets" 部分下载文件
 
-### Artifact Description
+### 产物说明
 
-| File Name | Size | Purpose | Platform |
+| 文件名 | 大小 | 用途 | 平台 |
 |--------|------|------|------|
-| `app-release.apk` | ~50MB | Direct install | Android |
-| `app-release.aab` | ~45MB | Google Play release | Android |
-| `app-debug.apk` | ~55MB | Debugging/testing | Android |
-| `app-release.ipa` | ~60MB | Install after signing | iOS |
-| `vpncore.aar` | ~15MB | Android dependency library | Android |
-| `VPNCore.framework` | ~20MB | iOS dependency library | iOS |
+| `app-release.apk` | ~50MB | 直接安装 | Android |
+| `app-release.aab` | ~45MB | Google Play 发布 | Android |
+| `app-debug.apk` | ~55MB | 调试测试 | Android |
+| `app-release.ipa` | ~60MB | 需签名后安装 | iOS |
+| `vpncore.aar` | ~15MB | Android 依赖库 | Android |
+| `VPNCore.framework` | ~20MB | iOS 依赖库 | iOS |
 
-### Retention Time
+### 保留时间
 
-| Build Type | Retention Time |
+| 构建类型 | 保留时间 |
 |---------|---------|
-| CI build | 3 days |
-| Development build | 7 days |
-| Release build | 30 days |
-| GitHub Release | Permanent |
+| CI 构建 | 3 天 |
+| 开发构建 | 7 天 |
+| Release 构建 | 30 天 |
+| GitHub Release | 永久 |
 
 ---
 
-## 🎉 Release Process
+## 🎉 发布流程
 
-### Standard Release Process
+### 标准发布流程
 
 ```bash
-# 1. Make sure code is committed
+# 1. 确保代码已提交
 git status
 
-# 2. Update the version number
-# Edit the version in pubspec.yaml
+# 2. 更新版本号
+# 编辑 pubspec.yaml 中的 version
 
-# 3. Commit the version change
+# 3. 提交版本变更
 git add pubspec.yaml
 git commit -m "chore: bump version to 1.0.0"
 git push origin main
 
-# 4. Create and push the tag
+# 4. 创建并推送 tag
 git tag -a v1.0.0 -m "Release version 1.0.0"
 git push origin v1.0.0
 
-# 5. Wait for GitHub Actions to finish building (about 35-40 minutes)
+# 5. 等待 GitHub Actions 完成构建（约 35-40 分钟）
 
-# 6. Visit the Releases page to verify
+# 6. 访问 Releases 页面验证
 # https://github.com/YOUR_USERNAME/PrivateDeploy/releases
 ```
 
-### Release Checklist
+### 发布检查清单
 
-Before releasing, ensure:
-- [ ] All tests pass
-- [ ] Code has been reviewed
-- [ ] Version number has been updated
-- [ ] CHANGELOG has been updated
-- [ ] Documentation has been updated
-- [ ] Tested on a real device
-- [ ] Signed (if releasing to an app store)
+发布前确保：
+- [ ] 所有测试通过
+- [ ] 代码已 review
+- [ ] 版本号已更新
+- [ ] CHANGELOG 已更新
+- [ ] 文档已更新
+- [ ] 已在真机上测试
+- [ ] 已签名（如需发布到应用商店）
 
 ---
 
-## 🔍 Monitoring and Debugging
+## 🔍 监控和调试
 
-### View Build Logs
+### 查看构建日志
 
-1. Visit the Actions page
-2. Click the workflow run
-3. Click the specific Job
-4. View the detailed log output
+1. 访问 Actions 页面
+2. 点击工作流运行
+3. 点击具体的 Job
+4. 查看详细日志输出
 
-### Common Statuses
+### 常见状态
 
-| Status | Description |
+| 状态 | 说明 |
 |------|------|
-| ✅ Success | Build succeeded |
-| ❌ Failure | Build failed, check the logs |
-| 🟡 In Progress | Building |
-| ⏸️ Queued | Waiting in queue |
-| 🚫 Cancelled | Cancelled |
+| ✅ Success | 构建成功 |
+| ❌ Failure | 构建失败，查看日志 |
+| 🟡 In Progress | 正在构建 |
+| ⏸️ Queued | 排队等待 |
+| 🚫 Cancelled | 已取消 |
 
-### Handling Build Failures
+### 构建失败处理
 
-**Step 1: View the error logs**
-Click the failed Job and look at the red error messages.
+**步骤 1: 查看错误日志**
+点击失败的 Job，查看红色的错误信息。
 
-**Step 2: Reproduce locally**
-Try running the failed commands locally:
+**步骤 2: 本地复现**
+尝试在本地运行失败的命令：
 ```bash
 flutter pub get
 flutter pub run build_runner build
@@ -406,39 +404,39 @@ flutter analyze
 flutter test
 ```
 
-**Step 3: Fix the problem**
-Fix the code based on the error messages.
+**步骤 3: 修复问题**
+根据错误信息修复代码。
 
-**Step 4: Re-trigger**
-Push the fixed code, or click "Re-run jobs".
+**步骤 4: 重新触发**
+推送修复后的代码，或点击 "Re-run jobs"。
 
 ---
 
-## ⚙️ Custom Configuration
+## ⚙️ 自定义配置
 
-### Change the Flutter Version
+### 修改 Flutter 版本
 
-Edit the following in the workflow file:
+编辑工作流文件中的：
 ```yaml
 - name: Setup Flutter
   uses: subosito/flutter-action@v2
   with:
-    flutter-version: '3.16.0'  # Change to the desired version
+    flutter-version: '3.16.0'  # 修改为所需版本
     channel: 'stable'
 ```
 
-### Change the Go Version
+### 修改 Go 版本
 
 ```yaml
 - name: Setup Go
   uses: actions/setup-go@v5
   with:
-    go-version: '1.21'  # Change to the desired version
+    go-version: '1.21'  # 修改为所需版本
 ```
 
-### Add Environment Variables
+### 添加环境变量
 
-Add to the workflow file:
+在工作流文件中添加：
 ```yaml
 env:
   CUSTOM_VAR: value
@@ -448,14 +446,14 @@ steps:
     run: echo $CUSTOM_VAR
 ```
 
-### Add Secrets
+### 添加 Secrets
 
-In the GitHub repository settings:
+在 GitHub 仓库设置中：
 1. Settings → Secrets and variables → Actions
-2. Click "New repository secret"
-3. Add the name and value
+2. 点击 "New repository secret"
+3. 添加名称和值
 
-Use in the workflow:
+在工作流中使用：
 ```yaml
 env:
   API_KEY: ${{ secrets.API_KEY }}
@@ -463,29 +461,29 @@ env:
 
 ---
 
-## 🐛 Troubleshooting
+## 🐛 故障排除
 
-### Issue 1: Android NDK Not Found
+### 问题 1: Android NDK 未找到
 
-**Error:**
+**错误:**
 ```
 Error: ANDROID_NDK_HOME environment variable not set
 ```
 
-**Solution:**
-Make sure the `android-actions/setup-android@v3` action is used; it automatically sets up the NDK.
+**解决方案:**
+确保使用了 `android-actions/setup-android@v3` action，它会自动设置 NDK。
 
 ---
 
-### Issue 2: gomobile Initialization Failed
+### 问题 2: gomobile 初始化失败
 
-**Error:**
+**错误:**
 ```
 gomobile: command not found
 ```
 
-**Solution:**
-Check that it is installed correctly:
+**解决方案:**
+检查是否正确安装：
 ```yaml
 - name: Install gomobile
   run: |
@@ -495,15 +493,15 @@ Check that it is installed correctly:
 
 ---
 
-### Issue 3: Flutter Code Generation Failed
+### 问题 3: Flutter 代码生成失败
 
-**Error:**
+**错误:**
 ```
 Could not resolve annotation
 ```
 
-**Solution:**
-Run `flutter pub get` first, then run code generation:
+**解决方案:**
+先运行 `flutter pub get`，再运行代码生成：
 ```yaml
 - name: Get dependencies
   run: flutter pub get
@@ -514,133 +512,133 @@ Run `flutter pub get` first, then run code generation:
 
 ---
 
-### Issue 4: iOS Build Fails on macOS
+### 问题 4: iOS 构建在 macOS 上失败
 
-**Error:**
+**错误:**
 ```
 xcodebuild: error: Unable to find a destination
 ```
 
-**Solution:**
-Use the `--no-codesign` option:
+**解决方案:**
+使用 `--no-codesign` 选项：
 ```bash
 flutter build ios --release --no-codesign
 ```
 
 ---
 
-### Issue 5: Artifact Download Failed
+### 问题 5: Artifact 下载失败
 
-**Error:**
+**错误:**
 ```
 Unable to download artifact
 ```
 
-**Solution:**
-1. Check that the artifact name is correct
-2. Make sure upload and download are in different jobs
-3. Use `needs:` to ensure the dependency relationship
+**解决方案:**
+1. 检查 artifact 名称是否正确
+2. 确保 upload 和 download 在不同的 job 中
+3. 使用 `needs:` 确保依赖关系
 
 ---
 
-## 📊 Build Statistics
+## 📊 构建统计
 
-### Average Build Time
+### 平均构建时间
 
-| Workflow | Ubuntu | macOS | Total |
+| 工作流 | Ubuntu | macOS | 总计 |
 |--------|--------|-------|------|
-| CI | 15 min | - | 15 min |
-| Android | 25 min | - | 25 min |
-| iOS | - | 20 min | 20 min |
-| Release | 20 min | 15 min | 35 min |
+| CI | 15分钟 | - | 15分钟 |
+| Android | 25分钟 | - | 25分钟 |
+| iOS | - | 20分钟 | 20分钟 |
+| Release | 20分钟 | 15分钟 | 35分钟 |
 
-### Resource Usage
+### 资源使用
 
-- **Concurrent jobs**: up to 20 (GitHub Free tier)
-- **Storage**: Artifacts up to 500MB (cleaned up automatically)
-- **Build minutes**: 2000 minutes/month (GitHub Free tier)
+- **并发任务**: 最多 20 个（GitHub Free tier）
+- **存储**: Artifacts 最多 500MB（会自动清理）
+- **构建分钟数**: 2000 分钟/月（GitHub Free tier）
 
 ---
 
-## 📚 References
+## 📚 参考资料
 
-### GitHub Actions Documentation
-- [GitHub Actions Official Documentation](https://docs.github.com/en/actions)
+### GitHub Actions 文档
+- [GitHub Actions 官方文档](https://docs.github.com/en/actions)
 - [Flutter Action](https://github.com/marketplace/actions/flutter-action)
 - [Setup Go](https://github.com/marketplace/actions/setup-go-environment)
 - [Setup Android](https://github.com/marketplace/actions/setup-android)
 
-### Flutter Build Documentation
-- [Flutter Build and Release an Android App](https://docs.flutter.dev/deployment/android)
-- [Flutter Build and Release an iOS App](https://docs.flutter.dev/deployment/ios)
+### Flutter 构建文档
+- [Flutter 构建和发布 Android 应用](https://docs.flutter.dev/deployment/android)
+- [Flutter 构建和发布 iOS 应用](https://docs.flutter.dev/deployment/ios)
 
-### Go Mobile Documentation
-- [gomobile Official Documentation](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+### Go Mobile 文档
+- [gomobile 官方文档](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
 
 ---
 
-## ✅ Best Practices
+## ✅ 最佳实践
 
-### 1. Branch Strategy
+### 1. 分支策略
 
 ```
-main (production)
+main (生产)
   ↑
-develop (development)
+develop (开发)
   ↑
-feature/* (feature branches)
+feature/* (功能分支)
 ```
 
-- `main`: stable version, each push triggers a full build
-- `develop`: development version, each push triggers CI
-- `feature/*`: feature branches, tests are triggered when a PR is created
+- `main`: 稳定版本，每次推送触发完整构建
+- `develop`: 开发版本，每次推送触发 CI
+- `feature/*`: 功能分支，创建 PR 时触发测试
 
-### 2. Version Number Convention
+### 2. 版本号规范
 
-Use semantic versioning:
+使用语义化版本：
 ```
 v<major>.<minor>.<patch>
 
-For example:
-v1.0.0 - first release
-v1.1.0 - new feature
-v1.1.1 - bug fix
-v2.0.0 - major update
+例如:
+v1.0.0 - 首次发布
+v1.1.0 - 新增功能
+v1.1.1 - 修复 bug
+v2.0.0 - 重大更新
 ```
 
-### 3. Commit Convention
+### 3. Commit 规范
 
 ```
-feat: new feature
-fix: bug fix
-docs: documentation update
-style: code formatting
-refactor: refactoring
-test: tests
-chore: build/toolchain
+feat: 新功能
+fix: 修复 bug
+docs: 文档更新
+style: 代码格式
+refactor: 重构
+test: 测试
+chore: 构建/工具链
 
-For example:
+例如:
 feat: add VPN connection feature
 fix: resolve memory leak in profile provider
 docs: update README with installation guide
 ```
 
-### 4. Cache Optimization
+### 4. 缓存优化
 
-The workflows are already configured with caching:
-- Flutter SDK cache
-- Gradle cache
-- Go modules cache
+工作流已配置缓存：
+- Flutter SDK 缓存
+- Gradle 缓存
+- Go modules 缓存
 
-This can significantly speed up builds (about 30-40%).
+这可以显著加快构建速度（约 30-40%）。
 
 ---
 
-## 🎓 Advanced Usage
+## 🎓 高级用法
 
-### Matrix Builds
+### 矩阵构建
 
-Build multiple versions at the same time:
+同时构建多个版本：
 ```yaml
 strategy:
   matrix:
@@ -653,18 +651,18 @@ steps:
       flutter-version: ${{ matrix.flutter-version }}
 ```
 
-### Conditional Execution
+### 条件执行
 
-Execute only under specific conditions:
+只在特定条件下执行：
 ```yaml
 - name: Deploy to Production
   if: github.ref == 'refs/heads/main'
   run: ./deploy.sh
 ```
 
-### Scheduled Cleanup
+### 定时清理
 
-Automatically clean up old artifacts:
+自动清理旧的 artifacts：
 ```yaml
 - name: Delete old artifacts
   uses: c-hive/gha-remove-artifacts@v1
@@ -675,17 +673,17 @@ Automatically clean up old artifacts:
 
 ---
 
-## 📞 Getting Help
+## 📞 获取帮助
 
-If you run into problems:
+如遇到问题：
 
-1. **View logs**: Actions → specific run → view detailed logs
-2. **Search issues**: search for similar problems in GitHub Issues
-3. **Submit an Issue**: describe the problem, attach logs and environment information
-4. **Refer to documentation**: see this document and the official documentation
+1. **查看日志**: Actions → 具体运行 → 查看详细日志
+2. **搜索问题**: GitHub Issues 中搜索类似问题
+3. **提交 Issue**: 描述问题、附上日志、环境信息
+4. **参考文档**: 查看本文档和官方文档
 
 ---
 
-**Document version**: 1.0.0
-**Last updated**: 2025-11-05
-**Maintainer**: PrivateDeploy Team
+**文档版本**: 1.0.0
+**最后更新**: 2025-11-05
+**维护者**: PrivateDeploy Team
