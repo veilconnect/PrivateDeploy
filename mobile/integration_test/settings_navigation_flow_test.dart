@@ -82,7 +82,7 @@ void main() {
           type: VpnRouteDecisionType.direct,
           outboundType: 'direct',
           outboundTag: 'direct',
-          target: '45.113.192.102:443',
+          target: '198.51.100.11:443',
           domain: 'www.baidu.com',
         ),
       ],

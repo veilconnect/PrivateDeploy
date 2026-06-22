@@ -9,22 +9,22 @@ void main() {
 
       parser.replaceWith([
         VpnNativeLogEntry(
-          message: 'dns: exchanged A www.baidu.com. 1 IN A 45.113.192.102',
+          message: 'dns: exchanged A www.baidu.com. 1 IN A 198.51.100.11',
           timestamp: DateTime(2026, 3, 30, 7, 0, 0),
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/direct[direct]: outbound connection to 45.113.192.102:443',
+              'outbound/direct[direct]: outbound connection to 198.51.100.11:443',
           timestamp: DateTime(2026, 3, 30, 7, 0, 1),
         ),
         VpnNativeLogEntry(
           message:
-              'dns: exchanged A dyna.wikimedia.org. 180 IN A 103.102.166.224',
+              'dns: exchanged A dyna.wikimedia.org. 180 IN A 198.51.100.13',
           timestamp: DateTime(2026, 3, 30, 7, 0, 2),
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/shadowsocks[新加坡-SS]: outbound connection to 103.102.166.224:443',
+              'outbound/shadowsocks[新加坡-SS]: outbound connection to 198.51.100.13:443',
           timestamp: DateTime(2026, 3, 30, 7, 0, 3),
         ),
       ]);
@@ -39,7 +39,7 @@ void main() {
       final previous = parser.recentDecisions.last;
       expect(previous.type, VpnRouteDecisionType.direct);
       expect(previous.domain, 'www.baidu.com');
-      expect(previous.target, '45.113.192.102:443');
+      expect(previous.target, '198.51.100.11:443');
     });
 
     test('deduplicates repeated noisy decisions', () {
@@ -48,17 +48,17 @@ void main() {
       parser.replaceWith([
         VpnNativeLogEntry(
           message:
-              'outbound/direct[direct]: outbound connection to 45.113.192.102:443',
+              'outbound/direct[direct]: outbound connection to 198.51.100.11:443',
           timestamp: DateTime(2026, 3, 30, 7, 1, 0),
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/direct[direct]: outbound connection to 45.113.192.102:443',
+              'outbound/direct[direct]: outbound connection to 198.51.100.11:443',
           timestamp: DateTime(2026, 3, 30, 7, 1, 1),
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/direct[direct]: outbound connection to 45.113.192.102:443',
+              'outbound/direct[direct]: outbound connection to 198.51.100.11:443',
           timestamp: DateTime(2026, 3, 30, 7, 1, 4),
         ),
       ]);
@@ -81,13 +81,13 @@ void main() {
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/shadowsocks[新加坡-SS]: outbound connection to 103.102.166.224:443',
+              'outbound/shadowsocks[新加坡-SS]: outbound connection to 198.51.100.13:443',
           timestamp: DateTime(2026, 3, 30, 7, 2, 2),
         ),
       ]);
 
       expect(parser.recentDecisions, hasLength(1));
-      expect(parser.recentDecisions.single.target, '103.102.166.224:443');
+      expect(parser.recentDecisions.single.target, '198.51.100.13:443');
     });
 
     test('classifies DNS server hits for diagnostics', () {
@@ -152,13 +152,13 @@ void main() {
         ),
         VpnNativeLogEntry(
           message:
-              'outbound/shadowsocks[节点-A]: outbound connection to 103.102.166.224:443',
+              'outbound/shadowsocks[节点-A]: outbound connection to 198.51.100.13:443',
           timestamp: DateTime(2026, 3, 30, 7, 4, 2),
         ),
       ]);
 
       expect(parser.recentDecisions, hasLength(1));
-      expect(parser.recentDecisions.single.target, '103.102.166.224:443');
+      expect(parser.recentDecisions.single.target, '198.51.100.13:443');
     });
   });
 

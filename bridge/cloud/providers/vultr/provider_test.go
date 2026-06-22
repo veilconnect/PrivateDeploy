@@ -28,7 +28,7 @@ func TestListInstancesFallsBackToLocalNodeRecordsWithoutAPIKey(t *testing.T) {
 			Label:      "vultr",
 			Region:     "lax",
 			InstanceRecord: cloud.InstanceRecord{
-				IPv4:       "144.202.124.223",
+				IPv4:       "198.51.100.10",
 				CreatedAt:  "2026-03-24T10:20:59Z",
 				SSPort:     23951,
 				SSPassword: "secret",
@@ -56,7 +56,7 @@ func TestListInstancesFallsBackToLocalNodeRecordsWithoutAPIKey(t *testing.T) {
 	if instances[0].Label != "vultr" {
 		t.Fatalf("unexpected label: %q", instances[0].Label)
 	}
-	if instances[0].IPv4 != "144.202.124.223" {
+	if instances[0].IPv4 != "198.51.100.10" {
 		t.Fatalf("unexpected ipv4: %q", instances[0].IPv4)
 	}
 }
