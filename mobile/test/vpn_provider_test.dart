@@ -1272,7 +1272,7 @@ void main() {
       );
       vpnProvider.setFallbackEgressIpResolver((activeProfile) {
         if (activeProfile == 'Cloud: smoke-2603302014') {
-          return '95.179.178.229';
+          return '198.51.100.14';
         }
         return null;
       });
@@ -1322,7 +1322,7 @@ void main() {
 
       await vpnProvider.refreshDiagnostics();
 
-      expect(vpnProvider.diagnosticsEgressIp, '95.179.178.229');
+      expect(vpnProvider.diagnosticsEgressIp, '198.51.100.14');
       expect(vpnProvider.diagnosticsError, isNull);
       expect(fallbackCalls, 0);
     });
