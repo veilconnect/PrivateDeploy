@@ -1679,7 +1679,7 @@ void main() {
               'uptime': 5,
             };
           case 'getEgressIp':
-            return {'ip': '198.13.46.144', 'source': 'android_native'};
+            return {'ip': '198.51.100.16', 'source': 'android_native'};
           case 'isRunning':
             return true;
           default:
