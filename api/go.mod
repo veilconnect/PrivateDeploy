@@ -1,6 +1,6 @@
 module privatedeploy/api
 
-go 1.25.0
+go 1.25.11
 
 require (
 	github.com/gin-gonic/gin v1.10.0
