@@ -25,8 +25,7 @@ void main() {
   }
 
   List<Map<String, dynamic>> rulesOf(Map<String, dynamic> decoded) =>
-      ((decoded['route'] as Map)['rules'] as List)
-          .cast<Map<String, dynamic>>();
+      ((decoded['route'] as Map)['rules'] as List).cast<Map<String, dynamic>>();
 
   group('custom outbounds and rules', () {
     test('drops rules whose target outbound does not exist', () {

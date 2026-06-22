@@ -88,7 +88,8 @@ class CloudProvider extends CloudProviderBase {
 
   /// Nodes confirmed deleted upstream (via the provider key) but still cached
   /// locally. Surfaced flagged in [allInstances]; removed only on user confirm.
-  List<CloudInstance> get missingInstances => List.unmodifiable(_missingInstances);
+  List<CloudInstance> get missingInstances =>
+      List.unmodifiable(_missingInstances);
 
   /// Confirmed-missing nodes the user hasn't yet been prompted about this
   /// session. Drives the one-time "remove deleted nodes?" prompt.
@@ -2123,7 +2124,8 @@ class CloudProvider extends CloudProviderBase {
       AppLogger.info('[CloudProvider] Purged confirmed-deleted node $id');
       return true;
     } catch (e) {
-      _error = 'Failed to remove deleted node: ${cloudProviderMessageFromError(e)}';
+      _error =
+          'Failed to remove deleted node: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Purge missing node error', e);
       return false;
     } finally {

@@ -245,7 +245,6 @@ Future<void> showCreateProfileFlow({
   );
 }
 
-
 /// Run a throughput speed test for a manual profile.
 ///
 /// Temporarily connects VPN with the profile's config, measures download
