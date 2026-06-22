@@ -138,7 +138,7 @@ Response:
       "region": "nrt",
       "plan": "vc2-1c-1gb",
       "ipv4": "139.162.1.1",
-      "ipv6": "2400:8900::1",
+      "ipv6": "2001:db8::1",
       "createdAt": "2025-11-04T10:00:00Z",
       "tags": ["production"]
     }
