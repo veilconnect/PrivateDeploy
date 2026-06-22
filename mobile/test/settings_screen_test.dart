@@ -218,7 +218,7 @@ void main() {
             type: VpnRouteDecisionType.direct,
             outboundType: 'direct',
             outboundTag: 'direct',
-            target: '45.113.192.102:443',
+            target: '198.51.100.11:443',
             domain: 'www.baidu.com',
           ),
           VpnRouteDecision(
@@ -226,7 +226,7 @@ void main() {
             type: VpnRouteDecisionType.proxy,
             outboundType: 'shadowsocks',
             outboundTag: '新加坡-SS',
-            target: '103.102.166.224:443',
+            target: '198.51.100.13:443',
             domain: 'www.wikipedia.org',
           ),
         ],
@@ -256,9 +256,9 @@ void main() {
       expect(find.text('WeChat'), findsOneWidget);
       expect(find.text('Alipay'), findsOneWidget);
       expect(find.text('+22 more'), findsOneWidget);
-      expect(find.text('www.baidu.com -> 45.113.192.102:443'), findsOneWidget);
+      expect(find.text('www.baidu.com -> 198.51.100.11:443'), findsOneWidget);
       expect(
-        find.text('www.wikipedia.org -> 103.102.166.224:443'),
+        find.text('www.wikipedia.org -> 198.51.100.13:443'),
         findsOneWidget,
       );
       expect(find.text('DIRECT'), findsOneWidget);

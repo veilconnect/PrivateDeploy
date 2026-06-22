@@ -1095,12 +1095,12 @@ void main() {
             return [
               {
                 'message':
-                    'dns: exchanged A www.wikipedia.org. 180 IN A 103.102.166.224',
+                    'dns: exchanged A www.wikipedia.org. 180 IN A 198.51.100.13',
                 'timestamp': 1,
               },
               {
                 'message':
-                    'outbound/shadowsocks[新加坡-SS]: outbound connection to 103.102.166.224:443',
+                    'outbound/shadowsocks[新加坡-SS]: outbound connection to 198.51.100.13:443',
                 'timestamp': 2,
               },
             ];

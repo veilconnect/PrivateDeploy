@@ -24,10 +24,10 @@ void main() {
         'status': 'active',
         'region': 'fra',
         'plan': 'vc2-1c-1gb',
-        'main_ip': '199.247.3.62',
+        'main_ip': '198.51.100.12',
       });
 
-      expect(instance.ipv4, '199.247.3.62');
+      expect(instance.ipv4, '198.51.100.12');
       expect(instance.hasIp, isTrue);
     });
   });
