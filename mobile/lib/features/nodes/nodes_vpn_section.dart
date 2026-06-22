@@ -137,8 +137,8 @@ class NodesVpnSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       NodesStatusChip(
-                        text: _statusLabel(effStatus, l10n,
-                            degraded: isDegraded),
+                        text:
+                            _statusLabel(effStatus, l10n, degraded: isDegraded),
                         color: statusColor,
                       ),
                       SizedBox(height: 10.h),
@@ -205,8 +205,7 @@ class NodesVpnSection extends StatelessWidget {
                   ),
                 ],
               ),
-            if (proxyUp &&
-                _hasConnectionDetails(vpnProvider)) ...[
+            if (proxyUp && _hasConnectionDetails(vpnProvider)) ...[
               SizedBox(height: 12.h),
               _ConnectionDetailsTile(
                 vpnProvider: vpnProvider,
@@ -269,9 +268,10 @@ class NodesVpnSection extends StatelessWidget {
                       width: double.infinity,
                       child: FilledButton.icon(
                         key: NodesTestKeys.connectButton,
-                        onPressed: (!busy && effStatus == VpnStatus.disconnected)
-                            ? onConnect
-                            : null,
+                        onPressed:
+                            (!busy && effStatus == VpnStatus.disconnected)
+                                ? onConnect
+                                : null,
                         icon: Icon(
                           effStatus == VpnStatus.disconnected &&
                                   vpnProvider.error != null

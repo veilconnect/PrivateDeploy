@@ -29,12 +29,6 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      - name: Go tests (root)
-        run: go test ./...
-
-      - name: Go tests (api)
-        run: cd api && go test ./...
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -49,6 +43,16 @@ jobs:
 
       - name: Install dependencies
         run: cd frontend && pnpm install --frozen-lockfile
+
+      # 根包 //go:embed all:frontend/dist 需要先生成前端产物,否则 go test 编译失败
+      - name: Build frontend assets for Go embed
+        run: cd frontend && pnpm run build-only
+
+      - name: Go tests (root)
+        run: go test ./...
+
+      - name: Go tests (api)
+        run: cd api && go test ./...
 
       - name: Frontend type-check
         run: cd frontend && pnpm run type-check

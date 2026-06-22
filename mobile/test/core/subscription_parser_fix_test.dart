@@ -27,7 +27,8 @@ void main() {
   });
 
   test('trojan password + fragment name are percent-decoded', () {
-    final cfg = _cfg('trojan://p%40ss%23word@h.example.com:443#%E9%A6%99%E6%B8%AF');
+    final cfg =
+        _cfg('trojan://p%40ss%23word@h.example.com:443#%E9%A6%99%E6%B8%AF');
     final o = _proxyOutbounds(cfg).single;
     expect(o['type'], 'trojan');
     expect(o['password'], 'p@ss#word');
@@ -48,8 +49,7 @@ void main() {
       () {
     final cfg = _cfg('trojan://a@h1.example.com:443#dup\n'
         'trojan://b@h2.example.com:443#dup');
-    final tags =
-        _proxyOutbounds(cfg).map((o) => o['tag'] as String).toList();
+    final tags = _proxyOutbounds(cfg).map((o) => o['tag'] as String).toList();
     expect(tags.length, 2);
     expect(tags.toSet().length, 2, reason: 'tags must be unique: $tags');
   });

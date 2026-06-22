@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:privatedeploy_mobile/features/cdn/cdn_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
