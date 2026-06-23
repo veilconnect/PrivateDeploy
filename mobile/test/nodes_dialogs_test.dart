@@ -373,5 +373,17 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   CloudAccountStatus? get accountStatus => null;
 
   @override
+  bool get isProbingRegions => false;
+
+  @override
+  CloudLatencyCheck? regionLatencyFor(String regionId) => null;
+
+  @override
+  String? fastestReachableRegionId() => null;
+
+  @override
+  Future<void> probeRegionLatencies({bool force = false}) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

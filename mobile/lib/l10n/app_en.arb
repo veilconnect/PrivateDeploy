@@ -225,6 +225,8 @@
   "nodeNameOptional": "Node Name (Optional)",
   "autoGenerateHint": "Auto-generate if left blank",
   "region": "Region",
+  "regionUnreachable": "Unreachable",
+  "regionProbing": "Testing region reachability…",
   "plan": "Plan",
   "noPlansInRegion": "No supported plans are available in this region.",
   "deploy": "Deploy",

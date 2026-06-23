@@ -19,6 +19,7 @@ import 'digitalocean_client.dart';
 import 'ssh_deployer.dart';
 import 'vultr_deploy.dart';
 import 'vultr_client.dart';
+import 'vultr_region_latency.dart';
 import 'vultr_user_data_recovery.dart';
 
 typedef CloudLatencyProbe = Future<CloudLatencyCheck> Function(
@@ -38,7 +39,14 @@ class CloudProvider extends CloudProviderBase {
       'mobile_cloud_active_provider';
   static const String _preferredEndpointStorageKey =
       'mobile_cloud_endpoint_preferences';
+  static const String _regionLatencyStorageKey =
+      'mobile_cloud_region_latency_v1';
   static const Duration latencyCacheMaxAge = Duration(minutes: 5);
+  // How long a persisted region-latency reading is worth showing on a cold
+  // dialog open before we'd rather show nothing. A re-probe refreshes whatever
+  // survives within ~1.5s of the dialog opening, so this only governs the
+  // brief pre-refresh display.
+  static const Duration regionLatencyPersistMaxAge = Duration(days: 3);
   static const Duration connectSelectionReuseMaxAge = Duration(minutes: 30);
   static const Duration quickProbeTimeout = Duration(milliseconds: 900);
   static const Duration benchmarkProbeTimeout = Duration(milliseconds: 1500);
@@ -61,11 +69,17 @@ class CloudProvider extends CloudProviderBase {
   final String _selectedProfile = PortProfileAllocator.edge443Profile;
   Map<String, VultrNodeRecord> _nodeRecords = {};
   final Map<String, CloudLatencyCheck> _latencyChecks = {};
+  // Per-region reachability/latency to Vultr's public anchor IPs, keyed by
+  // region code. Drives the deploy dialog's "which region is usable" hints.
+  // Distinct from _latencyChecks (which is per deployed instance).
+  final Map<String, CloudLatencyCheck> _regionLatencyChecks = {};
+  bool _isProbingRegions = false;
   final Map<String, String> _preferredEndpointLabels = {};
   Future<void>? _regionsLoadFuture;
   Future<void>? _plansLoadFuture;
   final CloudLatencyProbe _latencyProbe;
   final CloudLatencyProbe _benchmarkLatencyProbe;
+  final RegionLatencyProbe _regionLatencyProbe;
   bool _benchmarkAllRunning = false;
   bool _benchmarkAbortRequested = false;
   int _providerRequestEpoch = 0;
@@ -360,10 +374,12 @@ class CloudProvider extends CloudProviderBase {
   CloudProvider({
     CloudLatencyProbe? latencyProbe,
     CloudLatencyProbe? benchmarkLatencyProbe,
+    RegionLatencyProbe? regionLatencyProbe,
     bool autoInitialize = true,
   })  : _latencyProbe = latencyProbe ?? _defaultLatencyProbe,
         _benchmarkLatencyProbe =
-            benchmarkLatencyProbe ?? _defaultBenchmarkLatencyProbe {
+            benchmarkLatencyProbe ?? _defaultBenchmarkLatencyProbe,
+        _regionLatencyProbe = regionLatencyProbe ?? probeVultrRegionLatency {
     if (autoInitialize) {
       _init();
     }
@@ -401,6 +417,10 @@ class CloudProvider extends CloudProviderBase {
   Future<void> _init() async {
     await _initializeStorage();
     await _restorePreferredEndpointLabels();
+    // Rehydrate last-known region reachability so the deploy dialog shows
+    // numbers immediately on a cold open instead of a spinner; a re-probe on
+    // open refreshes them.
+    await _restoreRegionLatencies();
     // Restore the previously selected provider before loading any per-provider
     // data, otherwise node records and api key would be read from the wrong
     // storage namespace on app restart.
@@ -469,6 +489,76 @@ class CloudProvider extends CloudProviderBase {
     await StorageService.saveString(
       _preferredEndpointStorageKey,
       jsonEncode(_preferredEndpointLabels),
+    );
+  }
+
+  /// Restore last-known per-region reachability/latency from disk so a cold
+  /// deploy-dialog open shows numbers immediately. Entries older than
+  /// [regionLatencyPersistMaxAge] are dropped; the on-open re-probe refreshes
+  /// whatever survives. Stored compactly as `{regionId: {ms|err, ts}}`.
+  Future<void> _restoreRegionLatencies() async {
+    _regionLatencyChecks.clear();
+    final raw = StorageService.getString(_regionLatencyStorageKey);
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return;
+      }
+      final now = DateTime.now();
+      for (final entry in decoded.entries) {
+        final regionId = entry.key.toString();
+        final value = entry.value;
+        if (regionId.isEmpty || value is! Map) {
+          continue;
+        }
+        final tsRaw = value['ts'];
+        final ts = tsRaw is int ? tsRaw : int.tryParse('$tsRaw');
+        if (ts == null) {
+          continue;
+        }
+        final updatedAt = DateTime.fromMillisecondsSinceEpoch(ts);
+        if (now.difference(updatedAt) > regionLatencyPersistMaxAge) {
+          continue;
+        }
+        final msRaw = value['ms'];
+        final ms = msRaw is int ? msRaw : int.tryParse('${msRaw ?? ''}');
+        _regionLatencyChecks[regionId] = ms != null
+            ? CloudLatencyCheck.success(latencyMs: ms, updatedAt: updatedAt)
+            : CloudLatencyCheck.failure(
+                error: 'unreachable',
+                updatedAt: updatedAt,
+              );
+      }
+    } catch (e) {
+      AppLogger.error('[CloudProvider] Failed to parse region latencies', e);
+      await StorageService.remove(_regionLatencyStorageKey);
+    }
+  }
+
+  Future<void> _persistRegionLatencies() async {
+    if (!StorageService.isInitialized) {
+      return;
+    }
+    final serializable = <String, Map<String, int>>{};
+    _regionLatencyChecks.forEach((regionId, check) {
+      if (check.isTesting) {
+        return;
+      }
+      final ts = (check.updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
+      final ms = check.latencyMs;
+      serializable[regionId] =
+          ms != null ? {'ms': ms, 'ts': ts} : {'err': 1, 'ts': ts};
+    });
+    if (serializable.isEmpty) {
+      await StorageService.remove(_regionLatencyStorageKey);
+      return;
+    }
+    await StorageService.saveString(
+      _regionLatencyStorageKey,
+      jsonEncode(serializable),
     );
   }
 
@@ -1515,6 +1605,109 @@ class CloudProvider extends CloudProviderBase {
     }();
 
     return completer.future;
+  }
+
+  /// Whether per-region reachability probes are currently in flight.
+  bool get isProbingRegions => _isProbingRegions;
+
+  /// Latest reachability/latency result for a region code, or null if not yet
+  /// probed. `isTesting` while in flight; `error != null` (or null latencyMs)
+  /// means unreachable from the current network.
+  CloudLatencyCheck? regionLatencyFor(String regionId) =>
+      _regionLatencyChecks[regionId];
+
+  /// Probe reachability + latency to every loaded region that has a known Vultr
+  /// anchor IP, from the device's current network, so the deploy dialog can
+  /// steer the user away from regions their network is blocking. Vultr-only
+  /// (the anchor table is provider-specific); a no-op for DigitalOcean/SSH.
+  /// Results cache for [latencyCacheMaxAge]; pass [force] to re-probe sooner.
+  Future<void> probeRegionLatencies({bool force = false}) async {
+    if (_providerId != CloudProviderId.vultr || _isProbingRegions) {
+      return;
+    }
+    final now = DateTime.now();
+    final pending = _regions.where((region) {
+      if (!vultrRegionHasLatencyAnchor(region.id)) {
+        return false;
+      }
+      if (force) {
+        return true;
+      }
+      final cached = _regionLatencyChecks[region.id];
+      if (cached == null) {
+        return true;
+      }
+      if (cached.isTesting) {
+        return false;
+      }
+      final updatedAt = cached.updatedAt;
+      return updatedAt == null ||
+          now.difference(updatedAt) >= latencyCacheMaxAge;
+    }).toList();
+    if (pending.isEmpty) {
+      return;
+    }
+
+    _isProbingRegions = true;
+    for (final region in pending) {
+      // Keep any prior result visible while re-probing. The dropdown menu is a
+      // frozen snapshot once open, so flipping an already-measured region back
+      // to a spinner would strand it spinning until the user closes/reopens.
+      // Only never-probed regions show the testing state.
+      _regionLatencyChecks.putIfAbsent(
+        region.id,
+        () => CloudLatencyCheck.testing(updatedAt: now),
+      );
+    }
+    notifyListeners();
+
+    await Future.wait(
+      pending.map((region) async {
+        final latencyMs = await _regionLatencyProbe(region.id);
+        if (_disposed) {
+          return;
+        }
+        _regionLatencyChecks[region.id] = latencyMs == null
+            ? CloudLatencyCheck.failure(
+                error: 'unreachable',
+                updatedAt: DateTime.now(),
+              )
+            : CloudLatencyCheck.success(
+                latencyMs: latencyMs,
+                updatedAt: DateTime.now(),
+              );
+      }),
+    );
+
+    if (_disposed) {
+      return;
+    }
+    _isProbingRegions = false;
+    unawaited(_persistRegionLatencies());
+    notifyListeners();
+  }
+
+  /// The loaded region with the lowest measured latency that is currently
+  /// reachable, or null if none have been confirmed reachable yet. Used by the
+  /// deploy dialog to pre-select the best region.
+  String? fastestReachableRegionId() {
+    String? bestId;
+    int? bestMs;
+    for (final region in _regions) {
+      final check = _regionLatencyChecks[region.id];
+      final ms = check?.latencyMs;
+      if (check == null ||
+          check.isTesting ||
+          check.error != null ||
+          ms == null) {
+        continue;
+      }
+      if (bestMs == null || ms < bestMs) {
+        bestMs = ms;
+        bestId = region.id;
+      }
+    }
+    return bestId;
   }
 
   Future<void> loadPlans({bool notify = true}) async {

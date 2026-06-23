@@ -7,6 +7,7 @@ import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_record.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_provider_id.dart';
+import 'package:privatedeploy_mobile/core/storage/storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -1036,6 +1037,148 @@ void main() {
       await provider.setActiveProvider(CloudProviderId.vultr);
       expect(provider.apiKey, 'TESTKEYJUSTFORUNITTESTNOTAREALONE12345');
       expect(provider.hasApiKey, isTrue);
+    });
+  });
+
+  group('CloudProvider.probeRegionLatencies', () {
+    CloudRegion region(String id) =>
+        CloudRegion(id: id, city: id, country: 'X', continent: 'Asia');
+
+    test('probes anchored regions, flags unreachable, exposes fastest',
+        () async {
+      final provider = CloudProvider(
+        regionLatencyProbe: (regionId) async => switch (regionId) {
+          'sjc' => 80,
+          'nrt' => 40,
+          'icn' => null, // unreachable (e.g. blocked by carrier/regional reachability)
+          _ => null,
+        },
+        autoInitialize: false,
+      );
+      provider.regions.addAll([region('sjc'), region('nrt'), region('icn')]);
+
+      await provider.probeRegionLatencies();
+
+      expect(provider.regionLatencyFor('nrt')?.latencyMs, 40);
+      expect(provider.regionLatencyFor('sjc')?.latencyMs, 80);
+      expect(provider.regionLatencyFor('icn')?.error, isNotNull);
+      expect(provider.regionLatencyFor('icn')?.latencyMs, isNull);
+      expect(provider.isProbingRegions, isFalse);
+      expect(provider.fastestReachableRegionId(), 'nrt');
+    });
+
+    test('skips regions without a known anchor IP', () async {
+      var calls = 0;
+      final provider = CloudProvider(
+        regionLatencyProbe: (regionId) async {
+          calls += 1;
+          return 10;
+        },
+        autoInitialize: false,
+      );
+      provider.regions.add(region('zzz')); // not in the Vultr anchor table
+
+      await provider.probeRegionLatencies();
+
+      expect(calls, 0);
+      expect(provider.regionLatencyFor('zzz'), isNull);
+      expect(provider.fastestReachableRegionId(), isNull);
+    });
+
+    test('caches results and re-probes only when forced', () async {
+      var calls = 0;
+      final provider = CloudProvider(
+        regionLatencyProbe: (regionId) async {
+          calls += 1;
+          return 50;
+        },
+        autoInitialize: false,
+      );
+      provider.regions.add(region('sjc'));
+
+      await provider.probeRegionLatencies();
+      await provider.probeRegionLatencies(); // within cache window → no re-probe
+      expect(calls, 1);
+
+      await provider.probeRegionLatencies(force: true);
+      expect(calls, 2);
+    });
+
+    test('keeps the prior result visible while a forced re-probe is in flight',
+        () async {
+      final gate = Completer<int?>();
+      var call = 0;
+      final provider = CloudProvider(
+        regionLatencyProbe: (regionId) async {
+          call += 1;
+          if (call == 1) {
+            return 70; // first probe resolves immediately
+          }
+          return gate.future; // second probe blocks until released
+        },
+        autoInitialize: false,
+      );
+      provider.regions.add(region('sjc'));
+
+      await provider.probeRegionLatencies();
+      expect(provider.regionLatencyFor('sjc')?.latencyMs, 70);
+
+      final reprobe = provider.probeRegionLatencies(force: true);
+      // Mid-flight the prior 70ms stays visible — NOT flipped back to a spinner,
+      // which would strand the (snapshot) dropdown menu spinning forever.
+      expect(provider.regionLatencyFor('sjc')?.isTesting, isFalse);
+      expect(provider.regionLatencyFor('sjc')?.latencyMs, 70);
+
+      gate.complete(90);
+      await reprobe;
+      expect(provider.regionLatencyFor('sjc')?.latencyMs, 90);
+    });
+  });
+
+  group('CloudProvider region latency persistence', () {
+    CloudRegion region(String id) =>
+        CloudRegion(id: id, city: id, country: 'X', continent: 'Asia');
+
+    test('persists probe results to storage', () async {
+      await StorageService.init();
+      final provider = CloudProvider(
+        regionLatencyProbe: (regionId) async => regionId == 'sjc' ? 77 : null,
+        autoInitialize: false,
+      );
+      provider.regions.addAll([region('sjc'), region('icn')]);
+
+      await provider.probeRegionLatencies();
+      // _persistRegionLatencies runs unawaited — let it flush.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final raw = StorageService.getString('mobile_cloud_region_latency_v1');
+      expect(raw, isNotNull);
+      final decoded = jsonDecode(raw!) as Map;
+      expect(decoded['sjc']['ms'], 77);
+      expect(decoded['icn']['err'], 1); // unreachable persisted as err
+    });
+
+    test('restores recent readings on init and drops stale ones', () async {
+      await StorageService.init();
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final staleMs = DateTime.now()
+          .subtract(const Duration(days: 5))
+          .millisecondsSinceEpoch;
+      await StorageService.saveString(
+        'mobile_cloud_region_latency_v1',
+        jsonEncode({
+          'sjc': {'ms': 88, 'ts': nowMs},
+          'icn': {'err': 1, 'ts': nowMs},
+          'fra': {'ms': 40, 'ts': staleMs}, // older than max age → dropped
+        }),
+      );
+
+      final provider = CloudProvider(autoInitialize: true);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(provider.regionLatencyFor('sjc')?.latencyMs, 88);
+      expect(provider.regionLatencyFor('icn')?.error, isNotNull);
+      expect(provider.regionLatencyFor('fra'), isNull);
     });
   });
 }

@@ -212,6 +212,8 @@
   "nodeNameOptional": "节点名称（可选）",
   "autoGenerateHint": "留空则自动生成",
   "region": "区域",
+  "regionUnreachable": "不可达",
+  "regionProbing": "正在测试区域可达性…",
   "plan": "套餐",
   "noPlansInRegion": "此区域没有可用的套餐。",
   "deploy": "部署",

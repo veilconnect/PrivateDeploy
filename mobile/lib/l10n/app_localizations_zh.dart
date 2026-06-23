@@ -651,6 +651,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get region => '区域';
 
   @override
+  String get regionUnreachable => '不可达';
+
+  @override
+  String get regionProbing => '正在测试区域可达性…';
+
+  @override
   String get plan => '套餐';
 
   @override
