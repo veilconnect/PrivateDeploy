@@ -1031,6 +1031,23 @@ class _NodeRow extends StatelessWidget {
               ),
             ),
             if (dep != null) ...[
+              // Redeploy in place — re-uploads the Worker script (overwrites
+              // by name) without the old delete-then-deploy two-step. The fix
+              // for a broken Worker (e.g. CF 1101 after a stale compat_date):
+              // a fresh upload from the current build. Disabled mid-deploy.
+              IconButton(
+                tooltip: isZh ? '重新部署' : 'Redeploy',
+                icon: provider.isDeploying
+                    ? SizedBox(
+                        width: 16.w,
+                        height: 16.w,
+                        child:
+                            const CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 18),
+                onPressed:
+                    (canDeploy && !provider.isDeploying) ? () => _deploy(context) : null,
+              ),
               IconButton(
                 tooltip: isZh ? '复制 Worker URL' : 'Copy Worker URL',
                 icon: const Icon(Icons.copy, size: 18),

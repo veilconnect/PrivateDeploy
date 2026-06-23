@@ -101,6 +101,21 @@ class CdnProvider with ChangeNotifier {
   Map<String, CdnDeployment> get deployments => Map.unmodifiable(_deployments);
   CdnDeployment? deploymentFor(String nodeId) => _deployments[nodeId];
 
+  /// A deployment exists for [nodeId] but its readiness probe has settled on
+  /// 'failed' — i.e. the live Worker is broken (CF 1101/500 throw, or a stuck
+  /// custom-domain binding), not merely "not deployed". Drives the
+  /// auto-redeploy gate (so a broken Worker self-heals instead of being
+  /// stranded "已部署" forever) and the broken-health badge + redeploy button.
+  ///
+  /// Note: keyed on customHostStatus, so it only flags deployments that have a
+  /// custom domain to probe. workers.dev-only deployments can't be probed from
+  /// CN (the subdomain is DNS-altered), which is exactly why custom domains
+  /// exist — those are the deployments this matters for.
+  bool deploymentNeedsRedeploy(String nodeId) {
+    final dep = _deployments[nodeId];
+    return dep != null && dep.customHostStatus == 'failed';
+  }
+
   /// Last WS-upgrade status the probe recorded for [nodeId] (null if never
   /// probed this session). 502/504 here on a 'failed' node means the Worker
   /// is fine but its VPS relay backend is unreachable — redeploy the node.
