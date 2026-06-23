@@ -1,5 +1,7 @@
 # Changelog
 
+**English** | [中文](CHANGELOG.zh-CN.md)
+
 This changelog backfills release notes from the git history and records the next unreleased line of work.
 
 The project has gone through two distinct product phases:
@@ -14,17 +16,22 @@ The project has gone through two distinct product phases:
 ## [2.0.9] - 2026-06-23
 
 ### Fixed
-- **CDN Worker 1101 (连接失效根因)**: 部署 Worker 的 `compatibility_date` 固定在 2024-09-23,
-  Cloudflare 2026 年初运行时变更后导致 `import { connect } from 'cloudflare:sockets'` 模块加载失败,
-  Worker 恒返回 CF 1101 → CDN 中转路径全失效 → 蜂窝下被运营商不可达的节点无法经 CDN 备用路径。
-  移动端 `_kCompatDate` 与桌面 `bridge/cdn` `workerCompatDate` 一并升级到 2026-06-01。
+- **CDN Worker error 1101 (root cause of CDN bypass failing)**: the deployed Worker's
+  `compatibility_date` was pinned at 2024-09-23. After a Cloudflare runtime change in early
+  2026, `import { connect } from 'cloudflare:sockets'` failed to load under that stale date,
+  so every Worker returned CF 1101 — the entire CDN relay path was dead, and nodes whose
+  direct IP a carrier blocks on cellular could no longer be reached via CDN. Bumped both the
+  mobile `_kCompatDate` and desktop `bridge/cdn` `workerCompatDate` to 2026-06-01.
 
 ### Added
-- **部署对话框区域可达性**: 创建节点时,区域下拉从本机当前网络实测各 Vultr 区域延迟/可达性,
-  按延迟排序、自动预选最快可达区域、标注「不可达」,并显示 可达性风险等级图标(🟢🟡🟠🔴);
-  结果持久化以便冷启动即时显示。桌面端同样持久化区域延迟结果。
-- **CDN 重新部署与自愈**: 已部署节点新增「重新部署」按钮(就地覆盖,免去先删再部署);
-  蜂窝自动部署在检测到 Worker 损坏时自动重新部署;新增部署健康判定。
+- **Region reachability in the deploy dialog**: when creating a node, the region dropdown now
+  probes each Vultr region's latency/reachability from the device's current network, sorts by
+  latency, auto-selects the fastest reachable region, flags unreachable ones, and shows a regional reachability
+  risk indicator (🟢🟡🟠🔴). Results are persisted so a cold open shows them immediately.
+  The desktop also persists its region-latency results.
+- **CDN redeploy & self-heal**: deployed nodes get an in-place "Redeploy" button (overwrites
+  the Worker, no more delete-then-deploy); the cellular auto-deploy now re-deploys when it
+  detects a broken Worker; added a deployment-health verdict.
 
 ## [2.0.0] - 2026-04-03
 
