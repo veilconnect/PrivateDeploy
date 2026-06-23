@@ -231,17 +231,27 @@ class PrivateDeployApp extends StatelessWidget {
               // Worker with the wrong secret and Worker returns HTTP 404,
               // killing the probe. Always rebuild the active profile with
               // the current deployment's secret + restart.
-              if (cdn.deploymentFor(instance.id) == null) {
-                trace('deploying Worker for ${instance.label} '
-                    '(${instance.ipv4}:$relayPort)...');
+              // Re-deploy when there's no Worker yet OR the existing one is
+              // confirmed broken (probe settled 'failed' — e.g. a Worker
+              // throwing CF 1101). Without the broken check, an
+              // auto-deployed-but-broken Worker stays stranded forever: the
+              // record exists so we'd skip the deploy, yet the dead CDN path
+              // is exactly why the node is being connectivity failureed-and-unreachable.
+              final isRedeploy = cdn.deploymentNeedsRedeploy(instance.id);
+              if (cdn.deploymentFor(instance.id) == null || isRedeploy) {
+                trace('${isRedeploy ? "re-" : ""}deploying Worker for '
+                    '${instance.label} (${instance.ipv4}:$relayPort)...');
                 // First-deploy is the path where the app actually
                 // creates a Worker / DNS record / cert on the user's
                 // Cloudflare account on their behalf — call it out
                 // explicitly. "We're touching your Cloudflare in the
                 // background" should never be silent.
                 showGlobalSnackBar(
-                  '检测到蜂窝运营商屏蔽该节点，正在你的 Cloudflare 账号下'
-                  '为 ${instance.label} 部署加速 Worker…',
+                  isRedeploy
+                      ? '检测到该节点的 CDN Worker 异常，正在你的 Cloudflare '
+                          '账号下为 ${instance.label} 重新部署…'
+                      : '检测到蜂窝运营商屏蔽该节点，正在你的 Cloudflare 账号下'
+                          '为 ${instance.label} 部署加速 Worker…',
                   duration: const Duration(seconds: 4),
                 );
                 final deployed = await cdn.deployWorkerForNode(
