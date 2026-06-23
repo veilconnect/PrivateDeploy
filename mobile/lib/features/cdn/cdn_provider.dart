@@ -43,7 +43,7 @@ class CdnProvider with ChangeNotifier {
   static const _kPreferredEdgeIpKey = 'cdn.preferred_edge_ip';
   // Compatibility date the Worker is deployed with. Bumping this can change
   // runtime behavior, so it lives next to the worker template.
-  static const _kCompatDate = '2024-09-23';
+  static const _kCompatDate = '2026-06-01';
 
   static const _verifyEndpoint =
       'https://api.cloudflare.com/client/v4/user/tokens/verify';

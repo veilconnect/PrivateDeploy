@@ -35,7 +35,7 @@ const (
 
 	// Compatibility date the Worker is uploaded with. Bumping this can
 	// change runtime behavior, so it lives next to the worker template.
-	workerCompatDate = "2024-09-23"
+	workerCompatDate = "2026-06-01"
 
 	configFileRel      = "data/cdn/config.json"
 	deploymentsFileRel = "data/cdn/deployments.json"
