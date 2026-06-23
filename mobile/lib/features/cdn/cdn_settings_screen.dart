@@ -1041,12 +1041,12 @@ class _NodeRow extends StatelessWidget {
                     ? SizedBox(
                         width: 16.w,
                         height: 16.w,
-                        child:
-                            const CircularProgressIndicator(strokeWidth: 2),
+                        child: const CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.refresh, size: 18),
-                onPressed:
-                    (canDeploy && !provider.isDeploying) ? () => _deploy(context) : null,
+                onPressed: (canDeploy && !provider.isDeploying)
+                    ? () => _deploy(context)
+                    : null,
               ),
               IconButton(
                 tooltip: isZh ? '复制 Worker URL' : 'Copy Worker URL',
