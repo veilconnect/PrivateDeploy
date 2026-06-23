@@ -9,6 +9,7 @@ import '../cdn/cdn_provider.dart';
 import '../cloud/cloud_models.dart';
 import '../cloud/cloud_provider.dart';
 import '../cloud/cloud_provider_id.dart';
+import '../cloud/region_reachability_risk.dart';
 import '../cloud/ssh_deployer.dart';
 import 'nodes_dialog_models.dart';
 
@@ -311,9 +312,19 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                     .map(
                       (region) => Align(
                         alignment: Alignment.centerLeft,
-                        child: Text(
-                          region.displayName,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(regionRiskIcon(region.id),
+                                style: TextStyle(fontSize: 12.sp)),
+                            SizedBox(width: 6.w),
+                            Flexible(
+                              child: Text(
+                                region.displayName,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     )
@@ -324,6 +335,12 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                         value: region.id,
                         child: Row(
                           children: [
+                            // Leading traffic-light = curated reachability risk for the
+                            // region (🟢 low … 🔴 critical); the trailing chip
+                            // is the live latency/reachability probe.
+                            Text(regionRiskIcon(region.id),
+                                style: TextStyle(fontSize: 12.sp)),
+                            SizedBox(width: 6.w),
                             Expanded(
                               child: Text(
                                 region.displayName,

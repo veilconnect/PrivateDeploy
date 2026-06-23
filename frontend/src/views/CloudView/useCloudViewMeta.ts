@@ -6,6 +6,11 @@ import { logError } from '@/utils/logger'
 import type { CloudProvider } from '@/types/cloud'
 import type { RegionLatency } from '@/types/cloud'
 
+// Persist the last region-latency probe so a cold restart shows numbers
+// immediately instead of an empty list until the silent re-probe lands.
+const REGION_LATENCY_CACHE_KEY = 'cloud-region-latency-v1'
+const REGION_LATENCY_PERSIST_MAX_AGE = 3 * 24 * 60 * 60 * 1000 // 3 days
+
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
 type DeployFormState = {
@@ -132,7 +137,49 @@ export const useCloudViewMeta = ({
         cloudStore.latencyTestResults[result.code] = result.latency
       }
     })
-    cloudStore.latencyUpdatedAt = Date.now()
+    const now = Date.now()
+    cloudStore.latencyUpdatedAt = now
+    try {
+      localStorage.setItem(
+        REGION_LATENCY_CACHE_KEY,
+        JSON.stringify({ provider: cloudStore.currentProvider, ts: now, results }),
+      )
+    } catch {
+      // localStorage may be unavailable (e.g. private mode) — best-effort.
+    }
+  }
+
+  // Rehydrate the last persisted probe so buildRegionOptions has numbers on a
+  // cold open. Keeps the existing 24h freshness logic: a restored-but-stale set
+  // still shows immediately, and the auto-probe watch re-tests it in the
+  // background. Provider-scoped so Vultr/DigitalOcean don't cross-contaminate.
+  const restoreLatencyCache = () => {
+    if (latencyResults.value.length > 0) return
+    try {
+      const raw = localStorage.getItem(REGION_LATENCY_CACHE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as {
+        provider?: CloudProvider
+        ts?: number
+        results?: RegionLatency[]
+      }
+      if (
+        !parsed.results?.length ||
+        parsed.provider !== cloudStore.currentProvider ||
+        !parsed.ts ||
+        Date.now() - parsed.ts > REGION_LATENCY_PERSIST_MAX_AGE
+      ) {
+        return
+      }
+      latencyResults.value = parsed.results
+      cloudStore.latencyUpdatedAt = parsed.ts
+      if (!form.region) {
+        const fastest = parsed.results.find((entry) => entry.status === 'ok')
+        if (fastest) form.region = fastest.code
+      }
+    } catch {
+      // Corrupt/unavailable cache — fall through to a live probe.
+    }
   }
 
   const testLatencySilently = async () => {
@@ -277,10 +324,18 @@ export const useCloudViewMeta = ({
     applyDefaults,
   )
 
+  restoreLatencyCache()
+
   watch(
     () => [cloudStore.regions.length, hasApiKey.value] as const,
     ([regionsCount, hasKey]) => {
-      if (regionsCount > 0 && hasKey && latencyResults.value.length === 0) {
+      // Probe when we have nothing yet, or when the restored set has gone stale
+      // (>24h) — otherwise a persisted cache would suppress the refresh forever.
+      if (
+        regionsCount > 0 &&
+        hasKey &&
+        (latencyResults.value.length === 0 || !cloudStore.isLatencyCacheValid())
+      ) {
         setTimeout(() => {
           testLatencySilently()
         }, 500)
