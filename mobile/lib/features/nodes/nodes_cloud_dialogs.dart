@@ -147,9 +147,8 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
       }
       setState(() {
         _selectedRegion = fastest;
-        final availablePlanIds = _availablePlans(provider, fastest)
-            .map((plan) => plan.id)
-            .toSet();
+        final availablePlanIds =
+            _availablePlans(provider, fastest).map((plan) => plan.id).toSet();
         if (_selectedPlan != null &&
             !availablePlanIds.contains(_selectedPlan)) {
           _selectedPlan = null;
