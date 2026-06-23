@@ -1262,6 +1262,18 @@ abstract class AppLocalizations {
   /// **'Region'**
   String get region;
 
+  /// No description provided for @regionUnreachable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unreachable'**
+  String get regionUnreachable;
+
+  /// No description provided for @regionProbing.
+  ///
+  /// In en, this message translates to:
+  /// **'Testing region reachability…'**
+  String get regionProbing;
+
   /// No description provided for @plan.
   ///
   /// In en, this message translates to:

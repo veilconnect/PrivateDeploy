@@ -33,6 +33,13 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   late final TextEditingController _labelController;
   String? _selectedRegion;
   String? _selectedPlan;
+  // Set once we've auto-selected the fastest reachable region, so a later
+  // rebuild (e.g. probes finishing) doesn't keep overriding the user's choice.
+  bool _autoSelectedRegion = false;
+  // Set once we've kicked the per-region reachability probe. Gated on regions
+  // actually being present, so it fires whether they were cached, freshly
+  // loaded, or arrived from a load already in flight when the dialog opened.
+  bool _regionProbeKicked = false;
   // Default true so the common case (CDN already set up) saves the user
   // a second trip. When CDN isn't verified the checkbox is hidden and
   // this stays false. Only the user un-checking it sets it to false
@@ -53,13 +60,100 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
       if (!mounted) {
         return;
       }
-      final provider = context.read<CloudProvider>();
-      if (provider.regions.isEmpty && !provider.isLoadingRegions) {
-        unawaited(provider.loadRegions());
+      unawaited(_ensureDeployOptions(context.read<CloudProvider>()));
+    });
+  }
+
+  /// Loads regions/plans if needed. Mirrors the original guards (don't kick a
+  /// fresh load while one is already in flight). Per-region reachability
+  /// probing is kicked separately from [build] once regions are actually
+  /// present — see [_maybeKickRegionProbe] — so it also covers the case where
+  /// a load was already running when the dialog opened.
+  Future<void> _ensureDeployOptions(CloudProvider provider) async {
+    if (provider.regions.isEmpty && !provider.isLoadingRegions) {
+      await provider.loadRegions();
+    }
+    if (provider.plans.isEmpty && !provider.isLoadingPlans) {
+      unawaited(provider.loadPlans());
+    }
+  }
+
+  /// Kicks the per-region reachability probe exactly once, as soon as regions
+  /// are present. Runs from the device's current network — the same path the
+  /// new node would dial — so a region whose anchor times out is flagged
+  /// unreachable. Idempotent: [CloudProvider.probeRegionLatencies] caches and
+  /// guards against concurrent runs.
+  void _maybeKickRegionProbe(CloudProvider provider) {
+    if (_regionProbeKicked || provider.regions.isEmpty) {
+      return;
+    }
+    _regionProbeKicked = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
       }
-      if (provider.plans.isEmpty && !provider.isLoadingPlans) {
-        unawaited(provider.loadPlans());
+      unawaited(context.read<CloudProvider>().probeRegionLatencies());
+    });
+  }
+
+  /// Regions ordered for the dropdown: reachable first (fastest first), then
+  /// still-probing/unknown, then unreachable last. Within a tier, by name.
+  List<CloudRegion> _sortedRegions(CloudProvider provider) {
+    int rank(CloudLatencyCheck? check) {
+      if (check == null || check.isTesting) {
+        return 1;
       }
+      if (check.error != null || check.latencyMs == null) {
+        return 2;
+      }
+      return 0;
+    }
+
+    final sorted = [...provider.regions];
+    sorted.sort((a, b) {
+      final ca = provider.regionLatencyFor(a.id);
+      final cb = provider.regionLatencyFor(b.id);
+      final ra = rank(ca);
+      final rb = rank(cb);
+      if (ra != rb) {
+        return ra.compareTo(rb);
+      }
+      if (ra == 0) {
+        return ca!.latencyMs!.compareTo(cb!.latencyMs!);
+      }
+      return a.displayName.compareTo(b.displayName);
+    });
+    return sorted;
+  }
+
+  /// Once probing has settled, pre-select the fastest reachable region if the
+  /// user hasn't picked one yet. Scheduled post-frame so it doesn't mutate
+  /// state mid-build.
+  void _maybeAutoSelectRegion(CloudProvider provider) {
+    if (_autoSelectedRegion ||
+        _selectedRegion != null ||
+        provider.isProbingRegions) {
+      return;
+    }
+    final fastest = provider.fastestReachableRegionId();
+    if (fastest == null) {
+      return;
+    }
+    _autoSelectedRegion = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedRegion != null) {
+        return;
+      }
+      setState(() {
+        _selectedRegion = fastest;
+        final availablePlanIds = _availablePlans(provider, fastest)
+            .map((plan) => plan.id)
+            .toSet();
+        if (_selectedPlan != null &&
+            !availablePlanIds.contains(_selectedPlan)) {
+          _selectedPlan = null;
+        }
+      });
     });
   }
 
@@ -73,6 +167,11 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
   Widget build(BuildContext context) {
     final provider = context.watch<CloudProvider>();
     final isSsh = provider.providerId == CloudProviderId.ssh;
+    if (!isSsh) {
+      _maybeKickRegionProbe(provider);
+      _maybeAutoSelectRegion(provider);
+    }
+    final sortedRegions = _sortedRegions(provider);
     final availablePlans = _availablePlans(provider, _selectedRegion);
     final isLoadingOptions =
         provider.isLoadingRegions || provider.isLoadingPlans;
@@ -200,13 +299,43 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               SizedBox(height: 16.h),
               DropdownButtonFormField<String>(
                 initialValue: _selectedRegion,
-                decoration: InputDecoration(labelText: l10n.region),
+                decoration: InputDecoration(
+                  labelText: l10n.region,
+                  helperText:
+                      provider.isProbingRegions ? l10n.regionProbing : null,
+                ),
                 isExpanded: true,
-                items: provider.regions
+                // Closed field shows just the region name; the latency chip
+                // would overflow the single-line selection box.
+                selectedItemBuilder: (context) => sortedRegions
+                    .map(
+                      (region) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          region.displayName,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                items: sortedRegions
                     .map(
                       (region) => DropdownMenuItem(
                         value: region.id,
-                        child: Text(region.displayName),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                region.displayName,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            SizedBox(width: 8.w),
+                            _RegionLatencyChip(
+                              check: provider.regionLatencyFor(region.id),
+                            ),
+                          ],
+                        ),
                       ),
                     )
                     .toList(),
@@ -321,6 +450,48 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
               Text(isLoadingOptions && !canDeploy ? l10n.loading : l10n.deploy),
         ),
       ],
+    );
+  }
+}
+
+/// Trailing reachability/latency indicator for a region dropdown item.
+/// Spinner while probing, green/amber/red latency when reachable, red
+/// "Unreachable" when the current network can't reach the region's anchor,
+/// nothing when the region has no anchor to probe.
+class _RegionLatencyChip extends StatelessWidget {
+  const _RegionLatencyChip({required this.check});
+
+  final CloudLatencyCheck? check;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = check;
+    if (value == null) {
+      return const SizedBox.shrink();
+    }
+    if (value.isTesting) {
+      return SizedBox(
+        width: 12.w,
+        height: 12.w,
+        child: const CircularProgressIndicator(strokeWidth: 1.6),
+      );
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final ms = value.latencyMs;
+    if (value.error != null || ms == null) {
+      return Text(
+        l10n.regionUnreachable,
+        style: TextStyle(fontSize: 11.sp, color: Colors.red),
+      );
+    }
+    final color = ms < 150
+        ? Colors.green
+        : ms < 300
+            ? Colors.orange
+            : Colors.redAccent;
+    return Text(
+      '$ms ms',
+      style: TextStyle(fontSize: 11.sp, color: color),
     );
   }
 }

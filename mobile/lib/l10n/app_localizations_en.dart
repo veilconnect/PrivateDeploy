@@ -676,6 +676,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get region => 'Region';
 
   @override
+  String get regionUnreachable => 'Unreachable';
+
+  @override
+  String get regionProbing => 'Testing region reachability…';
+
+  @override
   String get plan => 'Plan';
 
   @override
