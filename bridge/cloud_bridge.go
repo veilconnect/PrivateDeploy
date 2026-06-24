@@ -16,6 +16,28 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// Per-operation timeouts for cloud calls. Each operation derives its context
+// from the app lifecycle context (a.Ctx) so it cancels on shutdown, bounded so
+// a hung provider call can't block a bridge method forever. Deploy is generous
+// (provisioning routinely takes 2-5 min); list/probe ops are short.
+const (
+	cloudListOpTimeout    = 45 * time.Second
+	cloudProbeOpTimeout   = 2 * time.Minute
+	cloudDeployOpTimeout  = 10 * time.Minute
+	cloudDestroyOpTimeout = 2 * time.Minute
+)
+
+// opCtx returns a context for a single cloud operation, derived from the app
+// lifecycle context (so it cancels on shutdown) and bounded by timeout. Falls
+// back to context.Background when a.Ctx is unset (headless/tests).
+func (a *App) opCtx(timeout time.Duration) (context.Context, context.CancelFunc) {
+	parent := a.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
 // CloudProviderInfo represents basic information about a cloud provider
 type CloudProviderInfo struct {
 	Name        string `json:"name"`
@@ -266,7 +288,9 @@ func (a *App) ListCloudInstancesTyped() ([]cloud.Instance, error) {
 		return nil, err
 	}
 
-	return provider.ListInstances(context.Background())
+	ctx, cancel := a.opCtx(cloudListOpTimeout)
+	defer cancel()
+	return provider.ListInstances(ctx)
 }
 
 // ListCloudInstances returns all instances for the active provider
@@ -296,7 +320,7 @@ func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud
 	}
 
 	if reporter, ok := provider.(cloud.AccountStatusReporter); ok {
-		probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		probeCtx, cancel := a.opCtx(10 * time.Second)
 		defer cancel()
 		if status, statusErr := reporter.GetAccountStatus(probeCtx); statusErr == nil && status != nil && !status.CanDeploy {
 			msg := status.Message
@@ -308,7 +332,9 @@ func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud
 		}
 	}
 
-	return provider.CreateInstance(context.Background(), &opts)
+	ctx, cancel := a.opCtx(cloudDeployOpTimeout)
+	defer cancel()
+	return provider.CreateInstance(ctx, &opts)
 }
 
 // CloudAccountStatus is the wire envelope returned by GetCloudProviderAccountStatus.
@@ -342,7 +368,7 @@ func (a *App) GetCloudProviderAccountStatusTyped(providerName string) (*CloudAcc
 		}, nil
 	}
 
-	probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	probeCtx, cancel := a.opCtx(10 * time.Second)
 	defer cancel()
 	status, err := reporter.GetAccountStatus(probeCtx)
 	if err != nil {
@@ -417,7 +443,9 @@ func (a *App) DestroyCloudInstanceTyped(instanceID string) error {
 		return err
 	}
 
-	return provider.DestroyInstance(context.Background(), instanceID)
+	ctx, cancel := a.opCtx(cloudDestroyOpTimeout)
+	defer cancel()
+	return provider.DestroyInstance(ctx, instanceID)
 }
 
 // DestroyCloudInstance destroys an instance on the active provider
@@ -443,10 +471,14 @@ func (a *App) RepairCloudInstanceTyped(instanceID string) (*cloud.Instance, erro
 		RepairInstance(ctx context.Context, instanceID string) (*cloud.Instance, error)
 	}
 	if repairer, ok := provider.(instanceRepairer); ok {
-		return repairer.RepairInstance(context.Background(), instanceID)
+		ctx, cancel := a.opCtx(cloudDeployOpTimeout)
+		defer cancel()
+		return repairer.RepairInstance(ctx, instanceID)
 	}
 
-	instance, err := provider.GetInstance(context.Background(), instanceID)
+	getCtx, cancelGet := a.opCtx(cloudListOpTimeout)
+	defer cancelGet()
+	instance, err := provider.GetInstance(getCtx, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +493,9 @@ func (a *App) RepairCloudInstanceTyped(instanceID string) (*cloud.Instance, erro
 		time.Now().UTC().Format("01021504"),
 	)
 
-	return provider.CreateInstance(context.Background(), &cloud.CreateInstanceOptions{
+	createCtx, cancelCreate := a.opCtx(cloudDeployOpTimeout)
+	defer cancelCreate()
+	return provider.CreateInstance(createCtx, &cloud.CreateInstanceOptions{
 		Label:  replacementLabel,
 		Region: instance.Region,
 		Plan:   instance.Plan,
@@ -495,7 +529,9 @@ func (a *App) ListCloudRegionsTyped() ([]cloud.Region, error) {
 		return nil, err
 	}
 
-	return provider.ListRegions(context.Background())
+	ctx, cancel := a.opCtx(cloudListOpTimeout)
+	defer cancel()
+	return provider.ListRegions(ctx)
 }
 
 // ListCloudRegions returns all regions for the active provider
@@ -524,7 +560,9 @@ func (a *App) ListCloudPlansTyped() ([]cloud.Plan, error) {
 		return nil, err
 	}
 
-	return provider.ListPlans(context.Background(), "")
+	ctx, cancel := a.opCtx(cloudListOpTimeout)
+	defer cancel()
+	return provider.ListPlans(ctx, "")
 }
 
 // ListCloudPlans returns all plans for the active provider
@@ -553,7 +591,9 @@ func (a *App) ListCloudAvailabilityTyped(region string) ([]string, error) {
 		return nil, err
 	}
 
-	return provider.ListAvailability(context.Background(), region)
+	ctx, cancel := a.opCtx(cloudListOpTimeout)
+	defer cancel()
+	return provider.ListAvailability(ctx, region)
 }
 
 // ListCloudAvailability returns plan availability for the active provider
@@ -591,7 +631,8 @@ func (a *App) TestCloudRegionLatency(regionCode string) FlagResult {
 		return FlagResult{Flag: false, Data: errMsg}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := a.opCtx(cloudProbeOpTimeout)
+	defer cancel()
 	result, err := tester.TestRegionLatency(ctx, regionCode)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to test region latency: %v", err)
@@ -625,7 +666,8 @@ func (a *App) TestAllCloudRegions() FlagResult {
 		return FlagResult{Flag: false, Data: errMsg}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := a.opCtx(cloudProbeOpTimeout)
+	defer cancel()
 	results, err := tester.TestAllRegions(ctx)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to test all regions: %v", err)
@@ -659,7 +701,8 @@ func (a *App) GetFastestCloudRegion() FlagResult {
 		return FlagResult{Flag: false, Data: errMsg}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := a.opCtx(cloudProbeOpTimeout)
+	defer cancel()
 	result, err := tester.GetFastestRegion(ctx)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to get fastest region: %v", err)
@@ -698,7 +741,8 @@ func (a *App) CleanInvalidCloudNodes() FlagResult {
 		return FlagResult{Flag: false, Data: errMsg}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := a.opCtx(cloudProbeOpTimeout)
+	defer cancel()
 	removed, err := cleaner.CleanInvalidNodes(ctx)
 	if err != nil {
 		log.Printf("[CloudBridge] ERROR: Failed to clean invalid nodes: %v", err)
@@ -808,8 +852,9 @@ func (a *App) CreateMultipleCloudInstancesTyped(optsList []cloud.CreateInstanceO
 
 			runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "deploying", o.Label)
 
-			ctx := context.Background()
+			ctx, cancel := a.opCtx(cloudDeployOpTimeout)
 			instance, err := provider.CreateInstance(ctx, &o)
+			cancel()
 			if err != nil {
 				results[idx] = MultiDeployResult{Success: false, Error: err.Error()}
 				runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "failed", err.Error())
@@ -856,7 +901,8 @@ func (a *App) ScoreCloudRegions(latenciesJSON string) FlagResult {
 		return FlagResult{Flag: false, Data: err.Error()}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := a.opCtx(cloudListOpTimeout)
+	defer cancel()
 	regions, err := provider.ListRegions(ctx)
 	if err != nil {
 		return FlagResult{Flag: false, Data: err.Error()}
