@@ -86,4 +86,30 @@ void main() {
     final prefsAfter = await SharedPreferences.getInstance();
     expect(prefsAfter.getString('legacy_key'), isNull);
   });
+
+  test(
+      'getSecureString returns the legacy secret and retains it for retry when '
+      'the keystore is unavailable during migration', () async {
+    // Legacy build left the secret in plaintext, and the keystore now refuses
+    // writes (e.g. transiently locked). Reading must NOT lock the user out of
+    // their already-stored credential: return the legacy value and keep the
+    // plaintext mirror so a later read can retry the migration. This is a
+    // backward-compat read path — the fail-closed contract governs WRITES of
+    // *new* plaintext (covered above), not destroying already-persisted data.
+    failSecureWrites = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('legacy_key', 'legacy-secret');
+
+    final value = await StorageService.getSecureString('legacy_key');
+    expect(value, 'legacy-secret',
+        reason: 'must not lock the user out of an already-stored secret');
+
+    // Migration could not complete, so the plaintext mirror must remain for a
+    // future retry rather than being silently dropped.
+    expect(secureValues['legacy_key'], isNull,
+        reason: 'keystore write failed, so nothing should be persisted there');
+    final prefsAfter = await SharedPreferences.getInstance();
+    expect(prefsAfter.getString('legacy_key'), 'legacy-secret',
+        reason: 'plaintext must be retained so migration can retry');
+  });
 }
