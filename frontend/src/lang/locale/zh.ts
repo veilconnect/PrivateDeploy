@@ -994,6 +994,7 @@ export default {
     updateSuccess: '插件中心更新成功',
     total: '插件数量为',
     removeConfiguration: '是否删除插件配置？',
+    codeChanged: '该插件的代码自你上次批准后已变更。仅在信任来源时才运行新代码。',
     testRun: '运行测试',
     deprecated: '已废弃',
     newVersion: '新版本',

@@ -142,6 +142,9 @@ export interface Plugin {
   install: boolean
   installed: boolean
   status: number // 0: Normal 1: Running 2: Stopped
+  // SHA-256 of the approved plugin code (trust-on-first-use). Drift requires
+  // re-approval before the code is allowed to run. See stores/pluginSecurity.
+  codeHash?: string
   // Not Config
   updating?: boolean
   loading?: boolean

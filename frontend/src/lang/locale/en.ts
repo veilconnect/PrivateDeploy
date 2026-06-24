@@ -902,6 +902,7 @@ export default {
     updateSuccess: 'Plugin-Hub updated successfully',
     total: 'Number of plug-ins',
     removeConfiguration: 'Do you want to remove the plugin configuration?',
+    codeChanged: 'The plugin code changed since you approved it. Run the new code only if you trust the source.',
     testRun: 'TestRun',
     deprecated: 'Deprecated',
     newVersion: 'New',
