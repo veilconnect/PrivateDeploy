@@ -13,6 +13,22 @@
 
 - 暂无未发布的说明。
 
+## [2.0.12] - 2026-06-24
+
+### 新增
+- **DigitalOcean 节点恢复**:本地记录丢失时(换设备、CLI 创建的节点、状态损坏)
+  现可恢复 DO 节点凭据,与 Vultr 对齐。由于 DO API 既读不到 droplet 的 user-data、
+  也不能给运行中的 droplet 加 SSH key,实现采用托管 key:首次使用生成 ed25519,
+  公钥注册到 DO 账户(名 `privatedeploy-managed`),私钥存 OS keyring,并挂到每个
+  新建 DO droplet 上;恢复时 SSH 进 droplet 解析 cloud-init user-data。已真机
+  端到端验证。
+  - **安全取舍(仅 DO)**:这会往你的 DigitalOcean 账户加一把常驻、可 root 的 SSH
+    key,并挂到所有 PrivateDeploy droplet 上。Vultr 不需要这把 key(经 API 恢复)。
+    恢复读取使用 trust-on-first-use host key。
+
+### 变更
+- 把 user-data 恢复解析器抽到共享 `cloud` 包,Vultr 与 DigitalOcean 复用同一实现。
+
 ## [2.0.11] - 2026-06-24
 
 ### 安全
