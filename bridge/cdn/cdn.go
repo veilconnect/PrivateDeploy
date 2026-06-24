@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"privatedeploy/bridge/cloud"
 )
 
 const (
@@ -39,6 +41,11 @@ const (
 
 	configFileRel      = "data/cdn/config.json"
 	deploymentsFileRel = "data/cdn/deployments.json"
+
+	// cdnSecretScope identifies the Cloudflare token inside the shared secret
+	// store (OS keyring on macOS/Windows, file-backed on Linux). The token is
+	// never written to config.json in cleartext.
+	cdnSecretScope = "cloudflare-cdn"
 )
 
 // Status mirrors mobile CdnStatus.
@@ -120,10 +127,13 @@ type Deployment struct {
 	DNSRecordID string `json:"dnsRecordId,omitempty"`
 }
 
-// persistedConfig is the on-disk representation of the verifier state. The
-// raw token IS kept on disk; mobile uses platform secure storage for this,
-// but the desktop Wails app already keeps Vultr/DO API keys in the same
-// data/ directory so we follow the established pattern.
+// persistedConfig is the on-disk representation of the verifier state. The raw
+// Cloudflare token is NOT written to disk — it is routed through the shared
+// secret store (OS keyring on macOS/Windows, file-backed on Linux), mirroring
+// how provider API keys are handled. The Token field is still carried in memory
+// and is intentionally stripped before the struct is marshalled (see
+// saveConfigLocked); the json tag stays so legacy plaintext configs can be
+// read once and migrated.
 type persistedConfig struct {
 	Token            string        `json:"token,omitempty"`
 	AccountID        string        `json:"accountId,omitempty"`
@@ -855,6 +865,14 @@ func (m *Manager) load() {
 	if data, err := os.ReadFile(m.configPath()); err == nil && len(data) > 0 {
 		_ = json.Unmarshal(data, &m.cfg)
 	}
+	// The Cloudflare token lives in the secret store, not on disk. If a legacy
+	// build left it in config.json, migrate it into the secret store and strip
+	// the cleartext; otherwise restore it from the secret store.
+	if strings.TrimSpace(m.cfg.Token) != "" {
+		_ = m.saveConfigLocked() // re-keys: stores token securely + rewrites stripped config
+	} else if tok, err := cloud.LoadSecret(m.configPath(), cdnSecretScope); err == nil {
+		m.cfg.Token = tok
+	}
 	if data, err := os.ReadFile(m.deploymentsPath()); err == nil && len(data) > 0 {
 		_ = json.Unmarshal(data, &m.deployments)
 	}
@@ -891,7 +909,14 @@ func (m *Manager) saveConfigLocked() error {
 	if err := os.MkdirAll(filepath.Dir(m.configPath()), 0o750); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(m.cfg, "", "  ")
+	// Route the Cloudflare token through the secret store and never persist it
+	// in cleartext. An empty token clears the stored secret.
+	if err := cloud.SaveSecret(m.configPath(), cdnSecretScope, m.cfg.Token); err != nil {
+		return err
+	}
+	onDisk := m.cfg
+	onDisk.Token = ""
+	data, err := json.MarshalIndent(onDisk, "", "  ")
 	if err != nil {
 		return err
 	}
