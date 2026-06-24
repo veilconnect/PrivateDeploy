@@ -510,7 +510,7 @@ export DEBIAN_FRONTEND=noninteractive
 umask 077
 
 apt-get update -qq
-apt-get install -y docker.io ufw
+apt-get install -y docker.io ufw fail2ban
 
 systemctl enable docker
 systemctl start docker
@@ -519,10 +519,26 @@ ufw --force disable || true
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH'
+ufw limit 22/tcp comment 'SSH (rate-limited)'
 ufw allow $ssPort/tcp comment 'Shadowsocks-TCP'
 ufw allow $ssPort/udp comment 'Shadowsocks-UDP'
 echo "y" | ufw enable
+
+# Harden SSH (password auth retained: it is the owner's only credential).
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-privatedeploy.conf <<'SSHD_EOF'
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowAgentForwarding no
+SSHD_EOF
+chmod 600 /etc/ssh/sshd_config.d/99-privatedeploy.conf
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null || true
+systemctl enable fail2ban 2>/dev/null || true
+systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
 docker pull --quiet teddysun/shadowsocks-libev || true

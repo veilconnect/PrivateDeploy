@@ -51,7 +51,37 @@ void main() {
       expect(bundle.userData, contains('VLESS-Reality Server (sing-box)'));
       expect(bundle.userData, contains('Trojan Server (sing-box)'));
       expect(bundle.userData, contains('PublicKey:'));
-      expect(bundle.userData, contains('sing-box-1.12.12-linux-amd64.tar.gz'));
+      expect(bundle.userData, contains('SINGBOX_VERSION="1.12.12"'));
+    });
+
+    test('multi-protocol script is hardened to match desktop', () async {
+      final bundle = await VultrDeploymentBuilder.build(
+        planRam: 1024,
+        portProfile: PortProfileAllocator.randomProfile,
+      );
+      final s = bundle.userData;
+      // fail2ban installed + enabled
+      expect(s, contains('fail2ban'));
+      expect(s, contains('systemctl enable fail2ban'));
+      // SSH rate-limited + hardened
+      expect(s, contains("ufw limit 22/tcp comment 'SSH (rate-limited)'"));
+      expect(s, contains('/etc/ssh/sshd_config.d/99-privatedeploy.conf'));
+      expect(s, contains('MaxAuthTries 3'));
+      // sing-box download integrity-checked with a fallback + graceful skip
+      expect(s, contains('verify_checksum'));
+      expect(s, contains('SINGBOX_FALLBACK_VERSION="1.11.0"')); // proven fallback
+      expect(s, contains('SKIP_SINGBOX'));
+    });
+
+    test('lightweight script is hardened to match desktop', () async {
+      final bundle = await VultrDeploymentBuilder.build(
+        planRam: 512,
+        portProfile: PortProfileAllocator.randomProfile,
+      );
+      final s = bundle.userData;
+      expect(s, contains('fail2ban'));
+      expect(s, contains("ufw limit 22/tcp comment 'SSH (rate-limited)'"));
+      expect(s, contains('/etc/ssh/sshd_config.d/99-privatedeploy.conf'));
     });
 
     test('multi-protocol bundle provisions VLESS relay block', () async {

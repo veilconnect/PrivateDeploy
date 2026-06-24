@@ -8,6 +8,9 @@ import 'vultr_client.dart';
 
 const int lightweightPlanRamThresholdMb = 600;
 const String defaultSingBoxVersion = '1.12.12';
+// Fallback if the primary download fails. Kept in lockstep with the desktop
+// bridge (bridge/cloud/deploy/policy.go) so both ends deploy the same stack.
+const String defaultSingBoxFallbackVersion = '1.11.0';
 const String defaultHysteriaServerName = 'www.bing.com';
 const String defaultHysteriaMasqueradeUrl = 'https://www.bing.com';
 const String defaultVlessServerName = 'www.microsoft.com';
@@ -198,6 +201,7 @@ class VultrDeploymentBuilder {
       'TROJAN_PASSWORD': trojanPassword,
       'TROJAN_SERVER_NAME': trojanServerName,
       'SINGBOX_VERSION': defaultSingBoxVersion,
+      'SINGBOX_FALLBACK_VERSION': defaultSingBoxFallbackVersion,
     };
     for (final entry in replacements.entries) {
       script = script.replaceAll('{{${entry.key}}}', entry.value);
@@ -267,7 +271,7 @@ trap 'chmod 600 "$LOGFILE" 2>/dev/null' EXIT
 echo "=== PrivateDeploy Multi-Protocol Init Started at $(date) ==="
 
 apt-get update -qq
-apt-get install -y docker.io ufw iptables openssl curl ca-certificates net-tools
+apt-get install -y docker.io ufw iptables openssl curl ca-certificates net-tools fail2ban
 
 systemctl enable docker
 systemctl start docker
@@ -302,15 +306,37 @@ generate_cert /etc/privatedeploy/trojan/cert.pem /etc/privatedeploy/trojan/key.p
 
 ufw --force disable || true
 ufw --force reset
+ufw logging on
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH'
+# Rate-limit SSH (ufw 'limit' drops sources with too many recent connections)
+# to blunt brute-force attempts while keeping the port reachable for the owner.
+ufw limit 22/tcp comment 'SSH (rate-limited)'
 ufw allow {{SS_PORT}}/tcp comment 'Shadowsocks-TCP'
 ufw allow {{SS_PORT}}/udp comment 'Shadowsocks-UDP'
 ufw allow {{HY_PORT}}/udp comment 'Hysteria2'
 ufw allow {{VLESS_PORT}}/tcp comment 'VLESS-Reality'
 {{VLESS_RELAY_UFW}}ufw allow {{TROJAN_PORT}}/tcp comment 'Trojan'
 echo "y" | ufw enable
+
+# Harden the SSH daemon. Password auth is kept because the cloud provider's
+# auto-generated root password is the owner's only credential on these boxes;
+# disabling it would lock the owner out. Everything else is tightened, and
+# fail2ban bans repeat offenders.
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-privatedeploy.conf <<'SSHD_EOF'
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowAgentForwarding no
+SSHD_EOF
+chmod 600 /etc/ssh/sshd_config.d/99-privatedeploy.conf
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null || true
+systemctl enable fail2ban 2>/dev/null || true
+systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
 docker pull --quiet teddysun/shadowsocks-libev || true
@@ -319,11 +345,64 @@ docker run -d --name ss-server --restart=always \
   teddysun/shadowsocks-libev ss-server \
   -s 0.0.0.0 -p {{SS_PORT}} -k "{{SS_PASSWORD}}" -m aes-256-gcm
 
+SINGBOX_VERSION="{{SINGBOX_VERSION}}"
+SINGBOX_FALLBACK_VERSION="{{SINGBOX_FALLBACK_VERSION}}"
+SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
+FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz"
+
 mkdir -p /tmp/privatedeploy
-curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v{{SINGBOX_VERSION}}/sing-box-{{SINGBOX_VERSION}}-linux-amd64.tar.gz"
-tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
-find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
-chmod +x /usr/local/bin/sing-box
+SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz.sha256sum"
+
+verify_checksum() {
+  local file="$1" checksum_url="$2"
+  if curl -fsSLo /tmp/privatedeploy/singbox.sha256 "$checksum_url" 2>/dev/null; then
+    cd /tmp/privatedeploy
+    if sha256sum -c singbox.sha256 --status 2>/dev/null; then
+      echo "[OK] sing-box checksum verified"
+      cd - >/dev/null
+      return 0
+    else
+      echo "[WARN] sing-box checksum mismatch!" >&2
+      cd - >/dev/null
+      return 1
+    fi
+  else
+    echo "[WARN] Could not download checksum file, skipping verification" >&2
+    return 0
+  fi
+}
+
+# Skip download if sing-box is already installed.
+if command -v sing-box >/dev/null 2>&1; then
+  echo "[OK] sing-box already installed: $(sing-box version 2>/dev/null | head -1)"
+elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
+  if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
+    echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
+    SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz.sha256sum"
+    if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
+      echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan/Hysteria deployment." >&2
+      SKIP_SINGBOX=1
+    else
+      SINGBOX_VERSION="$SINGBOX_FALLBACK_VERSION"
+    fi
+  else
+    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured. Skipping VLESS/Trojan/Hysteria deployment." >&2
+    SKIP_SINGBOX=1
+  fi
+fi
+
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
+  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_CHECKSUM_URL"; then
+    echo "[ERROR] sing-box integrity check failed. Aborting sing-box deployment." >&2
+    SKIP_SINGBOX=1
+  fi
+fi
+
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
+  tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
+  find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
+  chmod +x /usr/local/bin/sing-box
+fi
 
 cat > /etc/privatedeploy/hysteria/config.json <<EOF
 {
@@ -512,8 +591,15 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
-systemctl restart hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
+# Only bring up the sing-box services if sing-box actually installed. If its
+# download/checksum failed, Shadowsocks still serves traffic rather than the
+# whole deploy aborting.
+if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && command -v sing-box >/dev/null 2>&1; then
+  systemctl enable hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
+  systemctl restart hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
+else
+  echo "[WARN] sing-box not installed; skipping Hysteria2/VLESS/Trojan services. Shadowsocks remains active." >&2
+fi
 
 sleep 5
 echo ""
