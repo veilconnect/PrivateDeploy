@@ -13,6 +13,17 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.10] - 2026-06-24
+
+### Tests
+- **Secure storage fail-closed coverage**: added a regression test for the
+  `getSecureString` legacy-migration path when the keystore is unavailable. It
+  locks in the intended behavior — return the already-stored legacy secret and
+  retain the plaintext mirror for a later retry, rather than locking the user
+  out of their own credential. The fail-closed contract governs *writes* of new
+  plaintext, not destruction of already-persisted data; this test prevents a
+  future "return null" regression from breaking existing users.
+
 ## [2.0.9] - 2026-06-23
 
 ### Fixed
