@@ -17,6 +17,8 @@ import {
   asyncPool,
 } from '@/utils'
 
+import { assertAllowedPluginURL, sha256Hex } from './pluginSecurity'
+
 import type { Plugin, Subscription } from '@/types/app'
 
 const PluginsCache: Recordable<{ plugin: Plugin; code: string }> = {}
@@ -86,10 +88,26 @@ export const usePluginsStore = defineStore('plugins', () => {
       const { id, triggers, path, context, hasUI, tags } = plugins.value[i]
       const code = await ignoredError(ReadFile, path)
       if (code) {
-        PluginsCache[id] = { plugin: plugins.value[i], code }
-        triggers.forEach((trigger) => {
-          PluginsTriggerMap[trigger].observers.push(id)
-        })
+        // Verify the on-disk code against the pinned hash. A mismatch (possible
+        // tampering) keeps the plugin out of the execution cache so it can't
+        // run. A plugin with no pin yet establishes its baseline here (TOFU).
+        let trusted = true
+        if (plugins.value[i].codeHash) {
+          trusted = (await sha256Hex(code)) === plugins.value[i].codeHash
+          if (!trusted) {
+            console.error(
+              `[plugins] ${id}: code hash mismatch — refusing to load (possible tampering)`,
+            )
+          }
+        } else {
+          plugins.value[i].codeHash = await sha256Hex(code)
+        }
+        if (trusted) {
+          PluginsCache[id] = { plugin: plugins.value[i], code }
+          triggers.forEach((trigger) => {
+            PluginsTriggerMap[trigger].observers.push(id)
+          })
+        }
       }
 
       if (!context) {
@@ -262,8 +280,21 @@ export const usePluginsStore = defineStore('plugins', () => {
     }
 
     if (plugin.type === 'Http') {
+      assertAllowedPluginURL(plugin.url)
       const { body } = await HttpGet(plugin.url)
       code = body
+    }
+
+    // Pin the code by SHA-256. First install records the hash (trust-on-first-
+    // use); a later change to the fetched/loaded code must be re-approved
+    // before it replaces the trusted copy.
+    if (code) {
+      const newHash = await sha256Hex(code)
+      if (plugin.codeHash && plugin.codeHash !== newHash) {
+        const ok = await confirm('Tips', 'plugins.codeChanged').catch(() => false)
+        if (!ok) throw `Plugin [${plugin.name}] code changed; update rejected.`
+      }
+      plugin.codeHash = newHash
     }
 
     if (plugin.type !== 'File') {
