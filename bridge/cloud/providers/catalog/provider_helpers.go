@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"privatedeploy/bridge/cloud"
-	"privatedeploy/bridge/cloud/deploy"
 )
 
 func (p *Provider) baseURL() string {
@@ -363,42 +362,10 @@ func portsToCSV(ports []int) string {
 	return strings.Join(parts, ",")
 }
 
+// ensureManagedTLSDefaults delegates to the shared cloud implementation so the
+// managed-protocol TLS defaults stay identical across every provider.
 func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {
-	if record == nil {
-		return false
-	}
-	changed := false
-	if record.HysteriaPort != 0 && record.HysteriaPassword != "" {
-		if strings.TrimSpace(record.HysteriaServerName) == "" {
-			record.HysteriaServerName = deploy.DefaultHysteriaServerName
-			changed = true
-		}
-		if record.HysteriaInsecure == nil {
-			record.HysteriaInsecure = deploy.BoolPtr(true)
-			changed = true
-		}
-	}
-	if record.TrojanPort != 0 && record.TrojanPassword != "" {
-		if strings.TrimSpace(record.TrojanServerName) == "" {
-			record.TrojanServerName = deploy.DefaultTrojanServerName
-			changed = true
-		}
-		if record.TrojanInsecure == nil {
-			record.TrojanInsecure = deploy.BoolPtr(true)
-			changed = true
-		}
-	}
-	if record.VLESSPort != 0 && record.VLESSUUID != "" {
-		if strings.TrimSpace(record.VLESSServerName) == "" {
-			if strings.TrimSpace(record.TrojanServerName) != "" {
-				record.VLESSServerName = record.TrojanServerName
-			} else {
-				record.VLESSServerName = deploy.DefaultVLESSServerName
-			}
-			changed = true
-		}
-	}
-	return changed
+	return cloud.EnsureManagedTLSDefaults(record)
 }
 
 func parseRFC3339(raw string) time.Time {
