@@ -4,41 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
-)
 
-var (
-	recoveredSSConfig = regexp.MustCompile(`-s 0\.0\.0\.0 -p (\d+) -k (?:"([^"]+)"|'([^']+)'|([^\s]+)) -m aes-256-gcm`)
-
-	recoveredHysteriaPort         = regexp.MustCompile(`(?s)"type":\s*"hysteria2".*?"listen_port":\s*(\d+)`)
-	recoveredHysteriaPasswordJSON = regexp.MustCompile(`(?s)"type":\s*"hysteria2".*?"password":\s*"([^"]+)"`)
-	recoveredHysteriaPasswordEnv  = regexp.MustCompile(`(?m)^HYSTERIA_PASSWORD=(?:"([^"]+)"|'([^']+)'|([^\s]+))$`)
-	recoveredHysteriaServerJSON   = regexp.MustCompile(`(?s)"type":\s*"hysteria2".*?"server_name":\s*"([^"]+)"`)
-	recoveredHysteriaServerEnv    = regexp.MustCompile(`(?m)^HYSTERIA_SERVER_NAME=(?:"([^"]+)"|'([^']+)'|([^\s]+))$`)
-
-	recoveredVLESSPort       = regexp.MustCompile(`(?s)"type":\s*"vless".*?"listen_port":\s*(\d+)`)
-	recoveredVLESSUUID       = regexp.MustCompile(`(?s)"type":\s*"vless".*?"uuid":\s*"([^"]+)"`)
-	recoveredVLESSServerName = regexp.MustCompile(`(?s)"type":\s*"vless".*?"server_name":\s*"([^"]+)"`)
-	recoveredVLESSPublicKey  = regexp.MustCompile(`(?m)^PublicKey:\s*([A-Za-z0-9_-]+)$`)
-	recoveredVLESSShortIDTxt = regexp.MustCompile(`(?m)^ShortID:\s*([A-Za-z0-9]+)$`)
-	recoveredVLESSShortIDCfg = regexp.MustCompile(`(?s)"short_id":\s*\[\s*"([^"]+)"\s*\]`)
-
-	recoveredTrojanPort       = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"listen_port":\s*(\d+)`)
-	recoveredTrojanPassword   = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"password":\s*"([^"]+)"`)
-	recoveredTrojanServerName = regexp.MustCompile(`(?s)"type":\s*"trojan".*?"server_name":\s*"([^"]+)"`)
-
-	// VLESS relay (CDN-front) port. The M1 install script always pairs the
-	// relay-port ufw rule with the "VLESS-Relay (CDN)" comment, which makes
-	// it a stable signal that survives port-number changes.
-	//
-	// Matches both `ufw allow` and `ufw limit`: the script flipped from
-	// allow to limit (iptables recent-module rate-limit) in a later
-	// revision, so nodes deployed during the `allow` window would silently
-	// fail recovery if we only matched `limit`. Mirrors the Dart-side fix
-	// (see mobile/lib/features/cloud/vultr_user_data_recovery.dart).
-	recoveredVLESSRelayPort = regexp.MustCompile(`ufw\s+(?:allow|limit)\s+(\d+)/tcp\s+comment\s+'VLESS-Relay`)
+	"privatedeploy/bridge/cloud"
 )
 
 func (p *Provider) getInstanceUserData(ctx context.Context, instanceID string) (string, error) {
@@ -87,102 +55,14 @@ func shouldRecoverNodeRecord(record nodeRecord) bool {
 	return !validateNodeRecord(record)
 }
 
-func recoverNodeRecordFromUserData(script string, base nodeRecord) (nodeRecord, bool) {
-	record := base
-	changed := false
-
-	if match := recoveredSSConfig.FindStringSubmatch(script); len(match) > 0 {
-		if setInt(&record.SSPort, parseInt(match[1])) {
-			changed = true
-		}
-		if record.Port != record.SSPort {
-			record.Port = record.SSPort
-			changed = true
-		}
-		password := firstNonEmpty(match[2], match[3], match[4])
-		if setString(&record.SSPassword, password) {
-			changed = true
-		}
-		if setString(&record.Password, password) {
-			changed = true
-		}
-	}
-
-	if setInt(&record.HysteriaPort, parseInt(firstMatchGroup(recoveredHysteriaPort, script, 1))) {
-		changed = true
-	}
-	if setString(&record.HysteriaPassword, firstNonEmpty(
-		firstMatchGroup(recoveredHysteriaPasswordEnv, script, 1),
-		firstMatchGroup(recoveredHysteriaPasswordEnv, script, 2),
-		firstMatchGroup(recoveredHysteriaPasswordEnv, script, 3),
-		firstMatchGroup(recoveredHysteriaPasswordJSON, script, 1),
-	)) {
-		changed = true
-	}
-	if setString(&record.HysteriaServerName, firstNonEmpty(
-		firstMatchGroup(recoveredHysteriaServerEnv, script, 1),
-		firstMatchGroup(recoveredHysteriaServerEnv, script, 2),
-		firstMatchGroup(recoveredHysteriaServerEnv, script, 3),
-		firstMatchGroup(recoveredHysteriaServerJSON, script, 1),
-	)) {
-		changed = true
-	}
-
-	if setInt(&record.VLESSPort, parseInt(firstMatchGroup(recoveredVLESSPort, script, 1))) {
-		changed = true
-	}
-	if setString(&record.VLESSUUID, firstMatchGroup(recoveredVLESSUUID, script, 1)) {
-		changed = true
-	}
-	if setString(&record.VLESSPublicKey, firstMatchGroup(recoveredVLESSPublicKey, script, 1)) {
-		changed = true
-	}
-	if setString(&record.VLESSShortID, firstNonEmpty(
-		firstMatchGroup(recoveredVLESSShortIDTxt, script, 1),
-		firstMatchGroup(recoveredVLESSShortIDCfg, script, 1),
-	)) {
-		changed = true
-	}
-	if setString(&record.VLESSServerName, firstMatchGroup(recoveredVLESSServerName, script, 1)) {
-		changed = true
-	}
-
-	// Optional VLESS relay port (CDN-front). Only present on M1-and-newer
-	// install scripts. Without this, the mobile CDN screen sees relay_port
-	// = 0 for any node whose local nodeRecord file was lost (fresh device,
-	// CLI-created node, etc.) and disables the "部署 Worker" button with
-	// a misleading "CDN unavailable (re-deploy)" hint even though the node
-	// itself does have a relay listener and the worker would have wired up
-	// just fine.
-	if setInt(&record.VLESSRelayPort, parseInt(firstMatchGroup(recoveredVLESSRelayPort, script, 1))) {
-		changed = true
-	}
-
-	if setInt(&record.TrojanPort, parseInt(firstMatchGroup(recoveredTrojanPort, script, 1))) {
-		changed = true
-	}
-	if setString(&record.TrojanPassword, firstMatchGroup(recoveredTrojanPassword, script, 1)) {
-		changed = true
-	}
-	if setString(&record.TrojanServerName, firstMatchGroup(recoveredTrojanServerName, script, 1)) {
-		changed = true
-	}
-
-	if ensureManagedTLSDefaults(&record.InstanceRecord) {
-		changed = true
-	}
-
-	return record, changed && validateNodeRecord(record)
-}
-
 func (p *Provider) recoverNodeRecordForInstance(ctx context.Context, inst vultrInstance, record nodeRecord) (nodeRecord, bool) {
 	script, err := p.getInstanceUserData(ctx, inst.ID)
 	if err != nil || strings.TrimSpace(script) == "" {
 		return record, false
 	}
 
-	recovered, ok := recoverNodeRecordFromUserData(script, record)
-	if !ok {
+	recovered := record
+	if !cloud.RecoverInstanceRecordFromUserData(script, &recovered.InstanceRecord) {
 		return record, false
 	}
 
@@ -205,19 +85,6 @@ func (p *Provider) recoverNodeRecordForInstance(ctx context.Context, inst vultrI
 		recovered.CreatedAt = inst.CreatedAt
 	}
 	return recovered, true
-}
-
-func firstMatchGroup(pattern *regexp.Regexp, input string, group int) string {
-	match := pattern.FindStringSubmatch(input)
-	if len(match) <= group {
-		return ""
-	}
-	return match[group]
-}
-
-func parseInt(value string) int {
-	result, _ := strconv.Atoi(strings.TrimSpace(value))
-	return result
 }
 
 func setString(target *string, value string) bool {
