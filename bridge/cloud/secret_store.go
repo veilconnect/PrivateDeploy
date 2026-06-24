@@ -18,6 +18,33 @@ const (
 
 var errSecretNotFound = errors.New("provider secret not found")
 
+// ErrSecretNotFound is returned by LoadSecret when no secret is stored for the
+// given (configPath, scope). Callers should treat it as "not yet set", not a
+// hard error.
+var ErrSecretNotFound = errSecretNotFound
+
+// SaveSecret stores an arbitrary secret (e.g. the Cloudflare CDN token) in the
+// same OS-keyring / file-backed backend used for provider API keys. `scope`
+// takes the role of "provider" in the key derivation so unrelated secret kinds
+// never collide. An empty secret deletes any stored value.
+func SaveSecret(configPath, scope, secret string) error {
+	if strings.TrimSpace(secret) == "" {
+		return deleteProviderAPIKey(configPath, scope)
+	}
+	return saveProviderAPIKey(configPath, scope, secret)
+}
+
+// LoadSecret returns the secret previously stored under (configPath, scope), or
+// ErrSecretNotFound if none exists.
+func LoadSecret(configPath, scope string) (string, error) {
+	return loadProviderAPIKey(configPath, scope)
+}
+
+// DeleteSecret removes any secret stored under (configPath, scope).
+func DeleteSecret(configPath, scope string) error {
+	return deleteProviderAPIKey(configPath, scope)
+}
+
 // PrepareProviderConfigForSave stores the API key in the configured secret
 // backend and returns a sanitized clone for on-disk JSON persistence.
 func PrepareProviderConfigForSave(configPath string, config *ProviderConfig) (*ProviderConfig, error) {
