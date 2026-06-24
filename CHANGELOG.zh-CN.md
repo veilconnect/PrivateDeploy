@@ -13,6 +13,28 @@
 
 - 暂无未发布的说明。
 
+## [2.0.11] - 2026-06-24
+
+### 安全
+- **Cloudflare CDN token 改走 OS keyring**:桌面 CDN token 是最后一个仍以明文写入
+  `data/cdn/config.json` 的密钥(云厂商 API key 和节点记录加密密钥早已走 keyring)。
+  现接入同一 secret store;旧版明文 token 在读取时自动迁移。
+- **插件信任边界加固(低破坏)**:远程插件代码只允许经 HTTPS 从白名单域名拉取,
+  并按 SHA-256 对插件代码做 pin(首次信任);更新漂移或磁盘篡改需重新确认才运行。
+- **手机端部署对齐桌面加固**:此前从手机部署的节点缺少桌面的 sing-box 下载校验和/
+  回退、SSH 加固、fail2ban、SSH 限速。现两端一致,并统一 sing-box 版本
+  (1.12.12,回退 1.11.0)。
+
+### 变更
+- **云调用加超时与取消**:桌面 bridge 的云操作改为从 App 生命周期派生 context
+  (关闭即取消)并加按操作超时,替代无界的 `context.Background()`。
+- 抽出共享 `EnsureManagedTLSDefaults`,4 个云 provider 不再各自漂移协议默认值;
+  新增跨端部署脚本 drift 守卫测试。
+
+### 文档
+- `API_DESIGN.md`:删除已从 API 移除的认证/VPN 端点章节,并指向权威来源
+  (Gin 路由 + `openapi.yaml`)。
+
 ## [2.0.10] - 2026-06-24
 
 ### Tests

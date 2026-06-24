@@ -13,6 +13,33 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.11] - 2026-06-24
+
+### Security
+- **Cloudflare CDN token moved to the OS keyring**: the desktop CDN token was the
+  last secret still written to `data/cdn/config.json` in cleartext (provider API
+  keys and the node-record encryption key already used the keyring). It now goes
+  through the same secret store; legacy plaintext tokens migrate on read.
+- **Plugin trust boundary hardened (low-breakage)**: remote plugin code may only
+  be fetched over HTTPS from allowlisted hosts, and plugin code is pinned by
+  SHA-256 (trust-on-first-use); drift on update or on-disk tampering must be
+  re-approved before it runs.
+- **Mobile deploy hardened to match desktop**: nodes deployed from the mobile app
+  previously lacked the desktop's sing-box download checksum/fallback, SSH
+  hardening, fail2ban, and SSH rate-limiting. These are now applied on both ends,
+  and the sing-box version is unified (1.12.12, fallback 1.11.0).
+
+### Changed
+- **Cloud calls bounded and cancellable**: the desktop bridge's cloud operations
+  now derive their context from the app lifecycle (cancelled on shutdown) with
+  per-operation timeouts, instead of an unbounded `context.Background()`.
+- Shared `EnsureManagedTLSDefaults` so the four cloud providers can't drift on
+  protocol defaults; added a cross-end test guard against deploy-script drift.
+
+### Docs
+- `API_DESIGN.md`: removed the stale auth/VPN endpoint sections (already deleted
+  from the API) and pointed readers to the authoritative routes + `openapi.yaml`.
+
 ## [2.0.10] - 2026-06-24
 
 ### Tests
