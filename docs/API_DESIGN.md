@@ -4,44 +4,14 @@
 
 **Base URL:** `https://api.privatedeploy.local:8443`
 **版本:** v1
-**认证方式:** 无登录，本地 / 内网控制
+**认证方式:** 默认绑定本地回环、无需登录；当 API 监听非回环地址时必须设置
+`API_AUTH_TOKEN`（请求头 `Authorization: Bearer <token>`，见 `api/config`）。
 **数据格式:** JSON
 
-> 注意：当前 standalone API 已移除 `/api/v1/auth/*` 和 `/api/v1/vpn/*`。
-> 本文档中旧的认证 / VPN 控制章节仅代表历史设计，不代表当前构建能力。
-
----
-
-## 🔐 认证接口
-
-### 登录
-```http
-POST /api/v1/auth/login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "password"
-}
-
-Response:
-{
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_in": 86400
-}
-```
-
-### Token 刷新
-```http
-POST /api/v1/auth/refresh
-Authorization: Bearer <token>
-
-Response:
-{
-  "token": "new_token...",
-  "expires_in": 86400
-}
-```
+> **权威来源：** 实际可用端点以 Gin 路由(`api/routes/routes.go`)和运行时生成的
+> `GET /api/v1/openapi.yaml` 为准；本文档是设计说明，可能滞后。
+> standalone API **已移除** `/api/v1/auth/*`(JWT 登录/刷新)和 `/api/v1/vpn/*`,
+> 故本文不再保留这些章节。
 
 ---
 
@@ -391,72 +361,6 @@ Response:
 
 ---
 
-## 🔌 VPN 控制
-
-> 已过时：standalone API 当前不提供设备级 VPN 控制接口。
-
-### 启动 VPN
-```http
-POST /api/v1/vpn/start
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "profileId": "profile-1"
-}
-
-Response:
-{
-  "success": true,
-  "status": "connected"
-}
-```
-
-### 停止 VPN
-```http
-POST /api/v1/vpn/stop
-Authorization: Bearer <token>
-
-Response:
-{
-  "success": true,
-  "status": "disconnected"
-}
-```
-
-### 获取 VPN 状态
-```http
-GET /api/v1/vpn/status
-Authorization: Bearer <token>
-
-Response:
-{
-  "status": "connected",
-  "profileId": "profile-1",
-  "uploadSpeed": 1024000,
-  "downloadSpeed": 2048000,
-  "totalUpload": 104857600,
-  "totalDownload": 524288000,
-  "connectedAt": "2025-11-04T10:00:00Z"
-}
-```
-
-### 获取流量统计
-```http
-GET /api/v1/vpn/stats
-Authorization: Bearer <token>
-
-Response:
-{
-  "upload": 104857600,
-  "download": 524288000,
-  "uploadSpeed": 1024000,
-  "downloadSpeed": 2048000
-}
-```
-
----
-
 ## 📊 WebSocket 实时通知
 
 ### 连接
@@ -465,30 +369,6 @@ ws://api.privatedeploy.local:8443/ws
 ```
 
 ### 事件类型
-
-#### VPN 状态变化
-```json
-{
-  "type": "vpn_status",
-  "data": {
-    "status": "connected",
-    "profileId": "profile-1"
-  }
-}
-```
-
-#### 流量更新
-```json
-{
-  "type": "traffic_update",
-  "data": {
-    "upload": 104857600,
-    "download": 524288000,
-    "uploadSpeed": 1024000,
-    "downloadSpeed": 2048000
-  }
-}
-```
 
 #### 服务器状态变化
 ```json
