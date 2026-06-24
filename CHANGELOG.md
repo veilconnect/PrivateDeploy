@@ -13,6 +13,27 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.12] - 2026-06-24
+
+### Added
+- **DigitalOcean node recovery**: a DO node's credentials can now be recovered
+  when the local record is lost (fresh device, CLI-created node, corrupted
+  state) — reaching parity with Vultr. Because DO's API can neither return a
+  droplet's user-data nor attach an SSH key to a running droplet, this requires
+  a managed key: PrivateDeploy generates an ed25519 keypair on first use,
+  registers the public key on the DO account (name `privatedeploy-managed`),
+  stores the private key in the OS keyring, and attaches it to every new DO
+  droplet. Recovery then SSHes in and parses the droplet's cloud-init user-data.
+  Verified end-to-end against a live droplet.
+  - **Security trade-off (DO only)**: this adds a persistent root-capable SSH
+    key to your DigitalOcean account, attached to all PrivateDeploy droplets.
+    Vultr needs no such key (it recovers via the API). The recovery read uses
+    trust-on-first-use host keys.
+
+### Changed
+- Extracted the user-data recovery parser into the shared `cloud` package so
+  Vultr and DigitalOcean reuse one implementation.
+
 ## [2.0.11] - 2026-06-24
 
 ### Security
