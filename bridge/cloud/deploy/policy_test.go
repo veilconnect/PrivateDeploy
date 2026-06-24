@@ -8,7 +8,7 @@ import (
 func TestResolveDeploymentTuningDefaultsSupportHysteriaMasquerade(t *testing.T) {
 	tuning := ResolveDeploymentTuning(nil)
 
-	if tuning.SingBoxVersion != "1.11.0" {
+	if tuning.SingBoxVersion != "1.12.12" {
 		t.Fatalf("unexpected default sing-box version: %s", tuning.SingBoxVersion)
 	}
 	if tuning.SingBoxFallbackVersion != "1.11.0" {
@@ -34,8 +34,8 @@ func TestGenerateMultiProtocolScriptUsesDefaultSingBoxVersion(t *testing.T) {
 		TrojanPassword:   "trojan-pass",
 	})
 
-	if !strings.Contains(script, "SINGBOX_VERSION=\"1.11.0\"") {
-		t.Fatal("expected deployment script to set sing-box v1.11.0 by default")
+	if !strings.Contains(script, "SINGBOX_VERSION=\"1.12.12\"") {
+		t.Fatal("expected deployment script to set sing-box v1.12.12 by default")
 	}
 	if !strings.Contains(script, "\"masquerade\"") {
 		t.Fatal("expected deployment script to include hysteria masquerade configuration")

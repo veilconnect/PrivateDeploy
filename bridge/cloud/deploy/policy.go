@@ -12,7 +12,9 @@ import (
 const (
 	DefaultPortProfile = "random"
 	// Hysteria2 inbound uses `masquerade`, which is available starting in sing-box 1.11.0.
-	DefaultSingBoxVersion         = "1.11.0"
+	// Primary tracks the version the mobile app ships (kept in lockstep with
+	// mobile/lib/features/cloud/vultr_deploy.dart); 1.11.0 is the proven fallback.
+	DefaultSingBoxVersion         = "1.12.12"
 	DefaultSingBoxFallbackVersion = "1.11.0"
 	DefaultHysteriaServerName     = "www.bing.com"
 	DefaultVLESSServerName        = "www.microsoft.com"
