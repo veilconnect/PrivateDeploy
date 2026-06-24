@@ -1097,7 +1097,8 @@ void main() {
       provider.regions.add(region('sjc'));
 
       await provider.probeRegionLatencies();
-      await provider.probeRegionLatencies(); // within cache window → no re-probe
+      await provider
+          .probeRegionLatencies(); // within cache window → no re-probe
       expect(calls, 1);
 
       await provider.probeRegionLatencies(force: true);
