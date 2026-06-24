@@ -117,6 +117,18 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			record.Plan = d.Size.Slug
 			dirty = true
 		}
+
+		// If the local record is incomplete (e.g. lost on a fresh device or a
+		// CLI-created node), try to recover the proxy credentials by SSHing in
+		// and parsing the droplet's cloud-init user-data. DO's API can't return
+		// user-data, so this is the only recovery path. Best-effort.
+		if !cloud.HasMinimumProxyConfig(record) && instance.IPv4 != "" {
+			if recovered, rok := p.recoverNodeRecordForInstance(ctx, instance.IPv4, record); rok {
+				record = recovered
+				dirty = true
+			}
+		}
+
 		if ensureManagedTLSDefaults(&record) {
 			dirty = true
 		}
@@ -274,12 +286,22 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		"ipv6":       true,
 	}
 
+	// Always attach PrivateDeploy's managed key so the node stays recoverable
+	// (DO can't add keys to a running droplet, nor return user-data later).
+	// Best-effort: a key-provisioning failure must not block the deploy.
+	sshKeyIDs := []interface{}{}
+	if managedID, _, kerr := p.ensureManagedSSHKey(ctx); kerr == nil && managedID != 0 {
+		sshKeyIDs = append(sshKeyIDs, managedID)
+	}
 	if opts.SSHKeyID != "" {
 		if keyID, err := strconv.Atoi(opts.SSHKeyID); err == nil {
-			createReq["ssh_keys"] = []interface{}{keyID}
+			sshKeyIDs = append(sshKeyIDs, keyID)
 		} else {
-			createReq["ssh_keys"] = []interface{}{opts.SSHKeyID}
+			sshKeyIDs = append(sshKeyIDs, opts.SSHKeyID)
 		}
+	}
+	if len(sshKeyIDs) > 0 {
+		createReq["ssh_keys"] = sshKeyIDs
 	}
 
 	reqBody, err := json.Marshal(createReq)
