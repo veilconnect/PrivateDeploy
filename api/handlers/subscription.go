@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
+	"privatedeploy/api/utils"
 	"strings"
 	"time"
 
@@ -271,16 +272,23 @@ func (h *SubscriptionHandler) Refresh(c *gin.Context) {
 	}))
 }
 
-func fetchSubscriptionNodeCount(url string) (int, error) {
+func fetchSubscriptionNodeCount(rawURL string) (int, error) {
+	// Subscription URLs are user-supplied, so guard against SSRF the same way
+	// the desktop bridge does: reject non-http(s)/internal hosts up front, then
+	// block any internal IP at dial time (incl. redirects and DNS rebinding).
+	if err := utils.ValidateOutboundURL(rawURL); err != nil {
+		return 0, err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := utils.SSRFSafeClient(20 * time.Second).Do(req)
 	if err != nil {
 		return 0, err
 	}
