@@ -21,6 +21,25 @@ const (
 	DefaultTrojanServerName       = "www.microsoft.com"
 )
 
+// singBoxKnownSHA256 pins the SHA-256 of the linux-amd64 sing-box release
+// tarballs PrivateDeploy ships by default, verified against the upstream GitHub
+// release assets. The deploy script integrity-checks the download against these
+// (sing-box publishes no per-asset .sha256sum file, so the pin is the trust
+// anchor). A version with no entry here — e.g. a user-overridden version we have
+// no hash for — degrades to install-without-offline-verification rather than
+// blocking the deploy. Update alongside DefaultSingBox*Version on a version bump.
+var singBoxKnownSHA256 = map[string]string{
+	"1.12.12": "7c103cb2f9a7dc54cb82962043596718ed27989a478d6405f0939a9b775f889f",
+	"1.11.0":  "eff0237951bfbd2381be36f114e419f10d3ed57dbf929f680e4cc9f57e319d64",
+}
+
+// SingBoxSHA256 returns the pinned linux-amd64 tarball SHA-256 for version, or
+// "" when no hash is pinned for it. The leading "v" and surrounding whitespace
+// are tolerated.
+func SingBoxSHA256(version string) string {
+	return singBoxKnownSHA256[strings.TrimPrefix(strings.TrimSpace(version), "v")]
+}
+
 var (
 	hostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
 	versionPattern  = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}(?:[-+._a-zA-Z0-9]+)?$`)

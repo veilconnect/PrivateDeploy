@@ -69,8 +69,26 @@ void main() {
       expect(s, contains('MaxAuthTries 3'));
       // sing-box download integrity-checked with a fallback + graceful skip
       expect(s, contains('verify_checksum'));
-      expect(s, contains('SINGBOX_FALLBACK_VERSION="1.11.0"')); // proven fallback
+      expect(
+          s, contains('SINGBOX_FALLBACK_VERSION="1.11.0"')); // proven fallback
       expect(s, contains('SKIP_SINGBOX'));
+      // Integrity check verifies against a pinned hash (not the non-existent
+      // upstream .sha256sum file, which 404s and made the check a no-op).
+      expect(s,
+          contains('SINGBOX_SHA256="${singBoxSha256(defaultSingBoxVersion)}"'));
+      expect(
+        s,
+        contains(
+            'SINGBOX_FALLBACK_SHA256="${singBoxSha256(defaultSingBoxFallbackVersion)}"'),
+      );
+      expect(s, contains(r'''actual="$(sha256sum "$file" | cut -d' ' -f1)"'''));
+      expect(s, isNot(contains('sha256sum -c')));
+      expect(s, isNot(contains('SINGBOX_CHECKSUM_URL')));
+      // Pinned hashes are real 64-hex SHA-256 values.
+      expect(singBoxSha256(defaultSingBoxVersion),
+          matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(singBoxSha256(defaultSingBoxFallbackVersion),
+          matches(RegExp(r'^[0-9a-f]{64}$')));
     });
 
     test('lightweight script is hardened to match desktop', () async {

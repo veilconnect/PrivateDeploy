@@ -11,6 +11,22 @@ const String defaultSingBoxVersion = '1.12.12';
 // Fallback if the primary download fails. Kept in lockstep with the desktop
 // bridge (bridge/cloud/deploy/policy.go) so both ends deploy the same stack.
 const String defaultSingBoxFallbackVersion = '1.11.0';
+// Pinned SHA-256 of the linux-amd64 sing-box release tarballs shipped by
+// default, verified against the upstream GitHub release assets. Kept in lockstep
+// with bridge/cloud/deploy/policy.go (singBoxKnownSHA256). The deploy script
+// integrity-checks the download against these (sing-box publishes no per-asset
+// .sha256sum file, so the pin is the trust anchor); a version with no entry
+// degrades to install-without-offline-verification rather than blocking.
+const Map<String, String> singBoxKnownSha256 = {
+  '1.12.12': '7c103cb2f9a7dc54cb82962043596718ed27989a478d6405f0939a9b775f889f',
+  '1.11.0': 'eff0237951bfbd2381be36f114e419f10d3ed57dbf929f680e4cc9f57e319d64',
+};
+
+/// Returns the pinned linux-amd64 tarball SHA-256 for [version], or '' when
+/// none is pinned. A leading 'v' and surrounding whitespace are tolerated.
+String singBoxSha256(String version) =>
+    singBoxKnownSha256[version.trim().replaceFirst(RegExp(r'^v'), '')] ?? '';
+
 const String defaultHysteriaServerName = 'www.bing.com';
 const String defaultHysteriaMasqueradeUrl = 'https://www.bing.com';
 const String defaultVlessServerName = 'www.microsoft.com';
@@ -202,6 +218,8 @@ class VultrDeploymentBuilder {
       'TROJAN_SERVER_NAME': trojanServerName,
       'SINGBOX_VERSION': defaultSingBoxVersion,
       'SINGBOX_FALLBACK_VERSION': defaultSingBoxFallbackVersion,
+      'SINGBOX_SHA256': singBoxSha256(defaultSingBoxVersion),
+      'SINGBOX_FALLBACK_SHA256': singBoxSha256(defaultSingBoxFallbackVersion),
     };
     for (final entry in replacements.entries) {
       script = script.replaceAll('{{${entry.key}}}', entry.value);
@@ -347,29 +365,34 @@ docker run -d --name ss-server --restart=always \
 
 SINGBOX_VERSION="{{SINGBOX_VERSION}}"
 SINGBOX_FALLBACK_VERSION="{{SINGBOX_FALLBACK_VERSION}}"
+SINGBOX_SHA256="{{SINGBOX_SHA256}}"
+SINGBOX_FALLBACK_SHA256="{{SINGBOX_FALLBACK_SHA256}}"
 SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
 FALLBACK_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz"
 
 mkdir -p /tmp/privatedeploy
-SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz.sha256sum"
+# Expected hash for whichever version actually downloads (reset in the fallback path).
+EXPECTED_SHA256="$SINGBOX_SHA256"
 
+# verify_checksum compares the downloaded tarball against a SHA-256 pinned in the
+# app source (verified against the upstream GitHub release). sing-box publishes
+# no per-asset .sha256sum file, and re-fetching a hash from the same origin would
+# add no supply-chain protection over TLS, so the pin is the trust anchor. An
+# empty pin (a version we have no hash for) degrades to a warning.
 verify_checksum() {
-  local file="$1" checksum_url="$2"
-  if curl -fsSLo /tmp/privatedeploy/singbox.sha256 "$checksum_url" 2>/dev/null; then
-    cd /tmp/privatedeploy
-    if sha256sum -c singbox.sha256 --status 2>/dev/null; then
-      echo "[OK] sing-box checksum verified"
-      cd - >/dev/null
-      return 0
-    else
-      echo "[WARN] sing-box checksum mismatch!" >&2
-      cd - >/dev/null
-      return 1
-    fi
-  else
-    echo "[WARN] Could not download checksum file, skipping verification" >&2
+  local file="$1" expected="$2"
+  if [ -z "$expected" ]; then
+    echo "[WARN] No pinned checksum for this sing-box version; skipping verification" >&2
     return 0
   fi
+  local actual
+  actual="$(sha256sum "$file" | cut -d' ' -f1)"
+  if [ "$actual" = "$expected" ]; then
+    echo "[OK] sing-box checksum verified"
+    return 0
+  fi
+  echo "[WARN] sing-box checksum mismatch! expected=${expected} actual=${actual}" >&2
+  return 1
 }
 
 # Skip download if sing-box is already installed.
@@ -378,12 +401,12 @@ if command -v sing-box >/dev/null 2>&1; then
 elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
   if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
     echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
-    SINGBOX_CHECKSUM_URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_FALLBACK_VERSION}/sing-box-${SINGBOX_FALLBACK_VERSION}-linux-amd64.tar.gz.sha256sum"
     if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
       echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan/Hysteria deployment." >&2
       SKIP_SINGBOX=1
     else
       SINGBOX_VERSION="$SINGBOX_FALLBACK_VERSION"
+      EXPECTED_SHA256="$SINGBOX_FALLBACK_SHA256"
     fi
   else
     echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured. Skipping VLESS/Trojan/Hysteria deployment." >&2
@@ -392,7 +415,7 @@ elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
 fi
 
 if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
-  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_CHECKSUM_URL"; then
+  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$EXPECTED_SHA256"; then
     echo "[ERROR] sing-box integrity check failed. Aborting sing-box deployment." >&2
     SKIP_SINGBOX=1
   fi
