@@ -1,9 +1,25 @@
 package deploy
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// TestDefaultSingBoxVersionsArePinned guards against the version-bump footgun:
+// bumping DefaultSingBoxVersion / DefaultSingBoxFallbackVersion without adding
+// the matching entry to singBoxKnownSHA256 would silently downgrade the deploy
+// integrity check to "skip verification" (an empty pin). This fails the build
+// instead, mirroring the Dart-side assertion in vultr_deploy_test.dart.
+func TestDefaultSingBoxVersionsArePinned(t *testing.T) {
+	hex64 := regexp.MustCompile(`^[0-9a-f]{64}$`)
+	for _, v := range []string{DefaultSingBoxVersion, DefaultSingBoxFallbackVersion} {
+		h := SingBoxSHA256(v)
+		if !hex64.MatchString(h) {
+			t.Fatalf("sing-box %q has no pinned SHA-256 (got %q) — add it to singBoxKnownSHA256 when bumping the default version", v, h)
+		}
+	}
+}
 
 func TestResolveDeploymentTuningDefaultsSupportHysteriaMasquerade(t *testing.T) {
 	tuning := ResolveDeploymentTuning(nil)
