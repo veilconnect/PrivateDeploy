@@ -17,7 +17,7 @@ import {
   asyncPool,
 } from '@/utils'
 
-import { assertAllowedPluginURL, sha256Hex } from './pluginSecurity'
+import { fetchAllowedPluginCode, sha256Hex } from './pluginSecurity'
 
 import type { Plugin, Subscription } from '@/types/app'
 
@@ -156,8 +156,27 @@ export const usePluginsStore = defineStore('plugins', () => {
 
   const reloadPlugin = async (plugin: Plugin, code = '', reloadTrigger = false) => {
     const { path } = plugin
+    // An explicit `code` argument is a deliberate edit from the in-app editor;
+    // an empty one means re-read the on-disk file (the "reload" action).
+    const isExplicitEdit = code !== ''
     if (!code) {
       code = await ReadFile(path)
+    }
+    // Enforce the SHA-256 pin before the code enters the execution cache.
+    // Without this, a tampered on-disk file would run on reload, defeating the
+    // load-time pin. A deliberate editor edit re-establishes the pin; a passive
+    // reload whose code drifted from the pin must be re-approved.
+    const newHash = await sha256Hex(code)
+    const stored = plugins.value.find((p) => p.id === plugin.id)
+    const pinned = stored?.codeHash ?? plugin.codeHash
+    if (!isExplicitEdit && pinned && pinned !== newHash) {
+      const ok = await confirm('Tips', 'plugins.codeChanged').catch(() => false)
+      if (!ok) throw `Plugin [${plugin.name}] code changed; reload rejected.`
+    }
+    plugin.codeHash = newHash
+    if (stored) {
+      stored.codeHash = newHash
+      savePlugins()
     }
     PluginsCache[plugin.id] = { plugin, code }
     reloadTrigger && updatePluginTrigger(plugin)
@@ -280,9 +299,7 @@ export const usePluginsStore = defineStore('plugins', () => {
     }
 
     if (plugin.type === 'Http') {
-      assertAllowedPluginURL(plugin.url)
-      const { body } = await HttpGet(plugin.url)
-      code = body
+      code = await fetchAllowedPluginCode(plugin.url)
     }
 
     // Pin the code by SHA-256. First install records the hash (trust-on-first-

@@ -9,6 +9,8 @@
 //      install (trust-on-first-use); later drift (remote update or on-disk
 //      tampering) is detected and must be re-approved before the code runs.
 
+import { HttpGet } from '@/bridge'
+
 // Hosts the GUI-for-Cores Plugin-Hub and its plugin sources are served from.
 const ALLOWED_PLUGIN_HOSTS = new Set([
   'raw.githubusercontent.com',
@@ -42,6 +44,35 @@ export const assertAllowedPluginURL = (rawURL: string): void => {
       `Plugin host not allowed: ${url.hostname}. Allowed: ${[...ALLOWED_PLUGIN_HOSTS].join(', ')}`,
     )
   }
+}
+
+// fetchAllowedPluginCode downloads remote plugin code while enforcing the host
+// allowlist on every hop. The bridge follows redirects transparently, so
+// validating only the initial URL would let an open redirect on an allowlisted
+// host (e.g. github.com) bounce the fetch to an arbitrary origin. We therefore
+// disable automatic redirects and follow them manually, re-validating each
+// Location against the allowlist before requesting it.
+export const fetchAllowedPluginCode = async (rawURL: string): Promise<string> => {
+  const MAX_HOPS = 5
+  let current = rawURL
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    assertAllowedPluginURL(current)
+    const { status, headers, body } = await HttpGet<string>(current, {}, { Redirect: false })
+    if (status >= 300 && status < 400) {
+      const raw = headers['Location'] ?? headers['location']
+      const location = Array.isArray(raw) ? raw[0] : raw
+      if (!location) {
+        throw new PluginSecurityError(`Redirect without Location header from ${current}`)
+      }
+      current = new URL(location, current).toString()
+      continue
+    }
+    if (status >= 200 && status < 300) {
+      return body
+    }
+    throw new PluginSecurityError(`Plugin fetch failed (HTTP ${status}) from ${current}`)
+  }
+  throw new PluginSecurityError(`Too many redirects fetching plugin from ${rawURL}`)
 }
 
 // sha256Hex returns the lowercase hex SHA-256 of a UTF-8 string.
