@@ -114,6 +114,14 @@ func addProxyEndpoint(set map[string]struct{}, u *url.URL) {
 		}
 	}
 	set[net.JoinHostPort(host, port)] = struct{}{}
+	// The dialer Control hook sees the resolved IP:port, not the hostname, so a
+	// proxy given as the "localhost" alias would otherwise be blocked as an SSRF
+	// loopback dial. Permit its loopback resolutions too. (Literal-IP proxies
+	// already match the resolved address directly.)
+	if strings.EqualFold(host, "localhost") {
+		set[net.JoinHostPort("127.0.0.1", port)] = struct{}{}
+		set[net.JoinHostPort("::1", port)] = struct{}{}
+	}
 }
 
 // makeSSRFControl returns a dialer Control hook that permits dialing the

@@ -107,6 +107,23 @@ func TestMakeSSRFControlAllowsOnlyConfiguredProxy(t *testing.T) {
 	}
 }
 
+func TestMakeSSRFControlAllowsLocalhostHostnameProxy(t *testing.T) {
+	// A proxy given by the "localhost" alias must be dialable: the Control hook
+	// sees the resolved loopback IP, not the hostname, so its IPv4/IPv6 loopback
+	// resolutions have to be permitted too. Other loopback ports stay blocked.
+	_, allowed := resolveProxy("http://localhost:7890")
+	control := makeSSRFControl(allowed)
+
+	for _, addr := range []string{"127.0.0.1:7890", "[::1]:7890"} {
+		if err := control("tcp", addr, nil); err != nil {
+			t.Fatalf("localhost proxy resolution %s must be dialable, got %v", addr, err)
+		}
+	}
+	if err := control("tcp", "127.0.0.1:9999", nil); err == nil {
+		t.Fatal("a different loopback port must still be blocked")
+	}
+}
+
 func TestMakeSSRFControlNoProxyBlocksLoopback(t *testing.T) {
 	// No explicit proxy and (assuming) no env proxy → loopback is blocked,
 	// closing the NO_PROXY / unparseable-proxy rebinding gap.

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -869,7 +870,13 @@ func (m *Manager) load() {
 	// build left it in config.json, migrate it into the secret store and strip
 	// the cleartext; otherwise restore it from the secret store.
 	if strings.TrimSpace(m.cfg.Token) != "" {
-		_ = m.saveConfigLocked() // re-keys: stores token securely + rewrites stripped config
+		// re-keys: stores token securely + rewrites stripped config. On failure
+		// the cleartext token is intentionally left on disk (so the user isn't
+		// locked out), but surface it — a persistent keyring failure means the
+		// token keeps living in cleartext silently otherwise.
+		if err := m.saveConfigLocked(); err != nil {
+			log.Printf("cdn: failed to migrate Cloudflare token to secret store (token left in cleartext config): %v", err)
+		}
 	} else if tok, err := cloud.LoadSecret(m.configPath(), cdnSecretScope); err == nil {
 		m.cfg.Token = tok
 	}
