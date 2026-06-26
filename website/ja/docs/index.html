@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy ドキュメント</title>
+    <meta name="description" content="PrivateDeploy ノードのデプロイと接続のクイックスタートです。">
+    <link rel="canonical" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/docs/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/docs/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/docs/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/docs/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/docs/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/docs/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/docs/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/docs/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="メインナビゲーション">
+        <a class="brand" href="/ja/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="ナビゲーションを開く" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/ja/">製品</a>
+          <a href="/ja/download/">ダウンロード</a>
+          <a href="/ja/docs/" aria-current="page">ドキュメント</a>
+          <a href="/ja/security/">セキュリティ</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>言語</button>
+            <div class="language-options" role="menu" aria-label="言語選択">
+              <a href="/docs/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/docs/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/docs/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/docs/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/docs/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/docs/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/docs/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/docs/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/docs/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/docs/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/docs/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/docs/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> クイックスタート</p><h1>ノードをデプロイし、ローカルプロキシポートを確認します。</h1><p>デスクトップアプリを入れ、プロバイダーを追加し、VPS ノードを作成して、Mixed、HTTP、SOCKS エンドポイントを使います。</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid three workflow">
+        <article class="card step"><h3>プレビュー版をインストール</h3><p>対象プラットフォームのビルドをダウンロードし、起動前に checksum を確認します。</p></article>
+        <article class="card step"><h3>クラウド認証情報を追加</h3><p>インスタンスとファイアウォール管理に限定したテスト API key を使います。</p></article>
+        <article class="card step"><h3>ノードを作成</h3><p>対応リージョンとプランを選びます。大きいプランでは完全なプロトコル構成を使えます。</p></article>
+        <article class="card step"><h3>プロトコル詳細を確認</h3><p>SS、Hysteria2、VLESS-Reality、Trojan のポートとリンクを確認します。</p></article>
+        <article class="card step"><h3>ローカルポートを使用</h3><p>概要ページには Mixed、HTTP、SOCKS ポートが直接表示されます。</p></article>
+        <article class="card step"><h3>別クライアントへインポート</h3><p>sing-box、Clash、v2rayN、Hiddify などへリンクをコピーします。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>ローカルエンドポイント形式</h2><p>デスクトップ概要のポートパネルで表示される形式です。</p></div><div class="grid three">
+        <article class="card dark"><h3>Mixed</h3><p>ホストとポートとしてコピーします。</p><div class="terminal"><pre><code>127.0.0.1:7890</code></pre></div></article>
+        <article class="card dark"><h3>HTTP</h3><p>HTTP プロキシ URL を要求するアプリで使います。</p><div class="terminal"><pre><code>http://127.0.0.1:7891</code></pre></div></article>
+        <article class="card dark"><h3>SOCKS</h3><p>SOCKS5 エンドポイント対応ツールで使います。</p><div class="terminal"><pre><code>socks5://127.0.0.1:7892</code></pre></div></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>プロバイダー認証情報の指針</h2><p>評価には専用のテスト token を使い、汎用の個人 token は使い回さないでください。</p></div><div class="grid three">
+        <article class="card"><h3>Vultr</h3><p>インスタンス作成、ファイアウォール管理、メタデータ読み取り、テストノード削除が可能な key を使います。</p></article>
+        <article class="card"><h3>DigitalOcean</h3><p>Droplet と SSH key を作成できる token を使います。復旧では管理 SSH key を使います。</p></article>
+        <article class="card"><h3>SSH host</h3><p>所有または管理許可のあるホストのみ使います。デプロイにはサービスとファイアウォール権限が必要です。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>よくある失敗</h2><p>プレビュー版の問題は多くの場合この分類に入ります。</p></div><div class="grid three">
+        <article class="card"><h3>プロバイダーが要求を拒否</h3><p>token の権限、残高、リージョン可用性、quota を確認します。</p></article>
+        <article class="card"><h3>SSH が準備完了にならない</h3><p>cloud-init 完了を待ち、ファイアウォールと SSH 対応を確認します。</p></article>
+        <article class="card"><h3>ローカルポートに接続できない</h3><p>カーネル、プロキシ/TUN 状態、ノードリンクの健全性を確認します。</p></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="grid two"><div><h2>詳細なプロジェクト文書</h2><p class="muted">リポジトリにはアーキテクチャ、API、マルチクラウド、リリースゲートの文書があります。</p></div><ul class="link-list">
+        <li><a href="/github">リポジトリ README</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/ARCHITECTURE.md">アーキテクチャ</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/API_DESIGN.md">API 設計</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/GO-NO-GO-CHECKLIST.md">リリースチェックリスト</a></li>
+      </ul></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/ja/download/">ダウンロード</a>
+          <a href="/ja/docs/">ドキュメント</a>
+          <a href="/ja/security/">セキュリティ</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

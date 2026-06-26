@@ -4,7 +4,7 @@ export interface NodeScore {
   node: ManagedCloudNode
   score: number
   reasons: string[]
-  antiBlockingScore?: number
+  resilienceScore?: number
 }
 
 export interface RecommendationCriteria {
@@ -15,7 +15,7 @@ export interface RecommendationCriteria {
   preferRecent?: boolean
 }
 
-// reachability risk levels (from CloudView)
+// Region reachability levels (from CloudView)
 const reachabilityRiskLevels: Record<string, 'low' | 'medium' | 'high' | 'critical'> = {
   // Low Risk
   'bom': 'low', 'sgp': 'low', 'nrt': 'low', 'icn': 'low',
@@ -46,7 +46,7 @@ const countProtocols = (node: ManagedCloudNode) => {
   return count
 }
 
-const calculateAntiBlockingScore = (node: ManagedCloudNode): { score: number; reasons: string[] } => {
+const calculateResilienceScore = (node: ManagedCloudNode): { score: number; reasons: string[] } => {
   const reasons: string[] = []
   const riskLevel = reachabilityRiskLevels[node.region || ''] || 'medium'
   let score = riskScoreMap[riskLevel] * 0.35
@@ -59,7 +59,7 @@ const calculateAntiBlockingScore = (node: ManagedCloudNode): { score: number; re
     reasons.push('Protocol diversity is weak')
   }
 
-  // UDP-capable protocols generally improve censorship resilience in unstable networks.
+  // UDP-capable protocols generally improve resilience on unstable networks.
   let transportBonus = 0
   if (node.hysteriaPort && node.hysteriaPassword) {
     transportBonus += 20
@@ -80,7 +80,7 @@ const calculateAntiBlockingScore = (node: ManagedCloudNode): { score: number; re
     reasons.push('Ports reachable even when ICMP is blocked')
   } else if (node.connectivityStatus === 'blocked') {
     connectivityScore = 0
-    reasons.push('Latest connectivity test is blocked')
+    reasons.push('Latest connectivity test is unavailable')
   }
   score += connectivityScore * 0.15
 
@@ -113,10 +113,10 @@ export function calculateNodeScore(
 ): NodeScore {
   let score = 0
   const reasons: string[] = []
-  const antiBlocking = calculateAntiBlockingScore(node)
+  const resilience = calculateResilienceScore(node)
   const weights = {
     latency: criteria.preferLowLatency ? 0.28 : 0.20,
-    antiBlocking: criteria.preferLowRisk ? 0.42 : 0.35,
+    resilience: criteria.preferLowRisk ? 0.42 : 0.35,
     connectivity: criteria.preferReachable ? 0.20 : 0.15,
     recency: criteria.preferRecent ? 0.10 : 0.05,
   }
@@ -140,9 +140,9 @@ export function calculateNodeScore(
     reasons.push('Acceptable latency (<200ms)')
   }
 
-  // 2. Dynamic reachability score
-  score += antiBlocking.score * weights.antiBlocking
-  reasons.push(...antiBlocking.reasons.slice(0, 3))
+  // 2. Dynamic resilience score
+  score += resilience.score * weights.resilience
+  reasons.push(...resilience.reasons.slice(0, 3))
 
   // 3. Connectivity score
   let connectivityScore = 50 // default
@@ -154,17 +154,17 @@ export function calculateNodeScore(
     reasons.push('ICMP blocked but ports open')
   } else if (node.connectivityStatus === 'blocked') {
     connectivityScore = 0
-    reasons.push('Currently blocked')
+    reasons.push('Currently unavailable')
 
-    // Heavily penalize blocked nodes if avoiding them
+    // Heavily penalize unavailable nodes if avoiding them
     if (criteria.avoidBlocked) {
       score *= 0.1
-      reasons.push('Blocked nodes avoided')
+      reasons.push('Unavailable nodes avoided')
     }
   }
   score += connectivityScore * weights.connectivity
 
-  // 4. Recency score (newer nodes might be less likely to be blocked)
+  // 4. Recency score
   if (node.createdAt) {
     const ageMs = Date.now() - new Date(node.createdAt).getTime()
     const ageDays = ageMs / (1000 * 60 * 60 * 24)
@@ -182,7 +182,7 @@ export function calculateNodeScore(
     node,
     score: Math.round(score),
     reasons,
-    antiBlockingScore: antiBlocking.score,
+    resilienceScore: resilience.score,
   }
 }
 

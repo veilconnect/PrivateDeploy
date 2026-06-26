@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ru" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Документация PrivateDeploy</title>
+    <meta name="description" content="Краткое руководство по развертыванию и подключению узлов PrivateDeploy.">
+    <link rel="canonical" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/docs/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/docs/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/docs/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/docs/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/docs/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/docs/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/docs/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/docs/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Основная навигация">
+        <a class="brand" href="/ru/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Открыть навигацию" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/ru/">Продукт</a>
+          <a href="/ru/download/">Скачать</a>
+          <a href="/ru/docs/" aria-current="page">Документы</a>
+          <a href="/ru/security/">Безопасность</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Язык</button>
+            <div class="language-options" role="menu" aria-label="Выбор языка">
+              <a href="/docs/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/docs/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/docs/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/docs/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/docs/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/docs/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/docs/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/docs/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/docs/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/docs/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/docs/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/docs/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> Быстрый старт</p><h1>Разверните узел и найдите локальные proxy-порты.</h1><p>Установите desktop-приложение, добавьте провайдера, создайте VPS-узел и используйте локальный Mixed, HTTP или SOCKS endpoint.</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid three workflow">
+        <article class="card step"><h3>Установите preview-сборку</h3><p>Скачайте сборку для вашей платформы и проверьте checksum перед запуском.</p></article>
+        <article class="card step"><h3>Добавьте cloud-учетные данные</h3><p>Используйте тестовый API key с правами на instance и firewall.</p></article>
+        <article class="card step"><h3>Создайте узел</h3><p>Выберите поддерживаемый регион и план. Большие планы поддерживают полный stack.</p></article>
+        <article class="card step"><h3>Проверьте протоколы</h3><p>Проверьте порты и ссылки SS, Hysteria2, VLESS-Reality и Trojan.</p></article>
+        <article class="card step"><h3>Используйте локальные порты</h3><p>Страница overview показывает Mixed, HTTP и SOCKS прямо.</p></article>
+        <article class="card step"><h3>Импортируйте в другой клиент</h3><p>Скопируйте links в sing-box, Clash, v2rayN, Hiddify или совместимый клиент.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Форматы локальных endpoints</h2><p>Эти форматы отображает панель портов desktop overview.</p></div><div class="grid three">
+        <article class="card dark"><h3>Mixed</h3><p>Копируется как host и port.</p><div class="terminal"><pre><code>127.0.0.1:7890</code></pre></div></article>
+        <article class="card dark"><h3>HTTP</h3><p>Для приложений, ожидающих HTTP proxy URL.</p><div class="terminal"><pre><code>http://127.0.0.1:7891</code></pre></div></article>
+        <article class="card dark"><h3>SOCKS</h3><p>Для инструментов, принимающих SOCKS5 endpoints.</p><div class="terminal"><pre><code>socks5://127.0.0.1:7892</code></pre></div></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>Рекомендации по credentials провайдера</h2><p>Используйте отдельный test token. Не переиспользуйте универсальный личный token.</p></div><div class="grid three">
+        <article class="card"><h3>Vultr</h3><p>Используйте key, который может создавать instances, управлять firewall, читать metadata и удалять test nodes.</p></article>
+        <article class="card"><h3>DigitalOcean</h3><p>Используйте token, который может создавать droplets и SSH keys. Recovery использует managed SSH key.</p></article>
+        <article class="card"><h3>SSH host</h3><p>Используйте только собственные или авторизованные hosts. Deploy требует прав для services и firewall rules.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Типичные сбои</h2><p>Большинство preview-проблем попадает в эти категории.</p></div><div class="grid three">
+        <article class="card"><h3>Провайдер отклонил запрос</h3><p>Проверьте scope token, баланс, регион и quota.</p></article>
+        <article class="card"><h3>SSH не стал готов</h3><p>Дождитесь cloud-init, проверьте firewall и поддержку SSH.</p></article>
+        <article class="card"><h3>Локальный порт не подключается</h3><p>Проверьте kernel, proxy/TUN и здоровые links узла.</p></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="grid two"><div><h2>Более глубокая документация</h2><p class="muted">В репозитории есть документы по architecture, API, multi-cloud и release gates.</p></div><ul class="link-list">
+        <li><a href="/github">README репозитория</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/ARCHITECTURE.md">Архитектура</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/API_DESIGN.md">Дизайн API</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/GO-NO-GO-CHECKLIST.md">Release checklist</a></li>
+      </ul></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/ru/download/">Скачать</a>
+          <a href="/ru/docs/">Документы</a>
+          <a href="/ru/security/">Безопасность</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

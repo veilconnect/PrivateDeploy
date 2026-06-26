@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="92" y="92" width="840" height="840" rx="220" fill="#173F9B" />
+
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M398 246H516C680 246 788 354 788 512C788 670 680 778 516 778H398V660H510C600 660 660 602 660 512C660 422 600 364 510 364H398V246Z"
+    fill="#2EC4A6"
+  />
+
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M272 246H500C624 246 706 324 706 432C706 540 624 618 500 618H398V778H272V246ZM398 360V506H490C544 506 580 478 580 432C580 386 544 360 490 360H398Z"
+    fill="#FFFFFF"
+  />
+
+  <path
+    d="M398 360V506H490C544 506 580 478 580 432C580 386 544 360 490 360H398Z"
+    fill="#173F9B"
+  />
+</svg>

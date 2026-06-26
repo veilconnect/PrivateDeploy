@@ -1004,11 +1004,8 @@ class CloudProvider extends CloudProviderBase {
       } catch (e) {
         // Save-first / verify-later: a transient network failure here
         // (timeout, DNS lookup failure, socket refused, certificate
-        // hiccup) is the exact shape of what happens on the
-        // China-Mobile cellular networks where this app is supposed to
-        // help — the carrier blocks api.vultr.com (or api.do.com, etc)
-        // outright, so the validation call can never complete from
-        // cellular even with a perfectly-good token. Previously we
+        // hiccup) can happen on networks that cannot reach cloud-provider
+        // APIs, even with a valid token. Previously we
         // cleared the disk-saved key and returned false; the user saw
         // "Failed to save API key" and was completely stuck unless
         // they could find a Wi-Fi access point first. Now we keep the
@@ -1510,7 +1507,7 @@ class CloudProvider extends CloudProviderBase {
     // records with vlessRelayPort=0, which disables the CDN deploy button
     // even when the node actually has a working relay listener. One extra
     // user-data fetch per refresh is cheap; it overwrites with the same
-    // record for genuinely legacy nodes and unblocks M1 nodes the first
+    // record for genuinely legacy nodes and repairs M1 nodes the first
     // time the regex matches.
     return record.vlessRelayPort <= 0;
   }

@@ -1050,7 +1050,7 @@ void main() {
         regionLatencyProbe: (regionId) async => switch (regionId) {
           'sjc' => 80,
           'nrt' => 40,
-          'icn' => null, // unreachable (e.g. blocked by carrier/regional reachability)
+          'icn' => null, // unreachable from this test network
           _ => null,
         },
         autoInitialize: false,
@@ -1097,7 +1097,8 @@ void main() {
       provider.regions.add(region('sjc'));
 
       await provider.probeRegionLatencies();
-      await provider.probeRegionLatencies(); // within cache window → no re-probe
+      await provider
+          .probeRegionLatencies(); // within cache window → no re-probe
       expect(calls, 1);
 
       await provider.probeRegionLatencies(force: true);

@@ -302,21 +302,20 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
 
     // 3b. CDN-fronted VLESS (Cloudflare Worker WS↔TCP relay).
     // Mirrors mobile/lib/features/cloud/cloud_node_config_builder.dart so a
-    // failover-via-CDN path is available when carriers SYN-drop the bare VPS
-    // IP (typical on mobile carrier cellular). Only added when:
+    // failover-via-CDN path is available when the direct VPS endpoint is
+    // unreachable from the current network. Only added when:
     //   - a Worker is deployed for this node (workerHost known),
     //   - the deploy script provisioned the plain-VLESS relay port on the VPS,
     //   - the node has a UUID we can authenticate with end-to-end.
     // The outbound talks to the CF anycast edge (workerHost:443 over TLS+WS);
     // CF terminates TLS, the Worker dials the VPS at vlessRelayPort, and the
     // VPS terminates the inner VLESS auth. CF holds no credentials.
-    // Strict M1: when the deployment has bound a custom domain, that's the
-    // only CDN outbound we emit. workers.dev is the path we needed M1 to
-    // bypass — keeping it as a sibling in the urltest group means every
-    // probe interval pays the cost of a known-bad path (DNS-altered, TLS
-    // dial timeout) before urltest converges. When customHost is empty,
-    // we still emit the workers.dev path so users without M1 get the
-    // baseline benefit; the moment M1 is wired, the workers.dev sibling
+    // Strict custom-domain mode: when the deployment has bound a custom
+    // domain, that's the only CDN outbound we emit. Keeping workers.dev as a
+    // sibling can make every probe interval pay the cost of an unhealthy path
+    // before urltest converges. When customHost is empty, we still emit the
+    // workers.dev path so users without a custom domain get the baseline
+    // benefit; the moment the custom domain is wired, the workers.dev sibling
     // is gone.
     const cdnDeployment = cdnDeploymentFor?.(node.instanceId)
     const cdnWorkerHost = cdnDeployment?.workerHost?.trim()
@@ -324,15 +323,13 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     const cdnPathSecret = cdnDeployment?.pathSecret?.trim() || ''
     // Once the user has configured a Workers Custom Domain for this node,
     // route through it regardless of the customHostStatus readiness probe.
-    // The probe runs through the platform DNS resolver, which is exactly
-    // what's broken on the networks M1 is meant to fix (regional mobile network
-    // DNS-poisons both *.workers.dev and the custom hostname). A
-    // 'failed' verdict under those conditions is a false negative, and
-    // falling back to workers.dev pushes traffic onto a more altered
-    // path. sing-box's internal DoH resolves the custom host correctly,
-    // so let it try. The 'pending' window (~60s while CF provisions the
-    // cert) is still a real failure mode — surface it as UI status
-    // instead of silently rerouting.
+    // The probe runs through the platform DNS resolver, which may be exactly
+    // what's unhealthy on networks where the custom domain is meant to help. A
+    // 'failed' verdict under those conditions can be a false negative, and
+    // falling back to workers.dev can push traffic onto a worse path. sing-box's
+    // internal DoH resolves the custom host separately, so let it try. The
+    // 'pending' window (~60s while CF provisions the cert) is still a real
+    // failure mode — surface it as UI status instead of silently rerouting.
     const cdnEligible =
       !!cdnDeployment &&
       !!node.vlessRelayPort &&

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Modelo de segurança PrivateDeploy</title>
+    <meta name="description" content="Como PrivateDeploy trata credenciais cloud, chaves SSH, segredos de nó e segurança de releases preview.">
+    <link rel="canonical" href="https://privatedeploy.org/pt/security/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/security/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/security/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/security/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/security/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/security/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/security/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/security/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/security/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/security/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/security/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/security/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/security/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/security/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Navegação principal">
+        <a class="brand" href="/pt/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Abrir navegação" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/pt/">Produto</a>
+          <a href="/pt/download/">Baixar</a>
+          <a href="/pt/docs/">Docs</a>
+          <a href="/pt/security/" aria-current="page">Segurança</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Idioma</button>
+            <div class="language-options" role="menu" aria-label="Seletor de idioma">
+              <a href="/security/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/security/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/security/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/security/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/security/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/security/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/security/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/security/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/security/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/security/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/security/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/security/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> Modelo de segurança</p><h1>Entenda quais credenciais a ferramenta precisa antes do deploy.</h1><p>PrivateDeploy automatiza infraestrutura sensível. Trate API keys cloud, chaves SSH, senhas de nó e links de assinatura como segredos de produção.</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid four">
+        <article class="card"><div class="icon-tile">K</div><h3>API keys cloud</h3><p>Use tokens com escopo estreito quando possível. Rotacione qualquer chave que apareça em logs, capturas ou testes.</p></article>
+        <article class="card"><div class="icon-tile">S</div><h3>Material SSH</h3><p>A recuperação DigitalOcean usa um par ed25519 gerenciado com acesso root a droplets criados.</p></article>
+        <article class="card"><div class="icon-tile">N</div><h3>Credenciais de nó</h3><p>Senhas de protocolo, UUIDs, Reality keys e links de compartilhamento são segredos.</p></article>
+        <article class="card"><div class="icon-tile">L</div><h3>Armazenamento local</h3><p>Tokens e configs sensíveis devem usar keyring do SO em vez de arquivos plaintext.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Checklist de segurança preview</h2><p>Antes de distribuir uma build, complete estes checks para a tag exata.</p></div><div class="matrix">
+        <div class="matrix-row matrix-head"><div>Área</div><div>Gate</div><div>Resultado exigido</div></div>
+        <div class="matrix-row"><div>Scan de segredos</div><div><span class="badge">Exigido</span></div><div>Nenhuma API key, chave privada, token, senha, link de nó ou URL de assinatura no código ou artefatos.</div></div>
+        <div class="matrix-row"><div>Artefatos de release</div><div><span class="badge">Exigido</span></div><div>Todo binário tem checksum SHA256 e vem do mesmo commit/tag.</div></div>
+        <div class="matrix-row"><div>Smoke tests cloud</div><div><span class="badge warn">Por provedor</span></div><div>Liste um provedor só após criar, implantar, conectar, recuperar quando aplicável e excluir.</div></div>
+        <div class="matrix-row"><div>Suporte iOS</div><div><span class="badge warn">Condicional</span></div><div>Marque iOS como build-required salvo se VPNCore e permissões forem validados em dispositivo real.</div></div>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>Tratamento de dados</h2><p>PrivateDeploy deve ser avaliado como uma ferramenta de infraestrutura local-first.</p></div><div class="grid three">
+        <article class="card"><h3>Não é um serviço de rede hospedado</h3><p>O projeto não fornece acesso de rede hospedado nem servidores proxy compartilhados. Você implanta nós em contas e hosts que controla.</p></article>
+        <article class="card"><h3>Segredos continuam sensíveis</h3><p>API keys, chaves SSH, senhas, UUIDs e links de assinatura não devem ir para issues públicas.</p></article>
+        <article class="card"><h3>Reportar vulnerabilidades</h3><p>Use GitHub issues para bugs não sensíveis. Para relatos exploráveis, use advisory privado quando disponível.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="grid two"><div><h2>Uso responsável</h2><p class="muted">Use PrivateDeploy somente com infraestrutura e contas próprias ou autorizadas. Revise os termos do provedor cloud antes do deploy.</p></div><div class="terminal"><div class="terminal-head"><span>gate local de release</span><button class="button" type="button" data-copy="bash scripts/check_versions.sh&#10;scripts/secret_scan.sh" data-copied="Copiado" data-copy-failed="Falha ao copiar">Copiar</button></div><pre><code>bash scripts/check_versions.sh
+scripts/secret_scan.sh</code></pre></div></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/pt/download/">Baixar</a>
+          <a href="/pt/docs/">Docs</a>
+          <a href="/pt/security/">Segurança</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

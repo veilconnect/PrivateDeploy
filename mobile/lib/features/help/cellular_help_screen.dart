@@ -266,45 +266,41 @@ class _HelpContent {
 // ─────────────────────────────────────── 中文 ───────────────────────────────────────
 
 final _zhContent = _HelpContent(
-  tldr: '蜂窝运营商对"用户独立部署的海外 VPS 裸 IP"做 SYN 丢包,但对"通过域名走 CDN 的 HTTPS 流量"较宽松。'
-      'PrivateDeploy 自部署的节点用的是 Vultr/DO/Linode 等云厂商的裸 IPv4——这正是被运营商重点过滤的范围。'
-      'Wi-Fi 通常没有此问题。',
+  tldr: '某些网络到云主机公网地址的可达性不稳定。PrivateDeploy 会检测节点上游是否真正可用,'
+      '并提供切换节点、重新部署节点、启用 Cloudflare Worker 入口等恢复选项。',
   sections: [
     _SectionData(
       title: '一句话原因',
       blocks: [
         _Para(
-          '出现"上游不可达"提示时,问题通常出在你的运营商和 VPS 提供商 IP 段之间——'
-          '不是 PrivateDeploy 软件配错,也不是节点服务挂了。',
+          '出现"上游不可达"提示时,通常表示本机隧道已经启动,但当前网络到所选节点公网地址的 TCP 路径没有稳定返回。'
+          '原因可能是临时路由、网络策略、云厂商 IP 质量、防火墙规则或节点自身状态。',
         ),
       ],
     ),
     _SectionData(
-      title: '用真实测试数据说明',
+      title: '应用会看什么',
       blocks: [
-        _Para('测试环境:移动网络 5G,VPN 已断开(直连测试):'),
-        _Para('完全连不通(裸 IP):'),
+        _Para('PrivateDeploy 关注的是"能否到达你控制的节点",而不是只看本地开关是否已经打开:'),
         _CompareTable(
           headers: ('目标 IP', '结果'),
           rows: [
-            ('198.51.100.15 (Vultr)', 'TCP SYN 丢弃,5 秒超时', false),
-            ('198.51.100.16 (Vultr)', '同上', false),
-            ('1.1.1.1 (Cloudflare DNS)', '同上', false),
-            ('8.8.8.8 (Google DNS)', '同上', false),
+            ('198.51.100.15 (node)', 'TCP 连接超时', false),
+            ('198.51.100.16 (node)', '同上', false),
+            ('relay.example.com', 'HTTPS 入口可达', true),
           ],
         ),
-        _Para('正常连通(域名经 CDN):'),
+        _Para('一个可用节点通常需要同时满足两件事:'),
         _CompareTable(
-          headers: ('目标域名', '结果'),
+          headers: ('检查项', '结果'),
           rows: [
-            ('vultr.com', '316 ms · 200 OK', true),
-            ('cloudflare.com', '247 ms · 200 OK', true),
-            ('www.taobao.com (国内)', '54 ms · 200 OK', true),
+            ('节点监听端口', '可连接', true),
+            ('健康探测', '可返回公网结果', true),
+            ('本地隧道', '已启动', true),
           ],
         ),
         _Para(
-          '关键观察:连接耗时为 0 但总时长是超时上限——意味着 TCP 三次握手的 SYN 包发出后'
-          '一个回应都没收到,这是运营商主动丢包的特征,不是网络拥塞。',
+          '如果本地隧道已启动但上游探测失败,界面会保留连接状态,同时提示你处理节点可达性问题。',
         ),
       ],
     ),
@@ -312,108 +308,96 @@ final _zhContent = _HelpContent(
       title: '为什么会这样?',
       blocks: [
         _Para(
-          '蜂窝运营商的 DPI(深度包检测)对国际段流量按"宁可错杀"原则过滤:',
+          '云主机公网地址的可达性会受多种因素影响:',
         ),
-        _Bullet('裸 IP 直连 HTTPS = 高度怀疑(普通用户极少这样上网),进 IP 黑名单或动态丢 SYN。'),
-        _Bullet('域名 → CDN 边缘 IP = 较低怀疑(海量正常网站走 CDN,完封会误伤)。'),
+        _Bullet('移动网络、公司网络和公共 Wi-Fi 可能有不同的出口策略和防火墙规则。'),
+        _Bullet('云厂商同一地区的 IP 段质量不完全一致,新建或更换节点后结果可能不同。'),
+        _Bullet('节点安全组、系统防火墙、服务监听端口或证书配置错误也会造成同样现象。'),
         _Para(
-          'Vultr / DigitalOcean / Linode 等 VPS 提供商的整段 IP 都打上了"VPN 友好"标签。'
-          '运营商按段过滤,与你跑什么协议无关——shadowsocks、Hysteria2、VLESS、Trojan 全部一样,'
-          'SYN 都送不到服务器。',
+          '因此,"本地已连接"和"业务流量可用"不是同一件事。应用会继续做上游探测,帮助你确认当前节点是否真正可用。',
         ),
       ],
     ),
     _SectionData(
       title: '你现在能做什么?',
       blocks: [
+        _Bullet('① 切换网络:如果当前网络不可达,先尝试 Wi-Fi、移动网络或另一个受信任网络。', bold: true),
+        _Bullet('② 切换到其他节点:在「云线路」列表里点击其他线路的"切换到此线路",应用会原地切换 outbound。'),
+        _Bullet('③ 重新部署节点:如果某个节点长期不可达,重新部署可以获得新的云主机和安全组配置。'),
         _Bullet(
-            '① 切到 Wi-Fi(最快):家里 / 公司 Wi-Fi 国际段过滤通常比蜂窝松得多。'
-            '90% 的用户日常其实在 Wi-Fi,这条路覆盖大部分场景。',
-            bold: true),
-        _Bullet('② 切换到其他节点:在「云线路」列表里点击其他线路的"切换到此线路",'
-            '应用会原地切换 outbound,不会断开 VPN。新部署的、地理位置较冷门的节点'
-            '(法兰克福 / 圣保罗)有时比 LAX/NRT 等热门区域更容易透过来。'),
-        _Bullet('③ 切到不同的 SIM 卡运营商:移动网络 / 电信 / 联通的不可达策略不同步。'
-            '移动网络 5G 在敏感时段封得最狠,电信和联通通常稍宽松。'),
-        _Bullet('④ 启用 CDN 加速:在「设置 → CDN 加速」里粘贴 Cloudflare API token,'
-            '应用会在你的 Cloudflare 账号下自动部署一个中转 Worker——客户端连 Cloudflare '
-            '边缘 IP(运营商不封),Worker 再转发到你的 VPS。需要节点用最新的 userdata 重新部署一次。'),
+            '④ 启用 CDN 加速:在「设置 → CDN 加速」里配置 Cloudflare API token,应用会在你的 Cloudflare 账号下部署 Worker 入口,由 Worker 转发到你控制的 VPS。'),
+        _Bullet('⑤ 检查服务器侧:确认服务端口已监听、安全组放行、系统时间正确,并且云主机没有超额或被暂停。'),
       ],
     ),
     _SectionData(
       title: '常见误解',
       blocks: [
-        _Bullet('"换个协议就好了?" — 不是。SYN 在 TCP 第一步就被丢,任何协议都跑不起来。'),
-        _Bullet('"Vultr 是不是被整个封了?" — 不是 Vultr 被针对,所有大型 VPS 提供商的 IP 段都在过滤范围。'),
-        _Bullet('"为什么我朋友用魔戒就没事?" — 商业 VPN 服务花大力气运维专门规避不可达的中转节点,不是普通自部署能做到的。'),
-        _Bullet('"那 IPv6 呢?" — IPv6 受同样的过滤,换 IPv6 没用。'),
+        _Bullet('"换个协议就一定好了?" — 不一定。如果连接在到达节点前就超时,协议还没有机会开始协商。'),
+        _Bullet('"一定是软件配错了?" — 不一定。先看节点端口、安全组和健康探测结果。'),
+        _Bullet(
+            '"Cloudflare Worker 会替代我的 VPS?" — 不会。Worker 只是你账号里的入口,最终仍转发到你控制的节点。'),
+        _Bullet('"IPv6 一定更好?" — 不一定。取决于你的网络和云主机 IPv6 路由质量。'),
       ],
     ),
   ],
-  disclaimer: '这是中国蜂窝运营商和"自部署 VPN"产品形态之间的结构性矛盾,无法靠一次软件更新一劳永逸解决。'
-      '当前版本能做到的是诚实告知和提供切换工具,长期方案是 CDN 前置(规划中)。',
+  disclaimer: '这些功能仅用于你拥有或已获授权的基础设施。请遵守所在地区、云服务商和网络服务商的使用规则。',
 );
 
 // ─────────────────────────────────────── English ───────────────────────────────────
 
 final _enContent = _HelpContent(
   tldr:
-      "Chinese mobile carriers drop SYN packets to bare offshore VPS IPs but allow HTTPS via CDN-fronted "
-      "domains. PrivateDeploy's nodes use bare Vultr/DO/Linode IPv4, which falls in the dropped range. "
-      "Wi-Fi usually doesn't have this issue.",
+      'Some networks have unstable reachability to public cloud host addresses. '
+      'PrivateDeploy checks whether the selected node is actually usable and offers recovery options such as switching nodes, redeploying, or using your Cloudflare Worker endpoint.',
   sections: [
     _SectionData(
       title: 'In one line',
       blocks: [
         _Para(
-          'When you see "upstream unreachable", it is almost always between your cellular carrier '
-          'and your VPS provider — not a PrivateDeploy bug or a server outage.',
+          'When you see "upstream unreachable", the local tunnel has started but the current network is not getting a stable TCP path to the selected node. '
+          'Possible causes include routing changes, network policy, cloud IP reputation, firewall rules, or node health.',
         ),
       ],
     ),
     _SectionData(
-      title: 'What we measured',
+      title: 'What the app checks',
       blocks: [
-        _Para('Test setup: mobile carrier 5G, VPN disabled (direct probe):'),
-        _Para('Bare IPs — all dropped:'),
+        _Para(
+            'PrivateDeploy looks for real node reachability, not just whether the local switch is on:'),
         _CompareTable(
           headers: ('Target IP', 'Result'),
           rows: [
-            ('198.51.100.15 (Vultr)', 'TCP SYN dropped, 5 s timeout', false),
-            ('198.51.100.16 (Vultr)', 'same', false),
-            ('1.1.1.1 (Cloudflare DNS)', 'same', false),
-            ('8.8.8.8 (Google DNS)', 'same', false),
+            ('198.51.100.15 (node)', 'TCP timeout', false),
+            ('198.51.100.16 (node)', 'same', false),
+            ('relay.example.com', 'HTTPS endpoint reachable', true),
           ],
         ),
-        _Para('CDN-fronted domains — all OK:'),
+        _Para('A usable node normally needs these checks to pass:'),
         _CompareTable(
-          headers: ('Domain', 'Result'),
+          headers: ('Check', 'Result'),
           rows: [
-            ('vultr.com', '316 ms · 200 OK', true),
-            ('cloudflare.com', '247 ms · 200 OK', true),
-            ('www.taobao.com (domestic)', '54 ms · 200 OK', true),
+            ('Node listener', 'reachable', true),
+            ('Health probe', 'returns egress result', true),
+            ('Local tunnel', 'started', true),
           ],
         ),
         _Para(
-          'Connect time is 0 but the total time hits the deadline — meaning the TCP SYN '
-          'never received an ACK. That signature is active packet drop by the carrier, '
-          'not congestion.',
+          'If the local tunnel starts but upstream probes fail, the app keeps the connection state visible and points you to node reachability actions.',
         ),
       ],
     ),
     _SectionData(
       title: 'Why does this happen?',
       blocks: [
-        _Para(
-            'Carrier DPI applies an "over-block" policy to international traffic:'),
+        _Para('Public cloud host reachability can vary for several reasons:'),
         _Bullet(
-            'Bare-IP HTTPS = highly suspicious (rare for normal users) → IP blacklist or SYN drop.'),
+            'Mobile networks, office networks, and public Wi-Fi can apply different egress policies and firewall rules.'),
         _Bullet(
-            'Domain → CDN edge = lower suspicion (huge volume of legit sites and apps).'),
+            'IP quality differs across cloud regions and providers; a newly deployed node may behave differently.'),
+        _Bullet(
+            'Security groups, local firewalls, listener ports, or certificate setup can create the same symptom.'),
         _Para(
-          'Vultr/DigitalOcean/Linode IP ranges have been broadly tagged as "VPN-friendly" '
-          'and are filtered as a class. Protocol choice (Shadowsocks, Hysteria2, VLESS, Trojan) '
-          'does not help — the SYN never reaches the server in the first place.',
+          'That is why "locally connected" and "traffic is usable" are separate states. The app keeps probing upstream health to make that distinction clear.',
         ),
       ],
     ),
@@ -421,25 +405,20 @@ final _enContent = _HelpContent(
       title: 'What you can do now',
       blocks: [
         _Bullet(
-          '① Switch to Wi-Fi (fastest): home/office Wi-Fi typically has much weaker '
-          'international filtering than cellular. ~90 % of usage is on Wi-Fi anyway.',
+          '① Switch networks: try Wi-Fi, mobile data, or another trusted network if the current network cannot reach the node.',
           bold: true,
         ),
         _Bullet(
-          '② Switch to a different node: tap "Switch to this node" on another node in the cloud list. '
-          'Newer or less-popular regions (Frankfurt, São Paulo) sometimes punch through when '
-          'LAX/NRT are blocked.',
+          '② Switch to a different node: tap "Switch to this node" on another node in the cloud list. The app switches the outbound in place.',
         ),
         _Bullet(
-          '③ Try a different SIM carrier: mobile carrier blocks the hardest, especially during '
-          'sensitive periods. Telecom and Unicom are typically a bit looser.',
+          '③ Redeploy the node: if one node stays unreachable, redeploying creates a fresh host and security-group setup.',
         ),
         _Bullet(
-          '④ Enable CDN acceleration: paste a Cloudflare API token in '
-          'Settings → CDN acceleration; the app deploys a relay Worker into '
-          'your CF account. Clients connect to the Cloudflare edge IP '
-          '(which carriers do not block) and the Worker forwards to your '
-          'VPS. Requires re-deploying the node with the latest userdata.',
+          '④ Enable CDN acceleration: paste a Cloudflare API token in Settings → CDN acceleration. The app deploys a Worker endpoint in your Cloudflare account and relays to the VPS you control.',
+        ),
+        _Bullet(
+          '⑤ Check the server side: confirm the service port is listening, the security group allows it, system time is correct, and the cloud account is not suspended or over quota.',
         ),
       ],
     ),
@@ -447,18 +426,16 @@ final _enContent = _HelpContent(
       title: 'Common misconceptions',
       blocks: [
         _Bullet(
-            '"Will another protocol work?" — No. The SYN is dropped at TCP layer, before any protocol.'),
+            '"Will another protocol always fix it?" — Not necessarily. If the TCP path times out before reaching the node, protocol negotiation has not started yet.'),
         _Bullet(
-            '"Is Vultr specifically blocked?" — No. All major VPS providers fall in the filtered range.'),
+            '"Is it definitely a software bug?" — Not necessarily. First check the node listener, security group, and health probes.'),
         _Bullet(
-            '"Why does Mojie/Surge etc. work for my friend?" — Commercial network services run constantly-rotated relay infrastructure, which a single self-deployed VPS cannot match.'),
+            '"Does Cloudflare Worker replace my VPS?" — No. It is only an endpoint in your account; traffic is still relayed to the node you control.'),
         _Bullet(
-            '"What about IPv6?" — IPv6 has the same filter behavior. No improvement.'),
+            '"Is IPv6 always better?" — Not always. It depends on your network and the cloud host IPv6 route quality.'),
       ],
     ),
   ],
   disclaimer:
-      'This is a structural tension between Chinese cellular carriers and the "self-deployed VPN" '
-      'product shape — no single software update can fix it for good. Right now PrivateDeploy '
-      'is honest about it and gives you switching tools; the long-term answer is CDN fronting (planned).',
+      'Use these features only with infrastructure you own or are authorized to operate. Follow the rules of your jurisdiction, cloud provider, and network provider.',
 );

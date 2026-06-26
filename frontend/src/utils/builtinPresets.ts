@@ -340,7 +340,7 @@ export const buildBuiltinRulesetSeeds = () => [
       },
       {
         ip_cidr: [
-          // China mainland public DNS servers
+          // Regional public DNS servers
           '1.12.12.12/32',
           '114.114.114.114/32',
           '114.114.115.115/32',
@@ -565,7 +565,7 @@ export const buildBuiltinProfiles = () => {
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.AI), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Developer), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Global), RuleAction.Route, DefaultDnsServersIds.RemoteDns),
-      // Mainland last — resolve via local DNS for best performance
+      // Regional rules last; resolve via local DNS for best performance
       createDnsRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultDnsServersIds.LocalDns),
     ]
     dns.final = finalDns
@@ -591,11 +591,12 @@ export const buildBuiltinProfiles = () => {
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.SystemConnectivity), RuleAction.Route, DefaultOutboundIds.Direct),
           createRouteRule(RuleType.ClashMode, ClashMode.Direct, RuleAction.Route, DefaultOutboundIds.Direct),
           createRouteRule(RuleType.ClashMode, ClashMode.Global, RuleAction.Route, DefaultOutboundIds.Global),
-          // Proxy rulesets first — blocked sites must match before mainland fallback
+          // Proxy rulesets first; selected remote destinations must match
+          // before the regional direct fallback.
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.AI), RuleAction.Route, DefaultOutboundIds.Select),
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Developer), RuleAction.Route, DefaultOutboundIds.Select),
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Global), RuleAction.Route, DefaultOutboundIds.Select),
-          // Mainland direct — everything else falls through to final (direct)
+          // Regional direct fallback; everything else falls through to final (direct).
           createRouteRule(RuleType.RuleSet, getRefId(BuiltinRulesetIds.Mainland), RuleAction.Route, DefaultOutboundIds.Direct),
         ],
         rule_set: routeRuleSets,

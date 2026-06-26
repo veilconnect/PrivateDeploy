@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy - 자체 VPS 프록시 배포 도구</title>
+    <meta name="description" content="PrivateDeploy는 VPS 노드를 만들고 다중 프로토콜 프록시를 배포하며 데스크톱, Android, API 클라이언트를 연결합니다.">
+    <link rel="canonical" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="기본 탐색">
+        <a class="brand" href="/ko/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/ko/" aria-current="page">제품</a>
+          <a href="/ko/download/">다운로드</a>
+          <a href="/ko/docs/">문서</a>
+          <a href="/ko/security/">보안</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>언어</button>
+            <div class="language-options" role="menu" aria-label="언어 선택">
+              <a href="/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow"><span class="status-dot"></span> Beta / Preview</p>
+          <h1>PrivateDeploy</h1>
+          <p class="hero-copy">직접 소유한 VPS에 프록시 노드를 배포하는 도구입니다. 서버 생성, 다중 프로토콜 배포, Mixed / HTTP / SOCKS 로컬 포트 확인을 한 곳에서 처리합니다.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="/ko/download/">Preview 다운로드</a>
+            <a class="button" href="/ko/docs/">빠른 시작</a>
+            <a class="button" href="/ko/security/">보안 모델</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>직접 관리하는 노드를 위해 설계되었습니다.</h2>
+            <p>PrivateDeploy는 단순한 로컬 프록시 클라이언트가 아닙니다. VPS 생성, 자격 증명 배포, 프로토콜 링크 동기화, 로컬 포트 표시를 제공합니다.</p>
+          </div>
+          <div class="grid four">
+            <article class="card">
+              <div class="icon-tile">01</div>
+              <h3>클라우드 프로비저닝</h3>
+              <p>지원되는 클라우드 또는 SSH 접근 가능한 호스트에서 노드를 만들고 삭제합니다.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">02</div>
+              <h3>다중 프로토콜 배포</h3>
+              <p>조건이 맞으면 Shadowsocks, Hysteria2, VLESS-Reality, Trojan을 배포합니다.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">03</div>
+              <h3>보이는 로컬 포트</h3>
+              <p>Mixed, HTTP, SOCKS 포트를 개요 화면에서 보고 바로 복사할 수 있습니다.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">04</div>
+              <h3>데스크톱, 모바일, API</h3>
+              <p>Wails 데스크톱 앱, Android companion, Go HTTP API를 사용할 수 있습니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>운영 상태를 명확하게 보여주는 대시보드.</h2>
+            <p>데스크톱 앱은 트래픽, 모드, 로컬 포트를 첫 화면에 표시하고 클라우드 패널은 각 노드의 포트와 링크를 보관합니다.</p>
+          </div>
+          <div class="product-preview">
+            <img src="/assets/app-overview-v2.png" alt="PrivateDeploy desktop overview">
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>현재 릴리스 상태.</h2>
+            <p>공개 테스트 가치는 있지만 실제 플랫폼과 클라우드 검증이 끝나기 전까지는 Beta / Preview로 표시해야 합니다.</p>
+          </div>
+          <div class="matrix">
+            <div class="matrix-row matrix-head"><div>Surface</div><div>Status</div><div>Note</div></div>
+            <div class="matrix-row"><div>Desktop</div><div><span class="badge">Preview ready</span></div><div>Core tests pass; platform package checks remain part of release validation.</div></div>
+            <div class="matrix-row"><div>Android</div><div><span class="badge">Preview ready</span></div><div>Native Android tunnel flow exists; release signing and device smoke tests are required.</div></div>
+            <div class="matrix-row"><div>iOS</div><div><span class="badge warn">Build required</span></div><div>Requires VPNCore.framework, App Group, and Network Extension entitlements.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section tight alt">
+        <div class="container">
+          <div class="grid two">
+            <div>
+              <h2>Preview 평가 시작</h2>
+              <p class="muted">먼저 다운로드와 빠른 시작을 확인하세요. 소유하거나 관리 권한이 있는 인프라에서만 사용하세요.</p>
+            </div>
+            <div class="button-row">
+              <a class="button primary" href="/ko/download/">다운로드</a>
+              <a class="button" href="/ko/docs/">빠른 시작</a>
+              <a class="button" href="/github">소스 코드</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/ko/download/">다운로드</a>
+          <a href="/ko/docs/">문서</a>
+          <a href="/ko/security/">보안</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

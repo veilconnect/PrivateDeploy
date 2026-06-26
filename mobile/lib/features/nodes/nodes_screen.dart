@@ -764,10 +764,8 @@ class _NodesScreenState extends State<NodesScreen> {
 
 /// Surfaced at the top of the nodes screen when [VpnProvider.needsCdnGuidance]
 /// is set — i.e. the native side reported that every start attempt failed
-/// while cellular was the active underlying transport. That's the
-/// China-Mobile-RST-to-Vultr-IP scenario the CDN-acceleration feature
-/// targets; we point the user at the settings entry rather than leaving
-/// them with a generic "VPN failed to start" toast.
+/// while the current network could not reach the node. We point the user at
+/// the settings entry rather than leaving them with a generic failure toast.
 class _CdnGuidanceBanner extends StatelessWidget {
   const _CdnGuidanceBanner({
     required this.deploymentExists,

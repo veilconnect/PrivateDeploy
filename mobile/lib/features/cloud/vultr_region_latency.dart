@@ -11,7 +11,7 @@ import 'dart:io';
 ///
 /// Reaching the anchor is a proxy for the region being usable from the current
 /// network: a probe that times out is a strong signal the whole range is
-/// blocked (carrier/regional reachability), so that region should be avoided. A probe that
+/// unreachable from the current network, so that region should be avoided. A probe that
 /// succeeds means the region is very likely usable — but the freshly-deployed
 /// node gets a different IP in the same range, so it is not a hard guarantee.
 const Map<String, String> kVultrRegionTestIp = {

@@ -377,7 +377,7 @@ export default {
       rotatingIP: 'Rotating IP…',
       rotateIPSuccess: 'IP rotation completed. New node created.',
       rotateIPConfirm: 'This will destroy the current node and create a new one with a different IP. Continue?',
-      rotateIPBlocked: 'This node appears to be blocked. Would you like to rotate its IP address?',
+      rotateIPBlocked: 'This node appears unreachable. Would you like to rotate its IP address?',
       repair: 'Repair / Redeploy',
       repairing: 'Repairing…',
       repairSuccess: 'Node repair completed.',
@@ -394,8 +394,8 @@ export default {
     },
     connectivity: {
       reachable: 'Reachable',
-      icmp_blocked: 'ICMP Blocked',
-      blocked: 'Blocked',
+      icmp_blocked: 'ICMP Unavailable',
+      blocked: 'Unavailable',
       testing: 'Testing…',
       unknown: 'Unknown',
       testButton: 'Speed Test',
@@ -658,6 +658,17 @@ export default {
       updateGEO: 'Update GEO',
       needPort: 'Please set the proxy port first',
       needTun: 'Please add a TUN inbound first',
+      proxyPorts: {
+        title: 'Proxy Ports',
+        mixed: 'Mixed',
+        http: 'HTTP',
+        socks: 'SOCKS',
+        listen: 'Listen',
+        localOnly: 'Local only',
+        lanOn: 'LAN',
+        none: 'No proxy port enabled',
+        copyAll: 'Copy all proxy endpoints',
+      },
     },
     controller: {
       name: 'Controller',
@@ -883,7 +894,7 @@ export default {
     rulesets: {
       PrivateLan: 'Private & LAN Direct',
       SystemConnectivity: 'System Connectivity Direct',
-      Mainland: 'Mainland Direct',
+      Mainland: 'Regional Direct',
       AI: 'AI Services Proxy',
       Developer: 'Developer Platforms Proxy',
       Global: 'Global Services Proxy',
@@ -1108,7 +1119,7 @@ export default {
     noMatching: 'No matching commands',
   },
   wizard: {
-    title: 'How to deploy your VPN node?',
+    title: 'How do you want to deploy your node?',
     subtitle: 'Choose the method that works best for you',
     method: {
       ssh: 'I have a server',
@@ -1123,7 +1134,7 @@ export default {
   cdn: {
     title: 'CDN Acceleration (optional)',
     subtitle:
-      'Front your VPS with a Cloudflare Worker so traffic enters via Cloudflare edge IPs instead of your bare VPS — useful when carriers drop SYN to offshore IPs.',
+      'Add an optional Cloudflare Worker front for infrastructure you control, so clients can use a stable endpoint while the Worker relays to the selected VPS.',
     learnMore: 'Learn more',
     docsLink: 'Read the deployment guide',
     status: {
@@ -1179,7 +1190,7 @@ export default {
     customDomain: {
       title: 'Custom domain (optional)',
       subtitle:
-        "Bind the same Worker to a domain on your Cloudflare zone (e.g. relay.example.com). Some carriers throttle or fingerprint *.workers.dev; a personal domain bypasses that pattern match.",
+        "Bind the same Worker to a domain on your Cloudflare zone (e.g. relay.example.com). Use this when you want a stable hostname you control instead of a workers.dev host.",
       enable: 'Use a custom domain',
       zone: 'Zone',
       zonePlaceholder: 'Loading…',

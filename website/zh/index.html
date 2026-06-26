@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy - 自建 VPS 代理部署工具</title>
+    <meta name="description" content="PrivateDeploy 用于创建 VPS 节点、部署多协议代理，并通过桌面端、Android 和 API 统一管理。">
+    <link rel="canonical" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="/zh/" aria-label="PrivateDeploy 首页">
+          <img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36">
+          <span>PrivateDeploy</span>
+        </a>
+        <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/zh/" aria-current="page">产品</a>
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/">文档</a>
+          <a href="/zh/security/">安全</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>语言</button>
+            <div class="language-options" role="menu" aria-label="语言选择">
+              <a href="/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow"><span class="status-dot"></span> Beta / Preview</p>
+          <h1>PrivateDeploy</h1>
+          <p class="hero-copy">
+            面向自建节点的 VPS 代理部署工具。创建服务器、部署多协议代理，并在桌面端直接看到 Mixed、HTTP、SOCKS 本地端口。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="/zh/download/">下载预览版</a>
+            <a class="button" href="/zh/docs/">查看快速开始</a>
+            <a class="button" href="/zh/security/">了解安全模型</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>为自己管理节点而设计。</h2>
+            <p>PrivateDeploy 不只是本地代理客户端。它负责创建 VPS、部署凭据、同步协议链接，并把本地代理端口放到首页。</p>
+          </div>
+          <div class="grid four">
+            <article class="card">
+              <div class="icon-tile">01</div>
+              <h3>云主机创建</h3>
+              <p>通过支持的云厂商或可 SSH 访问的主机创建和删除节点。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">02</div>
+              <h3>多协议部署</h3>
+              <p>在可用配置上部署 Shadowsocks、Hysteria2、VLESS-Reality 和 Trojan。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">03</div>
+              <h3>端口清晰可见</h3>
+              <p>首页直接显示 Mixed、HTTP、SOCKS 端口，并支持一键复制。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">04</div>
+              <h3>桌面、移动端、API</h3>
+              <p>提供 Wails 桌面端、Android 伴侣客户端，以及可用于自动化的 Go HTTP API。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>首页就能看懂运行状态。</h2>
+            <p>桌面端把流量、模式、本地代理端口放在第一屏；云节点面板保留协议端口和分享链接。</p>
+          </div>
+          <div class="product-preview">
+            <img src="/assets/app-overview-v2.png" alt="PrivateDeploy 桌面端概览，展示流量、代理端口和运行模式">
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>当前发布状态。</h2>
+            <p>这个软件已经有公开测试价值，但在真实平台和云厂商完整验证前，应以 Beta / Preview 发布。</p>
+          </div>
+          <div class="matrix">
+            <div class="matrix-row matrix-head">
+              <div>端</div>
+              <div>状态</div>
+              <div>说明</div>
+            </div>
+            <div class="matrix-row">
+              <div>桌面端</div>
+              <div><span class="badge">可预览</span></div>
+              <div>核心测试和构建门禁已通过，安装包仍需要逐平台发布验证。</div>
+            </div>
+            <div class="matrix-row">
+              <div>Android</div>
+              <div><span class="badge">可预览</span></div>
+              <div>原生 Android 隧道流程已实现；正式发布前仍需要签名包和真机冒烟。</div>
+            </div>
+            <div class="matrix-row">
+              <div>iOS</div>
+              <div><span class="badge warn">需自行构建</span></div>
+              <div>需要 VPNCore.framework、App Group 和 Network Extension 权限。</div>
+            </div>
+            <div class="matrix-row">
+              <div>云厂商</div>
+              <div><span class="badge warn">需实测</span></div>
+              <div>只应声明已经通过创建、部署、连接和删除冒烟测试的云厂商。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section tight alt">
+        <div class="container">
+          <div class="grid two">
+            <div>
+              <h2>开始评估预览版</h2>
+              <p class="muted">先看下载页和快速开始。请只在你拥有或被授权管理的基础设施上使用。</p>
+            </div>
+            <div class="button-row">
+              <a class="button primary" href="/zh/download/">下载</a>
+              <a class="button" href="/zh/docs/">快速开始</a>
+              <a class="button" href="/github">源码</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/">文档</a>
+          <a href="/zh/security/">安全</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

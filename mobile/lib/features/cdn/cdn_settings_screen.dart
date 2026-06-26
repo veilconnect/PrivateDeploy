@@ -153,16 +153,16 @@ class _IntroCard extends StatelessWidget {
           SizedBox(height: 8.h),
           Text(
             isZh
-                ? '当你的手机数据网络长期出现"上游不可达"时,可以让客户端通过 '
-                    'Cloudflare 边缘 IP 中转到你的 VPS——蜂窝运营商不会屏蔽 Cloudflare 段。\n\n'
-                    '需要一个免费的 Cloudflare 账号。流量仍然端到端加密,'
-                    'Cloudflare 只看到加密字节,看不到你的 VLESS UUID 或访问内容。'
-                : 'When cellular keeps showing "upstream unreachable", you can '
-                    'route your client through Cloudflare edge IPs to reach your '
-                    'VPS — carriers do not filter Cloudflare ranges.\n\n'
-                    'Requires a free Cloudflare account. Traffic stays end-to-end '
-                    'encrypted; Cloudflare sees only encrypted bytes — never your '
-                    'VLESS UUID or your traffic content.',
+                ? '当当前网络长期出现"上游不可达"时,可以让客户端先连接到你 '
+                    'Cloudflare 账号下的 Worker 入口,再由 Worker 转发到你的 VPS。\n\n'
+                    '需要 Cloudflare 账号。流量仍然端到端加密,Worker 不保存 '
+                    'VLESS UUID,也不解析访问内容。'
+                : 'When the current network keeps showing "upstream unreachable", '
+                    'the client can connect to a Worker endpoint in your Cloudflare '
+                    'account, and the Worker relays to your VPS.\n\n'
+                    'Requires a Cloudflare account. Traffic stays end-to-end '
+                    'encrypted; the Worker does not store your VLESS UUID or '
+                    'inspect destination content.',
             style: TextStyle(
                 fontSize: 13.sp, height: 1.5, color: Colors.grey[800]),
           ),
@@ -716,12 +716,12 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
               Text(
                 isZh
                     ? '把 Worker 同时绑定到你 Cloudflare 上的某个域名 (例如 '
-                        'relay-<node>.example.com)。部分蜂窝运营商会针对 '
-                        '*.workers.dev 做指纹/投毒,自定义域名能绕开。'
+                        'relay-<node>.example.com)。适合需要稳定自有主机名,'
+                        '或不想直接使用 workers.dev 主机名的场景。'
                     : 'Bind the Worker to a domain on your Cloudflare zone '
-                        '(e.g. relay-<node>.example.com). Some carriers '
-                        'fingerprint or DNS-poison *.workers.dev; a personal '
-                        'domain bypasses that.',
+                        '(e.g. relay-<node>.example.com). Use this when you '
+                        'want a stable hostname you control instead of using '
+                        'a workers.dev hostname directly.',
                 style: TextStyle(
                     fontSize: 12.sp, height: 1.5, color: Colors.grey[700]),
               ),
@@ -836,11 +836,12 @@ class _CustomDomainSectionState extends State<_CustomDomainSection> {
                     Text(
                       isZh
                           ? '手填一个快速的 Cloudflare 边缘 IP:CDN 会直连它,但 '
-                              'SNI/Host 仍用上面的自定义域名,绕开中国被限速的 CF '
-                              '默认线路。留空=不启用。'
+                              'SNI/Host 仍用上面的自定义域名。仅在你明确知道该 '
+                              'IP 适合当前网络时使用。留空=不启用。'
                           : 'A fast Cloudflare edge IP. The CDN dials it '
                               'directly while keeping the custom host as '
-                              'SNI/Host — bypasses CF\'s throttled regional edge. '
+                              'SNI/Host. Use only when you know the IP is '
+                              'suitable for the current network. '
                               'Blank = off.',
                       style:
                           TextStyle(fontSize: 11.sp, color: Colors.grey[600]),

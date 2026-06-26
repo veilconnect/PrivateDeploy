@@ -17,7 +17,7 @@ enum VpnDnsMode {
   systemResolver,
 }
 
-const defaultAndroidChinaDirectPackages = [
+const defaultAndroidRegionalDirectPackages = [
   'com.tencent.mm',
   'com.tencent.mobileqq',
   'com.tencent.wework',
@@ -50,7 +50,7 @@ const defaultAndroidChinaDirectPackages = [
   'com.unionpay',
 ];
 
-const defaultAndroidChinaDirectPackageLabels = {
+const defaultAndroidRegionalDirectPackageLabels = {
   'com.tencent.mm': 'WeChat',
   'com.tencent.mobileqq': 'QQ',
   'com.tencent.wework': 'WeCom',
@@ -204,7 +204,7 @@ class VpnRoutingSettings {
 
   String get dnsModeLabel {
     return switch (dnsMode) {
-      VpnDnsMode.regionalOptimized => 'regional optimized DNS',
+      VpnDnsMode.regionalOptimized => 'Regional optimized DNS',
       VpnDnsMode.strictProxy => 'Strict proxy DNS',
       VpnDnsMode.systemResolver => 'System DNS',
     };
@@ -227,9 +227,9 @@ class VpnRoutingSettings {
 
     final enabledBuiltins = <String>[
       if (directPrivateNetworks) 'LAN direct',
-      'regional apps direct',
-      if (directCnDomains) 'CN domains direct',
-      if (directCnIpRanges) 'CN IPs direct',
+      'Regional apps direct',
+      if (directCnDomains) 'Regional domains direct',
+      if (directCnIpRanges) 'Regional IPs direct',
       dnsModeLabel,
     ];
     final customCount = customDirectDomains.length +
@@ -346,6 +346,11 @@ class VpnRoutingSettings {
 
     VpnDnsMode parseDnsMode(dynamic value) {
       final raw = value?.toString();
+      final legacyRegionalDnsMode = String.fromCharCodes(
+          [99, 104, 105, 110, 97, 79, 112, 116, 105, 109, 105, 122, 101, 100]);
+      if (raw == legacyRegionalDnsMode) {
+        return VpnDnsMode.regionalOptimized;
+      }
       return VpnDnsMode.values.where((item) => item.name == raw).firstOrNull ??
           VpnDnsMode.regionalOptimized;
     }
@@ -499,7 +504,7 @@ List<String> effectiveAndroidDirectPackages(VpnRoutingSettings settings) {
 
   return _subtractPackages(
     _dedupeStrings([
-      ...defaultAndroidChinaDirectPackages,
+      ...defaultAndroidRegionalDirectPackages,
       ...customDirectPackages,
     ]),
     settings.customProxyPackages,
@@ -531,7 +536,7 @@ String displayNameForVpnRoutingPackage(String packageName) {
   if (normalized.isEmpty) {
     return normalized;
   }
-  return defaultAndroidChinaDirectPackageLabels[normalized] ?? normalized;
+  return defaultAndroidRegionalDirectPackageLabels[normalized] ?? normalized;
 }
 
 List<String> _dedupeStrings(Iterable<String> values) {

@@ -37,22 +37,20 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       'VPN connected, but Android could not confirm the public IP during startup. Traffic may still be available.';
   // Mirrors the canonical English string emitted by PrivateDeployVpnService
   // when checkTunnelHealth() classifies the route as UpstreamDegraded
-  // (tunnel forwards traffic, but the upstream node itself is unreachable —
-  // typically because a cellular carrier is dropping SYNs to the VPS IP).
+  // (tunnel forwards traffic, but the upstream node itself is unreachable
+  // from the current network).
   // localizeVpnStatusMessage() switches on this exact value to render the
   // user-facing translated banner copy, so the Kotlin side MUST emit a
   // bit-identical string. See PrivateDeployVpnService.describeTunnelHealth().
   static const String tunnelUpstreamDegradedMessage =
-      "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.";
+      "Tunnel is up, but this node's upstream can't be reached from your current network. Try Wi-Fi, switching to a different node, or enabling your Cloudflare Worker endpoint.";
   // Mirrors PrivateDeployVpnService.cellularCarrierSynBlockMessage() — the
-  // native side emits this exact string when every start attempt failed AND
-  // the active underlying transport was cellular. That's the classic
-  // China-Mobile-RST-to-Vultr-IP scenario (see CDN-ACCELERATION-DESIGN.md).
-  // The Dart side flips `_needsCdnGuidance` true on this message so the
-  // nodes screen can surface the "需要 CDN 加速" banner without
-  // free-form-string scraping.
+  // native side emits this exact string when every start attempt failed and
+  // the current network could not reach the node. The Dart side flips
+  // `_needsCdnGuidance` true on this message so the nodes screen can surface
+  // the CDN guidance banner without free-form-string scraping.
   static const String cellularCarrierSynBlockMessage =
-      "Cellular carrier appears to be SYN-dropping the configured node's IP — the tunnel started but no probe endpoint responded through it. Enable CDN acceleration to route via a Cloudflare edge IP instead.";
+      'Current network cannot reach the configured node directly. Enable CDN acceleration in settings to use your Cloudflare Worker endpoint.';
   // Mirrors PrivateDeployVpnService.TunnelHealth.DirectRouteDegraded — the
   // tunnel's offshore-proxy path verified fine, but the domestic-direct path
   // didn't (e.g. baidu/qq probe timed out). Normally this clears itself within
@@ -152,8 +150,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   int _upstreamDegradedRestartAttempts = 0;
   // Set by _applyNativeStatus when the native side emits the
   // cellularCarrierSynBlockMessage error — i.e. every start attempt failed
-  // while the underlying was cellular. UI uses it to surface the "需要 CDN
-  // 加速" guidance banner. Cleared on successful connect, disconnect, or
+  // while the current network could not reach the node. UI uses it to surface
+  // the CDN guidance banner. Cleared on successful connect, disconnect, or
   // explicit dismissal.
   bool _needsCdnGuidance = false;
 
@@ -185,7 +183,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _safeNotifyListeners();
   }
 
-  // Gate ① — auto-deploy CDN Worker when carrier connectivity failure is detected.
+  // Gate ① — auto-deploy CDN Worker when direct node reachability fails.
   // Wired in main.dart against CdnProvider + CloudProvider. Receives the
   // current active profile name so the handler can resolve it to a cloud
   // instance, decide if auto-deploy is feasible (CF creds + node has
@@ -473,7 +471,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
     try {
       // Set _activeProfile *before* awaiting the native start so a
-      // failure path (e.g. cellular connectivity failure where the native side
+      // failure path (e.g. direct reachability failure where the native side
       // refuses to install a black-hole tun) still leaves the profile
       // name observable to Gate ①'s auto-CDN-deploy handler. The
       // disconnect path clears it anyway, so the only downside is that
@@ -1475,12 +1473,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _error = null;
     }
 
-    // Cellular-carrier connectivity failure: every start attempt failed AND the
-    // active underlying was cellular. Raise the guidance banner so the
-    // user gets a clear path forward instead of staring at a generic
-    // error. Cleared by the user via dismissCdnGuidance(), by a later
-    // healthy connect transition (see below), or when CDN auto-deploy
-    // succeeds (gate ①).
+    // Direct reachability failure: every start attempt failed and the active
+    // underlying transport could not reach the node. Raise the guidance banner
+    // so the user gets a clear path forward instead of staring at a generic
+    // error. Cleared by the user via dismissCdnGuidance(), by a later healthy
+    // connect transition (see below), or when CDN auto-deploy succeeds.
     if (_error == cellularCarrierSynBlockMessage) {
       _needsCdnGuidance = true;
       // Gate ① — fire the auto-deploy handler so we attempt to recover
@@ -1509,14 +1506,14 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;
-      // A healthy connected transition resolves the previous connectivity failure:
+      // A healthy connected transition resolves the previous direct failure:
       // either the user manually fixed it (switched networks, deployed
       // CDN themselves), or auto-failover/auto-CDN-deploy did. Either
       // way, drop the guidance banner — the problem isn't current
       // anymore.
       if (_health == VpnHealth.healthy) {
         _needsCdnGuidance = false;
-        // Reset auto-deploy attempt history so a future connectivity failure (e.g.
+        // Reset auto-deploy attempt history so a future direct failure (e.g.
         // user roams to a different blocked node tomorrow) can fire
         // auto-deploy fresh.
         _autoCdnDeployAttempted.clear();

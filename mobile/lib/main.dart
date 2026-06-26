@@ -111,9 +111,8 @@ class PrivateDeployApp extends StatelessWidget {
               // Once the user has configured an M1 custom domain for this
               // node, route through it as the PRIMARY hostname regardless
               // of customHostStatus. The status probe runs over the
-              // platform DNS resolver, which is exactly what's broken on
-              // the carriers where M1 is needed most (regional mobile network
-              // DNS-poisons both *.workers.dev and the custom hostname).
+              // platform DNS resolver, which can be exactly what's unhealthy
+              // on networks where the custom domain is needed most.
               // A 'failed' verdict from the probe under those conditions
               // is a false negative.
               //
@@ -140,7 +139,7 @@ class PrivateDeployApp extends StatelessWidget {
             });
 
             // Gate ① — auto-deploy a Worker for the failing node when the
-            // native side reports cellular connectivity failure. Conditions
+            // native side reports direct reachability failure. Conditions
             // intentionally strict so we don't spam CF or surprise users
             // who haven't opted into CDN acceleration:
             //   - CdnProvider verified + has accountId
@@ -176,15 +175,11 @@ class PrivateDeployApp extends StatelessWidget {
                     '(status=${cdn.status}, accountId=${cdn.accountId}, '
                     'workersSub=${cdn.workersSubdomain}, '
                     'customDomain=${cdn.customDomain?.hostPattern})');
-                // Surface the actionable next step: this user is on
-                // cellular, the node is being connectivity failureed, but we can't
-                // auto-deploy CDN because they haven't set up CF
-                // credentials yet. The guidance banner on the nodes
-                // screen also fires here, but a SnackBar is more
-                // visible when the user is mid-connect-attempt and
-                // staring at the home screen.
+                // Surface the actionable next step: the current network cannot
+                // reach the node directly, but we cannot auto-deploy CDN until
+                // the user configures Cloudflare credentials.
                 showGlobalSnackBar(
-                  '蜂窝网络屏蔽了该节点。请在 CDN 设置中绑定 Cloudflare token 后再试。',
+                  '当前网络无法直接到达该节点。请在 CDN 设置中绑定 Cloudflare token 后再试。',
                   duration: const Duration(seconds: 6),
                 );
                 return false;
@@ -236,7 +231,7 @@ class PrivateDeployApp extends StatelessWidget {
               // throwing CF 1101). Without the broken check, an
               // auto-deployed-but-broken Worker stays stranded forever: the
               // record exists so we'd skip the deploy, yet the dead CDN path
-              // is exactly why the node is being connectivity failureed-and-unreachable.
+              // is exactly why the node remains unreachable.
               final isRedeploy = cdn.deploymentNeedsRedeploy(instance.id);
               if (cdn.deploymentFor(instance.id) == null || isRedeploy) {
                 trace('${isRedeploy ? "re-" : ""}deploying Worker for '
@@ -250,7 +245,7 @@ class PrivateDeployApp extends StatelessWidget {
                   isRedeploy
                       ? '检测到该节点的 CDN Worker 异常，正在你的 Cloudflare '
                           '账号下为 ${instance.label} 重新部署…'
-                      : '检测到蜂窝运营商屏蔽该节点，正在你的 Cloudflare 账号下'
+                      : '检测到当前网络无法直连该节点，正在你的 Cloudflare 账号下'
                           '为 ${instance.label} 部署加速 Worker…',
                   duration: const Duration(seconds: 4),
                 );

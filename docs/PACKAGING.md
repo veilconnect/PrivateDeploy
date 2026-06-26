@@ -211,6 +211,45 @@ PRIVATEDEPLOY_SKIP_DISPLAY_CHECK=1 wails build -m -s -trimpath -o PrivateDeploy.
 
 查看 `.github/workflows/` 目录了解详情。
 
+## 发布前核验
+
+正式公开分发前，必须从同一个 git tag 构建所有发布产物，并完成以下检查：
+
+1. **版本一致性**
+   - `VERSION`
+   - `wails.json`
+   - `frontend/package.json`
+   - `mobile/pubspec.yaml`
+   - 安装包文件名
+   - Git tag
+
+2. **安装与卸载**
+   - Windows：安装、启动、系统代理开关、卸载
+   - macOS：挂载 DMG、拖拽安装、启动、退出
+   - Linux：DEB / RPM 安装、启动、卸载
+   - Android：安装、启动、VPN 授权、连接、断开、卸载
+   - iOS：如列入发布范围，必须完成签名、真机安装、VPN 授权、连接、断开
+
+3. **签名与校验**
+   - Windows 安装包如面向普通用户分发，应使用代码签名证书签名
+   - macOS 面向普通用户分发时，应完成签名和 notarization
+   - Android 包应使用发布 keystore 签名
+   - iOS 包应使用正确的 Team、Profile 和 entitlements
+   - 每个发布产物都应生成并公布 SHA256
+
+4. **敏感信息清理**
+   - 发布包、日志、截图、E2E 报告中不得包含云厂商 API Key、SSH 私钥、节点密码、订阅链接或真实用户凭据
+   - 发布前运行密钥扫描脚本
+   - 真实联调使用过的云厂商 API Key 如曾进入日志或测试产物，必须轮换
+
+5. **发布说明**
+   - 明确标注 `Beta / Preview` 或 `Stable`
+   - 列出已验证系统和云厂商
+   - 列出未验证平台，尤其是 iOS 支持状态
+   - 列出已知问题和回滚方式
+
+详细发布决策以 [GO-NO-GO-CHECKLIST.md](/mnt/data/PrivateDeploy/docs/GO-NO-GO-CHECKLIST.md) 为准。
+
 ## 常见问题
 
 ### Q: Windows 上提示 "NSIS not found"

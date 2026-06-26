@@ -25,7 +25,7 @@ describe('recommendation utilities', () => {
     vi.restoreAllMocks()
   })
 
-  it('scores nodes using latency, reachability, connectivity, and recency signals', () => {
+  it('scores nodes using latency, resilience, connectivity, and recency signals', () => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-20T00:00:00.000Z').getTime())
 
     const score = calculateNodeScore(node({
@@ -43,7 +43,7 @@ describe('recommendation utilities', () => {
     }, new Map([['nrt', 42]]))
 
     expect(score.score).toBeGreaterThan(80)
-    expect(score.antiBlockingScore).toBeGreaterThan(80)
+    expect(score.resilienceScore).toBeGreaterThan(80)
     expect(score.reasons).toEqual(expect.arrayContaining([
       'Excellent latency (<50ms)',
       'Protocol diversity is strong',
@@ -64,8 +64,8 @@ describe('recommendation utilities', () => {
 
     expect(blocked.score).toBeLessThan(30)
     expect(blocked.reasons).toEqual(expect.arrayContaining([
-      'Currently blocked',
-      'Blocked nodes avoided',
+      'Currently unavailable',
+      'Unavailable nodes avoided',
       'Node is relatively old',
     ]))
   })

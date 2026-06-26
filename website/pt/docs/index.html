@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Documentação PrivateDeploy</title>
+    <meta name="description" content="Guia rápido para implantar e conectar nós PrivateDeploy.">
+    <link rel="canonical" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/docs/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/docs/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/docs/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/docs/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/docs/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/docs/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/docs/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/docs/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Navegação principal">
+        <a class="brand" href="/pt/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Abrir navegação" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/pt/">Produto</a>
+          <a href="/pt/download/">Baixar</a>
+          <a href="/pt/docs/" aria-current="page">Docs</a>
+          <a href="/pt/security/">Segurança</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Idioma</button>
+            <div class="language-options" role="menu" aria-label="Seletor de idioma">
+              <a href="/docs/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/docs/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/docs/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/docs/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/docs/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/docs/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/docs/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/docs/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/docs/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/docs/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/docs/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/docs/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> Início rápido</p><h1>Implante um nó e encontre suas portas proxy locais.</h1><p>Instale o app desktop, adicione um provedor, crie um VPS e use o endpoint Mixed, HTTP ou SOCKS local.</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid three workflow">
+        <article class="card step"><h3>Instale uma build preview</h3><p>Baixe a build da sua plataforma e verifique o checksum antes de abrir.</p></article>
+        <article class="card step"><h3>Adicione credenciais cloud</h3><p>Use uma API key de teste limitada a instâncias e firewall.</p></article>
+        <article class="card step"><h3>Crie um nó</h3><p>Escolha uma região e plano compatíveis. Planos maiores aceitam a pilha completa.</p></article>
+        <article class="card step"><h3>Revise detalhes de protocolo</h3><p>Veja portas e links de SS, Hysteria2, VLESS-Reality e Trojan.</p></article>
+        <article class="card step"><h3>Use portas locais</h3><p>A visão geral mostra Mixed, HTTP e SOCKS diretamente.</p></article>
+        <article class="card step"><h3>Importe em outro cliente</h3><p>Copie links para sing-box, Clash, v2rayN, Hiddify ou outro cliente.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Formatos de endpoint local</h2><p>Estes formatos aparecem no painel de portas da visão geral desktop.</p></div><div class="grid three">
+        <article class="card dark"><h3>Mixed</h3><p>Copie como host e porta.</p><div class="terminal"><pre><code>127.0.0.1:7890</code></pre></div></article>
+        <article class="card dark"><h3>HTTP</h3><p>Use para apps que esperam uma URL de proxy HTTP.</p><div class="terminal"><pre><code>http://127.0.0.1:7891</code></pre></div></article>
+        <article class="card dark"><h3>SOCKS</h3><p>Use para ferramentas que aceitam endpoints SOCKS5.</p><div class="terminal"><pre><code>socks5://127.0.0.1:7892</code></pre></div></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>Guia de credenciais do provedor</h2><p>Use um token de teste dedicado. Evite reutilizar um token pessoal genérico.</p></div><div class="grid three">
+        <article class="card"><h3>Vultr</h3><p>Use uma chave que possa criar instâncias, gerenciar firewall, ler metadados e excluir nós de teste.</p></article>
+        <article class="card"><h3>DigitalOcean</h3><p>Use um token que possa criar droplets e chaves SSH. A recuperação usa uma chave SSH gerenciada.</p></article>
+        <article class="card"><h3>SSH host</h3><p>Use hosts seus ou autorizados. O deploy precisa de privilégio para serviços e regras de firewall.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Falhas comuns</h2><p>A maioria dos problemas preview cai nestas categorias.</p></div><div class="grid three">
+        <article class="card"><h3>Provedor rejeitou a solicitação</h3><p>Verifique escopo do token, saldo, região e quota.</p></article>
+        <article class="card"><h3>SSH nunca ficou pronto</h3><p>Aguarde cloud-init, confirme firewall e suporte SSH.</p></article>
+        <article class="card"><h3>Porta local não conecta</h3><p>Confirme kernel, estado proxy/TUN e links saudáveis do nó.</p></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="grid two"><div><h2>Documentação mais profunda</h2><p class="muted">O repositório contém documentos de arquitetura, API, multi-cloud e gates de release.</p></div><ul class="link-list">
+        <li><a href="/github">README do repositório</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/ARCHITECTURE.md">Arquitetura</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/API_DESIGN.md">Design da API</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/GO-NO-GO-CHECKLIST.md">Checklist de release</a></li>
+      </ul></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/pt/download/">Baixar</a>
+          <a href="/pt/docs/">Docs</a>
+          <a href="/pt/security/">Segurança</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

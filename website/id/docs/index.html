@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="id" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dokumentasi PrivateDeploy</title>
+    <meta name="description" content="Dokumentasi quick start untuk deploy dan koneksi node PrivateDeploy.">
+    <link rel="canonical" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/docs/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/docs/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/docs/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/docs/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/docs/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/docs/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/docs/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/docs/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Navigasi utama">
+        <a class="brand" href="/id/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Buka navigasi" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/id/">Produk</a>
+          <a href="/id/download/">Unduh</a>
+          <a href="/id/docs/" aria-current="page">Dokumen</a>
+          <a href="/id/security/">Keamanan</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Bahasa</button>
+            <div class="language-options" role="menu" aria-label="Pemilih bahasa">
+              <a href="/docs/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/docs/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/docs/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/docs/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/docs/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/docs/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/docs/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/docs/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/docs/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/docs/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/docs/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/docs/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> Mulai cepat</p><h1>Deploy node dan temukan port proxy lokal.</h1><p>Instal app desktop, tambahkan provider, buat node VPS, lalu gunakan endpoint Mixed, HTTP, atau SOCKS lokal.</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid three workflow">
+        <article class="card step"><h3>Instal build preview</h3><p>Unduh build untuk platform Anda dan verifikasi checksum sebelum menjalankan.</p></article>
+        <article class="card step"><h3>Tambahkan kredensial cloud</h3><p>Gunakan API key uji yang dibatasi untuk instance dan firewall.</p></article>
+        <article class="card step"><h3>Buat node</h3><p>Pilih region dan plan yang didukung. Plan lebih besar mendukung stack lengkap.</p></article>
+        <article class="card step"><h3>Tinjau detail protokol</h3><p>Lihat port dan link SS, Hysteria2, VLESS-Reality, dan Trojan.</p></article>
+        <article class="card step"><h3>Gunakan port lokal</h3><p>Halaman overview menampilkan port Mixed, HTTP, dan SOCKS langsung.</p></article>
+        <article class="card step"><h3>Impor ke tempat lain</h3><p>Salin link ke sing-box, Clash, v2rayN, Hiddify, atau client kompatibel.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Format endpoint lokal</h2><p>Format ini ditampilkan oleh panel port overview desktop.</p></div><div class="grid three">
+        <article class="card dark"><h3>Mixed</h3><p>Salin sebagai host dan port.</p><div class="terminal"><pre><code>127.0.0.1:7890</code></pre></div></article>
+        <article class="card dark"><h3>HTTP</h3><p>Gunakan untuk app yang membutuhkan URL proxy HTTP.</p><div class="terminal"><pre><code>http://127.0.0.1:7891</code></pre></div></article>
+        <article class="card dark"><h3>SOCKS</h3><p>Gunakan untuk tool yang menerima endpoint SOCKS5.</p><div class="terminal"><pre><code>socks5://127.0.0.1:7892</code></pre></div></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>Panduan kredensial provider</h2><p>Gunakan token uji khusus. Hindari memakai ulang token pribadi serbaguna.</p></div><div class="grid three">
+        <article class="card"><h3>Vultr</h3><p>Gunakan key yang dapat membuat instance, mengelola firewall, membaca metadata, dan menghapus node uji.</p></article>
+        <article class="card"><h3>DigitalOcean</h3><p>Gunakan token yang dapat membuat droplets dan SSH keys. Recovery memakai SSH key terkelola.</p></article>
+        <article class="card"><h3>SSH host</h3><p>Gunakan host milik Anda atau yang diizinkan. Deploy memerlukan privilege layanan dan firewall.</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>Kegagalan umum</h2><p>Sebagian besar masalah preview masuk kategori ini.</p></div><div class="grid three">
+        <article class="card"><h3>Provider menolak permintaan</h3><p>Periksa scope token, saldo akun, region, dan quota.</p></article>
+        <article class="card"><h3>SSH tidak pernah siap</h3><p>Tunggu cloud-init, pastikan firewall dan dukungan SSH.</p></article>
+        <article class="card"><h3>Port lokal tidak terhubung</h3><p>Pastikan kernel, status proxy/TUN, dan link node sehat.</p></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="grid two"><div><h2>Dokumentasi proyek lebih dalam</h2><p class="muted">Repository berisi dokumen arsitektur, API, multi-cloud, dan gate rilis.</p></div><ul class="link-list">
+        <li><a href="/github">README repository</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/ARCHITECTURE.md">Arsitektur</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/API_DESIGN.md">Desain API</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/GO-NO-GO-CHECKLIST.md">Checklist rilis</a></li>
+      </ul></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/id/download/">Unduh</a>
+          <a href="/id/docs/">Dokumen</a>
+          <a href="/id/security/">Keamanan</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

@@ -476,7 +476,7 @@ void main() {
     });
 
     test(
-        'normalizeConfigForCurrentPlatform applies region-optimized DNS split rules',
+        'normalizeConfigForCurrentPlatform applies regional optimized DNS split rules',
         () {
       const config = '''
 {
@@ -1106,7 +1106,7 @@ void main() {
     });
 
     test(
-        'normalizeConfigForCurrentPlatform adds Android China app direct bypass in split mode',
+        'normalizeConfigForCurrentPlatform adds Android regional app direct rules in split mode',
         () {
       const config = '''
 {
@@ -1307,7 +1307,7 @@ void main() {
     });
 
     test(
-        'normalizeConfigForCurrentPlatform lets custom proxy packages override Android China app direct bypass',
+        'normalizeConfigForCurrentPlatform lets custom proxy packages override Android regional app direct rules',
         () {
       const config = '''
 {
@@ -1385,7 +1385,7 @@ void main() {
     });
 
     test(
-        'normalizeConfigForCurrentPlatform does not auto-bypass China apps in global mode',
+        'normalizeConfigForCurrentPlatform does not auto-route regional apps direct in global mode',
         () {
       const config = '''
 {

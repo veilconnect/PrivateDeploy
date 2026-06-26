@@ -1,9 +1,7 @@
-/// Coarse regional reachability-reachability risk rating per region code, ported from the desktop
-/// `reachabilityRiskRating` (frontend `cloudViewPresentation.ts`). A curated hint shown
-/// alongside the live latency probe: `low` = consistently reachable from CN,
-/// higher = more often throttled/blocked. Independent of the probe — the probe
-/// is empirical and current, this is stable prior knowledge that still helps
-/// when a probe hasn't landed yet or a region is borderline.
+/// Coarse reachability risk rating per region code. This curated hint is shown
+/// alongside the live latency probe; the probe is empirical and current, while
+/// this rating is stable prior knowledge that still helps when a probe has not
+/// landed yet or a region is borderline.
 enum RegionRisk { low, medium, high, critical }
 
 const Map<String, RegionRisk> _reachabilityRiskRating = {
@@ -30,12 +28,12 @@ const Map<String, RegionRisk> _reachabilityRiskRating = {
 };
 
 /// Curated reachability risk for [regionId]; unknown regions default to [RegionRisk.medium].
-RegionRisk regionGfwRisk(String regionId) =>
+RegionRisk regionReachabilityRisk(String regionId) =>
     _reachabilityRiskRating[regionId] ?? RegionRisk.medium;
 
 /// Traffic-light emoji for [regionId]'s risk, matching the desktop getRiskIcon.
 String regionRiskIcon(String regionId) {
-  switch (regionGfwRisk(regionId)) {
+  switch (regionReachabilityRisk(regionId)) {
     case RegionRisk.low:
       return '🟢';
     case RegionRisk.medium:

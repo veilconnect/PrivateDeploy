@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy - развертывание прокси на собственном VPS</title>
+    <meta name="description" content="PrivateDeploy создает VPS-узлы, разворачивает мультипротокольные прокси и подключает desktop, Android и API клиентов.">
+    <link rel="canonical" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Основная навигация">
+        <a class="brand" href="/ru/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/ru/" aria-current="page">Продукт</a>
+          <a href="/ru/download/">Скачать</a>
+          <a href="/ru/docs/">Документы</a>
+          <a href="/ru/security/">Безопасность</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Язык</button>
+            <div class="language-options" role="menu" aria-label="Выбор языка">
+              <a href="/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow"><span class="status-dot"></span> Beta / Preview</p>
+          <h1>PrivateDeploy</h1>
+          <p class="hero-copy">Инструмент для развертывания прокси на собственных VPS. Создавайте серверы, разворачивайте несколько протоколов и сразу видьте локальные порты Mixed, HTTP и SOCKS.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="/ru/download/">Скачать preview</a>
+            <a class="button" href="/ru/docs/">Быстрый старт</a>
+            <a class="button" href="/ru/security/">Модель безопасности</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Создан для управления собственными узлами.</h2>
+            <p>PrivateDeploy не просто локальный прокси-клиент. Он создает VPS, разворачивает учетные данные, синхронизирует ссылки протоколов и показывает локальные порты.</p>
+          </div>
+          <div class="grid four">
+            <article class="card">
+              <div class="icon-tile">01</div>
+              <h3>Создание в облаке</h3>
+              <p>Создавайте и удаляйте узлы у поддерживаемых провайдеров или на SSH-доступных хостах.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">02</div>
+              <h3>Мультипротокол</h3>
+              <p>Разворачивайте Shadowsocks, Hysteria2, VLESS-Reality и Trojan при поддержке выбранного плана.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">03</div>
+              <h3>Видимые порты</h3>
+              <p>Mixed, HTTP и SOCKS видны на странице обзора и копируются напрямую.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">04</div>
+              <h3>Desktop, mobile и API</h3>
+              <p>Используйте Wails desktop, Android companion или Go HTTP API.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Панель для ясного контроля состояния.</h2>
+            <p>Desktop-приложение показывает трафик, режим и локальные порты на первом экране; облачная панель хранит порты и ссылки каждого узла.</p>
+          </div>
+          <div class="product-preview">
+            <img src="/assets/app-overview-v2.png" alt="PrivateDeploy desktop overview">
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Текущий статус релиза.</h2>
+            <p>Продукт уже пригоден для публичного тестирования, но до полной проверки должен оставаться Beta / Preview.</p>
+          </div>
+          <div class="matrix">
+            <div class="matrix-row matrix-head"><div>Surface</div><div>Status</div><div>Note</div></div>
+            <div class="matrix-row"><div>Desktop</div><div><span class="badge">Preview ready</span></div><div>Core tests pass; platform package checks remain part of release validation.</div></div>
+            <div class="matrix-row"><div>Android</div><div><span class="badge">Preview ready</span></div><div>Native Android tunnel flow exists; release signing and device smoke tests are required.</div></div>
+            <div class="matrix-row"><div>iOS</div><div><span class="badge warn">Build required</span></div><div>Requires VPNCore.framework, App Group, and Network Extension entitlements.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section tight alt">
+        <div class="container">
+          <div class="grid two">
+            <div>
+              <h2>Начать оценку preview</h2>
+              <p class="muted">Начните со страницы загрузки и быстрого старта. Используйте только свою или разрешенную инфраструктуру.</p>
+            </div>
+            <div class="button-row">
+              <a class="button primary" href="/ru/download/">Скачать</a>
+              <a class="button" href="/ru/docs/">Быстрый старт</a>
+              <a class="button" href="/github">Исходный код</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/ru/download/">Скачать</a>
+          <a href="/ru/docs/">Документы</a>
+          <a href="/ru/security/">Безопасность</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

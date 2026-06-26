@@ -47,11 +47,11 @@ internal object NativeEgressProbe {
     // Pure reachability endpoints: any HTTP success here proves the tunnel is
     // forwarding traffic, even if no public IP can be extracted. Used as a
     // fallback for the dart-facing probe (when DEFAULT_ENDPOINTS all fail
-    // due to Cloudflare blocking from CN). NOT sufficient for the post-connect
+    // from the current network). NOT sufficient for the post-connect
     // verifier on its own — these endpoints are matched by sing-box's
     // "国内直连" routing rules and fall back to direct outbound, so they stay
     // reachable even when the configured upstream node is completely dead
-    // (e.g. carrier blocked the VPS IP). Pair with TUNNEL_REQUIRED_ENDPOINTS
+    // (e.g. the current network cannot reach the VPS IP). Pair with TUNNEL_REQUIRED_ENDPOINTS
     // to distinguish "tun0 forwards traffic" from "the chosen node actually
     // works".
     val REACHABILITY_ENDPOINTS: List<EgressProbeEndpoint> = listOf(

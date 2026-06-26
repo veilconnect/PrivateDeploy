@@ -378,7 +378,7 @@ export default {
       rotatingIP: '正在更换IP…',
       rotateIPSuccess: 'IP更换完成，已创建新节点。',
       rotateIPConfirm: '这将销毁当前节点并创建一个新的节点（IP不同）。是否继续？',
-      rotateIPBlocked: '该节点疑似被屏蔽，是否更换IP地址？',
+      rotateIPBlocked: '该节点当前不可达，是否更换 IP 地址？',
       repair: '修复/重新部署',
       repairing: '修复中…',
       repairSuccess: '节点修复完成。',
@@ -395,8 +395,8 @@ export default {
     },
     connectivity: {
       reachable: '可达',
-      icmp_blocked: 'ICMP被阻断',
-      blocked: '被阻断',
+      icmp_blocked: 'ICMP 不可达',
+      blocked: '不可达',
       testing: '测试中…',
       unknown: '未知',
       testButton: '测速',
@@ -750,6 +750,17 @@ export default {
       updateGEO: '更新 GEO',
       needPort: '请先设置代理端口',
       needTun: '请先添加一个TUN入站',
+      proxyPorts: {
+        title: '代理端口',
+        mixed: 'Mixed',
+        http: 'HTTP',
+        socks: 'SOCKS',
+        listen: '监听',
+        localOnly: '仅本机',
+        lanOn: '局域网',
+        none: '未启用代理端口',
+        copyAll: '复制全部代理端点',
+      },
     },
     controller: {
       name: '控制器',
@@ -975,7 +986,7 @@ export default {
     rulesets: {
       PrivateLan: '本地与局域网直连',
       SystemConnectivity: '系统连通性直连',
-      Mainland: '中国大陆直连',
+      Mainland: '区域直连',
       AI: 'AI 服务代理',
       Developer: '开发平台代理',
       Global: '国际常用服务代理',
@@ -1197,7 +1208,7 @@ export default {
     noMatching: '没有匹配到命令',
   },
   wizard: {
-    title: '如何部署你的 VPN 节点？',
+    title: '你想如何部署节点？',
     subtitle: '选择最适合你的部署方式',
     method: {
       ssh: '我有服务器',
@@ -1212,7 +1223,7 @@ export default {
   cdn: {
     title: 'CDN 加速（可选）',
     subtitle:
-      '通过 Cloudflare Worker 给你的 VPS 增加一层 CDN 入口：流量从 Cloudflare 边缘 IP 进入，而非裸 VPS。适合运营商屏蔽境外 IP 的网络。',
+      '为你控制的 VPS 增加可选的 Cloudflare Worker 前端，让客户端使用稳定入口，再由 Worker 转发到选定节点。',
     learnMore: '了解更多',
     docsLink: '查看部署指南',
     status: {
@@ -1266,7 +1277,7 @@ export default {
     customDomain: {
       title: '自定义域名（可选）',
       subtitle:
-        '把 Worker 同时绑定到你 Cloudflare 上的某个域名（例如 relay.example.com）。部分蜂窝网络对 *.workers.dev 有特殊限速 / 阻断，自定义域名能改善基于域名的指纹识别。',
+        '把 Worker 同时绑定到你 Cloudflare 上的某个域名（例如 relay.example.com）。适合需要稳定自有主机名而不是 workers.dev 主机名的场景。',
       enable: '启用自定义域名',
       zone: '选择域名',
       zonePlaceholder: '加载中…',

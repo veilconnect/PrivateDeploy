@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Protocol-level reachability/reachability benchmark for PrivateDeploy nodes.
+"""Protocol-level reachability benchmark for PrivateDeploy nodes.
 
 For each node/protocol combo, this script launches an isolated sing-box SOCKS
 inbound on a random localhost port (never 7890), then probes target URLs via
@@ -38,7 +38,7 @@ class ProtocolTarget:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark reachability reachability via isolated sing-box SOCKS endpoints")
+    parser = argparse.ArgumentParser(description="Benchmark protocol reachability via isolated sing-box SOCKS endpoints")
     parser.add_argument("--nodes", default="data/cloud/vultr-nodes.json", help="Path to node records JSON")
     parser.add_argument("--singbox", default="data/sing-box/sing-box", help="Path to sing-box executable")
     parser.add_argument("--timeout", type=int, default=15, help="Per-URL curl timeout seconds")
@@ -418,4 +418,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

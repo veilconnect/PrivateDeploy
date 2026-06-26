@@ -108,9 +108,8 @@ class CdnProvider with ChangeNotifier {
   /// stranded "已部署" forever) and the broken-health badge + redeploy button.
   ///
   /// Note: keyed on customHostStatus, so it only flags deployments that have a
-  /// custom domain to probe. workers.dev-only deployments can't be probed from
-  /// CN (the subdomain is DNS-altered), which is exactly why custom domains
-  /// exist — those are the deployments this matters for.
+  /// custom domain to probe. workers.dev-only deployments may be unreachable
+  /// on some networks, which is why custom domains exist.
   bool deploymentNeedsRedeploy(String nodeId) {
     final dep = _deployments[nodeId];
     return dep != null && dep.customHostStatus == 'failed';
@@ -143,8 +142,8 @@ class CdnProvider with ChangeNotifier {
   /// without going to the network: token verified, account scoped, and
   /// at least one routable destination (workers.dev subdomain or a bound
   /// custom domain). Used by the VPN auto-deploy gate in main.dart to
-  /// decide whether to attempt automatic recovery after a cellular
-  /// connectivity failure; mirrors the same checks deployWorkerForNode runs
+  /// decide whether to attempt automatic recovery after a direct reachability
+  /// failure; mirrors the same checks deployWorkerForNode runs
   /// internally so the caller can fail fast without firing an HTTP
   /// request that's going to bounce on missing-prerequisite errors.
   bool canAutoDeployForNode() {
@@ -626,7 +625,7 @@ class CdnProvider with ChangeNotifier {
 
     /// Whether this call originated from a user tap on the manual
     /// "Deploy Worker" button ('manual') or from Gate ① recovering
-    /// from a cellular connectivity failure ('auto'). Persisted on the resulting
+    /// from automatic direct-reachability recovery ('auto'). Persisted on the resulting
     /// [CdnDeployment] so the UI can show provenance without forcing
     /// the user to remember whether they did this on purpose.
     String deployedBy = 'manual',
@@ -801,8 +800,8 @@ class CdnProvider with ChangeNotifier {
         unawaited(_probeCustomHostReadiness(nodeId, customHost));
       }
       // (First-upload CF 1101 self-heal lives in _probeCustomHostReadiness:
-      // it rides the DoH + custom-domain path, so it works even though the
-      // phone can't reach the DNS-altered *.workers.dev host.)
+      // it rides the DoH + custom-domain path, so it works even when the
+      // phone cannot reach the workers.dev host.)
       // Preserve _lastError if the M1 step failed (so the UI can show it)
       // but clear it when everything succeeded.
       if (_customDomain != null && customHost == null && _lastError == null) {
@@ -811,9 +810,9 @@ class CdnProvider with ChangeNotifier {
       } else if (customHost != null && url.isEmpty) {
         // Single-point-of-failure guard: a custom-domain-only deploy (no
         // workers.dev subdomain claimed) leaves no sibling in the client's
-        // urltest pool. If the custom hostname stalls in provisioning or
-        // gets DNS-altered, the node has ZERO working CDN entry points —
-        // which is exactly how nodes ended up stranded behind a 522 host.
+        // urltest pool. If the custom hostname stalls in provisioning, the node
+        // has no working CDN entry points, which is how nodes can end up
+        // stranded behind a 522 host.
         // Surface it so the user claims a workers.dev subdomain; a later
         // repair/redeploy then wires the fallback in automatically.
         _lastError = 'CDN deployed via custom domain only — no workers.dev '
@@ -1410,8 +1409,8 @@ class CdnProvider with ChangeNotifier {
       // VPS relay is still booting and 404 = secret/legacy — those
       // self-resolve, so keep probing. repairCustomHostForNode re-uploads +
       // re-attaches and re-probes with autoRepair off, so it can't loop.
-      // Rides the DoH + custom-domain path, so it works where a
-      // *.workers.dev GET can't (that host is DNS-altered on these nets).
+      // Rides the DoH + custom-domain path, so it can still work when a
+      // workers.dev GET through the platform resolver cannot.
       final brokenWorkerOrBinding =
           status != null && (status == 500 || (status >= 520 && status <= 526));
       if (brokenWorkerOrBinding) {
@@ -1723,7 +1722,7 @@ class CdnProvider with ChangeNotifier {
   /// than the entire 3.7-min probe budget. Once cached, every iteration
   /// continues to fail even after CF has fully provisioned the record.
   /// AOSP's `netd/res_cache.cpp` and iOS's `mDNSResponder` both honor
-  /// SOA-MIN, so this is not Android-specific. DoH bypass dodges both
+  /// SOA-MIN, so this is not Android-specific. DoH avoids both
   /// caches by going straight to authoritative-by-proxy resolvers each
   /// iteration.
   Future<bool> _customHostTLSReachable(String host) async {
@@ -1735,7 +1734,7 @@ class CdnProvider with ChangeNotifier {
       // Open TCP to the DoH-resolved IP, then upgrade to TLS with the
       // customHost as the SNI/Host so CF presents the correct cert. We
       // avoid `SecureSocket.connect(host, ...)` because passing a hostname
-      // there would re-introduce the OS-resolver lookup we just bypassed.
+      // there would re-introduce the OS-resolver lookup we just avoided.
       raw = await Socket.connect(
         ips.first,
         443,
@@ -1765,7 +1764,7 @@ class CdnProvider with ChangeNotifier {
   /// A 502/504 means Worker→VPS TCP failed (UFW, wrong port, VPS down).
   /// 404 means the path-secret didn't match.
   /// Performs the WS upgrade against the custom host (DoH-resolved, so it
-  /// works even where *.workers.dev is DNS-altered) and returns the HTTP
+  /// avoids local resolver cache issues) and returns the HTTP
   /// status of the response: 101 = relay path live, 404 = secret mismatch,
   /// 500 = the Worker itself threw (CF 1101), 502/504 = Worker→VPS down.
   /// null = couldn't get a status (TLS/DNS/timeout).
@@ -2118,7 +2117,7 @@ class CdnDeployment {
 
   /// Provenance of this deployment. "manual" when the user tapped Deploy
   /// from CDN settings; "auto" when Gate ① fired during a cellular
-  /// connectivity failure recovery. Null on records that predate this field so the
+  /// direct-reachability recovery. Null on records that predate this field so the
   /// UI can render "已部署" without a provenance subtitle. Surfaced in
   /// the node row so users can tell apart deployments they explicitly
   /// created from ones the app provisioned in the background.

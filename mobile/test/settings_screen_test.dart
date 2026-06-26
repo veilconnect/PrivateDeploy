@@ -124,7 +124,7 @@ void main() {
       expect(find.text('Routing Rules'), findsOneWidget);
       expect(
           find.text(
-              'LAN direct · regional apps direct · CN domains direct · CN IPs direct · regional optimized DNS'),
+              'LAN direct · Regional apps direct · Regional domains direct · Regional IPs direct · Regional optimized DNS'),
           findsOneWidget);
       expect(find.text('1.2.3 (45)'), findsOneWidget);
     });
@@ -391,7 +391,7 @@ void main() {
       await tester.tap(find.text('Routing Rules'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('regional optimized DNS').last);
+      await tester.tap(find.text('Regional optimized DNS').last);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Strict proxy DNS').last);
       await tester.pumpAndSettle();

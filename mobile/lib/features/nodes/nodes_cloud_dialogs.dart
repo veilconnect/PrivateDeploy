@@ -334,9 +334,9 @@ class _NodesCreateCloudDialogState extends State<_NodesCreateCloudDialog> {
                         value: region.id,
                         child: Row(
                           children: [
-                            // Leading traffic-light = curated reachability risk for the
-                            // region (🟢 low … 🔴 critical); the trailing chip
-                            // is the live latency/reachability probe.
+                            // Leading traffic-light = curated reachability
+                            // hint for the region; the trailing chip is the
+                            // live latency/reachability probe.
                             Text(regionRiskIcon(region.id),
                                 style: TextStyle(fontSize: 12.sp)),
                             SizedBox(width: 6.w),

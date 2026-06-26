@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ja" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy - 自分のVPSにプロキシをデプロイ</title>
+    <meta name="description" content="PrivateDeploy は VPS ノードを作成し、複数プロトコルのプロキシを展開し、デスクトップ、Android、API クライアントを接続します。">
+    <link rel="canonical" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="メインナビゲーション">
+        <a class="brand" href="/ja/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/ja/" aria-current="page">製品</a>
+          <a href="/ja/download/">ダウンロード</a>
+          <a href="/ja/docs/">ドキュメント</a>
+          <a href="/ja/security/">セキュリティ</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>言語</button>
+            <div class="language-options" role="menu" aria-label="言語選択">
+              <a href="/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow"><span class="status-dot"></span> Beta / Preview</p>
+          <h1>PrivateDeploy</h1>
+          <p class="hero-copy">自分の VPS にプロキシノードを展開するためのツールです。サーバー作成、複数プロトコル展開、Mixed / HTTP / SOCKS のローカルポート確認を一つにまとめます。</p>
+          <div class="hero-actions">
+            <a class="button primary" href="/ja/download/">Preview をダウンロード</a>
+            <a class="button" href="/ja/docs/">クイックスタート</a>
+            <a class="button" href="/ja/security/">セキュリティモデル</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>自分のノードを管理するために設計。</h2>
+            <p>PrivateDeploy は単なるローカルプロキシクライアントではありません。VPS 作成、認証情報の展開、プロトコルリンク同期、ローカルポート表示まで扱います。</p>
+          </div>
+          <div class="grid four">
+            <article class="card">
+              <div class="icon-tile">01</div>
+              <h3>クラウド作成</h3>
+              <p>対応クラウドまたは SSH 接続可能なホストでノードを作成、削除します。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">02</div>
+              <h3>複数プロトコル</h3>
+              <p>条件が合えば Shadowsocks、Hysteria2、VLESS-Reality、Trojan を展開します。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">03</div>
+              <h3>見えるポート</h3>
+              <p>Mixed、HTTP、SOCKS ポートを概要画面で確認し、そのままコピーできます。</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">04</div>
+              <h3>デスクトップ、モバイル、API</h3>
+              <p>Wails デスクトップ、Android companion、Go HTTP API を利用できます。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>運用状況が一目でわかる画面。</h2>
+            <p>デスクトップアプリは通信量、モード、ローカルポートを最初の画面に表示し、クラウドパネルは各ノードのポートとリンクを保持します。</p>
+          </div>
+          <div class="product-preview">
+            <img src="/assets/app-overview-v2.png" alt="PrivateDeploy desktop overview">
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>現在の公開状態。</h2>
+            <p>公開テストの価値はありますが、実環境での検証が完了するまでは Beta / Preview として扱うべきです。</p>
+          </div>
+          <div class="matrix">
+            <div class="matrix-row matrix-head"><div>Surface</div><div>Status</div><div>Note</div></div>
+            <div class="matrix-row"><div>Desktop</div><div><span class="badge">Preview ready</span></div><div>Core tests pass; platform package checks remain part of release validation.</div></div>
+            <div class="matrix-row"><div>Android</div><div><span class="badge">Preview ready</span></div><div>Native Android tunnel flow exists; release signing and device smoke tests are required.</div></div>
+            <div class="matrix-row"><div>iOS</div><div><span class="badge warn">Build required</span></div><div>Requires VPNCore.framework, App Group, and Network Extension entitlements.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section tight alt">
+        <div class="container">
+          <div class="grid two">
+            <div>
+              <h2>Preview を評価する</h2>
+              <p class="muted">まずダウンロードとクイックスタートを確認してください。自分が管理権限を持つインフラでのみ使用してください。</p>
+            </div>
+            <div class="button-row">
+              <a class="button primary" href="/ja/download/">ダウンロード</a>
+              <a class="button" href="/ja/docs/">クイックスタート</a>
+              <a class="button" href="/github">ソースコード</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/ja/download/">ダウンロード</a>
+          <a href="/ja/docs/">ドキュメント</a>
+          <a href="/ja/security/">セキュリティ</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

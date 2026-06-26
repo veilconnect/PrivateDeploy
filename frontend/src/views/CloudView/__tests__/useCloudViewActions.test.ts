@@ -273,7 +273,7 @@ describe('useCloudViewActions', () => {
     const recommendedNode = node({ instanceId: 'best', label: 'Best node' })
     utilityMocks.getRecommendedNodes.mockReturnValueOnce([
       {
-        antiBlockingScore: 95,
+        resilienceScore: 95,
         node: recommendedNode,
         reasons: ['reachable', 'low latency'],
         score: 98,

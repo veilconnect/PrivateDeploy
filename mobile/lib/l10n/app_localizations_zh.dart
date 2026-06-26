@@ -136,18 +136,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get tunnelUpstreamDegradedMessageLocalized =>
-      '隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi 或更换其他节点 —— 蜂窝运营商有时会屏蔽 VPS 的 IP。';
+      '隧道已连接，但当前网络无法访问该节点的上游服务器。可切换到 Wi-Fi、更换其他节点，或启用你的 Cloudflare Worker 入口。';
 
   @override
   String get tunnelDirectRouteDegradedMessageLocalized =>
-      '隧道已连接、上游节点也已响应，但本地直连路径（用于访问国内站点）还在稳定中。部分流量可能在最长 1 分钟内卡顿 —— 在 Wi-Fi 与蜂窝之间切换后常见。';
+      '隧道已连接、上游节点也已响应，但本地直连路径还在稳定中。部分流量可能在最长 1 分钟内卡顿 —— 在 Wi-Fi 与蜂窝之间切换后常见。';
 
   @override
-  String get cdnGuidanceTitle => '蜂窝运营商似乎正在屏蔽该节点';
+  String get cdnGuidanceTitle => '当前网络无法到达该节点';
 
   @override
   String get cdnGuidanceBody =>
-      '在蜂窝数据下尝试连接当前节点全部失败。部分运营商（特别是移动网络）会丢弃发往已知 VPS IP 的包。开启 CDN 加速可改走 Cloudflare 边缘 IP，运营商不会过滤这条路径。';
+      '在当前网络下多次尝试连接该节点均失败。可在设置中启用 CDN 加速，通过你控制的 Cloudflare Worker 入口访问该节点。';
 
   @override
   String get cdnGuidanceConfigure => '设置 CDN 加速';
@@ -160,7 +160,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get cdnGuidanceBodyDeployed =>
-      'Worker 已部署，但走 CDN 也无法到达节点。可能是节点本身离线、Worker 与 VPS 链路中断，或这个地点的网络也屏蔽了 Cloudflare。建议换一个节点试试，或者打开 CDN 设置重新部署 Worker。';
+      'Worker 已部署，但 CDN 路径仍无法到达节点。可能是节点本身离线、Worker 与 VPS 链路中断，或当前网络无法到达 Worker 入口。建议换一个节点试试，或者打开 CDN 设置重新部署 Worker。';
 
   @override
   String get cdnGuidanceActionSwitchNode => '切换节点';
@@ -169,21 +169,21 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cdnGuidanceActionRedeploy => '重新部署 Worker';
 
   @override
-  String get cdnGuidanceHowItWorksLink => '原理：让流量改善运营商屏蔽';
+  String get cdnGuidanceHowItWorksLink => '原理：CDN 加速如何工作';
 
   @override
   String get cdnGuidanceHowItWorksTitle => 'CDN 加速是怎么工作的';
 
   @override
   String get cdnGuidanceHowItWorksBody =>
-      '蜂窝运营商有时会丢弃发往已知 VPS IP 的包，导致 VPN 隧道建起来但什么都过不去。\n\nCDN 加速让你的客户端先连到 Cloudflare 边缘 IP，由 Cloudflare 的 Worker 把加密数据原样转发到你的 VPS。运营商不会过滤 Cloudflare 的地址段。\n\n用的是你自己的免费 Cloudflare 账号，流量保持端到端加密——Cloudflare 只看到无意义的密文，看不到你的 VLESS 凭据或访问内容。';
+      '有些网络无法直接到达 VPS 地址，可能出现隧道建立但没有流量返回的情况。\n\nCDN 加速让客户端先连接到你的 Cloudflare Worker 入口，再由 Worker 把加密数据转发到你的 VPS 中转端口。\n\n它运行在你自己的 Cloudflare 账号中，Worker 不保存 VLESS 凭据，也不解析访问内容。';
 
   @override
   String get cdnGuidanceHowItWorksClose => '知道了';
 
   @override
   String get cellularCarrierSynBlockMessageLocalized =>
-      '蜂窝运营商似乎正在屏蔽该节点的 IP —— 隧道已建立，但没有任何外网流量返回。请在设置中开启 CDN 加速，改走 Cloudflare 边缘 IP。';
+      '当前网络无法直接到达配置的节点。请在设置中启用 CDN 加速，改用你的 Cloudflare Worker 入口。';
 
   @override
   String get cellularHelpTitle => '手机数据网络问题';
@@ -198,7 +198,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cdnAccelerationTitle => 'CDN 加速';
 
   @override
-  String get cdnAccelerationSubtitle => '可选:蜂窝网络出问题时通过 Cloudflare 中转';
+  String get cdnAccelerationSubtitle => '可选:通过你控制的 Cloudflare Worker 入口连接';
 
   @override
   String get nextStep => '下一步';
@@ -942,13 +942,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get routingTagLanDirect => '局域网直连';
 
   @override
-  String get routingTagCnAppsDirect => '国内应用直连';
+  String get routingTagCnAppsDirect => '区域应用直连';
 
   @override
-  String get routingTagCnDomainsDirect => '国内域名直连';
+  String get routingTagCnDomainsDirect => '区域域名直连';
 
   @override
-  String get routingTagCnIpsDirect => '国内 IP 直连';
+  String get routingTagCnIpsDirect => '区域 IP 直连';
 
   @override
   String get profileContentSaved => '配置内容已保存';
@@ -1044,7 +1044,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get global => '全局';
 
   @override
-  String get routingModeDesc => '局域网直连 · 国内应用直连 · 国内域名直连 · 国内 IP 直连';
+  String get routingModeDesc => '局域网直连 · 区域应用直连 · 区域域名直连 · 区域 IP 直连';
 
   @override
   String get vpnDiagnostics => 'VPN 诊断';
@@ -1299,13 +1299,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get routingRulesHelp =>
-      '分流模式可单独开关：局域网直连、国内域名直连、国内 IP 直连。下方还可单独指定走代理或直连的应用，并自定义域名 / CIDR。全局模式仅保留局域网和自定义规则。';
+      '分流模式可单独开关：局域网直连、区域域名直连、区域 IP 直连。下方还可单独指定走代理或直连的应用，并自定义域名 / CIDR。全局模式仅保留局域网和自定义规则。';
 
   @override
   String get dnsMode => 'DNS 模式';
 
   @override
-  String get cnOptimizedDns => '中国优化 DNS';
+  String get cnOptimizedDns => '区域优化 DNS';
 
   @override
   String get strictProxyDns => '严格代理 DNS';
@@ -1317,10 +1317,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get lanDirectRule => '局域网/私有网络直连';
 
   @override
-  String get cnDomainsDirectRule => '国内域名直连';
+  String get cnDomainsDirectRule => '区域域名直连';
 
   @override
-  String get cnIpsDirectRule => '国内 IP 直连';
+  String get cnIpsDirectRule => '区域 IP 直连';
 
   @override
   String get directApps => '直连应用';

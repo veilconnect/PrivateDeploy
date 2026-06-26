@@ -81,7 +81,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // retry instead of calling stopSelf(). Earlier behaviour left the
         // service permanently dead — and the last broadcast error was the
         // stale UpstreamDegraded probe of a half-built tun, which users
-        // read as "the carrier blocked the upstream node" when actually
+        // read as "the upstream node is permanently unavailable" when actually
         // "the restart loop hit a transient bad-network window". 15s seed
         // backoff doubles per attempt, capped at 5 minutes.
         private const val DELAYED_RESTART_INITIAL_MS = 15_000L
@@ -96,13 +96,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val PEER_VPN_RESUME_PROBE_DELAY_MS = 500L
         // Wait up to 12 s for the new transport to reach
         // NET_CAPABILITY_VALIDATED before kicking off start/restart.
-        // Real-world mobile networks (mobile carrier / Telecom / Unicom)
-        // commonly need 5–10 s to complete the captive-portal probe; the
-        // earlier 4 s cap returned too often before validation, leaving
-        // sing-box bound to a half-baked upstream and producing the
-        // "tunnel up but nothing flows" symptom.
+        // Some mobile networks commonly need 5-10 s to complete the
+        // captive-portal probe; the earlier 4 s cap returned too often before
+        // validation, leaving sing-box bound to a half-baked upstream and
+        // producing the "tunnel up but nothing flows" symptom.
         private const val VALIDATED_NETWORK_WAIT_MS = 12000L
-        // If the carrier blocks Android's captive-portal probe entirely
+        // If the network blocks Android's captive-portal probe entirely
         // (NET_CAPABILITY_VALIDATED never arrives) but a usable
         // INTERNET-capable transport is present, accept it after this
         // shorter window so we don't deadlock until VALIDATED_NETWORK_WAIT_MS.
@@ -131,16 +130,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
         private const val HEALTH_MONITOR_INTERVAL_MS = 30_000L
 
         // Number of consecutive TUNNEL_REQUIRED successes required to call the
-        // upstream Healthy. Carriers (notably mobile carrier / Telecom / Unicom)
-        // routinely let the first SYN or two from a flagged VPS slip through
-        // their DPI engine before they start RST'ing connections, so a
-        // single-shot gstatic probe can squeak through during that grace
-        // window even when sustained traffic is broken — exactly the
-        // scenario that produced the "VPN connected but YouTube doesn't
-        // load" report. Three consecutive successes spaced ~600ms apart
-        // bridges past that grace window without making startup feel sluggish
-        // (~5s extra in the worst healthy case, much less when the first
-        // probe fails fast).
+        // upstream Healthy. Some networks can pass one short probe while
+        // sustained traffic still fails, so a single-shot probe is too weak.
+        // Three consecutive successes spaced ~600ms apart avoids startup
+        // flapping without making healthy starts feel sluggish.
         private const val EGRESS_VERIFY_UPSTREAM_REPEATS = 3
         private const val EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS = 600L
         private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
@@ -601,27 +594,19 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             val onCellular = lastObservedUnderlyingNetworkType ==
                                 INTERFACE_TYPE_CELLULAR
                             if (onCellular) {
-                                // Reported 2026-05-20: on mobile carrier cellular,
-                                // every upstream node was SYN-dropped while
-                                // baidu/qq stayed reachable through the direct
-                                // outbound. checkTunnelHealth correctly returned
-                                // UpstreamDegraded — but accepting that as
-                                // `succeeded = true` left tun0 owning 0.0.0.0/0,
-                                // which black-holed *every* offshore request
-                                // from every app on the device. The user had to
-                                // force-stop PrivateDeploy to get back online.
-                                // Treat cellular UpstreamDegraded as a failed
-                                // start: tear down the tun, broadcast the
-                                // connectivity failure error (which fires Gate ③ banner
-                                // + Gate ① auto-CDN-deploy on the Dart side),
-                                // and let direct cellular traffic continue
-                                // working until the user (or auto-deploy) sets
-                                // CDN up.
+                                // When the upstream node remains unreachable on
+                                // the active mobile transport, accepting the
+                                // tunnel as healthy can leave tun0 owning
+                                // 0.0.0.0/0 while user traffic stalls. Treat
+                                // this as a failed start: tear down the tun,
+                                // broadcast the CDN guidance error, and let
+                                // normal device traffic continue until the user
+                                // or auto-deploy configures a Worker path.
                                 //
                                 // Tear down the tun NOW (not at end of loop)
                                 // and break: attempt 2 against the same node
                                 // on the same underlying network would just
-                                // re-create the black-hole tun for the
+                                // re-create the unhealthy tun for the
                                 // backoff+retry window.
                                 lastError = IllegalStateException(
                                     cellularCarrierSynBlockMessage(),
@@ -630,7 +615,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                     TAG,
                                     "VPN start attempt $attempt: cellular " +
                                         "UpstreamDegraded — refusing to install " +
-                                        "a black-hole tun. User likely needs " +
+                                        "an unhealthy tun. User may need " +
                                         "CDN acceleration; banner + auto-deploy " +
                                         "will fire on the Dart side. Tearing " +
                                         "down tun immediately and skipping retry.",
@@ -806,13 +791,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
     /**
      * Refines [describeTunnelHealth]'s `UpstreamDegraded` outcome with the
-     * active underlying transport. When the user is on cellular AND the
-     * upstream probe failed, the most likely cause is the carrier
-     * SYN-dropping the configured node's IP — the exact scenario CDN
-     * acceleration solves. Emit the connectivity failure-flavored message so the
-     * Dart side raises the "需要 CDN 加速" guidance banner. On Wi-Fi
-     * (which rarely filters VPS IPs), keep the original "switch nodes"
-     * message — the carrier-block diagnosis would be misleading there.
+     * active underlying transport. When the user is on cellular and the
+     * upstream probe failed, emit a machine-readable CDN guidance message so
+     * the Dart side can raise the relevant banner. On Wi-Fi, keep the original
+     * "switch nodes" message because the remediation is usually different.
      *
      * Healthy / DirectRouteDegraded / Unreachable outcomes pass through
      * unchanged.
@@ -831,19 +813,17 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
         return TunnelHealthOutcome(
             notificationText =
-                "VPN connected · carrier blocking node, enable CDN",
+                "VPN connected · node unreachable, enable CDN",
             statusMessage = cellularCarrierSynBlockMessage(),
         )
     }
 
     /**
      * Returns the error message to broadcast when every start attempt failed.
-     * When the active underlying transport is cellular AND every probe came
-     * back unreachable, the most likely cause is the carrier SYN-dropping
-     * the configured node's IP — the exact scenario CDN acceleration
-     * exists to solve. Surfacing a distinct, machine-readable string lets
-     * the Dart side raise the "需要 CDN 加速" guidance banner without
-     * keyword-matching free-form error text.
+     * When the active underlying transport is cellular and every probe came
+     * back unreachable, surface a distinct, machine-readable string so the Dart
+     * side can raise the CDN guidance banner without keyword-matching
+     * free-form error text.
      */
     private fun failedStartErrorMessage(lastError: Throwable?): String {
         val originalMessage = lastError?.message ?: "Failed to start VPN"
@@ -860,13 +840,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
             "through the selected node. The node may be unreachable or misconfigured."
 
     // Distinct from startupConnectivityFailureMessage so the Dart side can
-    // string-match on it and surface the "carrier blocked, need CDN" banner.
+    // string-match on it and surface the CDN guidance banner.
     // See VpnProvider.cellularCarrierSynBlockMessage — both strings must
     // match exactly for the banner to fire.
     private fun cellularCarrierSynBlockMessage(): String =
-        "Cellular carrier appears to be SYN-dropping the configured node's IP — " +
-            "the tunnel started but no probe endpoint responded through it. " +
-            "Enable CDN acceleration to route via a Cloudflare edge IP instead."
+        "Current network cannot reach the configured node directly. " +
+            "Enable CDN acceleration in settings to use your Cloudflare Worker endpoint."
 
     private fun stopVpn() {
         // Clear user intent FIRST and BEFORE any other state changes —
@@ -1211,10 +1190,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
      *
      * Strategy: prefer NET_CAPABILITY_VALIDATED (system has confirmed
      * Internet via captive-portal probe) up to [validatedTimeoutMs]. If the
-     * carrier blocks Android's probe destinations entirely
-     * (`connectivitycheck.gstatic.com` and friends — common on China
-     * Mobile/Telecom/Unicom and on networks that aggressively filter
-     * Google), VALIDATED never arrives but the network is in fact usable.
+     * network blocks Android's probe destinations entirely
+     * (`connectivitycheck.gstatic.com` and friends), VALIDATED never arrives
+     * but the network is in fact usable.
      * In that case, accept any INTERNET-capable, NOT_SUSPENDED transport
      * after [unvalidatedFallbackMs] so we don't deadlock until the longer
      * cap.
@@ -1249,7 +1227,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         Log.i(
                             TAG,
                             "Accepting unvalidated INTERNET-capable transport after " +
-                                "${unvalidatedFallbackMs}ms; carrier may be blocking the " +
+                                "${unvalidatedFallbackMs}ms; network may be blocking the " +
                                 "captive-portal probe",
                         )
                         loggedFallback = true
@@ -1275,10 +1253,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
      * - [UpstreamDegraded]: tunnel-required endpoints all failed, but a
      *   domestic-direct endpoint (baidu/qq) succeeded. tun0 is forwarding
      *   traffic and direct routing works, but the upstream VPS is unreachable
-     *   from the current underlying network — typically because a Chinese
-     *   carrier is blocking the node's IP after a Wi-Fi → cellular handover.
-     *   The user is still partially functional but YouTube/Google won't work
-     *   until they switch nodes.
+     *   from the current underlying network. The user is still partially
+     *   functional, but traffic that needs the selected node will not work
+     *   until they switch nodes or enable a Worker path.
      * - [Unreachable]: nothing responded. tun0 itself may be a black hole.
      */
     private enum class TunnelHealth {
@@ -1431,10 +1408,10 @@ class PrivateDeployVpnService : VpnService(), Platform {
             statusMessage = null,
         )
         TunnelHealth.UpstreamDegraded -> TunnelHealthOutcome(
-            notificationText = "VPN connected · upstream blocked, switch nodes",
+            notificationText = "VPN connected · upstream unavailable, switch nodes",
             statusMessage = "Tunnel is up, but this node's upstream can't be reached " +
-                "from your current network. Try Wi-Fi or switching to a different node " +
-                "— cellular carriers sometimes block VPS IPs.",
+                "from your current network. Try Wi-Fi, switching to a different node, " +
+                "or enabling your Cloudflare Worker endpoint.",
         )
         TunnelHealth.DirectRouteDegraded -> TunnelHealthOutcome(
             notificationText = "VPN connected · stabilizing direct routes",

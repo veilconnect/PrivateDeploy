@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy 安全模型</title>
+    <meta name="description" content="PrivateDeploy 如何处理云凭证、SSH key、节点密钥和预览版发布安全。">
+    <link rel="canonical" href="https://privatedeploy.org/zh/security/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/security/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/security/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/security/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/security/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/security/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/security/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/security/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/security/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/security/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/security/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/security/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/security/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/security/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="/zh/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/zh/">产品</a>
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/">文档</a>
+          <a href="/zh/security/" aria-current="page">安全</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>语言</button>
+            <div class="language-options" role="menu" aria-label="语言选择">
+              <a href="/security/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/security/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/security/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/security/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/security/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/security/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/security/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/security/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/security/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/security/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/security/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/security/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> 安全模型</p><h1>部署前先了解工具需要哪些凭证。</h1><p>PrivateDeploy 会自动化敏感基础设施。云 API key、SSH key、节点密码和订阅链接都应按生产密钥处理。</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid four">
+        <article class="card"><div class="icon-tile">K</div><h3>云 API key</h3><p>尽量使用最小权限 token。任何出现在日志、截图或测试输出中的 key 都应轮换。</p></article>
+        <article class="card"><div class="icon-tile">S</div><h3>SSH 材料</h3><p>DigitalOcean 恢复流程使用托管 ed25519 keypair，可 root 访问创建出的 Droplet。</p></article>
+        <article class="card"><div class="icon-tile">N</div><h3>节点凭证</h3><p>协议密码、UUID、Reality key 和分享链接都是密钥。</p></article>
+        <article class="card"><div class="icon-tile">L</div><h3>本地存储</h3><p>云厂商 token 和敏感配置应使用系统 keyring，而不是明文文件。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>预览版发布安全清单</h2><p>分发某个构建前，需要对该 tag 完成这些检查。</p></div><div class="matrix">
+        <div class="matrix-row matrix-head"><div>范围</div><div>门禁</div><div>必需结果</div></div>
+        <div class="matrix-row"><div>密钥扫描</div><div><span class="badge">必需</span></div><div>源码和产物中不能包含 API key、私钥、token、密码、节点链接或订阅 URL。</div></div>
+        <div class="matrix-row"><div>发布产物</div><div><span class="badge">必需</span></div><div>每个二进制文件都有 SHA256 校验值，并且来自同一个 commit/tag。</div></div>
+        <div class="matrix-row"><div>云厂商冒烟测试</div><div><span class="badge warn">按云厂商验证</span></div><div>创建、部署、连接、必要时恢复和删除都通过后，才能标为已验证。</div></div>
+        <div class="matrix-row"><div>iOS 支持</div><div><span class="badge warn">有条件</span></div><div>除非 VPNCore 和权限已在真机验证，否则 iOS 应标为需要自行构建。</div></div>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>数据处理</h2><p>PrivateDeploy 应作为本地优先的基础设施工具来评估。</p></div><div class="grid three">
+        <article class="card"><h3>不是托管网络服务</h3><p>项目不提供托管网络访问或共享代理服务器。你把节点部署到自己控制的账户和主机中。</p></article>
+        <article class="card"><h3>密钥始终敏感</h3><p>云 API key、托管 SSH key、节点密码、UUID 和订阅链接不应粘贴到公开 issue。</p></article>
+        <article class="card"><h3>报告漏洞</h3><p>非敏感 bug 可使用 GitHub issues。涉及可利用问题时，应使用私有安全报告渠道。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="grid two"><div><h2>负责任使用</h2><p class="muted">PrivateDeploy 只能用于你拥有或被授权管理的基础设施和账户。部署前请审阅云厂商条款。</p></div><div class="terminal"><div class="terminal-head"><span>本地发布门禁</span><button class="button" type="button" data-copy="bash scripts/check_versions.sh&#10;scripts/secret_scan.sh" data-copied="已复制" data-copy-failed="复制失败">复制</button></div><pre><code>bash scripts/check_versions.sh
+scripts/secret_scan.sh</code></pre></div></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/">文档</a>
+          <a href="/zh/security/">安全</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

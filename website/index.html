@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en" data-auto-language>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy - self-hosted infrastructure deployment</title>
+    <meta
+      name="description"
+      content="PrivateDeploy provisions hardened multi-protocol VPS proxies and connects desktop, mobile, and API clients to them."
+    >
+    <link rel="canonical" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="PrivateDeploy home">
+          <img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36">
+          <span>PrivateDeploy</span>
+        </a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" data-nav-toggle>
+          <span></span>
+        </button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/" aria-current="page">Product</a>
+          <a href="/download/">Download</a>
+          <a href="/docs/">Docs</a>
+          <a href="/security/">Security</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>Language</button>
+            <div class="language-options" role="menu" aria-label="Language selector">
+              <a href="/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow"><span class="status-dot"></span> Beta / Preview ready</p>
+          <h1>PrivateDeploy</h1>
+          <p class="hero-copy">
+            Self-hosted infrastructure deployment with a desktop client, Android companion, and Go API.
+            Create a server, deploy multiple protocols, and see the local proxy ports without digging through settings.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="/download/">Download preview</a>
+            <a class="button" href="/docs/">Read quick start</a>
+            <a class="button" href="/security/">Review security model</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Built for running your own nodes.</h2>
+            <p>
+              PrivateDeploy is not only a local proxy client. It creates VPS nodes,
+              deploys credentials, syncs protocol links, and exposes local ports in one place.
+            </p>
+          </div>
+          <div class="grid four">
+            <article class="card">
+              <div class="icon-tile">01</div>
+              <h3>Cloud provisioning</h3>
+              <p>Create and remove VPS nodes through supported cloud providers and SSH-reachable hosts.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">02</div>
+              <h3>Multi-protocol deploy</h3>
+              <p>Bring up Shadowsocks, Hysteria2, VLESS-Reality, and Trojan when the target plan supports it.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">03</div>
+              <h3>Visible local ports</h3>
+              <p>Mixed, HTTP, and SOCKS ports are visible on the overview page and can be copied directly.</p>
+            </article>
+            <article class="card">
+              <div class="icon-tile">04</div>
+              <h3>Desktop, mobile, API</h3>
+              <p>Use the Wails desktop app, Android companion, or standalone Go HTTP API for headless workflows.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>A dashboard designed around operational clarity.</h2>
+            <p>
+              The desktop app surfaces runtime state, traffic, mode, and local proxy ports in the first view.
+              The cloud panel keeps protocol ports and share links close to each node.
+            </p>
+          </div>
+          <div class="product-preview">
+            <img src="/assets/app-overview-v2.png" alt="PrivateDeploy desktop overview showing traffic, proxy ports, and operating mode">
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Current release posture.</h2>
+            <p>
+              The software has release value today, but the responsible label is Beta / Preview until the full
+              GO/NO-GO checklist passes on real platforms and cloud providers.
+            </p>
+          </div>
+          <div class="matrix">
+            <div class="matrix-row matrix-head">
+              <div>Surface</div>
+              <div>Status</div>
+              <div>Release note</div>
+            </div>
+            <div class="matrix-row">
+              <div>Desktop</div>
+              <div><span class="badge">Preview ready</span></div>
+              <div>Core tests and build gates pass; install packages still need platform-by-platform release checks.</div>
+            </div>
+            <div class="matrix-row">
+              <div>Android</div>
+              <div><span class="badge">Preview ready</span></div>
+              <div>Native Android tunnel flow is implemented and covered by tests; final APK signing and device smoke checks remain release gates.</div>
+            </div>
+            <div class="matrix-row">
+              <div>iOS</div>
+              <div><span class="badge warn">Build required</span></div>
+              <div>Requires VPNCore.framework, App Group, and Network Extension entitlements before VPN control is turnkey.</div>
+            </div>
+            <div class="matrix-row">
+              <div>Cloud providers</div>
+              <div><span class="badge warn">Needs smoke tests</span></div>
+              <div>Declare only providers that pass create, deploy, connect, and delete tests for the published build.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>From VPS to usable proxy in one flow.</h2>
+            <p>
+              The expected path is deliberately short: provide cloud credentials, create a node,
+              review the generated ports and links, then use the endpoint locally or in another client.
+            </p>
+          </div>
+          <div class="grid three workflow">
+            <article class="card step">
+              <h3>Add provider credentials</h3>
+              <p>Paste a cloud API key or use an SSH-reachable host. Provider credentials stay part of the security model.</p>
+            </article>
+            <article class="card step">
+              <h3>Deploy protocols</h3>
+              <p>PrivateDeploy handles user-data, firewall rules, service setup, and credential persistence.</p>
+            </article>
+            <article class="card step">
+              <h3>Connect and copy</h3>
+              <p>Use the local Mixed, HTTP, or SOCKS ports, or copy protocol links into sing-box, Clash, v2rayN, or Hiddify.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section tight alt">
+        <div class="container">
+          <div class="grid two">
+            <div>
+              <h2>Ready to evaluate the preview?</h2>
+              <p class="muted">
+                Start with the release notes and the quick start. Use infrastructure you own or are authorized to manage.
+              </p>
+            </div>
+            <div class="button-row">
+              <a class="button primary" href="/download/">Download</a>
+              <a class="button" href="/docs/">Quick start</a>
+              <a class="button" href="/github">Source code</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/download/">Download</a>
+          <a href="/docs/">Docs</a>
+          <a href="/security/">Security</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

@@ -21,15 +21,13 @@ class CdnEndpoint {
 
   final String host;
 
-  /// Optional hand-picked Cloudflare edge IP ("优选IP"). When set, the builder
+  /// Optional hand-picked Cloudflare edge IP ("preferred edge IP"). When set, the builder
   /// adds an EXTRA CDN outbound that dials this IP directly on :443 while still
   /// presenting [host] as the TLS SNI + WebSocket `Host` header, so CF routes
-  /// it to the same Worker. This is the standard China technique to bypass
-  /// Cloudflare GeoDNS handing CN clients a throttled edge IP — mirrors how
-  /// 魔戒-class airports pin their entry to a fast, reachable relay IP. The
-  /// DNS-resolved custom-host and workers.dev paths are kept alongside it, so
-  /// urltest gets three independent entry points and self-heals if any one is
-  /// altered/blocked. Empty/null = unchanged behaviour (no pinned outbound).
+  /// it to the same Worker. The DNS-resolved custom-host and workers.dev paths
+  /// are kept alongside it, so urltest gets independent entry points and can
+  /// self-heal when one path is temporarily unhealthy. Empty/null = unchanged
+  /// behaviour (no pinned outbound).
   final String? preferredEdgeIp;
 
   /// Per-deployment 32-hex random injected into the Worker as PATH_SECRET.
@@ -43,16 +41,13 @@ class CdnEndpoint {
   /// gets two paths to the same relay.
   ///
   /// Why this exists: the previous design used a single client-side TLS
-  /// probe to decide whether to route via the M1 custom domain or the
-  /// `*.workers.dev` fallback. On regional mobile network both `*.workers.dev` and
-  /// the custom domain can be altered by different operators in
-  /// different ways — and the probe runs from the very network we're
-  /// trying to fix, so it's unreliable in exactly the scenario where
-  /// the user needs M1 most. Giving sing-box BOTH hostnames lets
-  /// urltest's connection-time test pick whichever the carrier
-  /// actually lets through, no client probe needed.
+  /// probe to decide whether to route via the custom domain or the
+  /// `*.workers.dev` fallback. On some networks either hostname can fail in
+  /// different ways, and the probe runs from the same network we're trying to
+  /// improve. Giving sing-box both hostnames lets urltest's connection-time
+  /// test pick whichever path works, no client probe needed.
   ///
-  /// Typically [host] is the M1 custom domain and [fallbackHost] is
+  /// Typically [host] is the custom domain and [fallbackHost] is
   /// the `*.workers.dev` URL — but the builder makes no assumption
   /// either way; both go into the urltest pool with equal weight.
   final String? fallbackHost;
@@ -223,20 +218,17 @@ Map<String, String> _appendInstanceOutbounds(
 
   // CDN-fronted variant(s). Routed to a Cloudflare Worker host that
   // relays WS↔TCP to the node's vlessRelayPort. The caller resolves
-  // cdnEndpoint to the user's M1 custom-domain (preferred — bypasses
-  // the *.workers.dev DNS-poisoning that some carriers apply); if a
+  // cdnEndpoint to the user's custom domain when bound; if a
   // sibling `fallbackHost` is also supplied (typically the `*.workers.dev`
   // form), we emit a SECOND outbound pointing at it.
   //
   // Why two outbounds: the previous design used a single client-side
   // TLS probe to gate which hostname was wired into the config, and
-  // fell back to a single workers.dev outbound on probe failure. But
-  // on the broken cellular networks where M1 is most needed, the probe
-  // runs through the SAME broken network and never succeeds — leaving
-  // the user permanently on the workers.dev path that the carrier is
-  // also DNS-poisoning. Giving sing-box BOTH hostnames lets urltest's
-  // connection-time test pick whichever one the carrier actually lets
-  // through, no client-side probe needed.
+  // fell back to a single workers.dev outbound on probe failure. On the
+  // networks where the custom domain is most useful, the probe runs through
+  // the same unhealthy network and may never succeed. Giving sing-box both
+  // hostnames lets urltest pick whichever one works, no client-side probe
+  // needed.
   //
   // The path always carries the per-deployment PATH_SECRET as ?k=<secret>
   // (when present). The Worker rejects every request that doesn't match
@@ -269,8 +261,9 @@ Map<String, String> _appendInstanceOutbounds(
       final tag = '$label-$tagSuffix';
       // 优选IP: when dialIp is given we connect the TCP socket to that IP but
       // keep SNI + WS Host = [host], so Cloudflare still routes to the Worker.
-      // No DNS lookup happens for an IP literal, which is the whole point —
-      // we sidestep CF GeoDNS's throttled regional edge.
+      // No DNS lookup happens for an IP literal, which is the point: it lets
+      // advanced users pin a known-good Cloudflare edge address for their
+      // current network.
       final dialTarget = (dialIp != null && dialIp.isNotEmpty) ? dialIp : host;
       outbounds.add({
         'type': 'vless',
@@ -297,7 +290,7 @@ Map<String, String> _appendInstanceOutbounds(
           // overrides the `alpn` field above when fingerprint=chrome. CF
           // then picks h2 → Upgrade header gets stripped → Worker returns
           // 404 → urltest deems CDN outbound dead → falls back to bare VPS
-          // → cellular connectivity failures bare VPS → user reports "still can't
+          // → direct node reachability fails → user reports "still can't
           // connect" while curl from the same device gets 101 (because
           // curl --http1.1 forces HTTP/1.1).
           //
@@ -366,13 +359,12 @@ String? buildCloudNodeConfig(
   // PATH_SECRET on the WS path so the Worker accepts the request. The
   // Worker relays WS frames to the node's vlessRelayPort over plain TCP
   // — see docs/cdn-acceleration. The CDN variant joins the urltest pool
-  // so sing-box auto-fails over from direct → CDN when the carrier
-  // blocks the direct path.
+  // so sing-box auto-fails over from direct to CDN when the direct path is
+  // unhealthy.
   CdnEndpoint? cdnEndpoint,
   // Other cloud nodes to enroll in the same urltest failover pool. When the
-  // active node's IP is dropped by the carrier (e.g. mobile carrier silently
-  // blackholing some VPS ranges on cellular), sing-box urltest will pick a
-  // working failover node automatically. Failover only applies in "auto"
+  // active node is unreachable from the current network, sing-box urltest will
+  // pick a working failover node automatically. Failover only applies in "auto"
   // mode — if [preferredEndpointLabel] pins a protocol, the user explicitly
   // wants that one outbound and we honor it.
   List<CloudInstance> failoverInstances = const [],
@@ -409,11 +401,9 @@ String? buildCloudNodeConfig(
   // Always promote `<label>-CDN` to the front when present, independent of
   // the edge443 rule. urltest probes pool members in order until one passes,
   // so a member that's positioned first is the one users converge to fastest
-  // when everything else is timing out. On carrier-filtered networks
-  // (notably mobile carrier cellular) every bare-VPS-IP probe burns ~8 s
-  // before failing — if CDN sits at position 3, that's 24 s of dead air
-  // before failover. Putting CDN first means the urltest selector tries
-  // the Cloudflare-edge path immediately; if the bare IPs happen to work
+  // when everything else is timing out. On networks where direct probes burn
+  // several seconds before failing, putting CDN first means the urltest
+  // selector tries the Worker path immediately; if the direct node happens to work
   // (Wi-Fi), the 200 ms tolerance still lets a faster direct member win.
   _putCdnFirst(outbounds: outbounds, tags: tags);
 
@@ -607,8 +597,8 @@ String? buildCloudNodeConfig(
           // IP-literal so the urltest probe never has to resolve a hostname.
           // The DNS module's "any" rule routes through dns-remote (DoH 1.1.1.1)
           // with detour: select → auto → urltest's first member. If that
-          // member is unreachable (carrier blocking the VPS IP, captive
-          // portal, etc.) DNS hangs, no probe ever fires, and urltest can't
+          // member is unreachable (network policy, captive portal, etc.) DNS
+          // hangs, no probe ever fires, and urltest can't
           // discover the working failover member it already has in pool.
           // 1.0.0.1 is Cloudflare's anycast resolver; /cdn-cgi/trace returns
           // a small 200 OK so any 2xx counts as reachable for urltest.

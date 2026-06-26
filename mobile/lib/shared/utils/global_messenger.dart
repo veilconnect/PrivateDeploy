@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 /// Wired into [MaterialApp.scaffoldMessengerKey] in `main.dart`. Without
 /// this key, the Gate ① auto-deploy path could only `print()` its
 /// progress, so users had no idea their Cloudflare account was being
-/// touched on their behalf during a cellular connectivity failure recovery.
+/// touched on their behalf during automatic direct-reachability recovery.
 final GlobalKey<ScaffoldMessengerState> globalScaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
 

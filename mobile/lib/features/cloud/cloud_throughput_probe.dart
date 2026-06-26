@@ -16,7 +16,7 @@ const Duration defaultCloudBenchmarkSampleWindow = Duration(seconds: 6);
 
 /// Number of parallel HTTP connections used when sampling throughput. A
 /// single connection is dominated by per-RTT window growth on long paths
-/// (e.g. China -> Singapore Vultr); 4 parallel streams reliably saturate
+/// (for example, a distant client and VPS region); 4 parallel streams reliably saturate
 /// the link like a real browser/CDN workload.
 const int defaultCloudBenchmarkConcurrency = 4;
 

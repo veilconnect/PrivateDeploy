@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrivateDeploy 文档</title>
+    <meta name="description" content="部署并连接 PrivateDeploy 节点的快速入门文档。">
+    <link rel="canonical" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="en" href="https://privatedeploy.org/docs/">
+    <link rel="alternate" hreflang="zh-CN" href="https://privatedeploy.org/zh/docs/">
+    <link rel="alternate" hreflang="es" href="https://privatedeploy.org/es/docs/">
+    <link rel="alternate" hreflang="fr" href="https://privatedeploy.org/fr/docs/">
+    <link rel="alternate" hreflang="de" href="https://privatedeploy.org/de/docs/">
+    <link rel="alternate" hreflang="ja" href="https://privatedeploy.org/ja/docs/">
+    <link rel="alternate" hreflang="ko" href="https://privatedeploy.org/ko/docs/">
+    <link rel="alternate" hreflang="pt" href="https://privatedeploy.org/pt/docs/">
+    <link rel="alternate" hreflang="ru" href="https://privatedeploy.org/ru/docs/">
+    <link rel="alternate" hreflang="ar" href="https://privatedeploy.org/ar/docs/">
+    <link rel="alternate" hreflang="hi" href="https://privatedeploy.org/hi/docs/">
+    <link rel="alternate" hreflang="id" href="https://privatedeploy.org/id/docs/">
+    <link rel="alternate" hreflang="x-default" href="https://privatedeploy.org/docs/">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/site-v5.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="/zh/"><img class="brand-logo" src="/assets/logo.svg" alt="" width="36" height="36"><span>PrivateDeploy</span></a>
+        <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-nav-toggle><span></span></button>
+        <div class="nav-links" data-nav-menu>
+          <a href="/zh/">产品</a>
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/" aria-current="page">文档</a>
+          <a href="/zh/security/">安全</a>
+          <a href="/github">GitHub</a>
+          <div class="language-menu" data-language-menu>
+            <button class="language-toggle" type="button" aria-expanded="false" data-language-toggle>语言</button>
+            <div class="language-options" role="menu" aria-label="语言选择">
+              <a href="/docs/" lang="en"><span class="language-native">English</span><span class="language-code">EN</span></a>
+              <a href="/zh/docs/" lang="zh-CN"><span class="language-native">中文</span><span class="language-code">ZH</span></a>
+              <a href="/es/docs/" lang="es"><span class="language-native">Español</span><span class="language-code">ES</span></a>
+              <a href="/fr/docs/" lang="fr"><span class="language-native">Français</span><span class="language-code">FR</span></a>
+              <a href="/de/docs/" lang="de"><span class="language-native">Deutsch</span><span class="language-code">DE</span></a>
+              <a href="/ja/docs/" lang="ja"><span class="language-native">日本語</span><span class="language-code">JA</span></a>
+              <a href="/ko/docs/" lang="ko"><span class="language-native">한국어</span><span class="language-code">KO</span></a>
+              <a href="/pt/docs/" lang="pt"><span class="language-native">Português</span><span class="language-code">PT</span></a>
+              <a href="/ru/docs/" lang="ru"><span class="language-native">Русский</span><span class="language-code">RU</span></a>
+              <a href="/ar/docs/" lang="ar"><span class="language-native">العربية</span><span class="language-code">AR</span></a>
+              <a href="/hi/docs/" lang="hi"><span class="language-native">हिन्दी</span><span class="language-code">HI</span></a>
+              <a href="/id/docs/" lang="id"><span class="language-native">Bahasa Indonesia</span><span class="language-code">ID</span></a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-title"><div class="container"><p class="eyebrow"><span class="status-dot"></span> 快速入门</p><h1>部署节点并找到本地代理端口。</h1><p>安装桌面端、添加云厂商、创建 VPS 节点，然后在本地使用 Mixed、HTTP 或 SOCKS 端口。</p></div></section>
+      <section class="section alt"><div class="container"><div class="grid three workflow">
+        <article class="card step"><h3>安装预览版</h3><p>下载适合平台的安装包，并在启动前校验 checksum。</p></article>
+        <article class="card step"><h3>添加云凭证</h3><p>使用只包含实例和防火墙管理权限的测试 API key。</p></article>
+        <article class="card step"><h3>创建节点</h3><p>选择支持的地域和套餐。更高内存套餐可部署完整协议栈。</p></article>
+        <article class="card step"><h3>查看协议详情</h3><p>检查 SS、Hysteria2、VLESS-Reality 和 Trojan 的端口与链接。</p></article>
+        <article class="card step"><h3>使用本地端口</h3><p>概览页直接显示 Mixed、HTTP 和 SOCKS 端口。</p></article>
+        <article class="card step"><h3>导入其他客户端</h3><p>把协议链接复制到 sing-box、Clash、v2rayN、Hiddify 或其他客户端。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>本地端点格式</h2><p>这些格式来自桌面端概览页的端口面板。</p></div><div class="grid three">
+        <article class="card dark"><h3>Mixed</h3><p>按主机和端口复制。</p><div class="terminal"><pre><code>127.0.0.1:7890</code></pre></div></article>
+        <article class="card dark"><h3>HTTP</h3><p>用于需要 HTTP 代理 URL 的应用。</p><div class="terminal"><pre><code>http://127.0.0.1:7891</code></pre></div></article>
+        <article class="card dark"><h3>SOCKS</h3><p>用于支持 SOCKS5 端点的工具。</p><div class="terminal"><pre><code>socks5://127.0.0.1:7892</code></pre></div></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="section-heading"><h2>云厂商凭证建议</h2><p>评估时使用专用测试 token，不要复用个人全权限 token。</p></div><div class="grid three">
+        <article class="card"><h3>Vultr</h3><p>使用可创建实例、管理防火墙、读取元数据并删除测试节点的 key。</p></article>
+        <article class="card"><h3>DigitalOcean</h3><p>使用可创建 Droplet 和 SSH key 的 token。恢复流程会使用托管 SSH key。</p></article>
+        <article class="card"><h3>SSH host</h3><p>只使用你拥有或被授权管理的主机。部署需要安装服务和防火墙规则的权限。</p></article>
+      </div></div></section>
+      <section class="section"><div class="container"><div class="section-heading"><h2>常见失败</h2><p>预览版问题大多落在以下几类。</p></div><div class="grid three">
+        <article class="card"><h3>云厂商拒绝请求</h3><p>检查 token 权限、账户余额、地域可用性和实例配额。</p></article>
+        <article class="card"><h3>SSH 一直未就绪</h3><p>等待 cloud-init 完成，确认防火墙访问，并检查镜像支持 SSH。</p></article>
+        <article class="card"><h3>本地端口无法连接</h3><p>确认内核运行中，系统代理/TUN 状态正确，并且节点链路健康。</p></article>
+      </div></div></section>
+      <section class="section alt"><div class="container"><div class="grid two"><div><h2>更深入的项目文档</h2><p class="muted">仓库中包含架构、API、多云和发布门禁文档。</p></div><ul class="link-list">
+        <li><a href="/github">仓库 README</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/ARCHITECTURE.md">架构</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/API_DESIGN.md">API 设计</a></li>
+        <li><a href="https://github.com/veilconnect/PrivateDeploy/blob/main/docs/GO-NO-GO-CHECKLIST.md">发布检查清单</a></li>
+      </ul></div></div></section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div>PrivateDeploy</div>
+        <div class="footer-links">
+          <a href="/zh/download/">下载</a>
+          <a href="/zh/docs/">文档</a>
+          <a href="/zh/security/">安全</a>
+          <a href="/github">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="/assets/site-v5.js"></script>
+  </body>
+</html>

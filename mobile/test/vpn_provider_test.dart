@@ -1513,7 +1513,7 @@ void main() {
     });
 
     test(
-        'cellular connectivity failure invokes the auto-CDN-deploy handler exactly '
+        'direct reachability failure invokes the auto-CDN-deploy handler exactly '
         'once per profile name and clears the guidance banner on success',
         () async {
       // Connect first so the provider has an active profile name to
@@ -1553,7 +1553,7 @@ void main() {
         return handlerResult;
       });
 
-      // First connectivity failure broadcast: handler must fire.
+      // First direct-reachability failure broadcast: handler must fire.
       vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
         running: false,
         status: 'error',
@@ -1565,7 +1565,7 @@ void main() {
       // completes.
       await Future<void>.delayed(Duration.zero);
       expect(invocations, ['Cloud: blocked-node'],
-          reason: 'auto-CDN handler must fire on connectivity failure');
+          reason: 'auto-CDN handler must fire on direct-reachability failure');
       expect(vpnProvider.needsCdnGuidance, false,
           reason: 'handler returning true clears the banner');
 
@@ -1581,15 +1581,15 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(invocations, ['Cloud: blocked-node'],
           reason:
-              'second connectivity failure on same profile must not re-invoke the handler');
+              'second direct-reachability failure on same profile must not re-invoke the handler');
     });
 
     test(
-        'cellular connectivity failure error sets needsCdnGuidance until a healthy '
+        'direct reachability error sets needsCdnGuidance until a healthy '
         'connect (or explicit dismiss) clears it', () async {
       expect(vpnProvider.needsCdnGuidance, false);
 
-      // Native side reports the carrier-connectivity failure flavor of start failure.
+      // Native side reports the direct-reachability failure flavor of start failure.
       vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
         running: false,
         status: 'error',
@@ -1598,7 +1598,7 @@ void main() {
         uptime: 0,
       ));
       expect(vpnProvider.needsCdnGuidance, true,
-          reason: 'banner must rise on carrier-connectivity failure error broadcast');
+          reason: 'banner must rise on direct-reachability failure broadcast');
 
       // A healthy connected transition resolves the situation — the user
       // (or auto-CDN-deploy) made the tunnel work, banner goes away.

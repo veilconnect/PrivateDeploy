@@ -329,7 +329,7 @@ abstract class AppLocalizations {
   /// No description provided for @tunnelUpstreamDegradedMessageLocalized.
   ///
   /// In en, this message translates to:
-  /// **'Tunnel is up, but this node\'s upstream can\'t be reached from your current network. Try Wi-Fi or switching to a different node — cellular carriers sometimes block VPS IPs.'**
+  /// **'Tunnel is up, but this node\'s upstream can\'t be reached from your current network. Try Wi-Fi, switching to a different node, or enabling your Cloudflare Worker endpoint.'**
   String get tunnelUpstreamDegradedMessageLocalized;
 
   /// No description provided for @tunnelDirectRouteDegradedMessageLocalized.
@@ -341,13 +341,13 @@ abstract class AppLocalizations {
   /// No description provided for @cdnGuidanceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Cellular carrier appears to be blocking this node'**
+  /// **'Current network cannot reach this node'**
   String get cdnGuidanceTitle;
 
   /// No description provided for @cdnGuidanceBody.
   ///
   /// In en, this message translates to:
-  /// **'Every attempt to reach the configured node failed while on cellular data. Some carriers (notably mobile carrier) drop packets to known VPS IPs. Set up CDN acceleration to route through a Cloudflare edge IP that carriers don\'t filter.'**
+  /// **'Every attempt to reach the configured node failed on the current network. Set up CDN acceleration to use a Cloudflare Worker endpoint you control.'**
   String get cdnGuidanceBody;
 
   /// No description provided for @cdnGuidanceConfigure.
@@ -371,7 +371,7 @@ abstract class AppLocalizations {
   /// No description provided for @cdnGuidanceBodyDeployed.
   ///
   /// In en, this message translates to:
-  /// **'The Worker is deployed, but routing through the CDN still can\'t reach the node. The node itself may be offline, the Worker→VPS link may be down, or this network is filtering Cloudflare too. Try switching to a different node, or re-deploy the Worker from CDN settings.'**
+  /// **'The Worker is deployed, but the CDN path still can\'t reach the node. The node itself may be offline, the Worker→VPS link may be down, or the current network may not reach the Worker endpoint. Try switching to a different node, or re-deploy the Worker from CDN settings.'**
   String get cdnGuidanceBodyDeployed;
 
   /// No description provided for @cdnGuidanceActionSwitchNode.
@@ -401,7 +401,7 @@ abstract class AppLocalizations {
   /// No description provided for @cdnGuidanceHowItWorksBody.
   ///
   /// In en, this message translates to:
-  /// **'Cellular carriers sometimes drop packets to known VPS IPs, so the VPN tunnel can come up but no traffic actually flows.\n\nCDN acceleration routes your client through a Cloudflare edge IP first; a Cloudflare Worker then forwards the encrypted bytes to your VPS. Carriers don\'t filter Cloudflare\'s address ranges.\n\nIt runs on your own free Cloudflare account, end-to-end encryption stays intact — Cloudflare sees only opaque ciphertext, never your VLESS credentials or what sites you visit.'**
+  /// **'Some networks cannot reach a VPS address directly, so the tunnel can be established but traffic does not flow.\n\nCDN acceleration lets the client connect to a Cloudflare Worker endpoint first; the Worker forwards encrypted bytes to your VPS relay.\n\nIt runs in your own Cloudflare account. The relay does not store your VLESS credentials or inspect destination content.'**
   String get cdnGuidanceHowItWorksBody;
 
   /// No description provided for @cdnGuidanceHowItWorksClose.
@@ -413,7 +413,7 @@ abstract class AppLocalizations {
   /// No description provided for @cellularCarrierSynBlockMessageLocalized.
   ///
   /// In en, this message translates to:
-  /// **'Cellular carrier appears to be blocking the configured node\'s IP — tunnel is up but no offshore traffic reached it. Enable CDN acceleration in settings to route via a Cloudflare edge IP instead.'**
+  /// **'Current network cannot reach the configured node directly. Enable CDN acceleration in settings to use your Cloudflare Worker endpoint.'**
   String get cellularCarrierSynBlockMessageLocalized;
 
   /// No description provided for @cellularHelpTitle.
@@ -1799,19 +1799,19 @@ abstract class AppLocalizations {
   /// No description provided for @routingTagCnAppsDirect.
   ///
   /// In en, this message translates to:
-  /// **'regional apps direct'**
+  /// **'Regional apps direct'**
   String get routingTagCnAppsDirect;
 
   /// No description provided for @routingTagCnDomainsDirect.
   ///
   /// In en, this message translates to:
-  /// **'CN domains direct'**
+  /// **'Regional domains direct'**
   String get routingTagCnDomainsDirect;
 
   /// No description provided for @routingTagCnIpsDirect.
   ///
   /// In en, this message translates to:
-  /// **'CN IPs direct'**
+  /// **'Regional IPs direct'**
   String get routingTagCnIpsDirect;
 
   /// No description provided for @profileContentSaved.
@@ -1991,7 +1991,7 @@ abstract class AppLocalizations {
   /// No description provided for @routingModeDesc.
   ///
   /// In en, this message translates to:
-  /// **'LAN direct · regional apps direct · CN domains direct · CN IPs direct'**
+  /// **'LAN direct · regional apps direct · regional domains direct · regional IPs direct'**
   String get routingModeDesc;
 
   /// No description provided for @vpnDiagnostics.
@@ -2453,7 +2453,7 @@ abstract class AppLocalizations {
   /// No description provided for @cnOptimizedDns.
   ///
   /// In en, this message translates to:
-  /// **'regional optimized DNS'**
+  /// **'Regional optimized DNS'**
   String get cnOptimizedDns;
 
   /// No description provided for @strictProxyDns.
