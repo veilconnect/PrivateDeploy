@@ -13,6 +13,20 @@
 
 - 暂无未发布的说明。
 
+## [2.0.13] - 2026-06-29
+
+### 变更
+- **内部重构(无行为变化)**:将云 provider 间重复的辅助函数收敛到共享的
+  `internal/provutil` 包(Vultr / DigitalOcean / SSH / 静态 catalog 四端);把独立
+  HTTP API 的数据模型(`Subscription`、`Profile`、VPN 状态/统计 DTO)抽到专门的
+  `api/models` 包;并把移动端过大的 `cloud_provider.dart` 中的顶层探测/记录辅助
+  函数拆到聚焦的 `part` 文件。
+
+### 测试
+- **更强的跨端防漂移守卫**:Go↔Dart parity 测试现在断言 sing-box 压缩包的
+  SHA-256 pin 在两端逐字节一致(不再只比版本号),保持默认 SNI 伪装域名同步,
+  并检查更多 SSH 加固指令在两端部署脚本中都存在。
+
 ## [2.0.12] - 2026-06-24
 
 ### 新增

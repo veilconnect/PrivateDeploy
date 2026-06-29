@@ -13,6 +13,22 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.13] - 2026-06-29
+
+### Changed
+- **Internal refactors (no behavior change)**: consolidated duplicated cloud
+  provider helpers into a shared `internal/provutil` package across Vultr,
+  DigitalOcean, SSH, and the static catalog; extracted the standalone HTTP API's
+  data models (`Subscription`, `Profile`, VPN status/stats DTOs) into a dedicated
+  `api/models` package; and split the mobile app's oversized `cloud_provider.dart`
+  top-level probe/record helpers into focused `part` files.
+
+### Tests
+- **Stronger cross-surface drift guard**: the Go↔Dart parity test now asserts the
+  sing-box tarball SHA-256 pins are byte-identical across ends (not just the
+  version strings), keeps the default SNI camouflage hostnames in lockstep, and
+  checks more SSH-hardening directives appear in both ends' deploy scripts.
+
 ## [2.0.12] - 2026-06-24
 
 ### Added
