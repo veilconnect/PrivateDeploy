@@ -18,6 +18,7 @@ import (
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 
 	"golang.org/x/net/proxy"
 )
@@ -61,7 +62,7 @@ func (p *Provider) ensureProtocolReadinessWithRepair(
 	), defaultProtocolProbeURL)
 	probeTimeout := parseProtocolProbeTimeout(extra, defaultProtocolProbeTimeout)
 	repairAttempts := parseProtocolRepairAttempts(extra, defaultProtocolRepairAttempts)
-	readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+	readyTimeout := provutil.ParseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
 	readyPorts := []int{ports.SSPort, ports.VLESSPort, ports.TrojanPort}
 
 	var lastErr error

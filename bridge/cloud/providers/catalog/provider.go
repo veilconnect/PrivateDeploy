@@ -37,6 +37,7 @@ import (
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 )
 
 const (
@@ -364,7 +365,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		label = fmt.Sprintf("pd-%s-%d", p.name, time.Now().Unix())
 	}
 
-	extra := mergeExtra(cfg.Extra, opts.Extra)
+	extra := provutil.MergeExtra(cfg.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
 	ports := deploy.AllocatePorts(tuning.PortProfile)
 

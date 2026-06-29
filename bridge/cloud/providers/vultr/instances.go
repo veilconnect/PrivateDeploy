@@ -12,6 +12,7 @@ import (
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 )
 
 // instanceCredentials holds generated credentials for a deployment.
@@ -183,7 +184,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, err
 	}
 
-	extra := mergeExtra(cfg.Extra, opts.Extra)
+	extra := provutil.MergeExtra(cfg.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
 
 	planRAM, err := p.getPlanRAM(ctx, opts.Plan)
@@ -258,7 +259,7 @@ func (p *Provider) generateDeploymentPayload(planRAM int, tuning deploy.Deployme
 	if err != nil {
 		return creds, "", fmt.Errorf("failed to generate reality key pair: %w", err)
 	}
-	creds.realityShortID = generateShortID()
+	creds.realityShortID = provutil.GenerateShortID()
 
 	userData := deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
 		SSPort:           creds.ports.SSPort,
@@ -409,7 +410,7 @@ func (p *Provider) waitForServiceReady(ctx context.Context, ip string, ports dep
 	if planRAM > 600 {
 		readyPorts = append(readyPorts, ports.VLESSPort, ports.TrojanPort)
 	}
-	readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+	readyTimeout := provutil.ParseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
 	if readyErr := p.waitForTCPPorts(ctx, ip, readyPorts, readyTimeout); readyErr != nil {
 		fmt.Printf("[VultrProvider] Warning: %v\n", readyErr)
 	}

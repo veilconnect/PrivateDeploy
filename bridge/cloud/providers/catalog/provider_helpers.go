@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -289,21 +288,6 @@ func upcloudCredentials(cfg *cloud.ProviderConfig) (string, string, error) {
 	return username, password, nil
 }
 
-func mergeExtra(base, override map[string]string) map[string]string {
-	merged := make(map[string]string, len(base)+len(override))
-	for k, v := range base {
-		if strings.TrimSpace(k) != "" {
-			merged[k] = v
-		}
-	}
-	for k, v := range override {
-		if strings.TrimSpace(k) != "" {
-			merged[k] = v
-		}
-	}
-	return merged
-}
-
 func firstPublicIPv4(list []string) string {
 	for _, ip := range list {
 		trimmed := strings.TrimSpace(ip)
@@ -313,53 +297,6 @@ func firstPublicIPv4(list []string) string {
 		return trimmed
 	}
 	return ""
-}
-
-func uniquePositivePorts(ports []int) []int {
-	seen := make(map[int]struct{}, len(ports))
-	out := make([]int, 0, len(ports))
-	for _, port := range ports {
-		if port <= 0 {
-			continue
-		}
-		if _, ok := seen[port]; ok {
-			continue
-		}
-		seen[port] = struct{}{}
-		out = append(out, port)
-	}
-	return out
-}
-
-func pendingTCPPorts(ip string, ports []int, timeout time.Duration) []int {
-	if strings.TrimSpace(ip) == "" || len(ports) == 0 {
-		return ports
-	}
-	pending := make([]int, 0, len(ports))
-	for _, port := range ports {
-		if !isTCPPortReachable(ip, port, timeout) {
-			pending = append(pending, port)
-		}
-	}
-	return pending
-}
-
-func isTCPPortReachable(ip string, port int, timeout time.Duration) bool {
-	addr := net.JoinHostPort(ip, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
-}
-
-func portsToCSV(ports []int) string {
-	parts := make([]string, 0, len(ports))
-	for _, port := range ports {
-		parts = append(parts, strconv.Itoa(port))
-	}
-	return strings.Join(parts, ",")
 }
 
 // ensureManagedTLSDefaults delegates to the shared cloud implementation so the

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 	"strconv"
 	"strings"
 	"time"
@@ -706,7 +707,7 @@ func (p *Provider) getRemoteInstance(ctx context.Context, remoteID string) (remo
 }
 
 func (p *Provider) waitForInstanceAndTCPPorts(ctx context.Context, instanceID string, ports []int, timeout time.Duration) (*cloud.Instance, error) {
-	requiredPorts := uniquePositivePorts(ports)
+	requiredPorts := provutil.UniquePositivePorts(ports)
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -721,11 +722,11 @@ func (p *Provider) waitForInstanceAndTCPPorts(ctx context.Context, instanceID st
 		} else if instance != nil {
 			status := strings.ToLower(strings.TrimSpace(instance.Status))
 			if (status == "active" || status == "running") && strings.TrimSpace(instance.IPv4) != "" {
-				pending := pendingTCPPorts(instance.IPv4, requiredPorts, catalogReadyDialTimeout)
+				pending := provutil.PendingTCPPorts(instance.IPv4, requiredPorts, catalogReadyDialTimeout)
 				if len(pending) == 0 {
 					return instance, nil
 				}
-				lastErr = fmt.Errorf("pending tcp ports on %s: %s", instance.IPv4, portsToCSV(pending))
+				lastErr = fmt.Errorf("pending tcp ports on %s: %s", instance.IPv4, provutil.PortsToCSV(pending))
 			} else {
 				lastErr = fmt.Errorf("instance not ready yet: status=%s ipv4=%s", status, strings.TrimSpace(instance.IPv4))
 			}

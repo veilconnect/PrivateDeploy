@@ -3,7 +3,6 @@ package ssh
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -225,7 +225,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	// Merge SSH connection params: opts.Extra overrides config.Extra
-	extra := mergeExtra(p.config.Extra, opts.Extra)
+	extra := provutil.MergeExtra(p.config.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
 
 	host := extra["host"]
@@ -293,7 +293,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		realityPrivateKey = ""
 		realityPublicKey = ""
 	}
-	realityShortID := generateShortID()
+	realityShortID := provutil.GenerateShortID()
 
 	// 4. Generate and execute deployment script
 	var script string
@@ -516,7 +516,7 @@ func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error
 	}
 
 	// Try to SSH in and stop services
-	extra := mergeExtra(p.config.Extra, nil)
+	extra := provutil.MergeExtra(p.config.Extra, nil)
 	extra["host"] = rec.Host
 	if rec.Port > 0 {
 		extra["port"] = fmt.Sprintf("%d", rec.Port)
@@ -689,17 +689,6 @@ func (p *Provider) writeConfig(config *cloud.ProviderConfig) error {
 
 // --- Helpers ---
 
-func mergeExtra(base, override map[string]string) map[string]string {
-	result := make(map[string]string)
-	for k, v := range base {
-		result[k] = v
-	}
-	for k, v := range override {
-		result[k] = v
-	}
-	return result
-}
-
 func sanitizeSSHConfigExtra(extra map[string]string) (map[string]string, bool) {
 	if len(extra) == 0 {
 		return map[string]string{}, false
@@ -717,16 +706,6 @@ func sanitizeSSHConfigExtra(extra map[string]string) (map[string]string, bool) {
 		sanitized[key] = value
 	}
 	return sanitized, changed
-}
-
-// generateShortID returns a cryptographically random 16-character hex string
-// suitable for use as a Reality short ID.
-func generateShortID() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
-	return fmt.Sprintf("%016x", b)
 }
 
 // ensureManagedTLSDefaults delegates to the shared cloud implementation so the

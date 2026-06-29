@@ -14,6 +14,7 @@ import (
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/deploy"
+	"privatedeploy/bridge/cloud/providers/internal/provutil"
 )
 
 // ListInstances returns all DigitalOcean droplets.
@@ -218,9 +219,9 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("create options cannot be nil")
 	}
 
-	extra := mergeExtra(nil, opts.Extra)
+	extra := provutil.MergeExtra(nil, opts.Extra)
 	if p.config != nil {
-		extra = mergeExtra(p.config.Extra, opts.Extra)
+		extra = provutil.MergeExtra(p.config.Extra, opts.Extra)
 	}
 	tuning := deploy.ResolveDeploymentTuning(extra)
 	ports := deploy.AllocatePorts(tuning.PortProfile)
@@ -250,7 +251,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		realityPrivateKey = ""
 		realityPublicKey = ""
 	}
-	realityShortID := generateShortID()
+	realityShortID := provutil.GenerateShortID()
 
 	userData := deploy.GenerateMultiProtocolScript(deploy.MultiProtocolParams{
 		SSPort:           ssPort,
@@ -424,7 +425,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		}
 	}
 
-	readyTimeout := parseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
+	readyTimeout := provutil.ParseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
 	readyPorts := []int{ssPort, vlessPort, trojanPort}
 	if readyInstance, waitErr := p.waitForInstanceAndTCPPorts(ctx, instanceID, readyPorts, readyTimeout); waitErr != nil {
 		fmt.Fprintf(os.Stderr, "[DigitalOceanProvider] Warning: %v\n", waitErr)
