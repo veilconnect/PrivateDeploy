@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"privatedeploy/api/models"
 )
 
 var ErrVPNUnsupported = errors.New("vpn control is not available in this build")
@@ -42,10 +44,10 @@ func (m *UnsupportedVPNManager) ResetStats() error {
 	return m.unsupportedError()
 }
 
-func (m *UnsupportedVPNManager) GetStatus() (*VPNStatus, error) {
+func (m *UnsupportedVPNManager) GetStatus() (*models.VPNStatus, error) {
 	return nil, m.unsupportedError()
 }
 
-func (m *UnsupportedVPNManager) GetStats() (*VPNStats, error) {
+func (m *UnsupportedVPNManager) GetStats() (*models.VPNStats, error) {
 	return nil, m.unsupportedError()
 }

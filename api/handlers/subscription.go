@@ -21,20 +21,10 @@ type SubscriptionHandler struct {
 	db *gorm.DB
 }
 
-// Subscription represents a VPN subscription
-type Subscription struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Name      string    `json:"name" gorm:"not null"`
-	URL       string    `json:"url" gorm:"not null"`
-	NodeCount int       `json:"nodeCount"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
 // NewSubscriptionHandler creates a new SubscriptionHandler
 func NewSubscriptionHandler(db *gorm.DB) *SubscriptionHandler {
 	// Auto migrate
-	db.AutoMigrate(&Subscription{})
+	db.AutoMigrate(&models.Subscription{})
 
 	return &SubscriptionHandler{
 		db: db,
@@ -45,7 +35,7 @@ func NewSubscriptionHandler(db *gorm.DB) *SubscriptionHandler {
 func (h *SubscriptionHandler) List(c *gin.Context) {
 	log.Printf("[SubscriptionHandler] List called")
 
-	var subscriptions []Subscription
+	var subscriptions []models.Subscription
 	if err := h.db.Order("created_at DESC").Find(&subscriptions).Error; err != nil {
 		log.Printf("[SubscriptionHandler] ERROR: Failed to list subscriptions: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
@@ -65,7 +55,7 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	log.Printf("[SubscriptionHandler] Get subscription: %s", id)
 
-	var subscription Subscription
+	var subscription models.Subscription
 	if err := h.db.First(&subscription, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, models.ErrorResponse(
@@ -104,7 +94,7 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 
 	log.Printf("[SubscriptionHandler] Creating subscription: %s", req.Name)
 
-	subscription := Subscription{
+	subscription := models.Subscription{
 		Name:      req.Name,
 		URL:       req.URL,
 		NodeCount: 0,
@@ -145,7 +135,7 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 
 	log.Printf("[SubscriptionHandler] Updating subscription: %s", id)
 
-	var subscription Subscription
+	var subscription models.Subscription
 	if err := h.db.First(&subscription, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, models.ErrorResponse(
@@ -190,7 +180,7 @@ func (h *SubscriptionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	log.Printf("[SubscriptionHandler] Deleting subscription: %s", id)
 
-	var subscription Subscription
+	var subscription models.Subscription
 	if err := h.db.First(&subscription, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, models.ErrorResponse(
@@ -227,7 +217,7 @@ func (h *SubscriptionHandler) Refresh(c *gin.Context) {
 	id := c.Param("id")
 	log.Printf("[SubscriptionHandler] Refreshing subscription: %s", id)
 
-	var subscription Subscription
+	var subscription models.Subscription
 	if err := h.db.First(&subscription, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, models.ErrorResponse(

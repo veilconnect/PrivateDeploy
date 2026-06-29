@@ -19,23 +19,10 @@ type ProfileHandler struct {
 	db *gorm.DB
 }
 
-// Profile represents a VPN configuration profile.
-type Profile struct {
-	ID              uint       `json:"id" gorm:"primaryKey"`
-	Name            string     `json:"name" gorm:"not null"`
-	Type            string     `json:"type"` // local, remote
-	Config          string     `json:"config" gorm:"type:text"`
-	SubscriptionURL string     `json:"subscriptionUrl,omitempty" gorm:"column:subscription_url"`
-	Active          bool       `json:"active"`
-	LastUpdated     *time.Time `json:"lastUpdated,omitempty" gorm:"column:last_updated"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
-}
-
 // NewProfileHandler creates a new ProfileHandler.
 func NewProfileHandler(db *gorm.DB) *ProfileHandler {
 	// Auto migrate
-	_ = db.AutoMigrate(&Profile{})
+	_ = db.AutoMigrate(&models.Profile{})
 
 	return &ProfileHandler{
 		db: db,
@@ -75,7 +62,7 @@ func parseProfileID(raw string) (uint, error) {
 	return uint(id), nil
 }
 
-func (p Profile) responsePayload() gin.H {
+func profileResponsePayload(p models.Profile) gin.H {
 	payload := gin.H{
 		"id":               p.ID,
 		"name":             p.Name,
@@ -111,13 +98,13 @@ func decodeConfigIfJSON(raw string) any {
 	return trimmed
 }
 
-func (h *ProfileHandler) findByParamID(c *gin.Context) (*Profile, error) {
+func (h *ProfileHandler) findByParamID(c *gin.Context) (*models.Profile, error) {
 	id, err := parseProfileID(c.Param("id"))
 	if err != nil {
 		return nil, err
 	}
 
-	var profile Profile
+	var profile models.Profile
 	if err := h.db.First(&profile, id).Error; err != nil {
 		return nil, err
 	}
@@ -129,7 +116,7 @@ func (h *ProfileHandler) findByParamID(c *gin.Context) (*Profile, error) {
 func (h *ProfileHandler) List(c *gin.Context) {
 	log.Printf("[ProfileHandler] List called")
 
-	var profiles []Profile
+	var profiles []models.Profile
 	if err := h.db.Order("created_at DESC").Find(&profiles).Error; err != nil {
 		log.Printf("[ProfileHandler] ERROR: Failed to list profiles: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(
@@ -141,7 +128,7 @@ func (h *ProfileHandler) List(c *gin.Context) {
 
 	items := make([]gin.H, 0, len(profiles))
 	for _, p := range profiles {
-		items = append(items, p.responsePayload())
+		items = append(items, profileResponsePayload(p))
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -151,7 +138,7 @@ func (h *ProfileHandler) List(c *gin.Context) {
 
 // GetActive returns the currently active profile.
 func (h *ProfileHandler) GetActive(c *gin.Context) {
-	var profile Profile
+	var profile models.Profile
 	err := h.db.Where("active = ?", true).Order("updated_at DESC").First(&profile).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -168,7 +155,7 @@ func (h *ProfileHandler) GetActive(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(profile.responsePayload()))
+	c.JSON(http.StatusOK, models.SuccessResponse(profileResponsePayload(profile)))
 }
 
 // SetActive marks a profile as active and clears active state from others.
@@ -191,7 +178,7 @@ func (h *ProfileHandler) SetActive(c *gin.Context) {
 
 	now := time.Now()
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Profile{}).Where("active = ?", true).Update("active", false).Error; err != nil {
+		if err := tx.Model(&models.Profile{}).Where("active = ?", true).Update("active", false).Error; err != nil {
 			return err
 		}
 		profile.Active = true
@@ -207,7 +194,7 @@ func (h *ProfileHandler) SetActive(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(profile.responsePayload()))
+	c.JSON(http.StatusOK, models.SuccessResponse(profileResponsePayload(*profile)))
 }
 
 // Get returns a single profile by ID.
@@ -229,7 +216,7 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"profile": profile.responsePayload(),
+		"profile": profileResponsePayload(*profile),
 	}))
 }
 
@@ -250,7 +237,7 @@ func (h *ProfileHandler) Create(c *gin.Context) {
 		return
 	}
 
-	profile := Profile{
+	profile := models.Profile{
 		Name:            strings.TrimSpace(req.Name),
 		Type:            strings.TrimSpace(req.Type),
 		Config:          configToString(req.Config),
@@ -276,7 +263,7 @@ func (h *ProfileHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"profile": profile.responsePayload(),
+		"profile": profileResponsePayload(profile),
 	}))
 }
 
@@ -330,7 +317,7 @@ func (h *ProfileHandler) Update(c *gin.Context) {
 		}
 		if req.Active != nil {
 			if *req.Active {
-				if err := tx.Model(&Profile{}).Where("active = ?", true).Update("active", false).Error; err != nil {
+				if err := tx.Model(&models.Profile{}).Where("active = ?", true).Update("active", false).Error; err != nil {
 					return err
 				}
 			}
@@ -350,7 +337,7 @@ func (h *ProfileHandler) Update(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"profile": profile.responsePayload(),
+		"profile": profileResponsePayload(*profile),
 	}))
 }
 
@@ -453,7 +440,7 @@ func (h *ProfileHandler) UpdateSubscription(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"profile": profile.responsePayload(),
+		"profile": profileResponsePayload(*profile),
 		"message": "Subscription updated",
 	}))
 }

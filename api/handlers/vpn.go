@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,30 +20,8 @@ type VPNManager interface {
 	Stop() error
 	Restart() error
 	ResetStats() error
-	GetStatus() (*VPNStatus, error)
-	GetStats() (*VPNStats, error)
-}
-
-// VPNStatus represents VPN connection status.
-type VPNStatus struct {
-	Status         string    `json:"status"` // connected, disconnected, connecting
-	ProfileID      string    `json:"profileId,omitempty"`
-	ActiveProfile  string    `json:"active_profile,omitempty"`
-	ConnectedAt    time.Time `json:"connectedAt,omitempty"`
-	UploadBytes    int64     `json:"upload_bytes"`
-	DownloadBytes  int64     `json:"download_bytes"`
-	UploadSpeed    int64     `json:"upload_speed"`
-	DownloadSpeed  int64     `json:"download_speed"`
-	ConnectionTime int64     `json:"connection_time"`
-}
-
-// VPNStats represents VPN traffic statistics.
-type VPNStats struct {
-	UploadBytes    int64 `json:"upload_bytes"`
-	DownloadBytes  int64 `json:"download_bytes"`
-	UploadSpeed    int64 `json:"upload_speed"`
-	DownloadSpeed  int64 `json:"download_speed"`
-	ConnectionTime int64 `json:"connection_time"`
+	GetStatus() (*models.VPNStatus, error)
+	GetStats() (*models.VPNStats, error)
 }
 
 // NewVPNHandler creates a new VPNHandler.

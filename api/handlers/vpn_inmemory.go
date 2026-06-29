@@ -3,6 +3,8 @@ package handlers
 import (
 	"sync"
 	"time"
+
+	"privatedeploy/api/models"
 )
 
 // InMemoryVPNManager is a lightweight VPN manager for API compatibility.
@@ -71,7 +73,7 @@ func (m *InMemoryVPNManager) ResetStats() error {
 	return nil
 }
 
-func (m *InMemoryVPNManager) GetStatus() (*VPNStatus, error) {
+func (m *InMemoryVPNManager) GetStatus() (*models.VPNStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -81,7 +83,7 @@ func (m *InMemoryVPNManager) GetStatus() (*VPNStatus, error) {
 		m.download += m.downloadSpd / 2
 	}
 
-	return &VPNStatus{
+	return &models.VPNStatus{
 		Status:         m.status,
 		ProfileID:      m.profileID,
 		ActiveProfile:  m.profileID,
@@ -94,7 +96,7 @@ func (m *InMemoryVPNManager) GetStatus() (*VPNStatus, error) {
 	}, nil
 }
 
-func (m *InMemoryVPNManager) GetStats() (*VPNStats, error) {
+func (m *InMemoryVPNManager) GetStats() (*models.VPNStats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -103,7 +105,7 @@ func (m *InMemoryVPNManager) GetStats() (*VPNStats, error) {
 		m.download += m.downloadSpd / 3
 	}
 
-	return &VPNStats{
+	return &models.VPNStats{
 		UploadBytes:    m.upload,
 		DownloadBytes:  m.download,
 		UploadSpeed:    m.uploadSpd,
