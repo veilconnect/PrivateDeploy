@@ -33,7 +33,11 @@ void main() {
       );
       expect(out, equals(l10n.tunnelUpstreamDegradedMessageLocalized));
       expect(out, contains('Wi-Fi'));
-      expect(out, contains('蜂窝'));
+      // Distinctly-Chinese token from the localized guidance, confirming zh
+      // routing (not the en string). The cellular-specific '蜂窝' wording was
+      // intentionally generalized to "current network" in the public-release
+      // copy pass (commit 718ca5fa).
+      expect(out, contains('更换其他节点'));
     });
 
     test('passes unknown messages through unchanged', () async {
