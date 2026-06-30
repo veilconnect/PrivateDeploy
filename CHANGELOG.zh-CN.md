@@ -13,6 +13,26 @@
 
 - 暂无未发布的说明。
 
+## [2.0.14] - 2026-06-30
+
+### 修复
+- **VLESS 连不上(Reality 握手目标)**:VLESS-Reality 的 `server_name` 默认
+  `www.microsoft.com`,其多 CDN 地域漂移源站(Azure Front Door/Akamai)转发的
+  TLS 握手在边缘间不一致,sing-box 判 `REALITY: processed invalid connection`
+  → 只有 VLESS 连不上(Hysteria/Trojan 仅把该域名当 SNI 标签)。VLESS 改用专属的
+  单源稳定目标池(永不含 microsoft),与 Trojan/Hysteria 的 SNI 池解耦,并在请求时
+  探测可达目标。存量节点需重新部署以选用新目标。
+- **蜂窝下配了 CDN 仍连不上(sing-box 1.12 配置)**:客户端内核升到 sing-box
+  1.12.x 后,云节点与订阅配置生成器仍输出被 1.12.0 移除的老写法
+  `geoip: ["private"]`,导致整份配置解析失败 → VPN 起不来,尤其是蜂窝依赖的
+  CDN-front 路径。改为 `ip_is_private: true`。
+
+### 变更
+- **前向兼容 sing-box 1.13**:把已弃用的 `dns`/`block` 特殊出站迁移为路由规则
+  action(`hijack-dns`;未被引用的 `block` 出站直接删除),涉及云节点与订阅配置
+  生成器。这些特殊出站在 sing-box 1.13 移除;实测 1.11.0 与 1.12.12 在不设弃用
+  开关时均通过。
+
 ## [2.0.13] - 2026-06-29
 
 ### 变更

@@ -13,6 +13,30 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.14] - 2026-06-30
+
+### Fixed
+- **VLESS could not connect (Reality handshake target)**: the VLESS-Reality
+  `server_name` defaulted to `www.microsoft.com`, whose geo-distributed multi-CDN
+  origin (Azure Front Door/Akamai) relays an inconsistent TLS handshake and makes
+  sing-box reject clients with `REALITY: processed invalid connection` — so only
+  VLESS failed (Hysteria/Trojan only use the name as an SNI label). VLESS now
+  draws from a dedicated pool of vetted single-origin targets (never microsoft),
+  decoupled from the Trojan/Hysteria SNI pool, and the deploy probes for a live
+  target at request time. Existing nodes must be re-deployed to pick a new target.
+- **Cellular could not connect despite CDN (sing-box 1.12 config)**: with the
+  client kernel on sing-box 1.12.x, the cloud-node and subscription config
+  builders still emitted the legacy `geoip: ["private"]` route field, which 1.12.0
+  removed — the whole config failed to parse, so the VPN never started, notably on
+  the CDN-front path that cellular relies on. Replaced with `ip_is_private: true`.
+
+### Changed
+- **Forward-compat with sing-box 1.13**: migrated the deprecated `dns`/`block`
+  special outbounds to route-rule actions (`hijack-dns`; the unused `block`
+  outbound was dropped) in the cloud-node and subscription config builders. These
+  are removed in sing-box 1.13; verified accepted by 1.11.0 and 1.12.12 without
+  the deprecation flag.
+
 ## [2.0.13] - 2026-06-29
 
 ### Changed
