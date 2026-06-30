@@ -2494,6 +2494,11 @@ class CloudProvider extends CloudProviderBase {
         .where(
           (candidate) =>
               candidate.id != instance.id &&
+              // Never enroll a node the provider confirmed is deleted: its
+              // server is gone and its outbounds are dead, so they only waste
+              // urltest probes and can keep the pool from settling on a
+              // working member.
+              !candidate.missing &&
               candidate.hasIp &&
               candidate.nodeInfo != null,
         )

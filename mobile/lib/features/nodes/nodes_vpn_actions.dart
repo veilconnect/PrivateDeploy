@@ -513,8 +513,20 @@ Future<void> connectSelectedProfile({
     }
   }
 
-  if (autoSelectFastestCloudNode &&
+  // A confirmed-deleted node ("已在云端删除") must never be connected — its VPS
+  // is gone and its saved config is stale, so connecting it always fails and
+  // strands the user on a dead line. If it's the active profile, force a
+  // fail-over to the fastest healthy ready node regardless of the
+  // autoSelectFastestCloudNode flag (you literally cannot connect a node that
+  // no longer exists).
+  final activeNodeMissing = activeProfile != null &&
+      isCloudManagedProfile(activeProfile) &&
+      cloudProvider.allInstances.any((inst) =>
+          inst.missing && cloudProfileName(inst) == activeProfile.name);
+
+  if ((autoSelectFastestCloudNode || activeNodeMissing) &&
       (activeProfile == null ||
+          activeNodeMissing ||
           (isCloudManagedProfile(activeProfile) &&
               activeCloudInstance == null))) {
     final usedFastestNode = await _useFastestReadyCloudNode(
