@@ -4,6 +4,11 @@ import 'package:privatedeploy_mobile/features/cloud/vultr_deploy.dart';
 import 'package:privatedeploy_mobile/features/cloud/vultr_user_data_recovery.dart';
 
 void main() {
+  // Keep the Reality-target probe off the network in tests.
+  setUp(() => VultrDeploymentBuilder.realityProbe = (_) async => false);
+  tearDown(() => VultrDeploymentBuilder.realityProbe =
+      VultrDeploymentBuilder.defaultRealityProbe);
+
   group('recoverVultrNodeRecordFromUserData', () {
     test('recovers lightweight script credentials', () {
       final script = PortProfileAllocator.lightweightScript(

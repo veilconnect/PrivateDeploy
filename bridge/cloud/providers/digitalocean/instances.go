@@ -224,6 +224,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		extra = provutil.MergeExtra(p.config.Extra, opts.Extra)
 	}
 	tuning := deploy.ResolveDeploymentTuning(extra)
+	tuning.VLESSServerName = deploy.SelectVLESSRealityTarget(ctx, tuning.VLESSServerName)
 	ports := deploy.AllocatePorts(tuning.PortProfile)
 	if tuning.PortProfile == deploy.DefaultPortProfile {
 		ports = deploy.PortAssignment{

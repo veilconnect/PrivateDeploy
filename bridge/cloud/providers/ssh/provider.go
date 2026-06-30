@@ -227,6 +227,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	// Merge SSH connection params: opts.Extra overrides config.Extra
 	extra := provutil.MergeExtra(p.config.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
+	tuning.VLESSServerName = deploy.SelectVLESSRealityTarget(ctx, tuning.VLESSServerName)
 
 	host := extra["host"]
 	if host == "" {

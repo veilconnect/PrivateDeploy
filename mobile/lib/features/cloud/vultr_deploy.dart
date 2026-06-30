@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -29,8 +30,27 @@ String singBoxSha256(String version) =>
 
 const String defaultHysteriaServerName = 'www.bing.com';
 const String defaultHysteriaMasqueradeUrl = 'https://www.bing.com';
-const String defaultVlessServerName = 'www.microsoft.com';
+// VLESS-Reality's server_name is a *live* TLS handshake target ("steal
+// oneself"), unlike Hysteria/Trojan where it's only an SNI label over a
+// self-signed cert. Multi-CDN geo-load-balanced targets (e.g. www.microsoft.com
+// behind Azure Front Door/Akamai) relay an inconsistent handshake and make
+// sing-box reject clients with "REALITY: processed invalid connection", so VLESS
+// uses its own pool of stable single-origin targets — never microsoft. Kept in
+// lockstep with bridge/cloud/deploy/policy.go (DefaultVLESSServerName + pool).
+const String defaultVlessServerName = 'dl.google.com';
 const String defaultTrojanServerName = 'www.microsoft.com';
+
+// Vetted Reality handshake targets (stable single-origin TLS1.3+H2 sites). The
+// deploy flow probes these for reachability and bakes the chosen one into both
+// the script and the node record (Reality needs the client server_name to match
+// the server's handshake target exactly).
+const List<String> vlessRealityTargetPool = <String>[
+  'dl.google.com',
+  'www.cloudflare.com',
+  'addons.mozilla.org',
+  'www.python.org',
+  'swcdn.apple.com',
+];
 
 class VultrDeploymentBundle {
   final String userData;
@@ -46,6 +66,43 @@ class VultrDeploymentBundle {
 
 class VultrDeploymentBuilder {
   const VultrDeploymentBuilder._();
+
+  /// Probes whether [host] currently looks usable as a Reality handshake
+  /// target (a TLS handshake on :443 completes). Overridable so tests run
+  /// without network. Mirrors realityProbe in bridge/cloud/deploy/policy.go.
+  static Future<bool> Function(String host) realityProbe = defaultRealityProbe;
+
+  static Future<bool> defaultRealityProbe(String host) async {
+    SecureSocket? socket;
+    try {
+      socket = await SecureSocket.connect(
+        host,
+        443,
+        timeout: const Duration(seconds: 4),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      socket?.destroy();
+    }
+  }
+
+  /// Picks a live Reality handshake target, probing [preferred] first then the
+  /// vetted pool, falling back to [preferred]/the default if none respond. The
+  /// returned value is baked into both the script and the node record.
+  static Future<String> selectVlessRealityTarget(String preferred) async {
+    final ordered = <String>[
+      if (preferred.isNotEmpty) preferred,
+      ...vlessRealityTargetPool,
+    ];
+    final seen = <String>{};
+    for (final host in ordered) {
+      if (!seen.add(host)) continue;
+      if (await realityProbe(host)) return host;
+    }
+    return preferred.isNotEmpty ? preferred : defaultVlessServerName;
+  }
 
   static Future<VultrDeploymentBundle> build({
     required int planRam,
@@ -80,6 +137,8 @@ class VultrDeploymentBuilder {
     final vlessUuid = _generateUuidV4();
     final realityKeyPair = await _generateRealityKeyPair();
     final vlessShortId = _generateShortId();
+    final vlessServerName =
+        await selectVlessRealityTarget(defaultVlessServerName);
 
     return VultrDeploymentBundle(
       userData: _multiProtocolScript(
@@ -94,7 +153,7 @@ class VultrDeploymentBuilder {
         vlessPrivateKey: realityKeyPair.privateKey,
         vlessPublicKey: realityKeyPair.publicKey,
         vlessShortId: vlessShortId,
-        vlessServerName: defaultVlessServerName,
+        vlessServerName: vlessServerName,
         vlessRelayPort: vlessRelayPort,
         trojanPort: trojanPort,
         trojanPassword: trojanPassword,
@@ -112,7 +171,7 @@ class VultrDeploymentBuilder {
         'vlessUUID': vlessUuid,
         'vlessPublicKey': realityKeyPair.publicKey,
         'vlessShortId': vlessShortId,
-        'vlessServerName': defaultVlessServerName,
+        'vlessServerName': vlessServerName,
         if (vlessRelayPort > 0) 'vlessRelayPort': vlessRelayPort,
         'trojanPort': trojanPort,
         'trojanPassword': trojanPassword,

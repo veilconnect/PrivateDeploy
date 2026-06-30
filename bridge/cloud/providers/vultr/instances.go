@@ -186,6 +186,10 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 
 	extra := provutil.MergeExtra(cfg.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
+	// Pick a live Reality handshake target at request time so the same value
+	// lands in both the deploy script and the node record (Reality needs the
+	// client server_name to match the server's handshake target exactly).
+	tuning.VLESSServerName = deploy.SelectVLESSRealityTarget(ctx, tuning.VLESSServerName)
 
 	planRAM, err := p.getPlanRAM(ctx, opts.Plan)
 	if err != nil {

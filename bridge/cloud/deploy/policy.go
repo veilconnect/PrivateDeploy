@@ -1,12 +1,16 @@
 package deploy
 
 import (
+	"context"
 	cryptorand "crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,8 +21,14 @@ const (
 	DefaultSingBoxVersion         = "1.12.12"
 	DefaultSingBoxFallbackVersion = "1.11.0"
 	DefaultHysteriaServerName     = "www.bing.com"
-	DefaultVLESSServerName        = "www.microsoft.com"
-	DefaultTrojanServerName       = "www.microsoft.com"
+	// VLESS-Reality's server_name is a *live* TLS handshake target ("steal
+	// oneself"), unlike Hysteria/Trojan where it is only an SNI label over a
+	// self-signed cert. A geo-distributed multi-CDN target (e.g. www.microsoft.com
+	// behind Azure Front Door/Akamai) relays an inconsistent handshake and makes
+	// sing-box reject clients with "REALITY: processed invalid connection", so
+	// VLESS gets its own pool of stable single-origin targets — never microsoft.
+	DefaultVLESSServerName  = "dl.google.com"
+	DefaultTrojanServerName = "www.microsoft.com"
 )
 
 // singBoxKnownSHA256 pins the SHA-256 of the linux-amd64 sing-box release
@@ -55,7 +65,78 @@ var (
 		"www.apple.com",
 		"www.cloudflare.com",
 	}
+	// vlessRealityTargetPool holds vetted Reality handshake targets: stable,
+	// single-origin TLS1.3+H2 sites that relay a consistent handshake. Multi-CDN
+	// geo-load-balanced sites (microsoft, apple, icloud — Akamai/AFD) are
+	// deliberately excluded; they intermittently fail Reality auth. The deploy
+	// flow probes these for reachability and picks a live one (see
+	// SelectVLESSRealityTarget) so the choice adapts to the client's network.
+	vlessRealityTargetPool = []string{
+		"dl.google.com",
+		"www.cloudflare.com",
+		"addons.mozilla.org",
+		"www.python.org",
+		"swcdn.apple.com",
+	}
 )
+
+// VLESSRealityTargetPool returns a copy of the vetted Reality handshake targets.
+func VLESSRealityTargetPool() []string {
+	out := make([]string, len(vlessRealityTargetPool))
+	copy(out, vlessRealityTargetPool)
+	return out
+}
+
+// realityProbe reports whether host currently looks usable as a Reality
+// handshake target: a TLS 1.3 handshake on :443 with a valid certificate
+// completes within the timeout. It is a package variable so tests can stub it
+// without touching the network.
+var realityProbe = func(ctx context.Context, host string) bool {
+	dialer := tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 4 * time.Second},
+		Config:    &tls.Config{ServerName: host, MinVersion: tls.VersionTLS13},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "443"))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	tc, ok := conn.(*tls.Conn)
+	return ok && tc.ConnectionState().Version == tls.VersionTLS13
+}
+
+// SelectVLESSRealityTarget picks the Reality handshake target for a new deploy,
+// probing the vetted pool for current reachability so the choice adapts to the
+// network. preferred (an explicit override or the tuning default) is tried
+// first; if nothing responds, preferred — then the pool default — is the
+// last resort. The single returned value MUST be baked into both the deploy
+// script and the node record: Reality requires the client's server_name to
+// match the server's handshake target exactly, so this has to be decided once,
+// at request time, not on the VPS (which can't feed a choice back to the client).
+func SelectVLESSRealityTarget(ctx context.Context, preferred string) string {
+	preferred = normalizeHostname(preferred, "")
+	seen := map[string]bool{}
+	var order []string
+	add := func(h string) {
+		if h != "" && !seen[h] {
+			seen[h] = true
+			order = append(order, h)
+		}
+	}
+	add(preferred)
+	for _, h := range vlessRealityTargetPool {
+		add(h)
+	}
+	for _, h := range order {
+		if realityProbe(ctx, h) {
+			return h
+		}
+	}
+	if preferred != "" {
+		return preferred
+	}
+	return DefaultVLESSServerName
+}
 
 // DeploymentTuning captures optional rollout/security tuning from provider extra fields.
 type DeploymentTuning struct {
@@ -87,13 +168,17 @@ type PortAssignment struct {
 func ResolveDeploymentTuning(extra map[string]string) DeploymentTuning {
 	hysteriaDefault := pickRandomOrDefault(hysteriaServerNamePool, DefaultHysteriaServerName)
 	trojanDefault := pickRandomOrDefault(trojanServerNamePool, DefaultTrojanServerName)
+	// VLESS-Reality gets its own target from the vetted single-origin pool —
+	// never inherited from the Trojan SNI pool (which contains multi-CDN sites
+	// that break Reality). The deploy flow may further narrow this by probing.
+	vlessDefault := pickRandomOrDefault(vlessRealityTargetPool, DefaultVLESSServerName)
 
 	tuning := DeploymentTuning{
 		PortProfile:            DefaultPortProfile,
 		SingBoxVersion:         DefaultSingBoxVersion,
 		SingBoxFallbackVersion: DefaultSingBoxFallbackVersion,
 		HysteriaServerName:     hysteriaDefault,
-		VLESSServerName:        trojanDefault,
+		VLESSServerName:        vlessDefault,
 		TrojanServerName:       trojanDefault,
 		HysteriaInsecure:       true,
 		TrojanInsecure:         true,
@@ -120,7 +205,7 @@ func ResolveDeploymentTuning(extra map[string]string) DeploymentTuning {
 	), trojanDefault)
 	tuning.VLESSServerName = normalizeHostname(firstExtra(extra,
 		"vlessServerName", "vless_server_name", "vlessSNI", "vless_sni", "realityServerName", "reality_server_name",
-	), tuning.TrojanServerName)
+	), vlessDefault)
 	if tuning.VLESSServerName == "" {
 		tuning.VLESSServerName = DefaultVLESSServerName
 	}

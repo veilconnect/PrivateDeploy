@@ -5,6 +5,44 @@ import 'package:privatedeploy_mobile/features/cloud/vultr_deploy.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // Keep the Reality-target probe off the network in tests; deterministically
+  // fall back to the default (dl.google.com).
+  setUp(() => VultrDeploymentBuilder.realityProbe = (_) async => false);
+  tearDown(() => VultrDeploymentBuilder.realityProbe =
+      VultrDeploymentBuilder.defaultRealityProbe);
+
+  group('VultrDeploymentBuilder reality target selection', () {
+    test('probes preferred first, then the vetted pool', () async {
+      VultrDeploymentBuilder.realityProbe =
+          (host) async => host == 'addons.mozilla.org';
+      expect(
+        await VultrDeploymentBuilder.selectVlessRealityTarget('dl.google.com'),
+        'addons.mozilla.org',
+      );
+    });
+
+    test('honours a reachable preferred target', () async {
+      VultrDeploymentBuilder.realityProbe = (host) async => true;
+      expect(
+        await VultrDeploymentBuilder.selectVlessRealityTarget('www.python.org'),
+        'www.python.org',
+      );
+    });
+
+    test('falls back to the default when nothing responds', () async {
+      VultrDeploymentBuilder.realityProbe = (_) async => false;
+      expect(
+        await VultrDeploymentBuilder.selectVlessRealityTarget(''),
+        defaultVlessServerName,
+      );
+    });
+
+    test('pool never contains www.microsoft.com', () {
+      expect(vlessRealityTargetPool, isNot(contains('www.microsoft.com')));
+      expect(defaultVlessServerName, isNot('www.microsoft.com'));
+    });
+  });
+
   group('VultrDeploymentBuilder', () {
     test('creates lightweight bundle for low-memory plans', () async {
       final bundle = await VultrDeploymentBuilder.build(

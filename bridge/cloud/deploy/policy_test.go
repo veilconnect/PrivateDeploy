@@ -1,10 +1,44 @@
 package deploy
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+// TestVLESSRealityTargetSelection verifies the request-time probe ordering and
+// fallbacks, with the network probe stubbed.
+func TestVLESSRealityTargetSelection(t *testing.T) {
+	orig := realityProbe
+	t.Cleanup(func() { realityProbe = orig })
+
+	realityProbe = func(_ context.Context, host string) bool { return host == "addons.mozilla.org" }
+	if got := SelectVLESSRealityTarget(context.Background(), "dl.google.com"); got != "addons.mozilla.org" {
+		t.Fatalf("first reachable pool target should win: got %s", got)
+	}
+
+	realityProbe = func(_ context.Context, _ string) bool { return true }
+	if got := SelectVLESSRealityTarget(context.Background(), "www.python.org"); got != "www.python.org" {
+		t.Fatalf("reachable preferred should be kept: got %s", got)
+	}
+
+	realityProbe = func(_ context.Context, _ string) bool { return false }
+	if got := SelectVLESSRealityTarget(context.Background(), ""); got != DefaultVLESSServerName {
+		t.Fatalf("no target reachable should fall back to default: got %s", got)
+	}
+}
+
+// TestVLESSRealityPoolExcludesMultiCDN guards the root-cause fix: the VLESS
+// Reality target must never be www.microsoft.com (or any future multi-CDN host
+// added by mistake), since that breaks the Reality handshake.
+func TestVLESSRealityPoolExcludesMultiCDN(t *testing.T) {
+	for _, h := range append(VLESSRealityTargetPool(), DefaultVLESSServerName) {
+		if h == "www.microsoft.com" {
+			t.Fatalf("www.microsoft.com must not be a VLESS Reality target")
+		}
+	}
+}
 
 // TestDefaultSingBoxVersionsArePinned guards against the version-bump footgun:
 // bumping DefaultSingBoxVersion / DefaultSingBoxFallbackVersion without adding

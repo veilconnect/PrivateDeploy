@@ -6,10 +6,10 @@
 // Files in this package:
 //
 //   - provider.go            — package shell: types, all New* constructors,
-//                              CloudProvider interface methods, apiRequest.
+//     CloudProvider interface methods, apiRequest.
 //   - listing.go             — per-provider ListRegions / ListPlans dispatch.
 //   - remote_instances.go    — per-provider lifecycle dispatch (list / create /
-//                              get / wait / record-to-instance projection).
+//     get / wait / record-to-instance projection).
 //   - provider_scaleway.go   — Scaleway-specific lookups (project, image, get).
 //   - provider_upcloud.go    — UpCloud template-storage lookup.
 //   - provider_contabo.go    — Contabo OAuth + API calls.
@@ -367,6 +367,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 
 	extra := provutil.MergeExtra(cfg.Extra, opts.Extra)
 	tuning := deploy.ResolveDeploymentTuning(extra)
+	tuning.VLESSServerName = deploy.SelectVLESSRealityTarget(ctx, tuning.VLESSServerName)
 	ports := deploy.AllocatePorts(tuning.PortProfile)
 
 	ssPort := ports.SSPort
