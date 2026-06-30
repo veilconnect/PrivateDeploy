@@ -5,6 +5,16 @@ import 'package:flutter/foundation.dart';
 import '../../core/network/managed_dns_defaults.dart';
 import 'cloud_models.dart';
 
+/// Stable Cloudflare anycast edge IPs used as DNS-independent CDN entry points
+/// when the user hasn't pinned a preferred edge IP. The CDN outbound keeps the
+/// custom-domain SNI/Host (so CF routes to the Worker) but dials one of these
+/// directly, surviving networks that poison/block DNS for the relay's custom
+/// domain. Verified reachable on CN cellular 2026-06-30; refresh if CF rotates.
+const List<String> cloudflareEdgeIpFallbacks = <String>[
+  '104.16.132.229',
+  '172.67.202.217',
+];
+
 /// Fully-qualified destination of the CDN-fronted variant for one node.
 /// Carries both the hostname (M1 custom domain when bound, falling back to
 /// `*.workers.dev`) and the per-deployment PATH_SECRET that the Worker
@@ -317,6 +327,20 @@ Map<String, String> _appendInstanceOutbounds(
     final edgeIp = cdnEndpoint?.preferredEdgeIp;
     if (edgeIp != null && edgeIp.isNotEmpty) {
       addCdnOutbound(cdnHost, 'CDN-edgeip', dialIp: edgeIp);
+    } else {
+      // No user-pinned edge IP: emit a couple of DNS-independent CDN paths that
+      // dial a stable Cloudflare anycast edge directly while keeping SNI + WS
+      // Host = the custom domain, so CF still routes to the Worker. This is the
+      // only CDN path that survives a network which poisons/blocks DNS for the
+      // relay's custom domain (observed on CN cellular, which also RSTs
+      // `*.workers.dev` by SNI — verified 2026-06-30). The custom domain must be
+      // a real bound CF custom hostname for the SNI to route; these IPs are a
+      // best-effort fallback and may need refreshing if CF rotates anycast.
+      // urltest picks whichever member actually connects.
+      for (var i = 0; i < cloudflareEdgeIpFallbacks.length; i++) {
+        addCdnOutbound(cdnHost, 'CDN-edge${i + 1}',
+            dialIp: cloudflareEdgeIpFallbacks[i]);
+      }
     }
 
     final fallbackHost = cdnEndpoint?.fallbackHost;

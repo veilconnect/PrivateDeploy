@@ -319,8 +319,27 @@ void main() {
       expect(
         ob2.any((o) => o is Map && o['tag'] == 'hk-1-CDN-edgeip'),
         isFalse,
-        reason: 'no preferredEdgeIp → no pinned outbound',
+        reason: 'no preferredEdgeIp → no manually-pinned outbound',
       );
+      // ...but without a preferredEdgeIp we DO emit DNS-independent CDN paths
+      // that dial curated Cloudflare edges directly (keeping the custom-domain
+      // SNI/Host), so the CDN survives custom-domain DNS poisoning on hostile
+      // networks. One per curated edge IP.
+      for (var i = 0; i < cloudflareEdgeIpFallbacks.length; i++) {
+        final edgeN = ob2.firstWhere(
+          (o) => o is Map && o['tag'] == 'hk-1-CDN-edge${i + 1}',
+          orElse: () => null,
+        ) as Map<String, dynamic>?;
+        expect(edgeN, isNotNull,
+            reason: 'expected DNS-independent CDN-edge${i + 1} outbound');
+        expect(edgeN!['server'], cloudflareEdgeIpFallbacks[i],
+            reason: 'CDN-edge dials the curated CF edge IP');
+        expect((edgeN['tls'] as Map)['server_name'], 'relay-hk.example.org',
+            reason: 'SNI stays the custom domain so CF routes to the Worker');
+        expect(((edgeN['transport'] as Map)['headers'] as Map)['Host'],
+            'relay-hk.example.org');
+        expect((edgeN['tls'] as Map)['alpn'], ['http/1.1']);
+      }
     });
 
     test(
