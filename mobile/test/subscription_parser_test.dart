@@ -11,8 +11,10 @@ void main() {
 
       final json = jsonDecode(config!) as Map<String, dynamic>;
       final outbounds = json['outbounds'] as List;
-      // selector + urltest + node + direct + dns + block = 6
-      expect(outbounds.length, 6);
+      // selector + urltest + node + direct = 4. The legacy dns/block special
+      // outbounds were removed (deprecated in sing-box 1.11, removed in 1.13);
+      // DNS hijack is now a route-rule action.
+      expect(outbounds.length, 4);
 
       final ssOutbound =
           outbounds.firstWhere((o) => o['type'] == 'shadowsocks');
@@ -80,8 +82,9 @@ void main() {
 
       final json = jsonDecode(config!) as Map<String, dynamic>;
       final outbounds = json['outbounds'] as List;
-      // selector + urltest + 2 nodes + direct + dns + block = 7
-      expect(outbounds.length, 7);
+      // selector + urltest + 2 nodes + direct = 5 (legacy dns/block special
+      // outbounds removed; DNS hijack is now a route-rule action).
+      expect(outbounds.length, 5);
     });
 
     test('parse multi-line plain URI list', () {

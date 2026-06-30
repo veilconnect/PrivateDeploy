@@ -608,14 +608,23 @@ String? buildCloudNodeConfig(
         },
       ...protocolOutbounds,
       {'type': 'direct', 'tag': 'direct'},
-      {'type': 'dns', 'tag': 'dns-out'},
-      {'type': 'block', 'tag': 'block'},
+      // The legacy `dns`/`block` special outbounds are deprecated in sing-box
+      // 1.11 and removed in 1.13; DNS hijack and rejection are now expressed as
+      // route-rule actions (`hijack-dns` / `reject`). `block` was unused here, so
+      // it's dropped; the DNS rule below carries the action instead of routing
+      // to a `dns-out` outbound.
     ],
     'route': {
       'rules': [
-        {'protocol': 'dns', 'outbound': 'dns-out'},
+        {'protocol': 'dns', 'action': 'hijack-dns'},
         {
-          'geoip': ['private'],
+          // sing-box 1.12.0 removed the legacy `geoip` route field; the LAN /
+          // private-range direct carve-out is now expressed via `ip_is_private`
+          // (available since 1.11). Emitting `geoip: ["private"]` makes the
+          // 1.12.x client reject the whole config ("geoip database ... removed
+          // in sing-box 1.12.0"), so the VPN never starts — notably on the
+          // CDN-front rebuild, which is the only path available on cellular.
+          'ip_is_private': true,
           'outbound': 'direct'
         },
         // Cloud-provider management APIs must bypass the tunnel so the user

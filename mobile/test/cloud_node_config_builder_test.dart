@@ -887,6 +887,42 @@ void main() {
         outbounds.where((outbound) => outbound['type'] == 'trojan'),
         isNotEmpty,
       );
+
+      // The LAN/private carve-out must use `ip_is_private` — the legacy
+      // `geoip: ["private"]` field was removed in sing-box 1.12.0 and makes the
+      // client reject the whole config, so the VPN never starts (notably on the
+      // CDN-front rebuild, the only path available on cellular).
+      final routeRules =
+          (route['rules'] as List<dynamic>).cast<Map<String, dynamic>>();
+      expect(
+        routeRules.any((rule) => rule['ip_is_private'] == true),
+        isTrue,
+        reason: 'private carve-out must use ip_is_private',
+      );
+      expect(
+        routeRules.any((rule) => rule.containsKey('geoip')),
+        isFalse,
+        reason: 'legacy geoip route field is removed in sing-box 1.12',
+      );
+
+      // Legacy `dns`/`block` special outbounds are deprecated in sing-box 1.11
+      // and removed in 1.13; DNS hijack must be a route-rule action instead.
+      expect(
+        outbounds.any((o) => o['type'] == 'dns' || o['type'] == 'block'),
+        isFalse,
+        reason: 'legacy dns/block special outbounds removed in sing-box 1.13',
+      );
+      expect(
+        routeRules.any((rule) => rule['action'] == 'hijack-dns'),
+        isTrue,
+        reason: 'DNS hijack must use the hijack-dns rule action',
+      );
+      expect(
+        routeRules.any((rule) =>
+            rule['outbound'] == 'dns-out' || rule['outbound'] == 'block'),
+        isFalse,
+        reason: 'no rule may route to a removed special outbound',
+      );
     });
 
     test('honors preferred endpoint on Android when it is supported', () {

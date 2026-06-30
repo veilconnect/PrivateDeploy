@@ -476,14 +476,18 @@ class SubscriptionParser {
         },
         ...outbounds,
         {'type': 'direct', 'tag': 'direct'},
-        {'type': 'dns', 'tag': 'dns-out'},
-        {'type': 'block', 'tag': 'block'},
+        // Legacy `dns`/`block` special outbounds are deprecated in sing-box 1.11
+        // and removed in 1.13; DNS hijack is now a route-rule action. `block`
+        // was unused here, so it's dropped.
       ],
       'route': {
         'rules': [
-          {'protocol': 'dns', 'outbound': 'dns-out'},
+          {'protocol': 'dns', 'action': 'hijack-dns'},
           {
-            'geoip': ['private'],
+            // `ip_is_private` replaces the legacy `geoip: ["private"]` route
+            // field, which sing-box 1.12.0 removed (it makes the 1.12.x client
+            // reject the entire config and refuse to start the VPN).
+            'ip_is_private': true,
             'outbound': 'direct'
           },
           {
