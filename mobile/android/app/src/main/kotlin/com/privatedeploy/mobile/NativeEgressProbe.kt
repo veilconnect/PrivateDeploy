@@ -3,6 +3,7 @@ package com.privatedeploy.mobile
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.SystemClock
 import android.util.Log
 import android.util.Patterns
 import java.net.HttpURLConnection
@@ -37,10 +38,25 @@ internal object NativeEgressProbe {
     private const val TAG = "EgressProbe"
     const val DEFAULT_TIMEOUT_MS: Int = 1500
 
+    // A common desktop-browser UA. The old "PrivateDeploy/1.0" was exactly the
+    // kind of automation UA that IP-echo services rate-limit / 403, which made
+    // the egress verdict flap even while the tunnel forwarded fine.
+    private const val PROBE_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+    // Provider-diverse IP-echo endpoints. The previous list was four
+    // Cloudflare/US-fronted services (ipify/api64.ipify/ifconfig.me/icanhazip),
+    // so a single provider block or CN-edge hijack took out ALL of them at once
+    // and the tunnel was declared dead even though it carried traffic. Spreading
+    // across AWS (checkip.amazonaws.com), ipinfo, ident.me, etc. means a probe
+    // failure now reflects the tunnel, not one CDN's throttling policy.
     val DEFAULT_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
+        EgressProbeEndpoint("https://checkip.amazonaws.com"),
         EgressProbeEndpoint("https://api.ipify.org?format=json"),
-        EgressProbeEndpoint("https://api64.ipify.org?format=json"),
+        EgressProbeEndpoint("https://ipinfo.io/ip"),
         EgressProbeEndpoint("https://ifconfig.me/ip"),
+        EgressProbeEndpoint("https://ident.me"),
         EgressProbeEndpoint("https://icanhazip.com"),
     )
 
@@ -59,20 +75,17 @@ internal object NativeEgressProbe {
         EgressProbeEndpoint("https://www.qq.com/favicon.ico"),
     )
 
-    // Endpoints that should only work when packets genuinely exit through the
-    // configured upstream node. These must return a public IP, not merely a
-    // 204/no-body reachability response: in the wild, Google's generate_204
-    // can occasionally complete while the configured VPS socket is still
-    // timing out, which made the service mark a broken tunnel Healthy. Keeping
-    // this list IP-bearing aligns the startup health decision with the
-    // Flutter diagnostics card and avoids a green "connected" state when the
-    // app still cannot confirm egress.
-    val TUNNEL_REQUIRED_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
-        EgressProbeEndpoint("https://api.ipify.org?format=json"),
-        EgressProbeEndpoint("https://api64.ipify.org?format=json"),
-        EgressProbeEndpoint("https://ifconfig.me/ip"),
-        EgressProbeEndpoint("https://icanhazip.com"),
-    )
+    // Endpoints that only answer when packets genuinely exit through the
+    // configured upstream node (foreign hosts sing-box routes via the proxy,
+    // NOT matched by the "国内直连" rules). Reachability here means the tunnel
+    // forwards offshore traffic. We deliberately do NOT require a parsed IP:
+    // an HTTP response of ANY status (200 or 403/429) proves the bytes
+    // round-tripped through tun0 → outbound → the real host and back, which is
+    // the only thing the health verdict actually needs. Requiring an IP body
+    // is what let a group-403 (all endpoints throttling our automation UA)
+    // masquerade as a dead tunnel. The list is provider-diverse for the same
+    // reason as DEFAULT_ENDPOINTS.
+    val TUNNEL_REQUIRED_ENDPOINTS: List<EgressProbeEndpoint> = DEFAULT_ENDPOINTS
 
     /**
      * @param allowDomesticFallback If true (default), and every [endpoints]
@@ -90,27 +103,39 @@ internal object NativeEgressProbe {
         endpoints: List<EgressProbeEndpoint> = DEFAULT_ENDPOINTS,
         timeoutMs: Int = DEFAULT_TIMEOUT_MS,
         allowDomesticFallback: Boolean = true,
+        requireVpnNetwork: Boolean = false,
     ): EgressProbeResult {
         var lastError: String? = null
         var reachableSource: String? = null
 
         for (endpoint in endpoints) {
             try {
-                val payload = fetchProbePayload(connectivityManager, endpoint, timeoutMs)
-                val ip = extractIpFromProbePayload(payload)
+                val response = fetchProbeResponse(
+                    connectivityManager,
+                    endpoint,
+                    timeoutMs,
+                    requireVpnNetwork,
+                )
+                val ip = extractIpFromProbePayload(response.body)
                 if (!ip.isNullOrBlank()) {
                     Log.i(TAG, "VPN egress probe succeeded via ${endpoint.url} -> $ip")
                     return EgressProbeResult(ip = ip, source = endpoint.url, reachable = true)
                 }
-                // HTTP request completed end-to-end but the body didn't expose
-                // an IP (e.g. a binary favicon). That still proves the tunnel
-                // forwards traffic — keep iterating in case a later endpoint
-                // does yield an IP, but record reachability so we can return
-                // it if no IP ever materialises.
+                // An HTTP response of ANY status came back through the bound
+                // (VPN) network. That alone proves tun0 → outbound → the real
+                // host round-tripped, i.e. the tunnel forwards offshore traffic
+                // — even a 403/429 means the packet reached the far end and it
+                // answered. Only a connection-level failure (caught below) means
+                // "no forwarding". Keep iterating in case a later endpoint also
+                // yields a display IP, but record reachability now.
                 if (reachableSource == null) {
                     reachableSource = endpoint.url
                 }
-                Log.i(TAG, "VPN egress probe reachable via ${endpoint.url} (no public IP)")
+                Log.i(
+                    TAG,
+                    "VPN egress probe reachable via ${endpoint.url} " +
+                        "(status ${response.statusCode}, no public IP)",
+                )
             } catch (timeout: SocketTimeoutException) {
                 Log.w(TAG, "VPN egress probe timed out for ${endpoint.url}", timeout)
                 lastError = "Timed out contacting public IP probe endpoints."
@@ -133,8 +158,17 @@ internal object NativeEgressProbe {
         if (allowDomesticFallback && endpoints !== REACHABILITY_ENDPOINTS) {
             for (endpoint in REACHABILITY_ENDPOINTS) {
                 try {
-                    fetchProbePayload(connectivityManager, endpoint, timeoutMs)
-                    Log.i(TAG, "VPN egress probe reachable via ${endpoint.url} (no public IP)")
+                    val response = fetchProbeResponse(
+                        connectivityManager,
+                        endpoint,
+                        timeoutMs,
+                        requireVpnNetwork,
+                    )
+                    Log.i(
+                        TAG,
+                        "VPN egress probe reachable via ${endpoint.url} " +
+                            "(status ${response.statusCode}, no public IP)",
+                    )
                     return EgressProbeResult(source = endpoint.url, reachable = true)
                 } catch (error: Exception) {
                     Log.w(TAG, "VPN egress reachability fallback failed for ${endpoint.url}", error)
@@ -145,37 +179,83 @@ internal object NativeEgressProbe {
         return EgressProbeResult(error = lastError ?: "Unable to determine current egress IP.")
     }
 
-    private fun fetchProbePayload(
+    fun waitForVpnNetwork(
+        connectivityManager: ConnectivityManager,
+        timeoutMs: Long,
+        pollMs: Long = 100L,
+    ): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            if (findPreferredProbeNetwork(
+                    connectivityManager,
+                    requireVpnNetwork = true,
+                ) != null
+            ) {
+                return true
+            }
+            val remainingMs = deadline - SystemClock.elapsedRealtime()
+            if (remainingMs <= 0L) {
+                return false
+            }
+            try {
+                Thread.sleep(if (remainingMs < pollMs) remainingMs else pollMs)
+            } catch (ignored: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+    }
+
+    private data class ProbeHttpResponse(val statusCode: Int, val body: String)
+
+    /**
+     * Issues the probe GET and returns the HTTP status plus body. Crucially it
+     * does NOT throw on 4xx/5xx: a status line of any kind means the request
+     * traversed the bound network end-to-end (the far host answered), which is
+     * the reachability signal the health verdict needs. Only genuine
+     * connection-level failures (DNS, connect timeout, TLS reset, no route)
+     * propagate as exceptions — those are the real "tunnel doesn't forward".
+     */
+    private fun fetchProbeResponse(
         connectivityManager: ConnectivityManager?,
         endpoint: EgressProbeEndpoint,
         timeoutMs: Int,
-    ): String {
+        requireVpnNetwork: Boolean,
+    ): ProbeHttpResponse {
         val url = URL(endpoint.url)
-        val connection = openProbeConnection(connectivityManager, url)
+        val connection = openProbeConnection(connectivityManager, url, requireVpnNetwork)
         try {
             connection.instanceFollowRedirects = true
             connection.connectTimeout = timeoutMs
             connection.readTimeout = timeoutMs
             connection.requestMethod = "GET"
             connection.setRequestProperty("Accept", "application/json, text/plain;q=0.9, */*;q=0.8")
-            connection.setRequestProperty("User-Agent", "PrivateDeploy/1.0")
+            connection.setRequestProperty("User-Agent", PROBE_USER_AGENT)
             endpoint.hostHeader?.let { connection.setRequestProperty("Host", it) }
             connection.connect()
 
+            // responseCode itself throws if the connection never produced an
+            // HTTP response (timeout/reset/etc.) — that surfaces as "not
+            // reachable" to the caller, which is correct.
             val statusCode = connection.responseCode
-            if (statusCode !in 200..399) {
-                throw IllegalStateException("Unexpected HTTP status $statusCode from ${endpoint.url}")
-            }
 
-            // 204 No Content endpoints (e.g. /generate_204) intentionally have
-            // no response body and HttpURLConnection returns a null inputStream
-            // for them. Reaching this point means the request completed
-            // end-to-end, which is all the reachability probe needs.
-            if (statusCode == 204 || connection.contentLength == 0) {
-                return ""
+            // Only a 2xx body can carry a usable egress IP; 204/no-body and
+            // 4xx/5xx still count as reachable (handled by the caller) but we
+            // must read errorStream (not inputStream) for >=400 to avoid an
+            // IOException, and we don't need that body at all.
+            val body = if (statusCode in 200..299 &&
+                statusCode != 204 &&
+                connection.contentLength != 0
+            ) {
+                try {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } catch (_: Exception) {
+                    ""
+                }
+            } else {
+                ""
             }
-
-            return connection.inputStream.bufferedReader().use { it.readText() }
+            return ProbeHttpResponse(statusCode, body)
         } finally {
             connection.disconnect()
         }
@@ -184,8 +264,22 @@ internal object NativeEgressProbe {
     private fun openProbeConnection(
         connectivityManager: ConnectivityManager?,
         url: URL,
+        requireVpnNetwork: Boolean,
     ): HttpURLConnection {
-        val preferredNetwork = connectivityManager?.let(::findPreferredProbeNetwork)
+        val preferredNetwork = connectivityManager?.let {
+            findPreferredProbeNetwork(it, requireVpnNetwork)
+        }
+        if (requireVpnNetwork && preferredNetwork == null) {
+            throw IllegalStateException("VPN network is not visible to ConnectivityManager yet")
+        }
+        if (connectivityManager != null) {
+            Log.d(
+                TAG,
+                "VPN egress probe using " +
+                    describeProbeNetwork(connectivityManager, preferredNetwork) +
+                    " for ${url.host}",
+            )
+        }
         val connection = preferredNetwork?.openConnection(url) ?: url.openConnection()
         return connection as? HttpURLConnection
             ?: throw IllegalStateException("Unsupported probe connection type for $url")
@@ -196,7 +290,10 @@ internal object NativeEgressProbe {
      * preferred (so a probe issued while the tunnel is up flows through
      * the tunnel), then validation, then transport quality.
      */
-    private fun findPreferredProbeNetwork(connectivityManager: ConnectivityManager): Network? {
+    private fun findPreferredProbeNetwork(
+        connectivityManager: ConnectivityManager,
+        requireVpnNetwork: Boolean = false,
+    ): Network? {
         val activeNetwork = connectivityManager.activeNetwork
         var bestNetwork: Network? = null
         var bestScore = Int.MIN_VALUE
@@ -207,12 +304,16 @@ internal object NativeEgressProbe {
             if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
                 return@forEach
             }
-            var score = 0
-            if (network == activeNetwork) {
-                score += 1000
+            val isVpn = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            if (requireVpnNetwork && !isVpn) {
+                return@forEach
             }
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                score += 500
+            var score = 0
+            if (isVpn) {
+                score += 5000
+            }
+            if (network == activeNetwork) {
+                score += 100
             }
             if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
                 score += 200
@@ -237,6 +338,42 @@ internal object NativeEgressProbe {
         }
 
         return bestNetwork
+    }
+
+    private fun describeProbeNetwork(
+        connectivityManager: ConnectivityManager,
+        network: Network?,
+    ): String {
+        if (network == null) {
+            return "system-default"
+        }
+        val capabilities = connectivityManager.getNetworkCapabilities(network)
+            ?: return "network@${network.networkHandle}"
+        val transports = mutableListOf<String>()
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+            transports.add("vpn")
+        }
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+            transports.add("cellular")
+        }
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+            transports.add("wifi")
+        }
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+            transports.add("ethernet")
+        }
+        if (transports.isEmpty()) {
+            transports.add("other")
+        }
+        val flags = mutableListOf<String>()
+        if (network == connectivityManager.activeNetwork) {
+            flags.add("active")
+        }
+        if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+            flags.add("validated")
+        }
+        return "${transports.joinToString("+")}@${network.networkHandle}" +
+            if (flags.isEmpty()) "" else "(${flags.joinToString(",")})"
     }
 
     private fun extractIpFromProbePayload(payload: String): String? {
