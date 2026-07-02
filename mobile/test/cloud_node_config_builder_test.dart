@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_models.dart';
 import 'package:privatedeploy_mobile/features/cloud/cloud_node_config_builder.dart';
+import 'package:privatedeploy_mobile/features/cloud/vultr_deploy.dart'
+    show defaultVlessServerName;
 
 void main() {
   group('buildCloudNodeConfig', () {
@@ -440,17 +442,24 @@ void main() {
       // exact order they were added to the outbounds list, so checking
       // the array order is enough — sing-box's urltest probes them
       // in-order until tolerance is satisfied.
+      final selector = outbounds.firstWhere(
+        (o) => o['tag'] == 'select',
+        orElse: () => <String, Object?>{},
+      );
       final urltest = outbounds.firstWhere(
         (o) => o['type'] == 'urltest',
         orElse: () => <String, Object?>{},
       );
+      expect(selector['default'], 'auto',
+          reason: 'CDN members belong in urltest failover; the main selector '
+              'must not pin a single CDN path that can fail independently');
       expect(urltest, isNotEmpty,
           reason: 'auto config must include an urltest selector');
       final members = (urltest['outbounds'] as List).cast<String>();
       expect(members.isNotEmpty, isTrue,
           reason: 'urltest must enumerate node protocol members');
-      expect(members.first, 'lax-1-CDN',
-          reason: 'CDN variant must lead the urltest pool when present');
+      expect(members.first, 'lax-1-CDN-edge1',
+          reason: 'IP-pinned CDN edge must lead the urltest pool when present');
     });
 
     test('omits CDN variant when relay port is zero (older deploys)', () {
@@ -888,6 +897,7 @@ void main() {
       final route = decoded['route'] as Map<String, dynamic>;
 
       expect(inbounds.single['stack'], 'system');
+      expect(route['final'], 'select');
       expect(route['auto_detect_interface'], isTrue);
       expect(route['default_network_strategy'], 'default');
       expect(
@@ -1256,6 +1266,54 @@ void main() {
         ),
         isNull,
       );
+    });
+
+    test(
+        'VLESS outbound falls back to the shared deploy default (never '
+        'www.microsoft.com) when the stored server_name is empty', () {
+      final instance = CloudInstance(
+        id: 'node-sni',
+        provider: 'vultr',
+        label: 'sni-1',
+        status: 'active',
+        region: 'sgp',
+        plan: 'vc2-1c-1gb',
+        ipv4: '9.9.9.9',
+        nodeInfo: NodeInfo(
+          ssPort: 0,
+          ssPassword: '',
+          hyPort: 0,
+          hyPassword: '',
+          hyServerName: '',
+          hyInsecure: null,
+          vlessPort: 9443,
+          vlessUuid: 'uuid-sni',
+          vlessPublicKey: 'pub',
+          vlessShortId: 'sid',
+          vlessServerName: '', // drifted/never-captured
+          trojanPort: 0,
+          trojanPassword: '',
+          trojanServerName: '',
+          trojanInsecure: null,
+          vlessRelayPort: 0,
+        ),
+      );
+
+      final raw = buildCloudNodeConfig(instance);
+      expect(raw, isNotNull);
+      final outbounds = (jsonDecode(raw!) as Map)['outbounds'] as List;
+      final vless = outbounds.firstWhere(
+        (o) => o is Map && o['tag'] == 'sni-1-VLESS',
+        orElse: () => null,
+      ) as Map<String, dynamic>?;
+      expect(vless, isNotNull);
+      final serverName = (vless!['tls'] as Map)['server_name'];
+      // microsoft is a multi-CDN target that makes Reality reject the client;
+      // the empty-server_name fallback must use the single-origin deploy
+      // default instead. Guards the Dart builder the way policy_test.go guards
+      // the Go side.
+      expect(serverName, isNot('www.microsoft.com'));
+      expect(serverName, defaultVlessServerName);
     });
   });
 }

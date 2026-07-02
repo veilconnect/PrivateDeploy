@@ -4,6 +4,11 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/network/managed_dns_defaults.dart';
 import 'cloud_models.dart';
+import 'vultr_deploy.dart' show defaultVlessServerName;
+
+const bool _vpnCoreDebugLogs = bool.fromEnvironment(
+  'PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS',
+);
 
 /// Stable Cloudflare anycast edge IPs used as DNS-independent CDN entry points
 /// when the user hasn't pinned a preferred edge IP. The CDN outbound keeps the
@@ -208,9 +213,16 @@ Map<String, String> _appendInstanceOutbounds(
       'flow': 'xtls-rprx-vision',
       'tls': {
         'enabled': true,
+        // Fall back to the shared deploy default (dl.google.com), NOT
+        // www.microsoft.com: microsoft is a multi-CDN geo-balanced target that
+        // makes Reality reject the client ("processed invalid connection"), and
+        // no deploy path ever bakes it for VLESS. A stale/empty stored
+        // server_name previously landed here and produced the exact x509
+        // "certificate is valid for *.google.com … not www.microsoft.com"
+        // handshake failure seen in the field.
         'server_name': info.vlessServerName.isNotEmpty
             ? info.vlessServerName
-            : 'www.microsoft.com',
+            : defaultVlessServerName,
         'utls': {
           'enabled': true,
           'fingerprint': 'chrome',
@@ -511,7 +523,7 @@ String? buildCloudNodeConfig(
     // reconstruct recent DIRECT/PROXY decisions from runtime traffic.
     // Android filters these out of logcat at the service layer to avoid
     // restoring the old log spam problem.
-    'log': {'level': 'info'},
+    'log': {'level': _vpnCoreDebugLogs ? 'debug' : 'info'},
     'dns': {
       'servers': [
         {
@@ -627,8 +639,12 @@ String? buildCloudNodeConfig(
           // 1.0.0.1 is Cloudflare's anycast resolver; /cdn-cgi/trace returns
           // a small 200 OK so any 2xx counts as reachable for urltest.
           'url': 'http://1.0.0.1/cdn-cgi/trace',
-          'interval': '5m',
-          'tolerance': 200,
+          // Cellular carriers time-variably blackhole direct VPS IPs, so the
+          // urltest must re-probe quickly to fail over to the (stable) CDN
+          // path. 5m left the tunnel dead for up to 5 minutes each time the
+          // carrier dropped direct; 1m matches the desktop config's cadence.
+          'interval': '1m',
+          'tolerance': 50,
         },
       ...protocolOutbounds,
       {'type': 'direct', 'tag': 'direct'},
@@ -639,6 +655,7 @@ String? buildCloudNodeConfig(
       // to a `dns-out` outbound.
     ],
     'route': {
+      'final': 'select',
       'rules': [
         {'protocol': 'dns', 'action': 'hijack-dns'},
         {
@@ -699,16 +716,25 @@ void _putCdnFirst({
   required List<Map<String, dynamic>> outbounds,
   required List<String> tags,
 }) {
-  final cdnTagIndex = tags.indexWhere((t) => t.endsWith('-CDN'));
+  // Prefer an IP-pinned edge (`-CDN-edge*`) first — it needs no DNS, which
+  // avoids the urltest DNS-detour deadlock (see _prioritizeEdge443ProtocolOrder).
+  // Fall back to the DNS-based `-CDN` only when no edge member exists.
+  bool isCdnFirstCandidate(String t) => t.contains('-CDN-edge');
+  var cdnTagIndex = tags.indexWhere(isCdnFirstCandidate);
+  if (cdnTagIndex < 0) cdnTagIndex = tags.indexWhere((t) => t.endsWith('-CDN'));
   if (cdnTagIndex <= 0) {
     return;
   }
   final cdnTag = tags.removeAt(cdnTagIndex);
   tags.insert(0, cdnTag);
 
-  final cdnOutboundIndex = outbounds.indexWhere(
-    (o) => o['tag']?.toString().endsWith('-CDN') ?? false,
-  );
+  var cdnOutboundIndex = outbounds
+      .indexWhere((o) => isCdnFirstCandidate(o['tag']?.toString() ?? ''));
+  if (cdnOutboundIndex < 0) {
+    cdnOutboundIndex = outbounds.indexWhere(
+      (o) => o['tag']?.toString().endsWith('-CDN') ?? false,
+    );
+  }
   if (cdnOutboundIndex > 0) {
     final cdnOutbound = outbounds.removeAt(cdnOutboundIndex);
     outbounds.insert(0, cdnOutbound);
@@ -726,12 +752,21 @@ void _prioritizeEdge443ProtocolOrder(
   }
 
   int priority(String tag) {
-    if (tag.endsWith('-CDN')) return 0;
-    if (tag.endsWith('-Trojan')) return 1;
-    if (tag.endsWith('-Hy2')) return 2;
-    if (tag.endsWith('-VLESS')) return 3;
-    if (tag.endsWith('-SS')) return 4;
-    return 5;
+    // IP-pinned CDN edges FIRST. They dial a literal Cloudflare IP so they
+    // need no DNS to establish. sing-box routes the urltest's DNS lookups
+    // (DoH via dns-remote) through the pool's FIRST member — so if that
+    // member is the DNS-based custom-domain `-CDN` (server = relay-<hash>.
+    // <zone>), resolving its OWN server deadlocks against itself and urltest
+    // never probes anything, leaving the client stuck on flapping direct.
+    // An IP-pinned edge first breaks the circular hang; DNS-based CDN follows.
+    if (tag.contains('-CDN-edge')) return 0; // -CDN-edge1/-edge2/-edgeip (IP)
+    if (tag.endsWith('-CDN')) return 1; // custom-domain (DNS)
+    if (tag.endsWith('-CDN-fallback')) return 2; // *.workers.dev (DNS)
+    if (tag.endsWith('-Trojan')) return 3;
+    if (tag.endsWith('-Hy2')) return 4;
+    if (tag.endsWith('-VLESS')) return 5;
+    if (tag.endsWith('-SS')) return 6;
+    return 7;
   }
 
   tags.sort((a, b) {

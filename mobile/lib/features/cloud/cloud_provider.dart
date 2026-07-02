@@ -1505,6 +1505,17 @@ class CloudProvider extends CloudProviderBase {
     if (record == null || record.ssPort <= 0 || record.ssPassword.isEmpty) {
       return true;
     }
+    // VLESS is configured but the Reality handshake target (server_name) was
+    // never captured. Without it the builder falls back to a guessed SNI and
+    // the Reality handshake fails with an x509 target mismatch. Re-read the
+    // server's user-data to pull the actual server_name so the client presents
+    // the exact target the server steals from — self-healing the drift instead
+    // of the user having to know about it.
+    if (record.vlessPort > 0 &&
+        record.vlessUuid.isNotEmpty &&
+        record.vlessServerName.isEmpty) {
+      return true;
+    }
     // Re-run recovery when vlessRelayPort is missing: nodes created before
     // the M1 install script (or before the ufw-limit regex fix) saved
     // records with vlessRelayPort=0, which disables the CDN deploy button
