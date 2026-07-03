@@ -59,6 +59,12 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // upstream-degraded watchdog (which would force a node restart / failover).
   static const String tunnelDirectRouteDegradedMessage =
       "Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.";
+  // Mirrors PrivateDeployVpnService.TunnelHealth.Unreachable. This is a
+  // health-probe classification, not a directive to restart the tunnel: the
+  // VPN may still be installed and carrying traffic while strict probes are
+  // timing out on a flaky CDN/urltest path.
+  static const String tunnelUnreachableMessage =
+      'Tunnel is up but egress could not be verified. Browsing may not work — try a different node or network.';
   static const Duration nativeEgressProbeTimeout = Duration(seconds: 3);
   static const Duration startupEgressProbeTimeout = Duration(seconds: 5);
   static const Duration androidStartupRetryDelay = Duration(seconds: 3);
@@ -550,9 +556,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     } finally {
       _isLoading = false;
-      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
-        _handleUpstreamDegradedSignal(degraded: true);
-      }
+      _handleUpstreamDegradedSignal(
+        degraded: _shouldArmUpstreamDegradedWatchdog,
+      );
       _safeNotifyListeners();
     }
   }
@@ -666,9 +672,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     } finally {
       _isLoading = false;
-      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
-        _handleUpstreamDegradedSignal(degraded: true);
-      }
+      _handleUpstreamDegradedSignal(
+        degraded: _shouldArmUpstreamDegradedWatchdog,
+      );
       _safeNotifyListeners();
     }
   }
@@ -762,9 +768,9 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     } finally {
       _isLoading = false;
-      if (_status == VpnStatus.connected && _health == VpnHealth.degraded) {
-        _handleUpstreamDegradedSignal(degraded: true);
-      }
+      _handleUpstreamDegradedSignal(
+        degraded: _shouldArmUpstreamDegradedWatchdog,
+      );
       _safeNotifyListeners();
     }
   }
@@ -1281,6 +1287,33 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return;
     }
 
+    // Advisory-only: startup egress verification must NEVER tear down a tunnel
+    // the native side still reports as running. Doing so was the regression
+    // behind the "keeps disconnecting" loop — the tun + core were up and
+    // forwarding offshore traffic (exit IP = the node, same as the rock-stable
+    // desktop through the same VPS), but an unverified probe here stopped the
+    // VPN, which then reconnected / failed over, forever, on both Wi-Fi and
+    // cellular. If the tunnel is still up, keep it connected and surface a
+    // degraded indicator (with a deferred re-probe) instead of stopping. The
+    // inconclusive marker also keeps handleNodesConnect from failing over
+    // (_shouldTryBackupAfterConnect excludes it). Only clean up when the native
+    // session genuinely went away.
+    final nativeStatus = await _nativeService.getStatus();
+    if (!_isActiveStartupVerification(generation)) {
+      return;
+    }
+    if (nativeStatus?.running == true) {
+      _markStartupProbeInconclusive();
+      _scheduleDeferredStartupEgressConfirmation(generation: generation);
+      _isLoading = false;
+      _safeNotifyListeners();
+      AppLogger.warning(
+        '[VpnProvider] startup egress unverified but native tunnel is up; '
+        'keeping it connected (degraded) instead of tearing down',
+      );
+      return;
+    }
+
     _error = _normalizeVpnError(
           _error ?? _nativeService.lastError ?? fallbackMessage,
         ) ??
@@ -1496,13 +1529,11 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // 2026-05-12: cellular-only session showed "VPN 连接成功" snackbar even
       // though nothing routed).
       final hasNativeDegradedMessage = message != null && message.isNotEmpty;
-      // DirectRouteDegraded is the transient handover settle window — the
-      // tunnel's proxy path is healthy, only the direct-route path is still
-      // stabilising. Surface the degraded UI but skip the upstream watchdog
-      // (which would force a same-node restart / failover) because the
-      // condition self-resolves once domestic probes start passing on the
-      // next health-monitor cycle (~30 s).
-      final isDirectRouteDegraded = message == tunnelDirectRouteDegradedMessage;
+      // Only UpstreamDegraded means "node upstream is unreachable" and should
+      // engage the same-node restart/failover watchdog. DirectRouteDegraded
+      // and Unreachable are health/probe states that still keep the tunnel
+      // installed; restarting here causes churn under flaky probe endpoints.
+      final isUpstreamDegraded = message == tunnelUpstreamDegradedMessage;
       _health = (hasNativeDegradedMessage || _hasStartupProbeWarning)
           ? VpnHealth.degraded
           : VpnHealth.healthy;
@@ -1529,7 +1560,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         unawaited(_refreshConnectedDiagnosticsEgressIp());
       }
       _handleUpstreamDegradedSignal(
-        degraded: hasNativeDegradedMessage && !isDirectRouteDegraded,
+        degraded: isUpstreamDegraded,
       );
     } else {
       if (previousStatus == VpnStatus.connected &&
@@ -1582,11 +1613,18 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
   }
 
+  bool get _shouldArmUpstreamDegradedWatchdog {
+    if (_status != VpnStatus.connected || _health != VpnHealth.degraded) {
+      return false;
+    }
+    return _error == tunnelUpstreamDegradedMessage;
+  }
+
   /// Reacts to whether the current `connected` broadcast carries a non-null
-  /// statusMessage from the native VpnService. The native side only sets a
-  /// message on the `connected` channel for `TunnelHealth.UpstreamDegraded`,
-  /// so any non-empty message while connected = "tunnel is up but can't reach
-  /// offshore". When that signal persists past [upstreamDegradedRestartDelay]
+  /// statusMessage from the native VpnService. Only
+  /// `TunnelHealth.UpstreamDegraded` should arm this watchdog; other degraded
+  /// tunnel health messages are displayed in the UI without forcing a restart.
+  /// When the upstream signal persists past [upstreamDegradedRestartDelay]
   /// we kick a native restart so urltest re-probes every pool member from
   /// scratch and (hopefully) lands on a healthy one.
   void _handleUpstreamDegradedSignal({required bool degraded}) {
@@ -1630,11 +1668,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // The signal cleared on its own between scheduling and firing.
       return;
     }
-    if (_error == tunnelDirectRouteDegradedMessage) {
-      // DirectRouteDegraded is the post-handover settle window: the proxy
-      // path is healthy and the direct path will clear itself within a
-      // health-monitor cycle. Restarting the tunnel here would only churn
-      // the same-node restart budget without addressing the real condition.
+    if (_error != tunnelUpstreamDegradedMessage) {
+      // The signal cleared or changed before the timer fired. Direct-route
+      // settling and strict-probe Unreachable states should not spend the
+      // upstream recovery budget.
       return;
     }
     if (_upstreamDegradedRestartAttempts >=
@@ -1723,6 +1760,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   @visibleForTesting
   int get debugUpstreamDegradedRestartAttempts =>
       _upstreamDegradedRestartAttempts;
+
+  @visibleForTesting
+  bool get debugUpstreamDegradedWatchdogArmed =>
+      _upstreamDegradedWatchdog?.isActive ?? false;
 
   /// Synchronously runs one watchdog cycle so tests don't need to wait for
   /// the 30-second [upstreamDegradedRestartDelay] timer. Mirrors what the
