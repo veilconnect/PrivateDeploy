@@ -3,6 +3,11 @@ import 'package:logger/logger.dart';
 class AppLogger {
   static bool _enabled = true;
   static final Logger _logger = Logger(
+    // TEMP(diagnostics): ProductionFilter emits logs in release builds too (the
+    // default DevelopmentFilter drops everything unless kDebugMode). Needed to
+    // capture VpnProvider reconnect-trigger decisions from a signed release APK
+    // on-device. Revert to the default filter before merge.
+    filter: ProductionFilter(),
     printer: PrettyPrinter(
       methodCount: 2,
       errorMethodCount: 8,
