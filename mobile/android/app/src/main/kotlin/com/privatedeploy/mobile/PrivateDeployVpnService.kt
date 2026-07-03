@@ -129,11 +129,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // failure surfaces within one cycle.
         private const val HEALTH_MONITOR_INTERVAL_MS = 30_000L
 
+        // Android can take a short moment after Builder.establish() before
+        // ConnectivityManager exposes the VPN Network. Startup probes must not
+        // fall back to the active cellular Network during that window.
+        private const val EGRESS_VERIFY_VPN_NETWORK_WAIT_MS = 5000L
+
+        // Startup verification is a liveness gate, not a burn-in test. Once a
+        // public-IP endpoint succeeds through the VPN Network, the tunnel is
+        // forwarding. The periodic monitor below still performs the stricter
+        // repeated checks after the session is accepted.
+        private const val EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS = 1
+
         // Number of consecutive TUNNEL_REQUIRED successes required to call the
-        // upstream Healthy. Some networks can pass one short probe while
-        // sustained traffic still fails, so a single-shot probe is too weak.
-        // Three consecutive successes spaced ~600ms apart avoids startup
-        // flapping without making healthy starts feel sluggish.
+        // upstream Healthy in the periodic monitor. Some networks can pass one
+        // short probe while sustained traffic still fails, so a single-shot
+        // monitor verdict is too weak. Startup uses a lighter gate above.
         private const val EGRESS_VERIFY_UPSTREAM_REPEATS = 3
         private const val EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS = 600L
         private val recentRuntimeLogs = ArrayDeque<RuntimeLogRecord>()
@@ -221,6 +231,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
             // Per-connection INFO/DEBUG chatter should stay available to the
             // in-app diagnostics parser, but does not need to flood logcat.
+            // During socket debugging, router/outbound/dial decisions are the
+            // signal: they show whether sing-box ever reaches proxy dialing
+            // after DNS resolution.
+            if (plain.contains("route(", ignoreCase = true) ||
+                plain.contains("outbound/", ignoreCase = true) ||
+                plain.contains("dial", ignoreCase = true)
+            ) {
+                return true
+            }
+
             return !isBenignAndroidPrivateDnsProbeLog(plain) &&
                 !isBenignAndroidProcessLookupLog(plain) &&
                 !plain.contains("outbound/", ignoreCase = true) &&
@@ -356,6 +376,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
      */
     private val healthProbeInFlight =
         java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val autoDetectControlCalls =
+        java.util.concurrent.atomic.AtomicLong(0L)
 
     private var lastUnderlyingRestartAtMs = 0L
 
@@ -575,7 +598,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
 
                     updateForegroundNotification("VPN connected (verifying)")
 
-                    val health = checkTunnelHealth()
+                    val health = checkTunnelHealth(
+                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                    )
                     when (health) {
                         TunnelHealth.Healthy -> {
                             val outcome = describeTunnelHealth(health)
@@ -995,7 +1020,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         break
                     }
 
-                    val health = checkTunnelHealth()
+                    val health = checkTunnelHealth(
+                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                    )
                     // Mirror startVpn's policy: don't retry on UpstreamDegraded.
                     // The same node from the same underlying network won't
                     // suddenly start passing offshore probes on a second
@@ -1289,7 +1316,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
      * users hit most often) but also require one domestic-direct success before
      * declaring Healthy.
      */
-    private fun checkTunnelHealth(): TunnelHealth {
+    private fun checkTunnelHealth(
+        upstreamRepeats: Int = EGRESS_VERIFY_UPSTREAM_REPEATS,
+    ): TunnelHealth {
         // Tun-existence guard. Without this, the probe sockets fall back to
         // the underlying physical network (carrier DPI strips them, baidu
         // works, gstatic doesn't) and we mis-report this as
@@ -1308,34 +1337,59 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
         val connectivityManager =
             getSystemService(ConnectivityManager::class.java) ?: return TunnelHealth.Unreachable
+        if (!NativeEgressProbe.waitForVpnNetwork(
+                connectivityManager,
+                EGRESS_VERIFY_VPN_NETWORK_WAIT_MS,
+            )
+        ) {
+            Log.w(
+                TAG,
+                "checkTunnelHealth: VPN Network was not visible after " +
+                    "${EGRESS_VERIFY_VPN_NETWORK_WAIT_MS}ms; skipping probes " +
+                    "that would otherwise use the cellular default network",
+            )
+            return TunnelHealth.Unreachable
+        }
 
         var lastUpstreamError: String? = null
         var lastUpstreamSource: String? = null
-        var upstreamHealthy = true
-        for (attempt in 1..EGRESS_VERIFY_UPSTREAM_REPEATS) {
+        // Tolerant verdict: the upstream is healthy if ANY of the repeated
+        // probes reaches a foreign endpoint through the tunnel — one success
+        // proves the tunnel forwards offshore traffic. We must NOT fail the
+        // whole verdict on the FIRST transient blip (the old behaviour): a
+        // single dropped probe would flip the tunnel to Unreachable/Degraded
+        // and kick a full VPN restart, and the restart itself (tun teardown +
+        // rebuild, ~25s) is what actually took the user offline — then it
+        // repeated every ~90s. The node is fine (the desktop's proxy holds a
+        // rock-stable connection through the same VPS), so a lone failed probe
+        // is noise to ride out, not a reason to rebuild the tunnel. Only when
+        // EVERY attempt fails do we treat upstream as down.
+        var upstreamHealthy = false
+        for (attempt in 1..upstreamRepeats) {
             val result = NativeEgressProbe.probe(
                 connectivityManager,
                 endpoints = NativeEgressProbe.TUNNEL_REQUIRED_ENDPOINTS,
                 timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
                 allowDomesticFallback = false,
+                requireVpnNetwork = true,
             )
-            if (!result.reachable) {
-                lastUpstreamError = result.error
-                upstreamHealthy = false
-                Log.w(
+            if (result.reachable) {
+                upstreamHealthy = true
+                lastUpstreamSource = result.source
+                Log.i(
                     TAG,
-                    "Tunnel upstream probe $attempt/$EGRESS_VERIFY_UPSTREAM_REPEATS failed: " +
-                        "${result.error}",
+                    "Tunnel upstream probe $attempt/$upstreamRepeats reachable via " +
+                        "${result.source}",
                 )
                 break
             }
-            lastUpstreamSource = result.source
-            Log.i(
+            lastUpstreamError = result.error
+            Log.w(
                 TAG,
-                "Tunnel upstream probe $attempt/$EGRESS_VERIFY_UPSTREAM_REPEATS reachable via " +
-                    "${result.source}",
+                "Tunnel upstream probe $attempt/$upstreamRepeats failed: " +
+                    "${result.error}",
             )
-            if (attempt < EGRESS_VERIFY_UPSTREAM_REPEATS) {
+            if (attempt < upstreamRepeats) {
                 try {
                     Thread.sleep(EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS)
                 } catch (ignored: InterruptedException) {
@@ -1353,6 +1407,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
             endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
             timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
             allowDomesticFallback = false,
+            requireVpnNetwork = true,
         )
 
         if (upstreamHealthy && domesticResult.reachable) {
@@ -2389,12 +2444,76 @@ class PrivateDeployVpnService : VpnService(), Platform {
     }
 
     override fun autoDetectInterfaceControl(fd: Int) {
-        Log.d(TAG, "Protecting outbound socket fd=$fd")
+        val callNumber = autoDetectControlCalls.incrementAndGet()
+        val shouldLog = shouldLogAutoDetectControl(callNumber)
+        val connectivityManager = getSystemService(ConnectivityManager::class.java)
+        if (shouldLog) {
+            Log.i(
+                TAG,
+                "AutoDetectInterfaceControl[$callNumber]: fd=$fd protect+bind start",
+            )
+        }
         if (!protect(fd)) {
             Log.e(TAG, "Failed to protect outbound socket fd=$fd")
             throw IllegalStateException("Failed to protect socket fd=$fd")
         }
-        Log.d(TAG, "Protected outbound socket fd=$fd")
+        val boundNetwork = try {
+            bindProtectedSocketToUnderlyingNetwork(fd, connectivityManager)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bind protected outbound socket fd=$fd", e)
+            throw IllegalStateException(
+                "Failed to bind protected socket fd=$fd to underlying network",
+                e,
+            )
+        }
+        if (shouldLog) {
+            Log.i(
+                TAG,
+                "AutoDetectInterfaceControl[$callNumber]: fd=$fd protected and " +
+                    "bound to ${formatBoundSocketNetwork(boundNetwork)}",
+            )
+        }
+    }
+
+    private fun bindProtectedSocketToUnderlyingNetwork(
+        fd: Int,
+        connectivityManager: ConnectivityManager?,
+    ): BoundSocketNetwork {
+        val manager = connectivityManager
+            ?: throw IllegalStateException("ConnectivityManager unavailable")
+        val network = findPreferredUnderlyingNetwork(manager)
+            ?: throw IllegalStateException("No usable underlying network for fd=$fd")
+        val snapshot = readCurrentUnderlyingNetworkSnapshot(manager)
+
+        val parcelFd = ParcelFileDescriptor.fromFd(fd)
+        try {
+            network.bindSocket(parcelFd.fileDescriptor)
+        } finally {
+            try {
+                parcelFd.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to close duplicate socket fd for $fd", e)
+            }
+        }
+
+        return BoundSocketNetwork(
+            handle = network.networkHandle,
+            snapshot = snapshot,
+        )
+    }
+
+    private fun shouldLogAutoDetectControl(callNumber: Long): Boolean {
+        return callNumber <= 20L || callNumber % 100L == 0L
+    }
+
+    private fun formatBoundSocketNetwork(boundNetwork: BoundSocketNetwork): String {
+        val snapshot = boundNetwork.snapshot
+        return if (snapshot == null) {
+            "network@${boundNetwork.handle}"
+        } else {
+            "${formatInterfaceType(snapshot.type)}:${snapshot.interfaceName}" +
+                "#${snapshot.interfaceIndex}@${boundNetwork.handle}"
+        }
     }
 
     override fun writeLog(message: String?) {
@@ -2901,6 +3020,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
         val interfaceIndex: Int,
         val expensive: Boolean,
         val constrained: Boolean,
+    )
+
+    private data class BoundSocketNetwork(
+        val handle: Long,
+        val snapshot: UnderlyingNetworkSnapshot?,
     )
 
     private data class RuntimeLogRecord(
