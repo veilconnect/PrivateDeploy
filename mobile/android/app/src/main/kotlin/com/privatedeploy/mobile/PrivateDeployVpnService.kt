@@ -599,7 +599,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     updateForegroundNotification("VPN connected (verifying)")
 
                     val health = checkTunnelHealth(
-                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                        // Use the tolerant multi-probe count (not the old
+                        // single startup probe) so a lone transient blip during
+                        // start/restart verification can't fail the start and
+                        // kick a teardown→retry cascade. Combined with the
+                        // any-attempt-passes verdict, one probe reaching a
+                        // foreign host through the tunnel is enough.
+                        upstreamRepeats = EGRESS_VERIFY_UPSTREAM_REPEATS,
                     )
                     when (health) {
                         TunnelHealth.Healthy -> {
@@ -1021,7 +1027,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     }
 
                     val health = checkTunnelHealth(
-                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                        // Use the tolerant multi-probe count (not the old
+                        // single startup probe) so a lone transient blip during
+                        // start/restart verification can't fail the start and
+                        // kick a teardown→retry cascade. Combined with the
+                        // any-attempt-passes verdict, one probe reaching a
+                        // foreign host through the tunnel is enough.
+                        upstreamRepeats = EGRESS_VERIFY_UPSTREAM_REPEATS,
                     )
                     // Mirror startVpn's policy: don't retry on UpstreamDegraded.
                     // The same node from the same underlying network won't
