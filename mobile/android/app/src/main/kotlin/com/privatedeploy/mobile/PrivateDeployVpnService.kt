@@ -599,13 +599,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     updateForegroundNotification("VPN connected (verifying)")
 
                     val health = checkTunnelHealth(
-                        // Use the tolerant multi-probe count (not the old
-                        // single startup probe) so a lone transient blip during
-                        // start/restart verification can't fail the start and
-                        // kick a teardown→retry cascade. Combined with the
-                        // any-attempt-passes verdict, one probe reaching a
-                        // foreign host through the tunnel is enough.
-                        upstreamRepeats = EGRESS_VERIFY_UPSTREAM_REPEATS,
+                        // Single fast probe for start/restart verification: report
+                        // connected quickly so the Dart-side startVpn call doesn't
+                        // hit START_TIMEOUT. Tolerance now lives in the verdict
+                        // (any-attempt-passes) and in accepting Unreachable as
+                        // connected-degraded rather than in slow multi-probe retries.
+                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
                     )
                     when (health) {
                         TunnelHealth.Healthy -> {
@@ -681,14 +680,47 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             )
                         }
                         TunnelHealth.Unreachable -> {
-                            lastError = IllegalStateException(startupConnectivityFailureMessage())
-                            Log.w(
-                                TAG,
-                                "VPN start attempt $attempt: probe couldn't reach any " +
-                                    "endpoint through the tunnel; treating this as a " +
-                                    "failed start so the app does not leave a blackholed " +
-                                    "TUN route installed",
-                            )
+                            val onCellular = lastObservedUnderlyingNetworkType ==
+                                INTERFACE_TYPE_CELLULAR
+                            if (onCellular) {
+                                // On cellular a genuinely blackholed tun should
+                                // yield to direct traffic (carrier SYN-block
+                                // case), so keep the historical fail-start here.
+                                lastError = IllegalStateException(
+                                    startupConnectivityFailureMessage(),
+                                )
+                                Log.w(
+                                    TAG,
+                                    "VPN start attempt $attempt: cellular Unreachable " +
+                                        "— failing start so device falls back to direct",
+                                )
+                            } else {
+                                // On Wi-Fi: DO NOT tear the tunnel down. The tun
+                                // and sing-box are up and the node is reachable
+                                // (a stable desktop proxy through the same VPS
+                                // proves it); an Unreachable verdict here is
+                                // almost always a transient probe/DNS blip in the
+                                // settle window. Failing the start forced connect()
+                                // to retry, which blew past the Dart-side
+                                // START_TIMEOUT (~90s of multi-attempt verify) and
+                                // churned the tunnel offline every cycle — the
+                                // exact "keeps disconnecting" the user reported.
+                                // Accept as connected-degraded; the periodic
+                                // monitor clears or sustains the indicator, and
+                                // the user can disconnect by hand if a node really
+                                // is dead.
+                                val outcome = describeTunnelHealth(health)
+                                updateForegroundNotification(outcome.notificationText)
+                                broadcastStatus("connected", outcome.statusMessage)
+                                succeeded = true
+                                Log.w(
+                                    TAG,
+                                    "VPN start attempt $attempt: egress unverified " +
+                                        "(Unreachable) but tun+core are up on Wi-Fi; " +
+                                        "accepting as connected-degraded instead of " +
+                                        "tearing down (avoids the reconnect cascade)",
+                                )
+                            }
                         }
                         TunnelHealth.TunnelDown -> {
                             // Can only happen if openTun() succeeded but the
@@ -1027,13 +1059,12 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     }
 
                     val health = checkTunnelHealth(
-                        // Use the tolerant multi-probe count (not the old
-                        // single startup probe) so a lone transient blip during
-                        // start/restart verification can't fail the start and
-                        // kick a teardown→retry cascade. Combined with the
-                        // any-attempt-passes verdict, one probe reaching a
-                        // foreign host through the tunnel is enough.
-                        upstreamRepeats = EGRESS_VERIFY_UPSTREAM_REPEATS,
+                        // Single fast probe for start/restart verification: report
+                        // connected quickly so the Dart-side startVpn call doesn't
+                        // hit START_TIMEOUT. Tolerance now lives in the verdict
+                        // (any-attempt-passes) and in accepting Unreachable as
+                        // connected-degraded rather than in slow multi-probe retries.
+                        upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
                     )
                     // Mirror startVpn's policy: don't retry on UpstreamDegraded.
                     // The same node from the same underlying network won't
@@ -1049,7 +1080,13 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         TunnelHealth.Healthy,
                         TunnelHealth.DirectRouteDegraded -> true
                         TunnelHealth.UpstreamDegraded -> !onCellular
-                        TunnelHealth.Unreachable,
+                        // Unreachable on Wi-Fi: keep the (already-up) tunnel
+                        // instead of churning it — same rationale as startVpn's
+                        // Unreachable branch. A restart just tears the tun down
+                        // and the next verify fails mid-rebuild, feeding the
+                        // reconnect cascade. TunnelDown means the tun fd is truly
+                        // gone, so that still needs a rebuild.
+                        TunnelHealth.Unreachable -> !onCellular
                         TunnelHealth.TunnelDown -> false
                     }
                     if (acceptNow) {
