@@ -9,7 +9,7 @@ class AppLogger {
     // on-device. Revert to the default filter before merge.
     filter: ProductionFilter(),
     printer: PrettyPrinter(
-      methodCount: 2,
+      methodCount: 8,
       errorMethodCount: 8,
       lineLength: 120,
       colors: true,
