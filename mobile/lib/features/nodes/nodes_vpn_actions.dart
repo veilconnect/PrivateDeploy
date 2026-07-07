@@ -403,7 +403,8 @@ bool _shouldTryBackupAfterConnect(VpnProvider vpnProvider) {
     return false;
   }
   final warning = vpnProvider.error ?? vpnProvider.diagnosticsError;
-  return warning != VpnProvider.startupProbeInconclusiveMessage;
+  return warning != VpnProvider.startupProbeInconclusiveMessage &&
+      warning != VpnProvider.tunnelDirectRouteDegradedMessage;
 }
 
 Future<void> handleNodesDisconnect({

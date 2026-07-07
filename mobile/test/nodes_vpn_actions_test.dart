@@ -385,6 +385,50 @@ void main() {
       );
     });
 
+    testWidgets('keeps cloud connection while direct routes are settling',
+        (tester) async {
+      final primary = _readyInstance(label: 'primary-node');
+      final backup = _readyInstance(label: 'backup-node');
+      final vpnProvider = _FakeVpnProvider(
+        status: VpnStatus.disconnected,
+        connectResult: true,
+        disconnectResult: true,
+        isDegraded: true,
+        errorMessage: VpnProvider.tunnelDirectRouteDegradedMessage,
+        diagnosticsError: VpnProvider.tunnelDirectRouteDegradedMessage,
+      );
+
+      await _pumpActionHarness(
+        tester,
+        onRun: (context) => connectSelectedProfile(
+          context: context,
+          vpnProvider: vpnProvider,
+          profileProvider: _FakeProfileProvider(
+            activeProfile: _profile(name: 'Cloud: ${primary.label}'),
+            activeConfigJson:
+                '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+          ),
+          cloudProvider: _FakeCloudProvider(
+            instances: [primary, backup],
+          ),
+          onUseCloudNode: (_) async {},
+          successMessage: 'VPN connected successfully',
+        ),
+      );
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect(vpnProvider.connectCalls, 1);
+      expect(vpnProvider.disconnectCalls, 0);
+      expect(
+        find.text(
+          'Tunnel is up and the upstream node responds, but the direct-route path (used for domestic sites) is still settling. Some traffic may stall for up to a minute — common right after switching between Wi-Fi and cellular.',
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets(
         'keeps cloud connection when startup egress is confirmed quickly',
         (tester) async {
