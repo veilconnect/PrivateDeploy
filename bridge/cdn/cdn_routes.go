@@ -224,6 +224,63 @@ func (m *Manager) attachWorkerCustomDomain(ctx context.Context, token, accountID
 	return &workerCustomDomainBinding{ID: id, Hostname: host}, nil
 }
 
+// relaxRelayZoneSecurity lowers the relay zone's Cloudflare edge security so
+// the vless WebSocket upgrade reaches the Worker instead of being 403'd by
+// CF's generic challenge for low-reputation source IPs (observed on CN
+// cellular: a fresh, low-volume connect still saw ~95% of WS upgrades return
+// 403 while the same hosts answered 404/200 from a clean IP — a per-request CF
+// edge decision, not the Worker and not rate-limiting). Mirrors the mobile
+// CdnProvider._relaxRelayZoneSecurity. Best-effort and fully non-fatal: each
+// setting is independent and a scope/plan miss only yields a warning. Safe to
+// lower because the Worker is gated by the per-deployment path secret; CF's
+// challenge was only generic edge protection, not the relay's access control.
+// Needs the token to carry "Zone.Zone Settings:Edit". Returns a human warning
+// string ("" when everything succeeded) for the caller to surface via
+// lastError. NOTE (2026-07-09): on a *free* CF plan these settings are
+// necessary but NOT sufficient — on-device testing showed Bot Fight Mode was
+// already off yet the CN-cellular WS-upgrade still 403'd, so the residual 403
+// comes from the free-tier managed WAF / DDoS L7 ruleset (not overridable
+// without Pro+). CDN-edge is best-effort on free plans.
+func (m *Manager) relaxRelayZoneSecurity(ctx context.Context, token, zoneID string) string {
+	zone := strings.TrimSpace(zoneID)
+	if zone == "" {
+		return ""
+	}
+	var warnings []string
+
+	patchSetting := func(key, value string) {
+		target := fmt.Sprintf("%s/%s/settings/%s", zonesEndpoint, zone, key)
+		body, status, err := m.cfJSONRequest(ctx, http.MethodPatch, token, target,
+			map[string]any{"value": value})
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s (%v)", key, err))
+			return
+		}
+		if status >= 400 || !cfSuccess(body) {
+			warnings = append(warnings, fmt.Sprintf("%s (HTTP %d)", key, status))
+		}
+	}
+
+	patchSetting("security_level", "essentially_off")
+	patchSetting("browser_check", "off")
+
+	// Best-effort hygiene: keep Bot Fight Mode off on the relay zone (it is off
+	// by default). fight_mode needs a "Zone.Bot Management:Edit" scope the
+	// default token set does not carry, and testing showed Bot Fight Mode was
+	// NOT the 403 source anyway — so a missing scope here is silent, never a
+	// warning and never a required permission.
+	botTarget := fmt.Sprintf("%s/%s/bot_management", zonesEndpoint, zone)
+	_, _, _ = m.cfJSONRequest(ctx, http.MethodPut, token, botTarget,
+		map[string]any{"fight_mode": false})
+
+	if len(warnings) == 0 {
+		return ""
+	}
+	return "relaxing CF edge security failed for: " + strings.Join(warnings, ", ") +
+		` — grant the token "Zone.Zone Settings:Edit" so the CDN path is not ` +
+		"403-challenged on CN cellular"
+}
+
 // probeCustomDomainScope verifies the token can read the Workers Custom
 // Domains endpoint on the verified account. We GET ?per_page=1 — empty
 // result is fine (we just want to know that the call is permitted), but

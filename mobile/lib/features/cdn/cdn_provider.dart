@@ -230,6 +230,10 @@ class CdnProvider with ChangeNotifier {
     // retry flips it Active — see [_resumeIncompleteProbes] for why
     // 'failed' must be retried rather than treated as terminal.
     _resumeIncompleteProbes();
+    // ...and re-validate the ones that ARE 'active': a host that passed its
+    // probe once is otherwise trusted forever, even after CF/relay later
+    // breaks it. See [revalidateActiveCustomHosts].
+    unawaited(revalidateActiveCustomHosts());
   }
 
   void _loadCustomDomain() {
@@ -576,6 +580,9 @@ class CdnProvider with ChangeNotifier {
     // timed out there before CF/VPS settled — re-probing here can clear it
     // without a manual re-deploy. See [_resumeIncompleteProbes].
     _resumeIncompleteProbes();
+    // Imported deployments can carry a stale 'active' whose CF/relay side has
+    // since broken; re-validate them too. See [revalidateActiveCustomHosts].
+    unawaited(revalidateActiveCustomHosts());
   }
 
   Future<void> clear() async {
@@ -771,6 +778,16 @@ class CdnProvider with ChangeNotifier {
           if (binding != null) {
             customHost = binding.hostname;
             customDomainId = binding.id;
+            // Root fix for the CN-cellular WS-upgrade 403: Cloudflare's edge
+            // (Security-Level challenge / Bot Fight Mode) injects a 403 on the
+            // vless WebSocket upgrade for low-reputation source IPs, even
+            // though our Worker only ever returns 404/502/101. Relax the
+            // relay zone's security so the upgrade reaches the Worker (which
+            // is itself gated by the per-deployment path secret, so lowering
+            // CF's generic challenge does not open the relay up). Non-fatal:
+            // the deploy already succeeded; a scope/permission miss just
+            // leaves a warning in lastError and the CDN path keeps flapping.
+            await _relaxRelayZoneSecurity(dio, _customDomain!.zoneId);
           }
         }
       }
@@ -1241,6 +1258,85 @@ class CdnProvider with ChangeNotifier {
     );
   }
 
+  /// Relax the relay zone's Cloudflare edge security so the vless WebSocket
+  /// upgrade reaches the Worker instead of being 403'd by CF's generic
+  /// challenge for low-reputation source IPs (observed on CN cellular: a
+  /// fresh, low-volume connect still saw ~95% of WS upgrades return 403 while
+  /// the same hosts answered 404/200 from a clean IP — so it is a per-request
+  /// CF edge decision, not the Worker and not rate-limiting).
+  ///
+  /// Three best-effort settings, each independently non-fatal:
+  ///   - `security_level: essentially_off` — stops the IP-reputation challenge.
+  ///   - `browser_check: off` — stops the Browser Integrity Check (challenges
+  ///     non-browser clients).
+  ///   - Bot Fight Mode `fight_mode: false` — stops the free-plan bot block.
+  ///
+  /// Safe to lower here because the Worker itself is gated by the
+  /// per-deployment path secret ([wsPath] `/<secret>`); CF's challenge was
+  /// only ever generic edge protection, not the relay's access control. The
+  /// relay zone is expected to be dedicated to relays. Requires the token to
+  /// carry `Zone · Zone Settings · Edit` (see cdn_settings_screen token help);
+  /// without it these calls 403 and we surface a single warning without
+  /// failing the deploy.
+  ///
+  /// NOTE (2026-07-09): on a *free* Cloudflare plan these two settings are
+  /// necessary but NOT sufficient to clear the CN-cellular WS-upgrade 403 —
+  /// on-device testing confirmed Bot Fight Mode was already off and the 403
+  /// persisted with security_level/browser_check fully relaxed. The residual
+  /// 403 originates from the free-tier managed WAF ("Cloudflare Managed Free
+  /// Ruleset") / DDoS L7 ruleset, whose IP-reputation rules are not
+  /// overridable without a Pro+ plan. CDN-edge is therefore best-effort on
+  /// free plans; direct nodes carry the connection.
+  Future<void> _relaxRelayZoneSecurity(Dio dio, String zoneId) async {
+    final zone = zoneId.trim();
+    if (zone.isEmpty) return;
+    const base = 'https://api.cloudflare.com/client/v4/zones';
+    final warnings = <String>[];
+
+    Future<void> patchSetting(String key, String value) async {
+      try {
+        final r = await dio.patch(
+          '$base/$zone/settings/$key',
+          data: jsonEncode({'value': value}),
+          options: Options(headers: {'Content-Type': 'application/json'}),
+        );
+        if (r.statusCode == null || r.statusCode! >= 400) {
+          warnings.add('$key (HTTP ${r.statusCode})');
+        }
+      } catch (e) {
+        warnings.add('$key ($e)');
+      }
+    }
+
+    await patchSetting('security_level', 'essentially_off');
+    await patchSetting('browser_check', 'off');
+
+    // Best-effort hygiene: ensure Bot Fight Mode stays off on the relay zone
+    // (it is off by default, so this only matters if it was ever toggled on).
+    // `fight_mode` needs a `Zone · Bot Management · Edit` scope the default
+    // token set does NOT carry, and testing showed Bot Fight Mode was NOT the
+    // 403 source anyway — so a missing scope here is silent, never a warning
+    // and never a required permission.
+    try {
+      await dio.put(
+        '$base/$zone/bot_management',
+        data: jsonEncode({'fight_mode': false}),
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          validateStatus: (_) => true,
+        ),
+      );
+    } catch (_) {
+      // Ignore — best-effort only, not part of the 403 fix.
+    }
+
+    if (warnings.isNotEmpty) {
+      _lastError = 'Relay deployed, but relaxing CF edge security failed for: '
+          '${warnings.join(', ')}. Grant the token "Zone · Zone Settings · '
+          'Edit" so the CDN path is not 403-challenged on CN cellular.';
+    }
+  }
+
   /// Workers Custom Domains detach. 404 is treated as success (the binding
   /// is already gone — CF dashboard or another tool may have removed it).
   /// CF cascades the auto-created DNS record as part of the detach.
@@ -1447,6 +1543,67 @@ class CdnProvider with ChangeNotifier {
     await _probeCustomHostReadiness(nodeId, host);
     final after = _deployments[nodeId];
     return after?.customHostStatus == 'active';
+  }
+
+  /// Re-validate custom hosts already marked 'active'.
+  ///
+  /// Root-cause fix for "the CDN works for a while, then always breaks, and
+  /// even a freshly-deployed node eventually stops connecting": readiness is
+  /// only ever proven ONCE, at deploy time. [_resumeIncompleteProbes]
+  /// deliberately skips 'active' (a healthy node shouldn't be re-probed on
+  /// every launch), which left a real blind spot — a host that passed its
+  /// probe and went 'active' is then trusted FOREVER. When Cloudflare later
+  /// breaks the managed cert / custom-domain binding (52x/500) or the VPS
+  /// relay backend dies (502/504), the stale-'active' host keeps getting
+  /// advertised in subscriptions and packed into the client urltest pool, so
+  /// the tunnel silently carries no international traffic and nothing
+  /// self-heals until a manual redeploy.
+  ///
+  /// This does one cheap WS-upgrade check per active host and — ONLY on a
+  /// definite broken signal from CF (an actual 5xx/52x status, never a
+  /// transient TLS/network miss, so a working node is never demoted on a
+  /// flaky probe) — demotes it back to 'pending' and re-runs the full
+  /// readiness probe. That reuses the existing self-heal: auto-repair for a
+  /// broken worker/binding (52x/500), or 'failed' + a recorded 502/504 that
+  /// tells the user to redeploy the node when the relay backend is dead.
+  Future<void> revalidateActiveCustomHosts() async {
+    if (_isDeploying) return;
+    // Snapshot first — the readiness probe mutates _deployments and we must
+    // not iterate a collection being modified underneath us.
+    final active = _deployments.entries
+        .where((e) {
+          final d = e.value;
+          return d.customHostStatus == 'active' &&
+              (d.customHost ?? '').isNotEmpty &&
+              (d.pathSecret ?? '').trim().isNotEmpty;
+        })
+        .map((e) => MapEntry(e.key, e.value))
+        .toList(growable: false);
+    for (final entry in active) {
+      final nodeId = entry.key;
+      final dep = entry.value;
+      final host = dep.customHost!;
+      final secret = dep.pathSecret!.trim();
+      if (!await _customHostTLSReachable(host)) {
+        // Offline or transient — don't tear down a working node's status on a
+        // single flaky probe. A genuinely dead host will still fail the next
+        // launch's re-validation once connectivity is back.
+        continue;
+      }
+      final status = await _customHostUpgradeStatus(host, secret);
+      // null = inconclusive (network), 101 = healthy end-to-end. Leave both.
+      if (status == null || status == 101) continue;
+      final broken = status == 500 ||
+          status == 502 ||
+          status == 504 ||
+          (status >= 520 && status <= 526);
+      if (!broken) continue;
+      _lastProbeStatus[nodeId] = status;
+      debugPrint('[CDNProbe] active host $host degraded to status=$status — '
+          're-validating (was silently stale-active)');
+      await _markCustomHostStatus(nodeId, host, 'pending');
+      unawaited(_probeCustomHostReadiness(nodeId, host));
+    }
   }
 
   /// Authoritative existence check of a Workers Custom Domain binding,
@@ -1810,8 +1967,17 @@ class CdnProvider with ChangeNotifier {
         keyBytes[i] = rng.nextInt(256);
       }
       final wsKey = base64Encode(keyBytes);
-      final query = 'ed=2560&k=${Uri.encodeQueryComponent(pathSecret)}';
-      final req = 'GET /?$query HTTP/1.1\r\n'
+      // Mirror EXACTLY the request sing-box puts on the wire. The config
+      // builder sets transport.ws.path = '/<secret>' (a PATH SEGMENT, not a
+      // `?k=` query — sing-box percent-escapes '?' in ws.path and does not
+      // implement the xray `?ed=` convention, so it can ONLY deliver the
+      // secret as a path segment; see cloud_node_config_builder). The probe
+      // MUST send the same shape, otherwise a 101 here is a false "healthy":
+      // a Worker honouring only the legacy `?k=` query form would 101 this
+      // probe yet 404 every real sing-box dial, so the node flips to 'active'
+      // while carrying zero traffic. The hex secret is URL-safe, so it needs
+      // no escaping and survives intact. No query string, no early-data param.
+      final req = 'GET /$pathSecret HTTP/1.1\r\n'
           'Host: $host\r\n'
           'Upgrade: websocket\r\n'
           'Connection: Upgrade\r\n'

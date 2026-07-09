@@ -322,25 +322,31 @@ class _SetupSection extends StatelessWidget {
                   : 'Create a Cloudflare API token',
               body: isZh
                   ? '在 Cloudflare 后台:My Profile → API Tokens → Create Token，'
-                      '选「Create Custom Token」。在 Permissions 里加这 3 行'
+                      '选「Create Custom Token」。在 Permissions 里加这 4 行'
                       '（用 Add more 加行）:\n'
                       '① Account · Workers Scripts · Edit\n'
                       '② Account · Account Settings · Read\n'
                       '③ Zone · Zone · Read\n'
+                      '④ Zone · Zone Settings · Edit\n'
                       'Account Resources 选 Include 你的账户 → Continue to '
                       'summary → Create Token，把生成的 Token 拷回 Step 2。'
                       '（注意:现成的「Edit Cloudflare Workers」模板缺 Zone:Read,'
-                      '单用它不够。）'
+                      '单用它不够。第④行让 App 部署时自动关掉 relay 区域的'
+                      '安全挑战，否则手机蜂窝下 CDN 会被 CF 边缘 403。）'
                   : 'In Cloudflare: My Profile → API Tokens → Create Token, '
                       'then pick "Create Custom Token". Under Permissions add '
-                      'these three rows (use "Add more"):\n'
+                      'these four rows (use "Add more"):\n'
                       '1. Account · Workers Scripts · Edit\n'
                       '2. Account · Account Settings · Read\n'
                       '3. Zone · Zone · Read\n'
+                      '4. Zone · Zone Settings · Edit\n'
                       'Set Account Resources to Include your account, then '
                       'Continue to summary → Create Token, and paste it into '
                       'Step 2. (Note: the ready-made "Edit Cloudflare Workers" '
-                      'template lacks Zone:Read, so it is not enough on its own.)',
+                      'template lacks Zone:Read, so it is not enough on its own. '
+                      'Row 4 lets the app auto-relax the relay zone security at '
+                      'deploy time; without it the CDN path gets 403-challenged '
+                      'by CF edge on cellular.)',
               actionLabel:
                   isZh ? '拷贝 API Tokens 页面链接' : 'Copy API Tokens page link',
               onAction: () =>

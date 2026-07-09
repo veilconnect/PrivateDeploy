@@ -296,7 +296,28 @@ Map<String, String> _appendInstanceOutbounds(
         'transport': {
           'type': 'ws',
           'path': wsPath,
-          'headers': {'Host': host},
+          // Browser-like headers on the WS-upgrade. Cloudflare's edge bot
+          // heuristics (Bot Fight Mode / Security-Level challenge) score a
+          // bare Go WS client dialing from a low-reputation IP (e.g. CN
+          // cellular NAT pools) high enough to inject a 403 on the upgrade —
+          // even though the Worker itself only returns 404/502/101. Presenting
+          // a realistic Chrome User-Agent + Accept-* + Sec-CH-UA set lowers
+          // that score. This is defence-in-depth only: the TLS (JA3/JA4)
+          // fingerprint is the stronger signal, and the deploy-side CF
+          // security relax (see cdn_provider.dart) is the actual root fix.
+          'headers': {
+            'Host': host,
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                    '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Origin': 'https://$host',
+            'Sec-CH-UA':
+                '"Chromium";v="126", "Google Chrome";v="126", "Not.A/Brand";v="24"',
+            'Sec-CH-UA-Mobile': '?0',
+            'Sec-CH-UA-Platform': '"Windows"',
+          },
         },
         'tls': {
           'enabled': true,

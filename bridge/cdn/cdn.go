@@ -590,6 +590,13 @@ func (m *Manager) DeployWorker(ctx context.Context, nodeID, nodeLabel, backendHo
 				dep.CustomDomainID = bind.ID
 				dep.CustomHostStatus = customHostStatusPending
 				go m.probeCustomHostReadiness(nodeID, bind.Hostname)
+				// Root fix for the CN-cellular WS-upgrade 403: relax the relay
+				// zone's CF edge security so the upgrade reaches the Worker
+				// (itself path-secret gated). Non-fatal — a scope/plan miss
+				// only adds a warning. Mirrors the mobile CdnProvider path.
+				if warn := m.relaxRelayZoneSecurity(ctx, token, customDomainCopy.ZoneID); warn != "" {
+					customWarn = "relay deployed, but " + warn
+				}
 				// Single-point-of-failure guard: a custom-domain-only deploy
 				// (host == "" because no workers.dev subdomain was claimed)
 				// leaves no sibling in the client's urltest pool, so if the
