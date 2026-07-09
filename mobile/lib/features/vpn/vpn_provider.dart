@@ -1713,22 +1713,42 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         }
       }
       // No failover candidate (single-node setup, or every cloud node already
-      // tried). Keep the tunnel UP and schedule a slower recovery restart so
-      // the session self-heals when the node/carrier recovers — instead of
-      // tearing it down and forcing a manual reconnect. The degraded banner
-      // stays visible; the user can always disconnect or switch nodes by hand.
-      AppLogger.info(
-        '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
-        '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
-        'and no failover candidate; keeping the tunnel up and scheduling a '
-        'recovery restart in ${upstreamDegradedRecoveryRetryDelay.inSeconds}s '
-        '(self-heal, no forced disconnect).',
-      );
-      try {
-        await _nativeService.restartVpn();
-      } catch (e) {
-        AppLogger.warning(
-          '[VpnProvider] Upstream-degraded recovery restart failed: $e',
+      // tried). Keep the tunnel UP so the session self-heals when the
+      // node/carrier recovers — instead of tearing it down and forcing a
+      // manual reconnect. The degraded banner stays visible; the user can
+      // always disconnect or switch nodes by hand.
+      //
+      // Only issue a native restart if the tunnel actually went DOWN (e.g. a
+      // failover attempt above disconnected the old node and the replacement
+      // refused on this network). If we are still connected-degraded, a restart
+      // just re-broadcasts "connecting" every cycle without un-blocking a
+      // carrier-blocked route — that periodic flip IS the "总是断线" the user
+      // sees. So when the tunnel is up we skip the restart and let the native
+      // periodic monitor + sing-box urltest re-probe recover on their own; the
+      // slow poll below only keeps observing until the signal clears.
+      final tunnelDown = _status != VpnStatus.connected;
+      if (tunnelDown) {
+        AppLogger.info(
+          '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
+          '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
+          'and no failover candidate; tunnel is down — restarting once to '
+          're-establish, then self-heal on the '
+          '${upstreamDegradedRecoveryRetryDelay.inSeconds}s poll.',
+        );
+        try {
+          await _nativeService.restartVpn();
+        } catch (e) {
+          AppLogger.warning(
+            '[VpnProvider] Upstream-degraded recovery restart failed: $e',
+          );
+        }
+      } else {
+        AppLogger.info(
+          '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
+          '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
+          'and no failover candidate; keeping the connected-degraded tunnel up '
+          'WITHOUT a restart (avoids the periodic reconnect flip). Native '
+          'monitor + urltest re-probe self-heal when the route recovers.',
         );
       }
       _armUpstreamDegradedRecoveryRetry();

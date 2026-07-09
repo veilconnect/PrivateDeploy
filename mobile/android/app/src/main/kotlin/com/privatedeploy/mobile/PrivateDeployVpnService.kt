@@ -1066,20 +1066,34 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         // connected-degraded rather than in slow multi-probe retries.
                         upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
                     )
-                    // Mirror startVpn's policy: don't retry on UpstreamDegraded.
-                    // The same node from the same underlying network won't
-                    // suddenly start passing offshore probes on a second
-                    // attempt; only Unreachable (probe verifier hit no
-                    // endpoints at all, possibly transient) earns a retry.
-                    // Same regression guard as startVpn: cellular
-                    // UpstreamDegraded must not be accepted, or tun0 ends up
-                    // black-holing every offshore request on the device.
+                    // Don't retry on UpstreamDegraded: the same node on the same
+                    // underlying network won't suddenly pass offshore probes on a
+                    // second attempt; only Unreachable (probe hit no endpoints at
+                    // all, possibly transient) earns a retry.
+                    //
+                    // Cellular UpstreamDegraded on the RESTART path used to be
+                    // refused (fall through to teardown + scheduleDelayedRestart)
+                    // to avoid a tun0 that black-holes offshore. But when the
+                    // carrier blocks the offshore route mid-session, that refusal
+                    // becomes an endless teardown -> delayed-restart -> teardown
+                    // cascade — the user's "总是断线" churn — because restarting
+                    // never un-blocks the route, it only flaps the tun down/up and
+                    // re-broadcasts "connecting" every cycle. Since we are
+                    // restarting an EXISTING session (a tun is already
+                    // established, vpnInterface != null), keep it up as
+                    // connected-degraded instead: domestic-direct traffic keeps
+                    // flowing, the degraded banner stays honest, and the periodic
+                    // monitor + Dart recovery poll self-heal when the carrier
+                    // recovers. Mirrors the Wi-Fi Unreachable rationale below and
+                    // the start worker's Wi-Fi branch. A FRESH connect (no tun)
+                    // still fail-closes via the start worker's synblock-refuse.
                     val onCellular = lastObservedUnderlyingNetworkType ==
                         INTERFACE_TYPE_CELLULAR
                     val acceptNow = when (health) {
                         TunnelHealth.Healthy,
                         TunnelHealth.DirectRouteDegraded -> true
-                        TunnelHealth.UpstreamDegraded -> !onCellular
+                        TunnelHealth.UpstreamDegraded -> !onCellular ||
+                            vpnInterface != null
                         // Unreachable on Wi-Fi: keep the (already-up) tunnel
                         // instead of churning it — same rationale as startVpn's
                         // Unreachable branch. A restart just tears the tun down

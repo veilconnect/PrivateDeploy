@@ -1464,15 +1464,20 @@ void main() {
       expect(restartCalls, 2);
 
       // Cap reached — the fast same-node restart budget is spent. With no
-      // failover candidate registered, the watchdog now keeps the tunnel UP
-      // and issues a slower recovery restart instead of tearing the session
-      // down (which used to force a manual reconnect on every transient
-      // upstream hiccup — the "总是断线" complaint).
+      // failover candidate registered AND the tunnel still connected-degraded
+      // (the native side now keeps a cellular UpstreamDegraded tun up instead
+      // of tearing it down), the watchdog does NOT issue another restart: a
+      // restart would only re-broadcast "connecting" every cycle without
+      // un-blocking a carrier-blocked route — the periodic flip that reads as
+      // "总是断线". It keeps the tunnel up and arms the slow observation poll
+      // instead. (A restart still fires from this branch when the tunnel has
+      // actually gone DOWN — e.g. a failover attempt disconnected us — so we
+      // never strand the user disconnected.)
       vpnProvider.debugApplyNativeStatus(disconnected());
       vpnProvider.debugApplyNativeStatus(connectedDegraded());
       await vpnProvider.debugFireUpstreamDegradedWatchdog();
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 2);
-      expect(restartCalls, 3);
+      expect(restartCalls, 2); // unchanged — no reconnect flip while connected
       expect(stopCalls, 0);
       expect(vpnProvider.status, VpnStatus.connected);
     });
