@@ -572,10 +572,14 @@ void main() {
     });
 
     test(
-        'connect fails when the startup egress probe cannot reach the node in hard-fail mode',
+        'connect keeps the tunnel up (degraded) when the startup egress probe cannot reach the node in hard-fail mode',
         () async {
+      // Advisory-only startup verification (the "keeps disconnecting" fix): a
+      // native tunnel that reports running must NEVER be torn down by an
+      // unverified egress probe, even in hard-fail mode. connect() still
+      // reports verification failure (returns false) so the caller can react,
+      // but the tunnel stays up and degraded instead of failing over.
       var stopVpnCalls = 0;
-      var tunnelStopped = false;
 
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
@@ -589,18 +593,8 @@ void main() {
             return true;
           case 'stopVpn':
             stopVpnCalls += 1;
-            tunnelStopped = true;
             return true;
           case 'getStatus':
-            if (tunnelStopped) {
-              return {
-                'running': false,
-                'status': 'disconnected',
-                'message': null,
-                'connected_at': 0,
-                'uptime': 0,
-              };
-            }
             return {
               'running': true,
               'status': 'connected',
@@ -615,7 +609,7 @@ void main() {
               'error': 'Timed out contacting public IP probe endpoints.',
             };
           case 'isRunning':
-            return !tunnelStopped;
+            return true;
           default:
             return null;
         }
@@ -625,21 +619,22 @@ void main() {
           await vpnProvider.connect(configJson: '{}', profileName: 'Dead Node');
 
       expect(success, false);
-      expect(stopVpnCalls, 1);
-      expect(vpnProvider.status, VpnStatus.disconnected);
-      expect(vpnProvider.activeProfile, isNull);
+      expect(stopVpnCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isDegraded, true);
       expect(vpnProvider.isLoading, false);
       expect(
         vpnProvider.error,
-        VpnProvider.startupConnectivityFailureMessage,
+        VpnProvider.startupProbeInconclusiveMessage,
       );
     });
 
     test(
-        'restart fails when the startup egress probe cannot reach the node in hard-fail mode',
+        'restart keeps the tunnel up (degraded) when the startup egress probe cannot reach the node in hard-fail mode',
         () async {
+      // Same advisory-only contract as connect(): a running tunnel is never
+      // torn down by an unverified restart egress probe.
       var stopVpnCalls = 0;
-      var tunnelStopped = false;
 
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
@@ -653,18 +648,8 @@ void main() {
             return true;
           case 'stopVpn':
             stopVpnCalls += 1;
-            tunnelStopped = true;
             return true;
           case 'getStatus':
-            if (tunnelStopped) {
-              return {
-                'running': false,
-                'status': 'disconnected',
-                'message': null,
-                'connected_at': 0,
-                'uptime': 0,
-              };
-            }
             return {
               'running': true,
               'status': 'connected',
@@ -679,7 +664,7 @@ void main() {
               'error': 'Timed out contacting public IP probe endpoints.',
             };
           case 'isRunning':
-            return !tunnelStopped;
+            return true;
           default:
             return null;
         }
@@ -688,13 +673,13 @@ void main() {
       final success = await vpnProvider.restart();
 
       expect(success, false);
-      expect(stopVpnCalls, 1);
-      expect(vpnProvider.status, VpnStatus.disconnected);
-      expect(vpnProvider.activeProfile, isNull);
+      expect(stopVpnCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isDegraded, true);
       expect(vpnProvider.isLoading, false);
       expect(
         vpnProvider.error,
-        VpnProvider.startupConnectivityFailureMessage,
+        VpnProvider.startupProbeInconclusiveMessage,
       );
     });
 
@@ -963,8 +948,14 @@ void main() {
     });
 
     test(
-        'connect normalizes benign Android Private DNS probe errors on hard startup verification failure',
+        'connect normalizes benign Android Private DNS probe errors and keeps the tunnel up (degraded) in hard-fail mode',
         () async {
+      // The raw native probe error ("operation not permitted") must never be
+      // surfaced to the user. In the advisory-only model the running tunnel is
+      // kept up and the error is normalized to the friendly inconclusive
+      // marker rather than the raw string.
+      var stopVpnCalls = 0;
+
       vpnProvider = VpnProvider(
         fetchEgressIp: () async => throw Exception('probe failed'),
         softFailStartupConnectivityProbe: false,
@@ -976,6 +967,7 @@ void main() {
           case 'startVpn':
             return true;
           case 'stopVpn':
+            stopVpnCalls += 1;
             return true;
           case 'getStatus':
             return {
@@ -993,7 +985,7 @@ void main() {
                   'connection: open outbound connection: operation not permitted',
             };
           case 'isRunning':
-            return false;
+            return true;
           default:
             return null;
         }
@@ -1005,11 +997,15 @@ void main() {
       );
 
       expect(success, false);
-      expect(vpnProvider.status, VpnStatus.disconnected);
+      expect(stopVpnCalls, 0);
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isDegraded, true);
       expect(
         vpnProvider.error,
-        VpnProvider.startupConnectivityFailureMessage,
+        VpnProvider.startupProbeInconclusiveMessage,
       );
+      // The raw, scary native error is never exposed.
+      expect(vpnProvider.error, isNot(contains('operation not permitted')));
     });
 
     test('initializes unsupported native VPN capability explicitly', () async {
@@ -1419,7 +1415,7 @@ void main() {
     VpnNativeStatus connectedDegraded() => VpnNativeStatus(
           running: true,
           status: 'connected',
-          message: 'Tunnel is up but offshore probe is failing',
+          message: VpnProvider.tunnelUpstreamDegradedMessage,
           connectedAt: 1,
           uptime: 30,
         );
@@ -1660,6 +1656,77 @@ void main() {
       await vpnProvider.debugFireUpstreamDegradedWatchdog();
       expect(restartCalls, 0);
       expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 0);
+    });
+
+    test(
+        'Unreachable health message marks UI degraded but does NOT arm '
+        'the upstream watchdog', () async {
+      var restartCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'restartVpn':
+            restartCalls += 1;
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      vpnProvider.debugApplyNativeStatus(VpnNativeStatus(
+        running: true,
+        status: 'connected',
+        message: VpnProvider.tunnelUnreachableMessage,
+        connectedAt: 1,
+        uptime: 65,
+      ));
+
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.isDegraded, true);
+      expect(vpnProvider.error, VpnProvider.tunnelUnreachableMessage);
+      expect(vpnProvider.debugUpstreamDegradedWatchdogArmed, false);
+
+      await vpnProvider.debugFireUpstreamDegradedWatchdog();
+      expect(restartCalls, 0);
+      expect(vpnProvider.debugUpstreamDegradedRestartAttempts, 0);
+    });
+
+    test(
+        'connect() DirectRouteDegraded result does not arm the upstream '
+        'watchdog from the finally block', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': VpnProvider.tunnelDirectRouteDegradedMessage,
+              'connected_at': 1,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': '203.0.113.42',
+              'source': 'native',
+              'error': null,
+            };
+          default:
+            return null;
+        }
+      });
+
+      final connected = await vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'direct-settling',
+      );
+
+      expect(connected, true);
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.error, VpnProvider.tunnelDirectRouteDegradedMessage);
+      expect(vpnProvider.debugUpstreamDegradedWatchdogArmed, false);
     });
 
     test('user-initiated restart() resets the watchdog budget', () async {
