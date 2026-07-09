@@ -648,16 +648,28 @@ String? buildCloudNodeConfig(
         },
       ...protocolOutbounds,
       {'type': 'direct', 'tag': 'direct'},
-      // The legacy `dns`/`block` special outbounds are deprecated in sing-box
-      // 1.11 and removed in 1.13; DNS hijack and rejection are now expressed as
-      // route-rule actions (`hijack-dns` / `reject`). `block` was unused here, so
-      // it's dropped; the DNS rule below carries the action instead of routing
-      // to a `dns-out` outbound.
+      // DNS hijack goes through this dedicated `dns` outbound, NOT the 1.12+
+      // `hijack-dns` route-rule action. vpncore bundles sing-box v1.12.12, and
+      // on 1.12.12 the `hijack-dns` action silently fails to deliver hijacked
+      // queries to the DNS module on the tun (system stack): the router matches
+      // `protocol=dns` but app queries never reach a `dns: exchange`, so every
+      // in-tunnel hostname resolution dies once Android's pre-VPN DNS cache
+      // expires (~4 min after connect) — health probes then false-negative to
+      // Unreachable and the session is torn down. Routing DNS to a `dns-out`
+      // outbound (deprecated in 1.12, removed only in 1.13, but fully functional
+      // here) restores delivery: verified on-device 2026-07-07, fresh queries
+      // reach `dns: exchange <host>` and the tunnel stays healthy past the death
+      // point. This is what the pre-f2f5204c (WireGuard-era) builds used and why
+      // they connected. NOTE: when vpncore is bumped to sing-box 1.13+, `dns-out`
+      // disappears and DNS hijack must be re-solved via the action form.
+      {'type': 'dns', 'tag': 'dns-out'},
     ],
     'route': {
       'final': 'select',
       'rules': [
-        {'protocol': 'dns', 'action': 'hijack-dns'},
+        // Route sniffed DNS to the `dns-out` outbound (see outbounds note above);
+        // the 1.12+ `{action: hijack-dns}` form is broken on sing-box 1.12.12.
+        {'protocol': 'dns', 'outbound': 'dns-out'},
         {
           // sing-box 1.12.0 removed the legacy `geoip` route field; the LAN /
           // private-range direct carve-out is now expressed via `ip_is_private`

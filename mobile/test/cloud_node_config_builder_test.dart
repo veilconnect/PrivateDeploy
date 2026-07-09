@@ -934,23 +934,32 @@ void main() {
         reason: 'legacy geoip route field is removed in sing-box 1.12',
       );
 
-      // Legacy `dns`/`block` special outbounds are deprecated in sing-box 1.11
-      // and removed in 1.13; DNS hijack must be a route-rule action instead.
+      // DNS hijack must route through a `dns-out` outbound, NOT the 1.12+
+      // `hijack-dns` route-rule action: on the bundled sing-box v1.12.12 the
+      // action form silently fails to deliver hijacked queries to the DNS
+      // module, killing in-tunnel resolution ~4 min after connect (verified
+      // on-device 2026-07-07). `dns-out` is deprecated in 1.12 but functional
+      // (removed only in 1.13). The `block` special outbound stays dropped.
       expect(
-        outbounds.any((o) => o['type'] == 'dns' || o['type'] == 'block'),
-        isFalse,
-        reason: 'legacy dns/block special outbounds removed in sing-box 1.13',
+        outbounds.any((o) => o['type'] == 'dns' && o['tag'] == 'dns-out'),
+        isTrue,
+        reason: 'DNS hijack must route through a dns-out outbound on 1.12.12',
       );
       expect(
-        routeRules.any((rule) => rule['action'] == 'hijack-dns'),
-        isTrue,
-        reason: 'DNS hijack must use the hijack-dns rule action',
+        outbounds.any((o) => o['type'] == 'block'),
+        isFalse,
+        reason: 'legacy block special outbound removed in sing-box 1.13',
       );
       expect(
         routeRules.any((rule) =>
-            rule['outbound'] == 'dns-out' || rule['outbound'] == 'block'),
+            rule['protocol'] == 'dns' && rule['outbound'] == 'dns-out'),
+        isTrue,
+        reason: 'DNS rule must route to the dns-out outbound',
+      );
+      expect(
+        routeRules.any((rule) => rule['action'] == 'hijack-dns'),
         isFalse,
-        reason: 'no rule may route to a removed special outbound',
+        reason: 'hijack-dns action is broken on sing-box 1.12.12',
       );
     });
 

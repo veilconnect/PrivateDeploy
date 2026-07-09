@@ -476,13 +476,18 @@ class SubscriptionParser {
         },
         ...outbounds,
         {'type': 'direct', 'tag': 'direct'},
-        // Legacy `dns`/`block` special outbounds are deprecated in sing-box 1.11
-        // and removed in 1.13; DNS hijack is now a route-rule action. `block`
-        // was unused here, so it's dropped.
+        // DNS hijack routes through this `dns` outbound, NOT the 1.12+
+        // `hijack-dns` route-rule action: on the bundled sing-box v1.12.12 that
+        // action silently fails to deliver hijacked queries to the DNS module,
+        // so in-tunnel resolution dies ~4 min after connect (once Android's
+        // pre-VPN DNS cache expires). `dns-out` is deprecated in 1.12 but fully
+        // functional (removed only in 1.13). See cloud_node_config_builder.dart
+        // for the full diagnosis. `block` was unused here, so it's dropped.
+        {'type': 'dns', 'tag': 'dns-out'},
       ],
       'route': {
         'rules': [
-          {'protocol': 'dns', 'action': 'hijack-dns'},
+          {'protocol': 'dns', 'outbound': 'dns-out'},
           {
             // `ip_is_private` replaces the legacy `geoip: ["private"]` route
             // field, which sing-box 1.12.0 removed (it makes the 1.12.x client
