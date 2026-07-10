@@ -902,11 +902,20 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
           logError('[CloudStore] Failed to restart core after auto-applying nodes:', error)
         }
       }
-    } else if (!repaired && !kernelApiStore.running && candidates.length > 0) {
+    } else if (!repaired && candidates.length > 0) {
+      // No *new* nodes to add, but usable nodes exist. Crucially, do NOT assume
+      // the running kernel already serves them just because the profile
+      // references their subscriptions: the live config may have been generated
+      // before these subscriptions were populated (e.g. the kernel auto-started
+      // at boot before node sync finished). In that state generateOutbounds
+      // collapses every proxy group to Direct and all "proxied" traffic silently
+      // leaks direct. Regenerate once so the live config reflects the current
+      // usable nodes. reloadKernel restarts when running (or auto-starts when
+      // stopped) and is throttled, so redundant startup calls coalesce.
       try {
-        await reloadKernel('apply-existing-ready-nodes')
+        await reloadKernel('resync-usable-nodes')
       } catch (error) {
-        logError('[CloudStore] Failed to start core when applying existing nodes:', error)
+        logError('[CloudStore] Failed to reload core to resync usable nodes:', error)
       }
     }
 

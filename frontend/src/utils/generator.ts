@@ -151,6 +151,13 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
       _outbound.interrupt_exist_connections = outbound.interrupt_exist_connections
       _outbound.outbounds = []
       const isTagMatching = createTagMatcher(outbound.include, outbound.exclude)
+      // Members that are meant to bring in real proxy nodes (subscriptions or
+      // explicit proxy references), as opposed to Built-in helpers like Auto.
+      // Used below to detect a group that was configured for proxying but
+      // resolved to nothing, so we never silently pretend Direct is a proxy.
+      const configuredProxyMembers = outbound.outbounds.filter(
+        (proxy) => proxy.type !== 'Built-in',
+      ).length
       for (const proxy of outbound.outbounds) {
         if (proxy.type === 'Built-in') {
           const tag = normalizeProxy(proxy)
@@ -159,6 +166,11 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
           const subId = proxy.type === 'Subscription' ? proxy.id : proxy.type
           if (!SubscriptionCache[subId]) {
             const sub = subscribesStore.getSubscribeById(subId)
+            if (!sub) {
+              console.warn(
+                `[Generator] Subscription "${subId}" referenced by proxy group "${_outbound.tag}" was not found in the subscription store; its nodes will be missing from the generated config.`,
+              )
+            }
             if (sub) {
               const subStr = await ReadFile(sub.path)
               const parsed = JSON.parse(subStr)
@@ -202,6 +214,19 @@ const generateOutbounds = async (outbounds: IOutbound[]) => {
         const directOutbound = outbounds.find((v) => v.type === Outbound.Direct)
         const directTag = ensureTag(directOutbound?.tag, directOutbound?.id || 'direct')
         _outbound.outbounds.push(directTag)
+        // A group configured with subscription/proxy members that resolved to
+        // zero usable nodes is a degraded config: sing-box requires at least one
+        // member, so we keep it valid by pointing at Direct — but this must NOT
+        // pass silently, or the user ends up "connected" while every proxied
+        // domain leaks straight to the GFW. Make it loud so logs/health checks
+        // and the startup resync can react.
+        if (configuredProxyMembers > 0) {
+          console.error(
+            `[Generator] Proxy group "${_outbound.tag}" was configured with ${configuredProxyMembers} subscription/proxy member(s) but none resolved to a usable node; ` +
+              `falling back to "${directTag}". Traffic routed to this group will go DIRECT. ` +
+              `This usually means the subscription files are empty or failed to load — reload the kernel once nodes are available.`,
+          )
+        }
       }
     }
     result.push(_outbound)

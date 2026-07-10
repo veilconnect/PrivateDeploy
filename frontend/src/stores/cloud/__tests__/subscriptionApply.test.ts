@@ -40,6 +40,7 @@ import { Outbound } from '@/enums/kernel'
 
 import { protocolHealthPath } from '../constants'
 import { subscriptionId, subscriptionPath } from '../helpers'
+import { ensureSmartAutoRouting } from '../smartRouting'
 import { createSubscriptionApply } from '../subscriptionApply'
 
 import type { ProtocolHealthMap } from '../constants'
@@ -137,6 +138,7 @@ const createHarness = (options: {
   protocolHealth?: ProtocolHealthMap
   cdnDeployment?: CdnDeployment | null
   running?: boolean
+  activeProfile?: string
 } = {}) => {
   const subscriptionMap = new Map((options.subscriptions ?? []).map((sub) => [sub.id, sub]))
   const profiles = options.profiles ?? []
@@ -174,7 +176,7 @@ const createHarness = (options: {
     },
     appSettingsStore: {
       app: {
-        kernel: { profile: '' },
+        kernel: { profile: options.activeProfile ?? '' },
         autoStartKernel: true,
       },
     },
@@ -274,6 +276,58 @@ describe('createSubscriptionApply', () => {
     expect(harness.reloadKernel).toHaveBeenCalledWith('remove-subscription', {
       allowStartWhenStopped: false,
     })
+  })
+
+  it('reloads the running kernel to resync when usable nodes exist but are already referenced', async () => {
+    const subId = subscriptionId('node-1')
+    // Pre-normalize so the in-flow managed-profile repair is a no-op (repaired
+    // === false). This models the real stuck state: the persisted profile is
+    // already correctly smart-routed, yet the live config.json is stale.
+    const profile = makeProfile(subId)
+    ensureSmartAutoRouting(profile, {})
+    const harness = createHarness({
+      subscriptions: [makeSubscription(subId)],
+      profiles: [profile],
+      activeProfile: 'profile-1',
+      running: true,
+    })
+
+    const instancesRef = shallowRef([makeNode()])
+    const applied = await harness.api.applyAllNodesToProfile(
+      instancesRef,
+      vi.fn().mockResolvedValue([]),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    // Node's subscription is already referenced by the profile, so nothing new
+    // is "applied"...
+    expect(applied).toEqual([])
+    // ...but because usable nodes exist, the live config must still be
+    // regenerated: a kernel that auto-started before node sync would otherwise
+    // keep serving a Direct-only config forever.
+    expect(harness.reloadKernel).toHaveBeenCalledWith('resync-usable-nodes')
+  })
+
+  it('does not reload when there are no usable candidate nodes', async () => {
+    const subId = subscriptionId('node-1')
+    const harness = createHarness({
+      subscriptions: [makeSubscription(subId)],
+      profiles: [makeProfile(subId)],
+      activeProfile: 'profile-1',
+      running: true,
+    })
+
+    // Node has only a private address -> not a usable candidate.
+    const instancesRef = shallowRef([makeNode({ ipv4: '10.0.0.5', ipv6: '' })])
+    await harness.api.applyAllNodesToProfile(
+      instancesRef,
+      vi.fn().mockResolvedValue([]),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(harness.reloadKernel).not.toHaveBeenCalledWith('resync-usable-nodes')
   })
 
   it('updates protocol health from connectivity results and applies managed excludes', async () => {
