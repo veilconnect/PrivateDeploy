@@ -392,9 +392,9 @@ void main() {
     });
 
     test(
-        'CDN variant lands at outbounds index 0 even when trojan is not on 443 '
-        '(so urltest probes the Cloudflare edge before bare-IP variants on '
-        'carrier-filtered networks)', () {
+        'CDN edge leads auto urltest pool when trojan is not on 443 '
+        '(so carrier-filtered direct variants do not exhaust probe timeouts)',
+        () {
       final instance = CloudInstance(
         id: 'lax-1',
         provider: 'vultr',
@@ -415,9 +415,9 @@ void main() {
           vlessPublicKey: 'pub',
           vlessShortId: 'sid',
           vlessServerName: 'example.com',
-          // Trojan on a non-443 port — _prioritizeEdge443ProtocolOrder is
-          // a no-op for this instance, so any CDN-first guarantee has to
-          // come from _putCdnFirst (the fix this test pins).
+          // Trojan on a non-443 port -- _prioritizeEdge443ProtocolOrder is
+          // a no-op for this instance, so the CDN-first guarantee has to
+          // come from _putCdnFirst.
           trojanPort: 8443,
           trojanPassword: 'tpw',
           trojanServerName: 'tj.example.com',
@@ -460,6 +460,12 @@ void main() {
           reason: 'urltest must enumerate node protocol members');
       expect(members.first, 'lax-1-CDN-edge1',
           reason: 'IP-pinned CDN edge must lead the urltest pool when present');
+      expect(members.indexOf('lax-1-CDN-edge1'),
+          lessThan(members.indexOf('lax-1-SS')),
+          reason: 'CDN edge should be tried before bare-IP direct protocols');
+      expect(members.indexOf('lax-1-CDN-edge1'),
+          lessThan(members.indexOf('lax-1-CDN')),
+          reason: 'DNS-independent CDN edge should lead DNS-resolved CDN');
     });
 
     test('omits CDN variant when relay port is zero (older deploys)', () {
@@ -1242,6 +1248,9 @@ void main() {
 
       // Must be IP-literal: hostname-based probes deadlock when DNS itself
       // routes through the urltest pool and every initial member is down.
+      expect(url, startsWith('https://'),
+          reason:
+              'urltest must exercise the HTTPS/443 path used by real traffic');
       final hostMatch = RegExp(r'^https?://([^/:]+)').firstMatch(url);
       expect(hostMatch, isNotNull,
           reason: 'urltest url must include host: $url');

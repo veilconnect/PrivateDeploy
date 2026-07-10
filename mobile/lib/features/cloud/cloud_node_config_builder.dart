@@ -455,13 +455,9 @@ String? buildCloudNodeConfig(
     cdnEndpoint: cdnEndpoint,
   );
   _prioritizeEdge443ProtocolOrder(instance, outbounds: outbounds, tags: tags);
-  // Always promote `<label>-CDN` to the front when present, independent of
-  // the edge443 rule. urltest probes pool members in order until one passes,
-  // so a member that's positioned first is the one users converge to fastest
-  // when everything else is timing out. On networks where direct probes burn
-  // several seconds before failing, putting CDN first means the urltest
-  // selector tries the Worker path immediately; if the direct node happens to work
-  // (Wi-Fi), the 200 ms tolerance still lets a faster direct member win.
+  // Promote DNS-independent CDN edge paths ahead of bare VPS protocols. On
+  // carrier-filtered networks, direct node sockets can burn the urltest timeout
+  // budget before a working CDN/Worker path is ever tried.
   _putCdnFirst(outbounds: outbounds, tags: tags);
 
   if (outbounds.isEmpty) {
@@ -513,9 +509,12 @@ String? buildCloudNodeConfig(
         tags: scratchTags,
         cdnEndpoint: fiCdnEndpoint,
       );
-      _putCdnFirst(outbounds: scratchOutbounds, tags: scratchTags);
       _prioritizeEdge443ProtocolOrder(
         fi,
+        outbounds: scratchOutbounds,
+        tags: scratchTags,
+      );
+      _putCdnFirst(
         outbounds: scratchOutbounds,
         tags: scratchTags,
       );
@@ -651,15 +650,11 @@ String? buildCloudNodeConfig(
           'tag': 'auto',
           'interrupt_exist_connections': true,
           'outbounds': allUrlTestTags,
-          // IP-literal so the urltest probe never has to resolve a hostname.
-          // The DNS module's "any" rule routes through dns-remote (DoH 1.1.1.1)
-          // with detour: select → auto → urltest's first member. If that
-          // member is unreachable (network policy, captive portal, etc.) DNS
-          // hangs, no probe ever fires, and urltest can't
-          // discover the working failover member it already has in pool.
-          // 1.0.0.1 is Cloudflare's anycast resolver; /cdn-cgi/trace returns
-          // a small 200 OK so any 2xx counts as reachable for urltest.
-          'url': 'http://1.0.0.1/cdn-cgi/trace',
+          // IP-literal so urltest never has to resolve a hostname. Use
+          // HTTPS/443, not HTTP/80: on cellular CDN/Worker paths can pass HTTP
+          // probes while EOFing the HTTPS/DoH/WebSocket flows used by real
+          // traffic.
+          'url': 'https://1.1.1.1/cdn-cgi/trace',
           // Cellular carriers time-variably blackhole direct VPS IPs, so the
           // urltest must re-probe quickly to fail over to the (stable) CDN
           // path. 5m left the tunnel dead for up to 5 minutes each time the
@@ -735,43 +730,51 @@ String? buildCloudNodeConfig(
   return const JsonEncoder.withIndent('  ').convert(config);
 }
 
-/// Moves any `<label>-CDN` tag to index 0 of both [outbounds] and [tags],
-/// preserving relative order of the rest. No-op if no CDN tag is present.
+/// Moves CDN variants ahead of direct node protocols while preserving relative
+/// order inside each group. Prefer IP-pinned CDN edges first because they avoid
+/// DNS lookup deadlocks on networks that poison or block the relay hostname.
 ///
-/// Runs ahead of [_prioritizeEdge443ProtocolOrder], so the edge443 sort
-/// (which itself puts CDN at priority 0) still produces an identical
-/// outcome when trojan is on 443. The change only matters when trojan
-/// isn't on 443 — in that case [_prioritizeEdge443ProtocolOrder] is a
-/// no-op and the original SS-first ordering would have made urltest burn
-/// the carrier's per-IP timeout budget on bare-VPS probes before reaching
-/// the Cloudflare-edge fallback.
+/// The urltest probe itself uses HTTPS/443, so CDN paths that only pass TCP or
+/// HTTP/80 but fail real HTTPS/WebSocket traffic should be rejected by the
+/// probe instead of being selected as false positives.
 void _putCdnFirst({
   required List<Map<String, dynamic>> outbounds,
   required List<String> tags,
 }) {
-  // Prefer an IP-pinned edge (`-CDN-edge*`) first — it needs no DNS, which
-  // avoids the urltest DNS-detour deadlock (see _prioritizeEdge443ProtocolOrder).
-  // Fall back to the DNS-based `-CDN` only when no edge member exists.
-  bool isCdnFirstCandidate(String t) => t.contains('-CDN-edge');
-  var cdnTagIndex = tags.indexWhere(isCdnFirstCandidate);
-  if (cdnTagIndex < 0) cdnTagIndex = tags.indexWhere((t) => t.endsWith('-CDN'));
-  if (cdnTagIndex <= 0) {
+  int priority(String tag) {
+    if (tag.contains('-CDN-edge')) return 0;
+    if (tag.endsWith('-CDN')) return 1;
+    if (tag.endsWith('-CDN-fallback')) return 2;
+    return 3;
+  }
+
+  if (!tags.any((tag) => priority(tag) < 3)) {
     return;
   }
-  final cdnTag = tags.removeAt(cdnTagIndex);
-  tags.insert(0, cdnTag);
 
-  var cdnOutboundIndex = outbounds
-      .indexWhere((o) => isCdnFirstCandidate(o['tag']?.toString() ?? ''));
-  if (cdnOutboundIndex < 0) {
-    cdnOutboundIndex = outbounds.indexWhere(
-      (o) => o['tag']?.toString().endsWith('-CDN') ?? false,
-    );
-  }
-  if (cdnOutboundIndex > 0) {
-    final cdnOutbound = outbounds.removeAt(cdnOutboundIndex);
-    outbounds.insert(0, cdnOutbound);
-  }
+  final orderedTags = tags.asMap().entries.toList()
+    ..sort((a, b) {
+      final byPriority = priority(a.value).compareTo(priority(b.value));
+      if (byPriority != 0) return byPriority;
+      return a.key.compareTo(b.key);
+    });
+
+  final outboundByTag = <String, Map<String, dynamic>>{
+    for (final outbound in outbounds)
+      if (outbound['tag'] is String) outbound['tag'] as String: outbound,
+  };
+  final reorderedTags = orderedTags.map((entry) => entry.value).toList();
+  final reorderedOutbounds = <Map<String, dynamic>>[
+    for (final tag in reorderedTags)
+      if (outboundByTag[tag] != null) outboundByTag[tag]!,
+  ];
+
+  tags
+    ..clear()
+    ..addAll(reorderedTags);
+  outbounds
+    ..clear()
+    ..addAll(reorderedOutbounds);
 }
 
 void _prioritizeEdge443ProtocolOrder(
@@ -785,20 +788,13 @@ void _prioritizeEdge443ProtocolOrder(
   }
 
   int priority(String tag) {
-    // IP-pinned CDN edges FIRST. They dial a literal Cloudflare IP so they
-    // need no DNS to establish. sing-box routes the urltest's DNS lookups
-    // (DoH via dns-remote) through the pool's FIRST member — so if that
-    // member is the DNS-based custom-domain `-CDN` (server = relay-<hash>.
-    // <zone>), resolving its OWN server deadlocks against itself and urltest
-    // never probes anything, leaving the client stuck on flapping direct.
-    // An IP-pinned edge first breaks the circular hang; DNS-based CDN follows.
-    if (tag.contains('-CDN-edge')) return 0; // -CDN-edge1/-edge2/-edgeip (IP)
-    if (tag.endsWith('-CDN')) return 1; // custom-domain (DNS)
-    if (tag.endsWith('-CDN-fallback')) return 2; // *.workers.dev (DNS)
-    if (tag.endsWith('-Trojan')) return 3;
-    if (tag.endsWith('-Hy2')) return 4;
-    if (tag.endsWith('-VLESS')) return 5;
-    if (tag.endsWith('-SS')) return 6;
+    if (tag.endsWith('-Trojan')) return 0;
+    if (tag.endsWith('-Hy2')) return 1;
+    if (tag.endsWith('-VLESS')) return 2;
+    if (tag.endsWith('-SS')) return 3;
+    if (tag.endsWith('-CDN')) return 4; // custom-domain DNS
+    if (tag.endsWith('-CDN-fallback')) return 5; // workers.dev DNS
+    if (tag.contains('-CDN-edge')) return 6; // IP-pinned edge
     return 7;
   }
 

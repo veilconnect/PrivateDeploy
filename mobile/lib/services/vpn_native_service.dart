@@ -50,6 +50,7 @@ class VpnNativeService {
       _clearLastError();
 
       // 监听原生事件
+      await _eventSubscription?.cancel();
       _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
         _handleNativeEvent,
         onError: (error) {

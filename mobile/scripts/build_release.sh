@@ -49,10 +49,19 @@ fi
 
 echo "→ Building release APKs for $PUBSPEC_VERSION"
 
-"$FLUTTER" build apk --release
+FLUTTER_EXTRA_ARGS=()
+case "${PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS:-}" in
+  1|true|TRUE|yes|YES)
+    FLUTTER_EXTRA_ARGS+=("--dart-define=PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS=true")
+    echo "→ VPN core debug logging enabled for this build"
+    ;;
+esac
+
+"$FLUTTER" build apk --release "${FLUTTER_EXTRA_ARGS[@]}"
 
 if [ "$SKIP_SPLIT" = 0 ]; then
   "$FLUTTER" build apk --release \
+    "${FLUTTER_EXTRA_ARGS[@]}" \
     --target-platform android-arm,android-arm64,android-x64 \
     --split-per-abi
 fi

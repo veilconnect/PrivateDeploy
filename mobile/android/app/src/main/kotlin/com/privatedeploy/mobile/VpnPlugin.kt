@@ -54,6 +54,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     private var pendingStartConfig: String? = null
     private var pendingStartDispatched = false
     private var pendingStartTimeout: Runnable? = null
+    private var receiverRegistered = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val vpnStatusReceiver = object : BroadcastReceiver() {
@@ -146,6 +147,10 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        unregisterVpnStatusReceiver()
+        clearPendingStart()
+        pendingPermissionResult = null
+        eventSink = null
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         context = null
@@ -156,25 +161,47 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         activity = binding.activity
         binding.addActivityResultListener(this)
 
-        // 注册 VPN 状态广播接收器
+        registerVpnStatusReceiver()
+
+        Log.d(TAG, "VPN Plugin attached to activity")
+    }
+
+    private fun registerVpnStatusReceiver() {
+        if (receiverRegistered) {
+            return
+        }
+        val appContext = context ?: return
+
         val receiverFilter = IntentFilter().apply {
             addAction(ACTION_VPN_STATUS)
             addAction(ACTION_VPN_LOG)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context?.registerReceiver(
+            appContext.registerReceiver(
                 vpnStatusReceiver,
                 receiverFilter,
                 Context.RECEIVER_NOT_EXPORTED
             )
         } else {
-            context?.registerReceiver(
+            appContext.registerReceiver(
                 vpnStatusReceiver,
                 receiverFilter
             )
         }
+        receiverRegistered = true
+    }
 
-        Log.d(TAG, "VPN Plugin attached to activity")
+    private fun unregisterVpnStatusReceiver() {
+        if (!receiverRegistered) {
+            return
+        }
+        try {
+            context?.unregisterReceiver(vpnStatusReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering receiver", e)
+        } finally {
+            receiverRegistered = false
+        }
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -187,11 +214,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     }
 
     override fun onDetachedFromActivity() {
-        try {
-            context?.unregisterReceiver(vpnStatusReceiver)
-        } catch (e: Exception) {
-            Log.w(TAG, "Error unregistering receiver", e)
-        }
+        unregisterVpnStatusReceiver()
         activity = null
     }
 

@@ -2,14 +2,22 @@ import 'package:logger/logger.dart';
 
 class AppLogger {
   static bool _enabled = true;
+
+  // Opt-in release diagnostics. Off by default so release builds keep the
+  // logger's DevelopmentFilter (drops logs unless kDebugMode) and a compact
+  // stack depth. Turn on with:
+  //   flutter build apk --release --dart-define=PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS=true
+  // or via `PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS=1 mobile/scripts/build_release.sh`
+  // to capture VpnProvider reconnect-trigger decisions from a signed release
+  // APK on-device: ProductionFilter emits in release too, and the deeper method
+  // count preserves full call chains.
+  static const bool _debugLogs =
+      bool.fromEnvironment('PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS');
+
   static final Logger _logger = Logger(
-    // TEMP(diagnostics): ProductionFilter emits logs in release builds too (the
-    // default DevelopmentFilter drops everything unless kDebugMode). Needed to
-    // capture VpnProvider reconnect-trigger decisions from a signed release APK
-    // on-device. Revert to the default filter before merge.
-    filter: ProductionFilter(),
+    filter: _debugLogs ? ProductionFilter() : DevelopmentFilter(),
     printer: PrettyPrinter(
-      methodCount: 8,
+      methodCount: _debugLogs ? 8 : 2,
       errorMethodCount: 8,
       lineLength: 120,
       colors: true,
