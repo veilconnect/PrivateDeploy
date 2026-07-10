@@ -19,7 +19,7 @@ import {
 } from '@/bridge'
 import { deepClone } from '@/utils'
 import { retryWithBackoff } from '@/utils/errorRecovery'
-import { logError, logInfo } from '@/utils/logger'
+import { logError, logInfo, logWarn } from '@/utils/logger'
 import { notifications } from '@/utils/notification'
 import { isOnline, saveToOfflineCache, loadFromOfflineCache } from '@/utils/offline'
 
@@ -244,13 +244,13 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
   const loadProviders = async () => {
     try {
       if (typeof ListCloudProviders !== 'function') {
-        console.warn('[CloudStore] ListCloudProviders not available, using default')
+        logWarn('[CloudStore] ListCloudProviders not available, using default')
         availableProviders.value = [{ name: 'vultr', displayName: 'Vultr' }]
         return
       }
 
       availableProviders.value = await ListCloudProviders()
-      console.log('[CloudStore] Loaded providers:', availableProviders.value)
+      logInfo('[CloudStore] Loaded providers:', availableProviders.value)
     } catch (error) {
       logError('[CloudStore] Failed to load providers:', error)
       availableProviders.value = [{ name: 'vultr', displayName: 'Vultr' }]
@@ -290,14 +290,14 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
       stopAutoRefresh()
 
       if (typeof SetCloudProvider !== 'function') {
-        console.warn('[CloudStore] SetCloudProvider not available')
+        logWarn('[CloudStore] SetCloudProvider not available')
         currentProvider.value = provider
         return
       }
 
       const current = await SetCloudProvider(provider)
       currentProvider.value = current.name as CloudProvider
-      console.log('[CloudStore] Switched to provider:', current)
+      logInfo('[CloudStore] Switched to provider:', current)
 
       // Clear provider-scoped display data (regions/plans/availability) but
       // PRESERVE instances across provider switches. Nodes that were already
@@ -310,12 +310,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
       // Reload config and data for new provider (will load saved API key)
       await loadConfig()
-      console.log('[CloudStore] After loadConfig, defaultRegion:', config.defaultRegion, 'defaultPlan:', config.defaultPlan)
 
       // Clear provider-specific defaults since region/plan IDs are not portable across providers
       config.defaultRegion = ''
       config.defaultPlan = ''
-      console.log('[CloudStore] Cleared defaults, defaultRegion:', config.defaultRegion, 'defaultPlan:', config.defaultPlan)
 
       // Force-refresh instances on provider switch: retained cross-provider
       // nodes in instances.value would otherwise satisfy the cache-hit guard
@@ -324,7 +322,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
         await refreshInstances(true, true)
       } else if (config.apiKey) {
         await Promise.all([fetchRegions(), fetchPlans()])
-        console.log('[CloudStore] After fetching, regions count:', regions.value.length, 'plans count:', plans.value.length)
+        logInfo('[CloudStore] Provider data refreshed:', {
+          regions: regions.value.length,
+          plans: plans.value.length,
+        })
         await refreshInstances(true, true)
       }
 
@@ -340,13 +341,13 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
   const getCurrentProvider = async () => {
     try {
       if (typeof GetCloudProvider !== 'function') {
-        console.warn('[CloudStore] GetCloudProvider not available, using default')
+        logWarn('[CloudStore] GetCloudProvider not available, using default')
         return
       }
 
       const provider = await GetCloudProvider()
       currentProvider.value = provider.name as CloudProvider
-      console.log('[CloudStore] Current provider:', provider)
+      logInfo('[CloudStore] Current provider:', provider)
     } catch (error) {
       logError('[CloudStore] Failed to get current provider:', error)
     }

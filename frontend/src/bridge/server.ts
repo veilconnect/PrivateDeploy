@@ -1,6 +1,8 @@
 import * as App from '@wails/go/bridge/App'
 import { EventsOn, EventsEmit, EventsOff } from '@wails/runtime/runtime'
 
+import { logError } from '@/utils/logger'
+
 interface Request {
   id: string
   method: string
@@ -77,7 +79,7 @@ export const StartServer = async (
         },
       )
     } catch (err: any) {
-      console.log('Server handler err:', err, id)
+      logError('[BridgeServer] Server handler failed:', err, id)
       EventsEmit(
         id,
         500,

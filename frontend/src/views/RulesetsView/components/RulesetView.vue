@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ReadFile, WriteFile } from '@/bridge'
 import { type RuleSet, useRulesetsStore } from '@/stores'
 import { deepClone, ignoredError, isValidJson, message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 
@@ -36,7 +37,7 @@ const handleSave = async () => {
     handleSubmit()
   } catch (error: any) {
     message.error(error)
-    console.log(error)
+    logError('[RulesetView] Failed to save ruleset:', error)
   } finally {
     loading.value = false
   }

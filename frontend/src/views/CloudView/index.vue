@@ -150,7 +150,6 @@ const planMap = computed(() => {
       map.set(p.id, p.id)
     }
   }
-  console.log('[CloudView] planMap updated, size:', map.size, 'plans:', cloudStore.plans.length)
   return map
 })
 

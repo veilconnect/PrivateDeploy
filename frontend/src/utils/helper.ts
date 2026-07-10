@@ -12,6 +12,8 @@ import {
 } from '@/stores'
 import { ignoredError, message, confirm } from '@/utils'
 
+import { logError } from './logger'
+
 const DeprecatedKernelEnvKeySet = new Set<string>(DeprecatedKernelEnvKeys)
 
 // Permissions Helper
@@ -377,7 +379,7 @@ export const GetSystemProxy = async () => {
       }
     }
   } catch (error) {
-    console.log('error', error)
+    logError('[SystemProxy] Failed to read system proxy:', error)
   }
   return ''
 }

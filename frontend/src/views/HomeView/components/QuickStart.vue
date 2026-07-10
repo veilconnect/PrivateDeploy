@@ -8,6 +8,7 @@ import * as Defaults from '@/constant/profile'
 import { RequestMethod } from '@/enums/app'
 import { useProfilesStore, useAppSettingsStore, useSubscribesStore } from '@/stores'
 import { message, sampleID } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 
@@ -62,7 +63,7 @@ const handleSave = async () => {
     await subscribeStore.updateSubscribe(subscribeID)
   } catch (error: any) {
     loading.value = false
-    console.log(error)
+    logError('[QuickStart] Failed to create quick-start profile:', error)
     message.error(error)
     subscribeStore.deleteSubscribe(subscribeID)
     return

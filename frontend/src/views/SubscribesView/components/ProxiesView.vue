@@ -7,6 +7,7 @@ import { DraggableOptions } from '@/constant/app'
 import { useBool } from '@/hooks'
 import { useSubscribesStore } from '@/stores'
 import { deepClone, ignoredError, message, sampleID } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 
@@ -134,7 +135,7 @@ const handleSave = async () => {
     await subscribeStore.editSubscribe(id, sub.value)
     handleSubmit()
   } catch (error: any) {
-    console.log(error)
+    logError('[ProxiesView] Failed to save proxies:', error)
     message.error(error)
   }
   loading.value = false
@@ -154,7 +155,7 @@ const onEditEnd = async () => {
 
     if (typeof proxy !== 'object') throw 'wrong format'
   } catch (error: any) {
-    console.log(error)
+    logError('[ProxiesView] Failed to parse proxy JSON:', error)
     message.error(error.message || error)
     // reopen
     toggleDetails()

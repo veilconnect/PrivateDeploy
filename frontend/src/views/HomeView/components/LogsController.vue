@@ -6,6 +6,7 @@ import { LogLevelOptions } from '@/constant/kernel'
 import { useBool } from '@/hooks'
 import { useKernelApiStore } from '@/stores'
 import { addToRuleSet, isValidIPv4, isValidIPv6, message, picker } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import type { PickerItem } from '@/components/Picker/index.vue'
 import type { Menu } from '@/types/app'
@@ -90,7 +91,7 @@ const menus: Menu[] = [
         message.success('common.success')
       } catch (error: any) {
         message.error(error)
-        console.log(error)
+        logError('[LogsController] Failed to add log rule:', error)
       }
     },
   }

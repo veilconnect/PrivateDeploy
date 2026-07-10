@@ -39,8 +39,7 @@ const sourceMenuList: Menu[] = [
 const binaryMenuList: Menu[] = [
   {
     label: 'common.none',
-    handler: (id: string) => {
-      console.log(id)
+    handler: () => {
       message.info('common.none')
     },
   },

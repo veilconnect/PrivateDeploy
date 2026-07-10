@@ -2,7 +2,7 @@
   "status": "passed",
   "base_url": "http://127.0.0.1:4174",
   "port": 4174,
-  "timestamp": "2026-04-07T09:03:03.376333",
+  "timestamp": "2026-07-07T10:45:10.749914",
   "steps": [
     "open_cloud_page",
     "search_nodes",
@@ -65,13 +65,14 @@
   ],
   "console_errors": [],
   "ignored_console_errors": [
-    "[PrivateDeploy] [CloudStore] Node not found for connectivity test: cloud-vultr-2"
+    "[PrivateDeploy] [Toast] 未找到内核可执行文件，请在设置-内核中下载后再试。",
+    "[PrivateDeploy] [Toast] 未找到内核可执行文件，请在设置-内核中下载后再试。"
   ],
   "created_labels": {
-    "deploy": "auto-e2e-1445",
-    "manual": "manual-e2e-2710",
-    "import_hy2": "import-e2e-hy2-9517",
-    "import_trojan": "import-e2e-trojan-1276"
+    "deploy": "auto-e2e-7938",
+    "manual": "manual-e2e-5067",
+    "import_hy2": "import-e2e-hy2-3971",
+    "import_trojan": "import-e2e-trojan-6474"
   },
   "artifacts": {
     "screenshot": "/mnt/data/PrivateDeploy/output/playwright/cloud-e2e-final.png"

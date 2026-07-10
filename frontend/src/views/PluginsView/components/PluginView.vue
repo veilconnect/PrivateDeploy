@@ -6,6 +6,7 @@ import { ReadFile, WriteFile } from '@/bridge'
 import { PluginTriggerEvent } from '@/enums/app'
 import { usePluginsStore } from '@/stores'
 import { deepClone, ignoredError, message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 import Dropdown from '@/components/Dropdown/index.vue'
@@ -38,7 +39,7 @@ const handleSave = async () => {
     handleSubmit()
   } catch (error: any) {
     message.error(error)
-    console.log(error)
+    logError('[PluginView] Failed to save plugin:', error)
   }
   loading.value = false
 }

@@ -6,6 +6,7 @@ import { CoreCacheFilePath } from '@/constant/kernel'
 import { useCoreBranch } from '@/hooks/useCoreBranch'
 import { useKernelApiStore } from '@/stores'
 import { message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 interface Props {
   isAlpha: boolean
@@ -48,7 +49,7 @@ const handleClearCoreCache = async () => {
     message.success('common.success')
   } catch (error: any) {
     message.error(error)
-    console.log(error)
+    logError('[BranchDetail] Failed to clear core cache:', error)
   }
 }
 </script>

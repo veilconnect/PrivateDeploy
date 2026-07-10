@@ -226,7 +226,7 @@ export function createSubscriptionApply(deps: SubscriptionApplyDeps) {
     }
 
     if (ipVersions.length === 0) {
-      console.log(`[CloudStore] Node ${node.label} has no usable public IP addresses, skipping subscription generation`)
+      logInfo(`[CloudStore] Node ${node.label} has no usable public IP addresses, skipping subscription generation`)
       await removeSubscriptionForNode(node.instanceId)
       return
     }

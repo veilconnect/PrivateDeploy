@@ -28,6 +28,7 @@ import {
   getKernelFileName,
   getKernelAssetFileName,
 } from '@/utils'
+import { logError } from '@/utils/logger'
 
 const StableUrl = 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'
 const AlphaUrl = 'https://api.github.com/repos/SagerNet/sing-box/releases?per_page=2'
@@ -138,7 +139,7 @@ export const useCoreBranch = (isAlpha = false) => {
       downloadCompleted.value = true
       message.success('common.success')
     } catch (error: any) {
-      console.log(error)
+      logError('[CoreBranch] Failed to download core:', error)
       message.error(error.message || error)
       downloadCompleted.value = false
     }
@@ -152,7 +153,7 @@ export const useCoreBranch = (isAlpha = false) => {
       versionDetail.value = res.trim()
       return res.match(/version (\S+)/)?.[1] || ''
     } catch (error: any) {
-      console.log(error)
+      logError('[CoreBranch] Failed to read local core version:', error)
       showTips && message.error(error)
     } finally {
       localVersionLoading.value = false
@@ -173,7 +174,7 @@ export const useCoreBranch = (isAlpha = false) => {
       const { name, tag_name } = release
       return (name || tag_name).replace('v', '') as string
     } catch (error: any) {
-      console.log(error)
+      logError('[CoreBranch] Failed to read remote core version:', error)
       showTips && message.error(error)
     } finally {
       remoteVersionLoading.value = false

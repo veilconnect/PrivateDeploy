@@ -23,6 +23,7 @@ import {
   alert,
   sampleID,
 } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import { useEnvStore } from './env'
 
@@ -131,7 +132,7 @@ export const useAppStore = defineStore('app', () => {
       await ignoredError(RemoveFile, 'data/rolling-release')
       await ignoredError(RemoveFile, 'data/rolling-release-alpha')
     } catch (error: any) {
-      console.log(error)
+      logError('[AppStore] Failed to download app update:', error)
       message.error(error.message || error, 5_000)
     }
     downloading.value = false
@@ -162,7 +163,7 @@ export const useAppStore = defineStore('app', () => {
         message.info(updatable.value ? 'about.newVersion' : 'about.latestVersion')
       }
     } catch (error: any) {
-      console.error(error)
+      logError('[AppStore] Failed to check for updates:', error)
       message.error(error.message || error)
     }
     checkForUpdatesLoading.value = false

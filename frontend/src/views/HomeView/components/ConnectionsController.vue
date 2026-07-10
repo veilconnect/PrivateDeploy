@@ -8,6 +8,7 @@ import { DefaultConnections } from '@/constant/kernel'
 import { useBool } from '@/hooks'
 import { useAppSettingsStore, useKernelApiStore } from '@/stores'
 import { addToRuleSet, formatBytes, formatRelativeTime, message, picker } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import type { PickerItem } from '@/components/Picker/index.vue'
 import type { Column } from '@/components/Table/index.vue'
@@ -157,7 +158,7 @@ const menu: Menu[] = [
       try {
         await deleteConnection(record.id)
       } catch (error: any) {
-        console.log(error)
+        logError('[ConnectionsController] Failed to close connection:', error)
         message.error(error)
       }
     },
@@ -206,7 +207,7 @@ const menu: Menu[] = [
           message.success('common.success')
         } catch (error: any) {
           message.error(error)
-          console.log(error)
+          logError('[ConnectionsController] Failed to add connection rule:', error)
         }
       },
     }

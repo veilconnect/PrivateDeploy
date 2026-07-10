@@ -122,8 +122,6 @@ export const addCloudNodeToKernelGroups = (
     })
   }
 
-  console.log(`[KernelApi] Adding ${proxyTags.length} proxy nodes for ${node.label}:`, proxyTags)
-
   proxyTags.forEach((tag) => {
     updated[tag] = {
       name: tag,

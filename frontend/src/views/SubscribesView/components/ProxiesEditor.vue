@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ReadFile, WriteFile } from '@/bridge'
 import { useSubscribesStore } from '@/stores'
 import { deepClone, ignoredError, message, omitArray, sampleID } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 
@@ -40,8 +41,7 @@ const handleSave = async () => {
     await subscribeStore.editSubscribe(id, sub.value)
     handleSubmit()
   } catch (error: any) {
-    console.log(error)
-
+    logError('[ProxiesEditor] Failed to save proxies JSON:', error)
     message.error(error.message || error)
   }
   loading.value = false

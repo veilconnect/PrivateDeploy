@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { useSubscribesStore } from '@/stores'
 import { message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 
@@ -34,7 +35,7 @@ const handleSave = async () => {
     handleSubmit()
   } catch (error: any) {
     message.error(error)
-    console.log(error)
+    logError('[SubscribeScript] Failed to save subscribe script:', error)
   }
   loading.value = false
 }

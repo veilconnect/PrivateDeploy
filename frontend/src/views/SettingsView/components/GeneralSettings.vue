@@ -19,6 +19,7 @@ import {
   CheckPermissions,
   SwitchPermissions,
 } from '@/utils'
+import { logError } from '@/utils/logger'
 
 const isAdmin = ref(false)
 const isTaskScheduled = ref(false)
@@ -108,7 +109,7 @@ const onPermChange = async (v: boolean) => {
     message.success('common.success')
   } catch (error: any) {
     message.error(error)
-    console.log(error)
+    logError('[GeneralSettings] Failed to change permissions:', error)
   }
 }
 

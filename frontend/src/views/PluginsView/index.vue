@@ -7,6 +7,7 @@ import { DraggableOptions } from '@/constant/app'
 import { PluginTriggerEvent, PluginTrigger, View } from '@/enums/app'
 import { usePluginsStore, useAppSettingsStore, useEnvStore } from '@/stores'
 import { debounce, message } from '@/utils'
+import { logError } from '@/utils/logger'
 
 import Button from '@/components/Button/index.vue'
 import { useModal } from '@/components/Modal'
@@ -28,7 +29,7 @@ const menuList: Menu[] = [
         await pluginsStore.reloadPlugin(plugin!)
         message.success('common.success')
       } catch (error: any) {
-        console.log(error)
+        logError('[PluginsView] Failed to reload plugin:', error)
         message.error(error)
       }
     },
@@ -91,7 +92,7 @@ const handleUpdatePluginHub = async () => {
     await pluginsStore.updatePluginHub()
     message.success('plugins.updateSuccess')
   } catch (error: any) {
-    console.error('handleUpdatePluginHub: ', error)
+    logError('[PluginsView] Failed to update plugin hub:', error)
     message.error(error)
   }
 }
@@ -101,7 +102,7 @@ const handleUpdatePlugins = async () => {
     await pluginsStore.updatePlugins()
     message.success('common.success')
   } catch (error: any) {
-    console.error('handleUpdatePlugins: ', error)
+    logError('[PluginsView] Failed to update plugins:', error)
     message.error(error)
   }
 }
@@ -111,7 +112,7 @@ const handleUpdatePlugin = async (s: Plugin) => {
     await pluginsStore.updatePlugin(s.id)
     message.success('common.success')
   } catch (error: any) {
-    console.error('handleUpdatePlugin: ', error)
+    logError('[PluginsView] Failed to update plugin:', error)
     message.error(error)
   }
 }
