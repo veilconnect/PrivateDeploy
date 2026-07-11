@@ -53,6 +53,13 @@ class CdnProvider with ChangeNotifier {
 
   CdnStatus _status = CdnStatus.disabled;
   String? _accountId;
+  // Every Cloudflare account the current token can access. A single token can
+  // be scoped to more than one account (e.g. a personal account plus a shared
+  // "VC" account); we must NOT silently pin the first one, or a user whose CDN
+  // Workers live under the second account gets stranded on the wrong account's
+  // (stale-secret) Workers and every CDN request 403s. Populated on verify; the
+  // settings screen renders a picker when length > 1.
+  List<Map<String, String>> _accounts = const [];
   String? _accountEmail;
   String? _workersSubdomain;
   String? _lastError;
@@ -72,6 +79,11 @@ class CdnProvider with ChangeNotifier {
 
   CdnStatus get status => _status;
   String? get accountId => _accountId;
+  /// Cloudflare accounts the current token can access (id + human name). When
+  /// this has more than one entry the UI must let the user choose which one to
+  /// deploy Workers under, instead of defaulting to the first.
+  List<Map<String, String>> get availableAccounts =>
+      List.unmodifiable(_accounts);
   String? get accountEmail => _accountEmail;
   String? get workersSubdomain => _workersSubdomain;
   String? get lastError => _lastError;
@@ -112,7 +124,17 @@ class CdnProvider with ChangeNotifier {
   /// on some networks, which is why custom domains exist.
   bool deploymentNeedsRedeploy(String nodeId) {
     final dep = _deployments[nodeId];
-    return dep != null && dep.customHostStatus == 'failed';
+    if (dep == null) return false;
+    if (dep.customHostStatus == 'failed') return true;
+    // A 401/403 from the Worker means it is up but rejects our stored
+    // pathSecret — the secret was rotated, or the Worker was deployed under a
+    // different Cloudflare account than the one we're now using. Either way the
+    // Worker will never accept this client until it's redeployed with a fresh
+    // matching secret, so treat it as needing redeploy and let auto-CDN
+    // self-heal instead of 403-looping forever.
+    final probe = _lastProbeStatus[nodeId];
+    if (probe == 401 || probe == 403) return true;
+    return false;
   }
 
   /// Last WS-upgrade status the probe recorded for [nodeId] (null if never
@@ -345,7 +367,24 @@ class CdnProvider with ChangeNotifier {
             : CdnStatus.disabled;
         return false;
       }
-      final account = accounts.first as Map;
+      // Record ALL accessible accounts so a multi-account token isn't silently
+      // pinned to the first entry. If the token still exposes the
+      // previously-selected account (token rotation, or a re-verify), keep that
+      // choice; otherwise default to the first but leave the full list so the
+      // settings picker can offer the others (e.g. switching to "VC").
+      _accounts = [
+        for (final a in accounts)
+          if (a is Map && ((a['id'] as String?) ?? '').isNotEmpty)
+            {
+              'id': a['id'] as String,
+              'name': (a['name'] as String?) ?? (a['id'] as String),
+            },
+      ];
+      final priorId = _accountId ?? '';
+      final Map account = (priorId.isNotEmpty &&
+              accounts.any((a) => a is Map && a['id'] == priorId))
+          ? accounts.firstWhere((a) => a is Map && a['id'] == priorId) as Map
+          : accounts.first as Map;
       final accountId = (account['id'] as String?) ?? '';
       if (accountId.isEmpty) {
         _lastError = 'Could not parse account id from Cloudflare response.';
@@ -473,6 +512,73 @@ class CdnProvider with ChangeNotifier {
       _isVerifying = false;
       notifyListeners();
     }
+  }
+
+  /// Switch the active Cloudflare account to [accountId] (must be one of
+  /// [availableAccounts]). Re-fetches that account's workers.dev subdomain,
+  /// drops the previous account-scoped custom-domain / zone cache, persists the
+  /// choice, and recomputes status. This is the root-cause fix for tokens that
+  /// expose more than one account: instead of being stuck on whichever account
+  /// happened to be first, the user can point CDN deploys at the right one.
+  Future<bool> selectAccount(String accountId) async {
+    if (accountId.isEmpty) return false;
+    if (accountId == _accountId) return true;
+    if (!_accounts.any((a) => a['id'] == accountId)) {
+      _lastError = 'Account is not in the current token\'s account list.';
+      notifyListeners();
+      return false;
+    }
+    final token = await StorageService.getSecureString(_kTokenKey);
+    if (token == null || token.isEmpty) {
+      _lastError = 'No stored Cloudflare token to switch account with.';
+      notifyListeners();
+      return false;
+    }
+    final dio = Dio(BaseOptions(
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+      validateStatus: (_) => true,
+    ));
+    String workersSub = '';
+    try {
+      final sub =
+          await dio.get('$_accountsEndpoint/$accountId/workers/subdomain');
+      if (sub.statusCode == 200 && sub.data is Map) {
+        final r = sub.data['result'];
+        if (r is Map) {
+          workersSub = (r['subdomain'] as String?) ?? '';
+        }
+      }
+    } catch (_) {
+      // Non-fatal: the subdomain fetch can fail transiently; we still switch
+      // account and let the status land on verifiedButIncomplete.
+    }
+    // Account changed → the custom-domain zone binding and cached zones belong
+    // to the old account and would 404 on the next deploy. Drop them.
+    _customDomain = null;
+    await _persistCustomDomain();
+    _zones = const [];
+    _accountId = accountId;
+    final acc = _accounts.firstWhere(
+      (a) => a['id'] == accountId,
+      orElse: () => const {'name': ''},
+    );
+    _accountEmail = (acc['name'] ?? '').isNotEmpty ? acc['name'] : _accountEmail;
+    _workersSubdomain = workersSub;
+    await StorageService.saveString(_kAccountIdKey, accountId);
+    await StorageService.saveString(_kAccountEmailKey, _accountEmail ?? '');
+    await StorageService.saveString(_kWorkersSubdomainKey, workersSub);
+    final hasCustomDomain = _customDomain != null;
+    _status = (workersSub.isEmpty && !hasCustomDomain)
+        ? CdnStatus.verifiedButIncomplete
+        : CdnStatus.verified;
+    _lastError = null;
+    notifyListeners();
+    return true;
   }
 
   /// Snapshot CDN state for inclusion in an encrypted cloud backup.

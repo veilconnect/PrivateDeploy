@@ -538,6 +538,19 @@ String? buildCloudNodeConfig(
       : ['auto', ...allUrlTestTags];
   final includeUrlTest = !manualProtocolSelection;
 
+  // DNS must resolve reliably even when the CDN path is flapping. The Worker
+  // relay can intermittently 403 (Cloudflare edge security challenge on
+  // cellular) while still passing urltest probes, so routing the remote DoH
+  // servers through `select` (which prefers the low-latency CDN) makes name
+  // resolution die with 403 → ERR_NAME_NOT_RESOLVED even though the tunnel is
+  // up. Give DNS its own urltest over the DIRECT node protocols only — those
+  // are stable whenever the node is reachable — so resolution never depends on
+  // the flappy Worker. Real data traffic still uses the CDN-preferring `select`.
+  final directDnsTags = manualProtocolSelection
+      ? const <String>[]
+      : allUrlTestTags.where((t) => !t.contains('-CDN')).toList();
+  final dnsResolverDetour = directDnsTags.isNotEmpty ? 'dns-resolver' : 'select';
+
   final config = {
     // Keep per-connection INFO logs available so the diagnostics screen can
     // reconstruct recent DIRECT/PROXY decisions from runtime traffic.
@@ -553,12 +566,12 @@ String? buildCloudNodeConfig(
           // IP-literal DoH endpoint to avoid recursively bootstrapping the DNS
           // server hostname through another resolver on Android.
           'address': managedDnsRemoteAddress,
-          'detour': 'select',
+          'detour': dnsResolverDetour,
         },
         {
           'tag': managedDnsRemoteFallbackTag,
           'address': managedDnsRemoteFallbackAddress,
-          'detour': 'select',
+          'detour': dnsResolverDetour,
         },
         // Cloud-provider API lookups must resolve via the underlying network
         // rather than dns-local: sing-box's local resolver opens sockets via
@@ -654,11 +667,37 @@ String? buildCloudNodeConfig(
           // HTTPS/443, not HTTP/80: on cellular CDN/Worker paths can pass HTTP
           // probes while EOFing the HTTPS/DoH/WebSocket flows used by real
           // traffic.
-          'url': 'https://1.1.1.1/cdn-cgi/trace',
+          //
+          // MUST be a NON-Cloudflare origin. A Cloudflare endpoint (e.g.
+          // 1.1.1.1/cdn-cgi/trace) is a false-positive for a CDN-Worker member:
+          // the request never leaves Cloudflare's edge, so it returns 200 even
+          // when the Worker's WS relay to the VPS is 403'd by an edge security
+          // challenge (the exact failure on China-Mobile cellular). urltest then
+          // keeps selecting a Worker that can't actually relay, and because the
+          // remote DoH server detours through `select`→`auto`, DNS resolution
+          // dies with 403 (ERR_NAME_NOT_RESOLVED) while the tunnel looks "up".
+          // 8.8.8.8/generate_204 forces a real external relay to Google and
+          // returns 204, so a broken/challenged Worker fails the probe and is
+          // honestly demoted in favour of the working direct node.
+          'url': 'https://8.8.8.8/generate_204',
           // Cellular carriers time-variably blackhole direct VPS IPs, so the
           // urltest must re-probe quickly to fail over to the (stable) CDN
           // path. 5m left the tunnel dead for up to 5 minutes each time the
           // carrier dropped direct; 1m matches the desktop config's cadence.
+          'interval': '1m',
+          'tolerance': 50,
+        },
+      // Dedicated DNS resolver over DIRECT node protocols only (no CDN). The
+      // remote DoH servers detour through this so name resolution stays alive
+      // when the CDN Worker relay is intermittently 403'ing. Same non-CF
+      // IP-literal probe as `auto` so a dead direct node is demoted too.
+      if (directDnsTags.isNotEmpty)
+        {
+          'type': 'urltest',
+          'tag': 'dns-resolver',
+          'interrupt_exist_connections': false,
+          'outbounds': directDnsTags,
+          'url': 'https://8.8.8.8/generate_204',
           'interval': '1m',
           'tolerance': 50,
         },

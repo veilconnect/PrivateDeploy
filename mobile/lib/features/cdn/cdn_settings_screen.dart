@@ -240,6 +240,40 @@ class _StatusCard extends StatelessWidget {
               if ((provider.workersSubdomain ?? '').isNotEmpty)
                 _kv(isZh ? 'Workers 子域' : 'Workers subdomain',
                     '${provider.workersSubdomain}.workers.dev'),
+              // Multi-account token: let the user pick which account deploys the
+              // CDN Worker instead of being silently pinned to the first one.
+              if (provider.availableAccounts.length > 1) ...[
+                SizedBox(height: 10.h),
+                Text(
+                  isZh
+                      ? '该 token 可访问多个账号，选择用于部署 CDN Worker 的账号：'
+                      : 'This token can access multiple accounts. Choose which '
+                          'one deploys the CDN Worker:',
+                  style: TextStyle(fontSize: 12.sp, color: Colors.grey[700]),
+                ),
+                SizedBox(height: 4.h),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  value: provider.availableAccounts
+                          .any((a) => a['id'] == provider.accountId)
+                      ? provider.accountId
+                      : null,
+                  items: [
+                    for (final a in provider.availableAccounts)
+                      DropdownMenuItem<String>(
+                        value: a['id'],
+                        child: Text(
+                          a['name'] ?? a['id'] ?? '',
+                          style: TextStyle(fontSize: 13.sp),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (id) {
+                    if (id != null) provider.selectAccount(id);
+                  },
+                ),
+              ],
             ],
             if ((provider.lastError ?? '').isNotEmpty) ...[
               SizedBox(height: 10.h),

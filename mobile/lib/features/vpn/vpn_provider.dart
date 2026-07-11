@@ -202,7 +202,17 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // Profile names we've already attempted auto-deploy on during this
   // failover episode, so we don't loop on the same node when the CF API
   // refused (e.g. quota, transient 5xx). Reset on any healthy connect.
+  // Profiles we've already fired an auto-CDN-deploy for this session. Once per
+  // profile per episode (anti-loop); cleared on a healthy connect so a fresh
+  // failure later can retry. What was missing before was any *trigger* for the
+  // connected-but-CDN-403 case — see _recordEgressProbeFailure.
   final Set<String> _autoCdnDeployAttempted = {};
+  // Consecutive post-connect egress-probe failures. Drives an honest degraded
+  // status (tunnel up but nothing reaches the internet) and fires auto-CDN
+  // self-heal, without over-reacting to one flaky probe during a handover.
+  int _consecutiveEgressProbeFailures = 0;
+  bool _degradedFromEgressProbe = false;
+  static const int _egressFailuresForDegraded = 2;
 
   void setOnAutoCdnDeployRequest(
     Future<bool> Function(String? activeProfileName) handler,
@@ -888,11 +898,29 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _recordEgressIpSuccess(fetched);
         return;
       }
-      _diagnosticsEgressIp = null;
-      _diagnosticsError = normalizedProbeError;
+      _recordEgressProbeFailure(normalizedProbeError);
     } catch (_) {
-      _diagnosticsEgressIp = null;
-      _diagnosticsError = normalizedProbeError;
+      _recordEgressProbeFailure(normalizedProbeError);
+    }
+  }
+
+  /// Handle a failed post-connect egress probe. Beyond recording the error for
+  /// the diagnostics card, a *persistent* failure while "connected" means the
+  /// tunnel is up but no traffic actually reaches the internet through the
+  /// selected outbound (e.g. every node/CDN path 403s because the CDN Worker's
+  /// secret is stale). Reflect that honestly as degraded — so the UI stops
+  /// showing a green "connected" — and kick auto-CDN self-heal to recover.
+  void _recordEgressProbeFailure(String probeError) {
+    _diagnosticsEgressIp = null;
+    _diagnosticsError = probeError;
+    if (_status != VpnStatus.connected) return;
+    _consecutiveEgressProbeFailures++;
+    if (_consecutiveEgressProbeFailures >= _egressFailuresForDegraded) {
+      _degradedFromEgressProbe = true;
+      if (_health != VpnHealth.degraded) {
+        _health = VpnHealth.degraded;
+      }
+      _maybeAttemptAutoCdnDeploy();
     }
   }
 
@@ -901,6 +929,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     if (normalized == null || normalized.isEmpty) {
       return;
     }
+    // A real egress IP came back: traffic is flowing. Clear any degraded state
+    // we raised purely from egress-probe failures (leave native/startup-probe
+    // degraded reasons untouched).
+    _consecutiveEgressProbeFailures = 0;
+    if (_degradedFromEgressProbe &&
+        _health == VpnHealth.degraded &&
+        !_hasStartupProbeWarning) {
+      _health = VpnHealth.healthy;
+    }
+    _degradedFromEgressProbe = false;
     final hadStartupProbeWarning = _hasStartupProbeWarning;
     _diagnosticsEgressIp = normalized;
     _diagnosticsError = null;
@@ -920,9 +958,21 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
 
   void _startStatsPolling() {
     _stopStatsPolling();
+    var tick = 0;
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (_status == VpnStatus.connected) {
-        loadStats();
+      if (_status != VpnStatus.connected) return;
+      loadStats();
+      // Periodically re-probe egress (~30s) so a tunnel that is "up" but not
+      // actually routing (every outbound 403s) is detected and surfaced as
+      // degraded, instead of showing a green "connected" indefinitely. Without
+      // this the probe only runs at startup (which soft-fails on Android) and
+      // when the diagnostics screen is open.
+      tick++;
+      if (tick % 10 == 0) {
+        unawaited(
+          _refreshConnectedDiagnosticsEgressIp()
+              .then((_) => _safeNotifyListeners()),
+        );
       }
     });
   }
@@ -1548,6 +1598,8 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         // user roams to a different blocked node tomorrow) can fire
         // auto-deploy fresh.
         _autoCdnDeployAttempted.clear();
+        _consecutiveEgressProbeFailures = 0;
+        _degradedFromEgressProbe = false;
       }
       // When the tunnel comes back up after an underlying-network handover
       // (e.g. Wi-Fi ↔ cellular), the cached egress IP from the previous
