@@ -392,8 +392,8 @@ void main() {
     });
 
     test(
-        'CDN edge leads auto urltest pool when trojan is not on 443 '
-        '(so carrier-filtered direct variants do not exhaust probe timeouts)',
+        'direct tier leads the tier chooser and CDN edge leads the CDN '
+        'fallback tier (tiered failover, not a flat CDN-first pool)',
         () {
       final instance = CloudInstance(
         id: 'lax-1',
@@ -437,34 +437,42 @@ void main() {
 
       final config = jsonDecode(raw!) as Map<String, dynamic>;
       final outbounds = (config['outbounds'] as List).cast<Map>();
-      // First-non-special outbound (skip dns/direct/block/selector tags) is
-      // the urltest selector itself. The selector lists members in the
-      // exact order they were added to the outbounds list, so checking
-      // the array order is enough — sing-box's urltest probes them
-      // in-order until tolerance is satisfied.
       final selector = outbounds.firstWhere(
         (o) => o['tag'] == 'select',
         orElse: () => <String, Object?>{},
       );
-      final urltest = outbounds.firstWhere(
-        (o) => o['type'] == 'urltest',
+      final auto = outbounds.firstWhere(
+        (o) => o['tag'] == 'auto',
+        orElse: () => <String, Object?>{},
+      );
+      final directAuto = outbounds.firstWhere(
+        (o) => o['tag'] == 'direct-auto',
+        orElse: () => <String, Object?>{},
+      );
+      final cdnAuto = outbounds.firstWhere(
+        (o) => o['tag'] == 'cdn-auto',
         orElse: () => <String, Object?>{},
       );
       expect(selector['default'], 'auto',
           reason: 'CDN members belong in urltest failover; the main selector '
               'must not pin a single CDN path that can fail independently');
-      expect(urltest, isNotEmpty,
-          reason: 'auto config must include an urltest selector');
-      final members = (urltest['outbounds'] as List).cast<String>();
-      expect(members.isNotEmpty, isTrue,
-          reason: 'urltest must enumerate node protocol members');
-      expect(members.first, 'lax-1-CDN-edge1',
-          reason: 'IP-pinned CDN edge must lead the urltest pool when present');
-      expect(members.indexOf('lax-1-CDN-edge1'),
-          lessThan(members.indexOf('lax-1-SS')),
-          reason: 'CDN edge should be tried before bare-IP direct protocols');
-      expect(members.indexOf('lax-1-CDN-edge1'),
-          lessThan(members.indexOf('lax-1-CDN')),
+      // Tiered design: the outer chooser prefers the stable DIRECT tier and
+      // only falls back to the CDN tier -- the reverse of the old flat pool.
+      // Carrier-filtered direct variants no longer exhaust probe timeouts
+      // because the direct tier is Hy2-first (UDP punches through) instead of
+      // relying on the CDN leading a single flat pool.
+      expect(auto['outbounds'], ['direct-auto', 'cdn-auto'],
+          reason: 'direct tier must lead the chooser; CDN is the fallback tier');
+      final directMembers = (directAuto['outbounds'] as List).cast<String>();
+      expect(directMembers, contains('lax-1-SS'),
+          reason: 'direct tier must enumerate bare-IP node protocols');
+      // Within the CDN fallback tier the IP-pinned edge still leads the
+      // DNS-resolved CDN path.
+      final cdnMembers = (cdnAuto['outbounds'] as List).cast<String>();
+      expect(cdnMembers.first, 'lax-1-CDN-edge1',
+          reason: 'IP-pinned CDN edge must lead the CDN tier when present');
+      expect(cdnMembers.indexOf('lax-1-CDN-edge1'),
+          lessThan(cdnMembers.indexOf('lax-1-CDN')),
           reason: 'DNS-independent CDN edge should lead DNS-resolved CDN');
     });
 
@@ -655,6 +663,7 @@ void main() {
 
       expect(selector['outbounds'], [
         'auto',
+        'direct-auto',
         'tokyo-1-SS',
         'tokyo-1-Hy2',
         'tokyo-1-VLESS',
@@ -697,17 +706,26 @@ void main() {
           (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
       final selector = outbounds.firstWhere((item) => item['tag'] == 'select');
       final urltest = outbounds.firstWhere((item) => item['tag'] == 'auto');
+      final directAuto =
+          outbounds.firstWhere((item) => item['tag'] == 'direct-auto');
 
+      // Selector exposes the tier chooser, the direct tier, then every raw
+      // protocol tag (kept in edge443 probe order: Trojan 443 before high ports).
       expect(selector['outbounds'], [
         'auto',
+        'direct-auto',
         'edge-1-Trojan',
         'edge-1-Hy2',
         'edge-1-VLESS',
         'edge-1-SS',
       ]);
-      expect(urltest['outbounds'], [
-        'edge-1-Trojan',
+      // Outer auto only chooses between tiers.
+      expect(urltest['outbounds'], ['direct-auto']);
+      // Direct tier prefers Hysteria2 first (China-Mobile punch-through), then
+      // keeps Trojan 443 ahead of the high-port protocols (stable partition).
+      expect(directAuto['outbounds'], [
         'edge-1-Hy2',
+        'edge-1-Trojan',
         'edge-1-VLESS',
         'edge-1-SS',
       ]);
@@ -1069,7 +1087,9 @@ void main() {
       final decoded = jsonDecode(raw!) as Map<String, dynamic>;
       final outbounds =
           (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
-      final urltest = outbounds.firstWhere((o) => o['tag'] == 'auto');
+      // Data pool now lives in the direct tier (the outer `auto` only chooses
+      // between direct-auto and cdn-auto).
+      final urltest = outbounds.firstWhere((o) => o['tag'] == 'direct-auto');
       final pool = List<String>.from(urltest['outbounds'] as List);
 
       // Active node's protocols come first, then each failover's protocols.
@@ -1204,7 +1224,8 @@ void main() {
       final decoded = jsonDecode(raw!) as Map<String, dynamic>;
       final outbounds =
           (decoded['outbounds'] as List<dynamic>).cast<Map<String, dynamic>>();
-      final urltest = outbounds.firstWhere((o) => o['tag'] == 'auto');
+      // Data pool now lives in the direct tier.
+      final urltest = outbounds.firstWhere((o) => o['tag'] == 'direct-auto');
       final pool = List<String>.from(urltest['outbounds'] as List);
 
       // No failover tags should leak in.

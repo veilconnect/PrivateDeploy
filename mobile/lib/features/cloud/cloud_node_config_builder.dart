@@ -533,23 +533,72 @@ String? buildCloudNodeConfig(
           .where((outbound) => outbound['tag']?.toString() == preferredTag)
           .toList(growable: false)
       : <Map<String, dynamic>>[...outbounds, ...failoverOutbounds];
-  final selectorOutbounds = manualProtocolSelection
-      ? List<String>.from(tags.take(1))
-      : ['auto', ...allUrlTestTags];
   final includeUrlTest = !manualProtocolSelection;
 
-  // DNS must resolve reliably even when the CDN path is flapping. The Worker
-  // relay can intermittently 403 (Cloudflare edge security challenge on
-  // cellular) while still passing urltest probes, so routing the remote DoH
-  // servers through `select` (which prefers the low-latency CDN) makes name
-  // resolution die with 403 → ERR_NAME_NOT_RESOLVED even though the tunnel is
-  // up. Give DNS its own urltest over the DIRECT node protocols only — those
-  // are stable whenever the node is reachable — so resolution never depends on
-  // the flappy Worker. Real data traffic still uses the CDN-preferring `select`.
-  final directDnsTags = manualProtocolSelection
+  // Tiered urltest so DATA (and DNS) prefer the STABLE direct node and only
+  // fail over to the flappy CDN when direct is genuinely unavailable. A single
+  // flat urltest just picks lowest-latency-that-probes-OK, which rewards the
+  // Cloudflare edge's low latency even when its Worker relay intermittently
+  // 403s (edge security challenge on cellular) — real multi-connection traffic
+  // then breaks (e.g. YouTube) while the tunnel looks up. Split into per-tier
+  // urltests and let a high-tolerance outer urltest (direct listed FIRST) stick
+  // to direct unless it is catastrophically worse; CDN is used only when direct
+  // actually fails. Confirmed against sing-box 1.12.12 urltest semantics: it
+  // keeps the earlier member unless a later one beats it by more than tolerance.
+  final directDataTags = manualProtocolSelection
+      ? <String>[]
+      : <String>[
+          ...allUrlTestTags
+              .where((t) => !t.contains('-CDN') && t.contains('-Hy2')),
+          ...allUrlTestTags
+              .where((t) => !t.contains('-CDN') && !t.contains('-Hy2')),
+        ];
+  // Prefer Hysteria2 (UDP/QUIC) at the FRONT of the direct tier. China-Mobile
+  // cellular throttles sustained TCP (VLESS/SS/Trojan) to i/o-timeout while
+  // Hy2's congestion control punches through — verified on-device: YouTube and
+  // Reddit load over Hy2 where TCP-direct timed out (278 i/o-timeouts -> 0).
+  // urltest keeps the earliest member unless a later one beats it by more than
+  // tolerance, so Hy2-first + a high direct-auto tolerance makes Hy2 the
+  // working default and only falls back to TCP when Hy2 (UDP) is actually
+  // blocked/unreachable (probe fails). Built with a STABLE Hy2-first partition
+  // (NOT List.sort, which is unstable in Dart and would scramble the deliberate
+  // non-Hy2 order, e.g. edge443 keeps Trojan 443 ahead of the high-port ones).
+  final cdnDataTags = manualProtocolSelection
       ? const <String>[]
-      : allUrlTestTags.where((t) => !t.contains('-CDN')).toList();
-  final dnsResolverDetour = directDnsTags.isNotEmpty ? 'dns-resolver' : 'select';
+      : allUrlTestTags.where((t) => t.contains('-CDN')).toList();
+  final hasDirectTier = directDataTags.isNotEmpty;
+  final hasCdnTier = cdnDataTags.isNotEmpty;
+  // Outer `auto` chooses between the tiers, direct first.
+  final autoTierTags = <String>[
+    if (hasDirectTier) 'direct-auto',
+    if (hasCdnTier) 'cdn-auto',
+  ];
+  final selectorOutbounds = manualProtocolSelection
+      ? List<String>.from(tags.take(1))
+      : <String>[
+          'auto',
+          if (hasDirectTier) 'direct-auto',
+          if (hasCdnTier) 'cdn-auto',
+          ...allUrlTestTags,
+        ];
+  // Remote DoH DNS MUST resolve over a DEDICATED, NON-INTERRUPTING resolver
+  // over the direct tier only (Hy2-first). Two hard-won constraints:
+  //  1. Direct only: the Cloudflare Worker relay 403s DoH under cellular, and
+  //     routing DNS through the CDN (or the nested `auto` that can pick it)
+  //     returns ERR_NAME_NOT_RESOLVED even while the data egress stays direct.
+  //  2. interrupt_exist_connections:false -- the `direct-auto` data tier
+  //     re-probes every 1m and, on re-selection under flapping cellular, TEARS
+  //     DOWN the in-flight DoH connection -> `dns: exchange failed ... context
+  //     deadline exceeded`. A dedicated `dns-resolver` urltest with interrupt
+  //     disabled keeps the DoH stream alive across re-probes. This restores the
+  //     known-good resolver from commit 70c02020 (verified DNS lived on
+  //     cellular), but with members Hy2-first so DoH rides the one protocol
+  //     China-Mobile does not throttle to death.
+  final dnsResolverDetour = (includeUrlTest && hasDirectTier)
+      ? 'dns-resolver'
+      : (includeUrlTest && autoTierTags.isNotEmpty)
+          ? 'auto'
+          : 'select';
 
   final config = {
     // Keep per-connection INFO logs available so the diagnostics screen can
@@ -657,46 +706,61 @@ String? buildCloudNodeConfig(
         'outbounds': selectorOutbounds,
         'default': manualProtocolSelection ? tags.first : 'auto',
       },
-      if (includeUrlTest)
+      // Outer tier chooser. Prefers the direct tier (listed first) and only
+      // falls to the CDN tier when direct is genuinely unavailable. The large
+      // tolerance stops the (flappy) CDN's small edge-latency advantage from
+      // pulling traffic off the stable direct node — sing-box keeps the earlier
+      // member unless a later one beats it by more than `tolerance`.
+      if (includeUrlTest && autoTierTags.isNotEmpty)
         {
           'type': 'urltest',
           'tag': 'auto',
           'interrupt_exist_connections': true,
-          'outbounds': allUrlTestTags,
-          // IP-literal so urltest never has to resolve a hostname. Use
-          // HTTPS/443, not HTTP/80: on cellular CDN/Worker paths can pass HTTP
-          // probes while EOFing the HTTPS/DoH/WebSocket flows used by real
-          // traffic.
-          //
-          // MUST be a NON-Cloudflare origin. A Cloudflare endpoint (e.g.
-          // 1.1.1.1/cdn-cgi/trace) is a false-positive for a CDN-Worker member:
-          // the request never leaves Cloudflare's edge, so it returns 200 even
-          // when the Worker's WS relay to the VPS is 403'd by an edge security
-          // challenge (the exact failure on China-Mobile cellular). urltest then
-          // keeps selecting a Worker that can't actually relay, and because the
-          // remote DoH server detours through `select`→`auto`, DNS resolution
-          // dies with 403 (ERR_NAME_NOT_RESOLVED) while the tunnel looks "up".
-          // 8.8.8.8/generate_204 forces a real external relay to Google and
-          // returns 204, so a broken/challenged Worker fails the probe and is
-          // honestly demoted in favour of the working direct node.
+          'outbounds': autoTierTags,
           'url': 'https://8.8.8.8/generate_204',
-          // Cellular carriers time-variably blackhole direct VPS IPs, so the
-          // urltest must re-probe quickly to fail over to the (stable) CDN
-          // path. 5m left the tunnel dead for up to 5 minutes each time the
-          // carrier dropped direct; 1m matches the desktop config's cadence.
           'interval': '1m',
-          'tolerance': 50,
+          'tolerance': 1500,
         },
-      // Dedicated DNS resolver over DIRECT node protocols only (no CDN). The
-      // remote DoH servers detour through this so name resolution stays alive
-      // when the CDN Worker relay is intermittently 403'ing. Same non-CF
-      // IP-literal probe as `auto` so a dead direct node is demoted too.
-      if (directDnsTags.isNotEmpty)
+      // Direct tier: best stable direct protocol. Non-Cloudflare IP-literal
+      // probe (8.8.8.8/generate_204) so a broken/challenged CDN Worker cannot
+      // false-positive by staying inside Cloudflare's edge.
+      if (includeUrlTest && hasDirectTier)
+        {
+          'type': 'urltest',
+          'tag': 'direct-auto',
+          'interrupt_exist_connections': true,
+          'outbounds': directDataTags,
+          'url': 'https://8.8.8.8/generate_204',
+          'interval': '1m',
+          // High tolerance so the Hy2-first ordering wins: a light generate_204
+          // probe cannot see the sustained-throughput throttling that kills
+          // TCP-direct on cellular, so latency alone must NOT pull selection off
+          // Hysteria2. Only a Hy2 probe *failure* (UDP blocked) drops it.
+          'tolerance': 3000,
+        },
+      // Dedicated DNS resolver: same direct tier (Hy2-first) as `direct-auto`
+      // but interrupt_exist_connections:false so periodic urltest re-probes
+      // never tear down an in-flight DoH stream (that produced
+      // `dns: exchange failed ... context deadline exceeded` on cellular).
+      if (includeUrlTest && hasDirectTier)
         {
           'type': 'urltest',
           'tag': 'dns-resolver',
           'interrupt_exist_connections': false,
-          'outbounds': directDnsTags,
+          'outbounds': directDataTags,
+          'url': 'https://8.8.8.8/generate_204',
+          'interval': '1m',
+          'tolerance': 3000,
+        },
+      // CDN tier: best CDN entry point (CDN-first ordering is kept only *within*
+      // this tier). Selected by the outer `auto` only when the direct tier is
+      // unavailable — e.g. a carrier that blackholes direct VPS IPs.
+      if (includeUrlTest && hasCdnTier)
+        {
+          'type': 'urltest',
+          'tag': 'cdn-auto',
+          'interrupt_exist_connections': true,
+          'outbounds': cdnDataTags,
           'url': 'https://8.8.8.8/generate_204',
           'interval': '1m',
           'tolerance': 50,
