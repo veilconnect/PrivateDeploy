@@ -213,6 +213,16 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   int _consecutiveEgressProbeFailures = 0;
   bool _degradedFromEgressProbe = false;
   static const int _egressFailuresForDegraded = 2;
+  // Cumulative download bytes at the last egress check. Used to tell whether
+  // real traffic is flowing through the tunnel: if it grew meaningfully since
+  // the previous egress probe, the route is provably alive even when the
+  // (flaky, DNS-heavy) public-IP probe endpoints time out on throttled
+  // cellular. Prevents a spurious 'upstream blocked' degrade + auto-CDN
+  // redeploy while the user is happily streaming.
+  int _egressCheckDownloadBytes = 0;
+  // Real traffic floor between two egress checks. Anything above this over the
+  // (~30-120s) window means the tunnel is routing; idle keepalives stay below.
+  static const int _egressTrafficFloorBytes = 24 * 1024;
 
   void setOnAutoCdnDeployRequest(
     Future<bool> Function(String? activeProfileName) handler,
@@ -911,9 +921,33 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   /// secret is stale). Reflect that honestly as degraded — so the UI stops
   /// showing a green "connected" — and kick auto-CDN self-heal to recover.
   void _recordEgressProbeFailure(String probeError) {
-    _diagnosticsEgressIp = null;
+    // Did real traffic move since the last egress check? The public-IP probe
+    // endpoints (native ipinfo/ident/checkip + Dart icanhazip/ifconfig/ipify)
+    // are DNS-heavy and routinely time out on throttled cellular even while
+    // the selected Hy2 outbound streams video fine. If download bytes grew,
+    // the route is alive — surface the probe error on the diagnostics card but
+    // do NOT mark degraded or fire auto-CDN self-heal (which would needlessly
+    // redeploy CDN mid-stream). Only a probe failure with NO throughput is a
+    // real 'tunnel up but nothing routes' signal.
+    final downloaded = _stats.downloadBytes - _egressCheckDownloadBytes;
+    _egressCheckDownloadBytes = _stats.downloadBytes;
+    final trafficFlowing = downloaded > _egressTrafficFloorBytes;
+
     _diagnosticsError = probeError;
     if (_status != VpnStatus.connected) return;
+    if (trafficFlowing) {
+      // Provably routing: keep the last-known egress IP visible and clear any
+      // degraded state we had raised purely from egress-probe failures.
+      _consecutiveEgressProbeFailures = 0;
+      if (_degradedFromEgressProbe &&
+          _health == VpnHealth.degraded &&
+          !_hasStartupProbeWarning) {
+        _health = VpnHealth.healthy;
+      }
+      _degradedFromEgressProbe = false;
+      return;
+    }
+    _diagnosticsEgressIp = null;
     _consecutiveEgressProbeFailures++;
     if (_consecutiveEgressProbeFailures >= _egressFailuresForDegraded) {
       _degradedFromEgressProbe = true;
@@ -933,6 +967,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // we raised purely from egress-probe failures (leave native/startup-probe
     // degraded reasons untouched).
     _consecutiveEgressProbeFailures = 0;
+    _egressCheckDownloadBytes = _stats.downloadBytes;
     if (_degradedFromEgressProbe &&
         _health == VpnHealth.degraded &&
         !_hasStartupProbeWarning) {
@@ -968,7 +1003,19 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // this the probe only runs at startup (which soft-fails on Android) and
       // when the diagnostics screen is open.
       tick++;
-      if (tick % 10 == 0) {
+      // Re-probe egress often (~30s) only while we still lack a confirmed
+      // egress IP or the tunnel looks stalled -- that is when a broken route
+      // must be caught fast. Once egress is confirmed AND real traffic is
+      // flowing, drop to a slow refresh (~2min) so we stop hammering the
+      // flaky, DNS-heavy public-IP probes (they otherwise spam hundreds of
+      // benign `dns: exchange failed` / timeout lines during normal use).
+      final egressConfirmed = _diagnosticsEgressIp != null;
+      final trafficFlowing =
+          _stats.downloadSpeed > 0 || _stats.uploadSpeed > 0;
+      final probeDue = (egressConfirmed && trafficFlowing)
+          ? (tick % 40 == 0)
+          : (tick % 10 == 0);
+      if (probeDue) {
         unawaited(
           _refreshConnectedDiagnosticsEgressIp()
               .then((_) => _safeNotifyListeners()),
@@ -1599,6 +1646,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         // auto-deploy fresh.
         _autoCdnDeployAttempted.clear();
         _consecutiveEgressProbeFailures = 0;
+        _egressCheckDownloadBytes = _stats.downloadBytes;
         _degradedFromEgressProbe = false;
       }
       // When the tunnel comes back up after an underlying-network handover
