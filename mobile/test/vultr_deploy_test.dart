@@ -150,8 +150,7 @@ void main() {
     // takes every other protocol down with it — with no self-heal, since
     // the script never runs again. Mirrors the same fix + test on the
     // desktop side (bridge/cloud/deploy/deploy_test.go).
-    test('shadowsocks docker pull failure does not abort the script',
-        () async {
+    test('shadowsocks docker pull failure does not abort the script', () async {
       for (final planRam in [512, 1024]) {
         final bundle = await VultrDeploymentBuilder.build(
           planRam: planRam,
