@@ -63,6 +63,10 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                 ACTION_VPN_STATUS -> {
                     val status = intent.getStringExtra("status")
                     val message = intent.getStringExtra("message")
+                    val serviceOwnsShutdown = intent.getBooleanExtra(
+                        EXTRA_SERVICE_OWNS_SHUTDOWN,
+                        false,
+                    )
 
                     if (status == "already_running") {
                         if (pendingStartResult != null) {
@@ -90,7 +94,11 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
                         "connected" -> completePendingStart()
                         "error" -> failPendingStart(
                             code = "START_FAILED",
-                            message = message ?: "Failed to start VPN"
+                            message = message ?: "Failed to start VPN",
+                            stopVpn = PendingStartFailurePolicy.shouldSendStop(
+                                pendingStartDispatched = pendingStartDispatched,
+                                serviceOwnsShutdown = serviceOwnsShutdown,
+                            ),
                         )
                         "revoked" -> failPendingStart(
                             code = "PERMISSION_REVOKED",

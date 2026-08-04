@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"privatedeploy/bridge/cloud/persistence"
+
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -112,7 +114,7 @@ func saveHostKeyRecords(path string, records map[string]hostKeyRecord) error {
 		return fmt.Errorf("encode SSH host key store: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(path, data); err != nil {
 		return fmt.Errorf("write SSH host key store: %w", err)
 	}
 	return nil

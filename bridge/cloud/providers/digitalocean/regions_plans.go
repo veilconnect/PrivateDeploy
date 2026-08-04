@@ -12,12 +12,17 @@ import (
 
 // ListRegions returns available DigitalOcean regions.
 func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
+	cfg, err := p.ensureConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/regions", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
@@ -62,12 +67,17 @@ func (p *Provider) ListRegions(ctx context.Context) ([]cloud.Region, error) {
 
 // ListPlans returns available DigitalOcean droplet sizes.
 func (p *Provider) ListPlans(ctx context.Context, region string) ([]cloud.Plan, error) {
+	cfg, err := p.ensureConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/sizes", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)

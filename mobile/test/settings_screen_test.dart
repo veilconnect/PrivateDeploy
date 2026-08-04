@@ -39,7 +39,7 @@ class _NoisyTestVpnProvider extends TestVpnProvider {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   String? clipboardText;
-  final vpnChannel = const MethodChannel('com.privatedeploy.vpn/native');
+  const vpnChannel = MethodChannel('com.privatedeploy.vpn/native');
 
   setUp(() {
     PackageInfo.setMockInitialValues(

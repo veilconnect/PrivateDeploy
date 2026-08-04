@@ -15,6 +15,10 @@ import (
 // ensurePrivateDeployFirewall finds (or creates) a protocol-specific firewall
 // for the given port assignment and returns its ID.
 func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy.PortAssignment) (string, error) {
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return "", err
+	}
 	// Include vlessRelayPort in the name so distinct port profiles get
 	// distinct firewalls (avoids accidentally sharing one firewall across
 	// nodes that have different relay-port allocations).
@@ -27,7 +31,7 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy
 		return "", err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
@@ -144,7 +148,7 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy
 		return "", err
 	}
 
-	createReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	createReq.Header.Set("Authorization", "Bearer "+apiKey)
 	createReq.Header.Set("Content-Type", "application/json")
 
 	createResp, err := p.client.Do(createReq)
@@ -173,6 +177,10 @@ func (p *Provider) ensurePrivateDeployFirewall(ctx context.Context, ports deploy
 
 // associateFirewallWithDroplet attaches a firewall to a droplet.
 func (p *Provider) associateFirewallWithDroplet(ctx context.Context, firewallID string, dropletID int) error {
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return err
+	}
 	reqBody := map[string]interface{}{
 		"droplet_ids": []int{dropletID},
 	}
@@ -187,7 +195,7 @@ func (p *Provider) associateFirewallWithDroplet(ctx context.Context, firewallID 
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)

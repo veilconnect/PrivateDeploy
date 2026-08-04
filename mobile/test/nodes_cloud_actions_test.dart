@@ -770,6 +770,7 @@ class _FakeCloudProvider extends ChangeNotifier implements CloudProvider {
   String? createdRegion;
   String? createdPlan;
   String? createdLabel;
+  @override
   String? lastCreatedInstanceId;
   int loadRegionsCalls = 0;
   int loadPlansCalls = 0;

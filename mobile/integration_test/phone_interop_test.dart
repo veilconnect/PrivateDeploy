@@ -1,3 +1,8 @@
+// This on-device interop harness reports its results through the console on
+// purpose — `adb logcat` / the integration_test driver is the only channel
+// back to the operator, so `print` here is the feature, not a leftover.
+// ignore_for_file: avoid_print
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';

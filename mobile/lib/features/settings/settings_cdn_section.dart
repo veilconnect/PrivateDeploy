@@ -14,7 +14,7 @@ import '../cdn/cdn_settings_screen.dart';
 /// state so users notice things like "verified but no subdomain bound"
 /// without having to drill in.
 class SettingsCdnSection extends StatelessWidget {
-  const SettingsCdnSection({Key? key}) : super(key: key);
+  const SettingsCdnSection({super.key});
 
   void _open(BuildContext context) {
     Navigator.of(context, rootNavigator: true).push(

@@ -33,6 +33,7 @@ type MultiProtocolParams struct {
 	VLESSRelayPort  int
 	SingBoxVersion  string
 	SingBoxFallback string
+	SSHPort         int
 }
 
 // GenerateUUID returns RFC-4122 UUID v4.
@@ -87,7 +88,7 @@ func shellEscape(s string) string {
 	if s == "" {
 		return "''"
 	}
-	if strings.ContainsAny(s, " \t\n\\\"'`$") {
+	if strings.ContainsAny(s, " \t\n\\\"'`$;&|<>(){}[]*?!#~") {
 		return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 	}
 	return s
@@ -95,6 +96,10 @@ func shellEscape(s string) string {
 
 // GenerateMultiProtocolScript renders the multi-protocol deployment bash script.
 func GenerateMultiProtocolScript(p MultiProtocolParams) string {
+	sshPort := p.SSHPort
+	if sshPort < 1 || sshPort > 65535 {
+		sshPort = 22
+	}
 	hysteriaServer := normalizeHostname(p.HysteriaServer, DefaultHysteriaServerName)
 	trojanServer := normalizeHostname(p.TrojanServer, DefaultTrojanServerName)
 	vlessServer := normalizeHostname(p.VLESSServer, trojanServer)
@@ -248,7 +253,7 @@ ufw default deny incoming
 ufw default allow outgoing
 # Rate-limit SSH (ufw 'limit' drops sources with too many recent connections)
 # to blunt brute-force attempts while keeping the port reachable for the owner.
-ufw limit 22/tcp comment 'SSH (rate-limited)'
+ufw limit %[22]d/tcp comment 'SSH (rate-limited)'
 ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
 ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
 ufw allow %[2]d/udp comment 'Hysteria2'
@@ -282,10 +287,15 @@ ufw status verbose
 # Deploy Shadowsocks
 echo "[6/8] Deploying Shadowsocks server (port %[1]d)..."
 docker rm -f ss-server >/dev/null 2>&1 || true
-docker pull --quiet teddysun/shadowsocks-libev || true
+# A transient pull hiccup here (registry rate limit, momentary network blip on
+# a fresh VPS) must not abort the whole script under set -e: Shadowsocks is
+# step 6/8, and Hysteria2/VLESS/Trojan below it would never get deployed
+# either. 'docker run' below still resolves and pulls the same pinned digest
+# on demand, so this explicit pull failing here is not fatal on its own.
+docker pull --quiet %[21]s || true
 docker run -d --name ss-server --restart=always \
   -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp \
-  teddysun/shadowsocks-libev ss-server \
+  %[21]s ss-server \
   -s 0.0.0.0 -p %[1]d -k %[5]s -m aes-256-gcm
 
 sleep 2
@@ -347,12 +357,12 @@ EXPECTED_SHA256="$SINGBOX_SHA256"
 # PrivateDeploy source (verified against the upstream GitHub release). sing-box
 # publishes no per-asset .sha256sum file, and re-fetching a hash from the same
 # origin would add no supply-chain protection over TLS, so the pin is the trust
-# anchor. An empty pin (a version we have no hash for) degrades to a warning.
+# anchor. An empty pin is a programming/configuration error and must fail.
 verify_checksum() {
   local file="$1" expected="$2"
   if [ -z "$expected" ]; then
-    echo "[WARN] No pinned checksum for this sing-box version; skipping verification" >&2
-    return 0
+    echo "[ERROR] No pinned checksum for this sing-box version" >&2
+    return 1
   fi
   local actual
   actual="$(sha256sum "$file" | cut -d' ' -f1)"
@@ -364,40 +374,35 @@ verify_checksum() {
   return 1
 }
 
-# Skip download if sing-box is already installed
-if command -v sing-box >/dev/null 2>&1; then
-  echo "[OK] sing-box already installed: $(sing-box version 2>/dev/null | head -1)"
-elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
+# Always replace any existing binary with a freshly downloaded, hash-pinned
+# release. A pre-existing executable on a BYO SSH host is not a trust anchor.
+if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
   if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
     echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
     if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
-      echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan deployment." >&2
-      SKIP_SINGBOX=1
+      echo "[ERROR] Could not download pinned sing-box binaries." >&2
+      exit 1
     else
       SINGBOX_VERSION="$SINGBOX_FALLBACK_VERSION"
       EXPECTED_SHA256="$SINGBOX_FALLBACK_SHA256"
     fi
   else
-    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured. Skipping VLESS/Trojan deployment." >&2
-    SKIP_SINGBOX=1
+    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured." >&2
+    exit 1
   fi
 fi
 
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
-  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$EXPECTED_SHA256"; then
-    echo "[ERROR] sing-box integrity check failed. Aborting sing-box deployment." >&2
-    SKIP_SINGBOX=1
-  fi
+if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$EXPECTED_SHA256"; then
+  echo "[ERROR] sing-box integrity check failed. Aborting deployment." >&2
+  exit 1
 fi
 
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
-  tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
-  find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
-  chmod +x /usr/local/bin/sing-box
-fi
+tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
+find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
+chmod +x /usr/local/bin/sing-box
 
-# Configure sing-box services if sing-box is available
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && command -v sing-box >/dev/null 2>&1; then
+# Configure sing-box services after verified installation.
+if command -v sing-box >/dev/null 2>&1; then
   docker rm -f hysteria-server >/dev/null 2>&1 || true
   cat > /etc/systemd/system/hysteria-server.service <<'HYSTERIASERVICE'
 [Unit]
@@ -702,18 +707,24 @@ echo "=== PrivateDeploy Multi-Protocol Init Completed at $(date) ==="
 		p.VLESSPublicKey,
 		hysteriaServer,
 		trojanServer,
-		hysteriaMasqueradeURL,
+		shellEscape(hysteriaMasqueradeURL),
 		singBoxVersion,
 		singBoxFallback,
 		vlessServer,
 		vlessRelayBlock,
 		singBoxSHA256,
 		singBoxFallbackSHA256,
+		ShadowsocksImage,
+		sshPort,
 	)
 }
 
 // GenerateLightweightScript returns the Shadowsocks-only bootstrap script.
-func GenerateLightweightScript(ssPort int, ssPassword string) string {
+func GenerateLightweightScript(ssPort int, ssPassword string, requestedSSHPort ...int) string {
+	sshPort := 22
+	if len(requestedSSHPort) > 0 && requestedSSHPort[0] >= 1 && requestedSSHPort[0] <= 65535 {
+		sshPort = requestedSSHPort[0]
+	}
 	return fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -735,7 +746,7 @@ ufw --force disable || true
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw limit 22/tcp comment 'SSH (rate-limited)'
+ufw limit %[4]d/tcp comment 'SSH (rate-limited)'
 ufw allow %[1]d/tcp comment 'Shadowsocks-TCP'
 ufw allow %[1]d/udp comment 'Shadowsocks-UDP'
 echo "y" | ufw enable
@@ -757,10 +768,13 @@ systemctl enable fail2ban 2>/dev/null || true
 systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
-docker pull --quiet teddysun/shadowsocks-libev || true
+# See the matching comment in GenerateMultiProtocolScript: a transient pull
+# hiccup must not abort under set -e — 'docker run' below still resolves and
+# pulls the same pinned digest on demand.
+docker pull --quiet %[3]s || true
 docker run -d --name ss-server --restart=always \
   -p %[1]d:%[1]d/tcp -p %[1]d:%[1]d/udp \
-  teddysun/shadowsocks-libev ss-server \
+  %[3]s ss-server \
   -s 0.0.0.0 -p %[1]d -k %[2]s -m aes-256-gcm
 
 sleep 3
@@ -769,5 +783,5 @@ docker ps -a --filter "name=ss-server" --format "{{.Names}}: {{.Status}}"
 
 echo ""
 echo "=== PrivateDeploy Lightweight Init Completed at $(date) ==="
-`, ssPort, shellEscape(ssPassword))
+`, ssPort, shellEscape(ssPassword), ShadowsocksImage, sshPort)
 }

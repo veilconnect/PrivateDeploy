@@ -729,6 +729,7 @@ onMounted(() => {
             :options="[
               { label: t('cloud.filter.allStatus'), value: 'all' },
               { label: t('cloud.status.unknown'), value: 'unknown' },
+              { label: t('cloud.status.deploying'), value: 'deploying' },
               { label: t('cloud.status.pending'), value: 'pending' },
               { label: t('cloud.status.applying'), value: 'applying' },
               { label: t('cloud.status.connected'), value: 'connected' },

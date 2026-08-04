@@ -171,8 +171,10 @@ jobs:
       # dependency, so the step always failed with "Could not find package".
       # `flutter analyze` (in the Analyze job) already covers static checks.
 
-      - name: Security audit
+      # Real gate: dependency_validator is declared in dev_dependencies and
+      # configured via mobile/dart_dependency_validator.yaml, so a failure
+      # here is a genuine dependency problem — no continue-on-error.
+      - name: Dependency audit
         run: |
-          echo "Running security audit..."
-          flutter pub run dependency_validator
-        continue-on-error: true
+          echo "Running dependency audit..."
+          dart run dependency_validator

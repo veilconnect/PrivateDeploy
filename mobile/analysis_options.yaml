@@ -1,0 +1,14 @@
+# Static analysis configuration for the PrivateDeploy mobile app.
+#
+# `flutter_lints` (declared in pubspec dev_dependencies) is the standard
+# Flutter lint set; CI runs `flutter analyze` against this file, so any rule
+# disabled below must carry a reason.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    # Generated code (build_runner / retrofit / hive / l10n output) is not
+    # hand-maintained; linting it only produces unactionable noise.
+    - '**/*.g.dart'
+    - '**/*.mocks.dart'
+    - 'lib/generated/**'

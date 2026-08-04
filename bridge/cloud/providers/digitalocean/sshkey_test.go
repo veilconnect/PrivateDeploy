@@ -1,13 +1,23 @@
 package digitalocean
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"privatedeploy/bridge/cloud"
 )
 
 func TestSameAuthorizedKey(t *testing.T) {
@@ -56,5 +66,131 @@ func TestManagedKeyRoundTrip(t *testing.T) {
 	fromPub := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 	if !sameAuthorizedKey(derived, fromPub) {
 		t.Fatalf("authorized key mismatch:\n  fromPEM=%s\n  fromPub=%s", derived, fromPub)
+	}
+}
+
+func TestEnsureManagedSSHKeyConcurrentCreatesOnce(t *testing.T) {
+	basePath := t.TempDir()
+	t.Setenv("PRIVATEDEPLOY_BASE_PATH", basePath)
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(basePath, "secrets"))
+
+	const keyID = 7319
+	var (
+		apiMu       sync.Mutex
+		accountKey  *doAccountKey
+		createCount int
+		apiErr      string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			apiMu.Lock()
+			apiErr = fmt.Sprintf("unexpected authorization header %q", r.Header.Get("Authorization"))
+			apiMu.Unlock()
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/account/keys":
+			// Widen the first-use race window: without serialization, many
+			// callers observe an empty account before any POST completes.
+			time.Sleep(10 * time.Millisecond)
+			apiMu.Lock()
+			keys := []doAccountKey(nil)
+			if accountKey != nil {
+				keys = append(keys, *accountKey)
+			}
+			apiMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ssh_keys": keys})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/account/keys":
+			var request struct {
+				Name      string `json:"name"`
+				PublicKey string `json:"public_key"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			apiMu.Lock()
+			createCount++
+			created := doAccountKey{ID: keyID, Name: request.Name, PublicKey: request.PublicKey}
+			accountKey = &created
+			apiMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ssh_key": created})
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	originalBaseURL := baseURL
+	baseURL = server.URL
+	t.Cleanup(func() { baseURL = originalBaseURL })
+
+	provider := New(&cloud.ProviderConfig{Provider: "digitalocean", APIKey: "test-token"})
+	provider.client = server.Client()
+
+	const callers = 64
+	type result struct {
+		id      int
+		privPEM string
+		err     error
+	}
+	results := make(chan result, callers)
+	start := make(chan struct{})
+	var callersWG sync.WaitGroup
+	callersWG.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer callersWG.Done()
+			<-start
+			id, privPEM, err := provider.ensureManagedSSHKey(context.Background())
+			results <- result{id: id, privPEM: privPEM, err: err}
+		}()
+	}
+	close(start)
+	callersWG.Wait()
+	close(results)
+
+	var firstPEM string
+	for got := range results {
+		if got.err != nil {
+			t.Fatalf("ensureManagedSSHKey: %v", got.err)
+		}
+		if got.id != keyID {
+			t.Fatalf("key ID = %d, want %d", got.id, keyID)
+		}
+		if strings.TrimSpace(got.privPEM) == "" {
+			t.Fatal("ensureManagedSSHKey returned an empty private key")
+		}
+		if firstPEM == "" {
+			firstPEM = got.privPEM
+		} else if got.privPEM != firstPEM {
+			t.Fatal("concurrent callers received different private keys")
+		}
+	}
+
+	apiMu.Lock()
+	gotCreateCount := createCount
+	gotAPIErr := apiErr
+	apiMu.Unlock()
+	if gotAPIErr != "" {
+		t.Fatal(gotAPIErr)
+	}
+	if gotCreateCount != 1 {
+		t.Fatalf("DigitalOcean key create calls = %d, want exactly 1", gotCreateCount)
+	}
+
+	storedPEM, err := cloud.LoadSecret(provider.configPath, managedSSHKeyScope)
+	if err != nil {
+		t.Fatalf("load persisted managed key: %v", err)
+	}
+	if storedPEM != firstPEM {
+		t.Fatal("persisted private key differs from the key returned to callers")
 	}
 }

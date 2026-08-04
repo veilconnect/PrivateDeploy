@@ -6,8 +6,12 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 
 import '../../services/native_http_service.dart';
+import '../../shared/utils/logger.dart';
 import 'cloud_api_client.dart';
 import 'cloud_models.dart';
+
+const String pinnedShadowsocksImage =
+    'teddysun/shadowsocks-libev@sha256:d9a991d15b93c9b1fd7a37d222e8e4406b2015bb28819f10a5f1428369da14f6';
 
 class VultrCloudClient implements CloudApiClient {
   static const String baseUrl = 'https://api.vultr.com/v2';
@@ -33,18 +37,22 @@ class VultrCloudClient implements CloudApiClient {
     _dio.interceptors.clear();
   }
 
+  @override
   Future<Map<String, dynamic>> listRegions() async {
     return _requestJson('GET', '/regions');
   }
 
+  @override
   Future<Map<String, dynamic>> listPlans() async {
     return _requestJson('GET', '/plans');
   }
 
+  @override
   Future<Map<String, dynamic>> listInstances() async {
     return _requestJson('GET', '/instances');
   }
 
+  @override
   Future<String?> getInstanceUserData(String instanceId) async {
     final response =
         await _requestJson('GET', '/instances/$instanceId/user-data');
@@ -62,14 +70,29 @@ class VultrCloudClient implements CloudApiClient {
     return null;
   }
 
+  @override
   Future<Map<String, dynamic>> deleteInstance(String instanceId) async {
-    return _requestJson('DELETE', '/instances/$instanceId');
+    try {
+      return await _requestJson('DELETE', '/instances/$instanceId');
+    } on CloudApiException catch (e) {
+      // A 404 means the instance is already gone on Vultr's side (deleted
+      // out-of-band, expired trial, etc.) — the caller's goal of "this
+      // instance should no longer exist" is already satisfied, so this must
+      // not be reported as a failure. Otherwise the local record is stuck:
+      // it can never be deleted through the normal flow again.
+      if (e.statusCode == 404) {
+        return const {};
+      }
+      rethrow;
+    }
   }
 
+  @override
   Future<Map<String, dynamic>> getOperatingSystems() async {
     return _requestJson('GET', '/os');
   }
 
+  @override
   Future<Map<String, dynamic>> createInstance({
     required String region,
     required String plan,
@@ -89,6 +112,7 @@ class VultrCloudClient implements CloudApiClient {
     return _requestJson('POST', '/instances', data: body);
   }
 
+  @override
   Future<Map<String, dynamic>> validateApiKey() {
     return _requestJson('GET', '/account', timeout: _validationTimeout);
   }
@@ -133,6 +157,7 @@ class VultrCloudClient implements CloudApiClient {
     return classifyVultrFirewallQuota(total, reusable);
   }
 
+  @override
   Future<Map<String, dynamic>> getPlanById(String planId) async {
     final plans = await listPlans();
     final items = (plans['plans'] as List?) ?? const [];
@@ -168,7 +193,7 @@ class VultrCloudClient implements CloudApiClient {
       return _normalizeResponseBody(response.statusCode, response.data);
     } on DioException catch (error) {
       if (_shouldRetryViaIpv4(error)) {
-        print(
+        AppLogger.debug(
           '[VultrCloudClient] retrying $method $path after Dio ${error.type}: ${error.message}',
         );
         try {
@@ -179,16 +204,16 @@ class VultrCloudClient implements CloudApiClient {
             timeout: timeout,
           );
           if (nativeResponse != null) {
-            print(
+            AppLogger.debug(
                 '[VultrCloudClient] native fallback succeeded for $method $path');
             return nativeResponse;
           }
-          print(
+          AppLogger.debug(
               '[VultrCloudClient] native fallback returned null for $method $path');
         } on StateError {
           rethrow;
         } catch (nativeError) {
-          print(
+          AppLogger.debug(
             '[VultrCloudClient] native fallback failed for $method $path: $nativeError',
           );
           // Continue to the lower-level socket fallback when the native stack
@@ -196,7 +221,7 @@ class VultrCloudClient implements CloudApiClient {
         }
 
         try {
-          print(
+          AppLogger.debug(
               '[VultrCloudClient] trying raw IPv4 fallback for $method $path');
           return await _requestJsonViaIpv4(
             method,
@@ -212,7 +237,7 @@ class VultrCloudClient implements CloudApiClient {
         }
       }
       final message = _extractDioErrorMessage(error);
-      throw StateError(message);
+      throw CloudApiException(message, statusCode: error.response?.statusCode);
     } finally {
       if (timeout != null) {
         _dio.options.connectTimeout = previousConnectTimeout;
@@ -405,8 +430,9 @@ class VultrCloudClient implements CloudApiClient {
 
   Map<String, dynamic> _normalizeResponseBody(int? statusCode, dynamic body) {
     if (statusCode != null && statusCode >= 400 && statusCode <= 599) {
-      throw StateError(
+      throw CloudApiException(
         _extractVultrError(body) ?? 'Vultr API error ($statusCode)',
+        statusCode: statusCode,
       );
     }
     if (body == null) {
@@ -541,10 +567,10 @@ systemctl enable fail2ban 2>/dev/null || true
 systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
-docker pull --quiet teddysun/shadowsocks-libev || true
-docker run -d --name ss-server --restart=always \
-  -p $ssPort:$ssPort/tcp -p $ssPort:$ssPort/udp \
-  teddysun/shadowsocks-libev ss-server \
+docker pull --quiet $pinnedShadowsocksImage || true
+docker run -d --name ss-server --restart=always \\
+  -p $ssPort:$ssPort/tcp -p $ssPort:$ssPort/udp \\
+  $pinnedShadowsocksImage ss-server \\
   -s 0.0.0.0 -p $ssPort -k "$ssPassword" -m aes-256-gcm
 
 echo "shadowsocks-deployed"

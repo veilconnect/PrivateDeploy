@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
 func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
@@ -48,7 +49,7 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal sanitized config: %w", err)
 		}
-		if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+		if err := persistence.WritePrivateFileAtomic(p.configPath, data); err != nil {
 			return nil, fmt.Errorf("failed to rewrite sanitized config: %w", err)
 		}
 	}
@@ -82,7 +83,7 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(p.configPath, data); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 	p.config = config

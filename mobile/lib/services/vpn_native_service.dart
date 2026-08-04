@@ -265,7 +265,7 @@ class VpnNativeService {
       AppLogger.warning(
         '[VpnNativeService] Failed to run native egress probe: $e',
       );
-      return VpnNativeEgressProbeResult(
+      return const VpnNativeEgressProbeResult(
         error: 'Unable to run native egress probe.',
       );
     }

@@ -31,7 +31,7 @@ class NativeHttpService {
     }
 
     try {
-      print('[NativeHttpService] invoking $method $url');
+      AppLogger.debug('[NativeHttpService] invoking $method $url');
       final response = await _channel.invokeMethod<Map>('httpJsonRequest', {
         'method': method,
         'url': url,
@@ -41,12 +41,12 @@ class NativeHttpService {
         'readTimeoutMs': readTimeout.inMilliseconds,
       });
       if (response == null) {
-        print('[NativeHttpService] null response for $method $url');
+        AppLogger.debug('[NativeHttpService] null response for $method $url');
         return null;
       }
 
       final data = Map<String, dynamic>.from(response);
-      print(
+      AppLogger.debug(
         '[NativeHttpService] success $method $url -> ${(data['statusCode'] as num?)?.toInt() ?? 0}',
       );
       return NativeHttpResponse(
@@ -54,7 +54,7 @@ class NativeHttpService {
         body: data['body']?.toString() ?? '',
       );
     } on PlatformException catch (e) {
-      print(
+      AppLogger.debug(
         '[NativeHttpService] platform failure for $method $url: ${e.code} ${e.message}',
       );
       AppLogger.warning(
@@ -62,7 +62,7 @@ class NativeHttpService {
       );
       return null;
     } catch (e) {
-      print('[NativeHttpService] failure for $method $url: $e');
+      AppLogger.debug('[NativeHttpService] failure for $method $url: $e');
       AppLogger.warning('[NativeHttpService] Native HTTP request failed: $e');
       return null;
     }

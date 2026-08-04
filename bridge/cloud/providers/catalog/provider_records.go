@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
 // nodeRecord stores node metadata for providers that support lifecycle management.
@@ -66,7 +67,7 @@ func (p *Provider) saveNodeRecords(records map[string]cloud.InstanceRecord) erro
 	if err != nil {
 		return fmt.Errorf("failed to encrypt node records: %w", err)
 	}
-	if err := os.WriteFile(p.nodesPath, data, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(p.nodesPath, data); err != nil {
 		return fmt.Errorf("failed to write node records: %w", err)
 	}
 	return nil

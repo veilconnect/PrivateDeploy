@@ -12,13 +12,13 @@ class NodesScreenFab extends StatelessWidget {
   final VoidCallback onCreateProfile;
 
   const NodesScreenFab({
-    Key? key,
+    super.key,
     this.cloudAccessActionLabel,
     this.onConfigureCloudAccess,
     this.onCreateCloudNode,
     required this.onImportProfile,
     required this.onCreateProfile,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

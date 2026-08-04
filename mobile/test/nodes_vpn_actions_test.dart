@@ -1062,7 +1062,7 @@ class _FakeAppSettingsProvider extends ChangeNotifier
     VpnRoutingSettings? settings,
   }) : _settings = settings ?? VpnRoutingSettings.defaults;
 
-  VpnRoutingSettings _settings;
+  final VpnRoutingSettings _settings;
 
   @override
   VpnRoutingSettings get vpnRoutingSettings => _settings;

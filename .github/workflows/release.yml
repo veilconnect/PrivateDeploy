@@ -6,15 +6,69 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   Quality-Gate:
     name: Quality Gate
     runs-on: ubuntu-latest
+    environment: stable-release
     if: github.repository == 'veilconnect/PrivateDeploy'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Assert stable release tag matches VERSION file
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          # Only stable vX.Y.Z tags are released. Prerelease tags (-rc, -beta,
+          # …) are rejected here, which is why the Release job can hardcode
+          # prerelease: false — the two must stay consistent.
+          if ! printf '%s' "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Release tag '${GITHUB_REF_NAME}' is not a stable vX.Y.Z tag. This workflow only publishes stable releases; prerelease tags (-rc/-beta/...) are not supported."
+            exit 1
+          fi
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::Release tag '${GITHUB_REF_NAME}' (-> '${TAG}') does not match the VERSION file ('${VERSION}'). Bump VERSION (scripts/sync_versions.sh) or retag."
+            exit 1
+          fi
+          echo "Tag ${GITHUB_REF_NAME} matches VERSION=${VERSION}"
+
+      - name: Stable release signing preflight
+        # This workflow only accepts stable vX.Y.Z tags. All Apple and Windows
+        # credentials are therefore mandatory; there is deliberately no
+        # unsigned-release escape hatch. The platform jobs sign and verify the
+        # binaries before they are archived. See docs/RELEASE-SIGNING.md.
+        env:
+          HAS_MACOS_SIGNING_CERT_P12: ${{ secrets.MACOS_SIGNING_CERT_P12 != '' }}
+          HAS_MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD != '' }}
+          HAS_APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY != '' }}
+          HAS_APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID != '' }}
+          HAS_APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER != '' }}
+          HAS_WINDOWS_SIGNING_CERT_PFX: ${{ secrets.WINDOWS_SIGNING_CERT_PFX != '' }}
+          HAS_WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD != '' }}
+          HAS_WINDOWS_SIGNING_CERT_SHA256: ${{ secrets.WINDOWS_SIGNING_CERT_SHA256 != '' }}
+          HAS_MACOS_SIGNING_CERT_SHA256: ${{ secrets.MACOS_SIGNING_CERT_SHA256 != '' }}
+          HAS_APPLE_DEVELOPER_TEAM_ID: ${{ secrets.APPLE_DEVELOPER_TEAM_ID != '' }}
+        run: |
+          missing=()
+          for v in HAS_MACOS_SIGNING_CERT_P12 HAS_MACOS_SIGNING_CERT_PASSWORD \
+                   HAS_APPLE_NOTARY_API_KEY HAS_APPLE_NOTARY_API_KEY_ID HAS_APPLE_NOTARY_API_ISSUER \
+                   HAS_WINDOWS_SIGNING_CERT_PFX HAS_WINDOWS_SIGNING_CERT_PASSWORD HAS_WINDOWS_SIGNING_CERT_SHA256 \
+                   HAS_MACOS_SIGNING_CERT_SHA256 HAS_APPLE_DEVELOPER_TEAM_ID; do
+            if [ "${!v}" != "true" ]; then missing+=("${v#HAS_}"); fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Blocking stable release; missing signing secrets: ${missing[*]} (see docs/RELEASE-SIGNING.md)."
+            exit 1
+          fi
+          echo "All required signing and notarization secrets are configured."
+
+      - name: Verify release signing workflow wiring
+        run: bash scripts/check_release_signing.sh
+
+      - name: Reject tracked credentials and secret material
+        run: bash scripts/secret_scan.sh
 
       - name: Check version consistency
         run: bash scripts/check_versions.sh
@@ -26,13 +80,25 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          # Pinned to the pnpm version in frontend/package.json packageManager.
+          version: 10.33.0
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Validate currently published website metadata
+        # Signed/notarized archive hashes cannot exist before this tag build:
+        # signatures, timestamps and ZIP metadata are intentionally produced
+        # later.  This gate therefore validates the currently published site,
+        # while the Release job creates and verifies an exact website handoff
+        # from this run's final artifacts before publishing the GitHub release.
+        run: node website/tools/render-localized-pages.js --check
+
+      - name: Website generator tests
+        run: node --test website/tools/render-localized-pages.test.js
 
       - name: Install frontend dependencies
         run: cd frontend && pnpm install --frozen-lockfile
@@ -48,6 +114,35 @@ jobs:
       - name: Go tests (api)
         run: cd api && go test ./...
 
+      - name: Verify and mask live cloud credentials
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          DIGITALOCEAN_API_KEY: ${{ secrets.DIGITALOCEAN_API_KEY }}
+        run: |
+          test -n "$VULTR_API_KEY" || { echo "::error::VULTR_API_KEY is missing from the stable-release environment"; exit 1; }
+          test -n "$DIGITALOCEAN_API_KEY" || { echo "::error::DIGITALOCEAN_API_KEY is missing from the stable-release environment"; exit 1; }
+          echo "::add-mask::$VULTR_API_KEY"
+          echo "::add-mask::$DIGITALOCEAN_API_KEY"
+
+      - name: Run Vultr + DigitalOcean read-only live gate
+        id: cloud_live
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          DIGITALOCEAN_API_KEY: ${{ secrets.DIGITALOCEAN_API_KEY }}
+        run: bash scripts/cloud_live_readonly_gate.sh
+
+      - name: Upload sanitized cloud evidence
+        if: always() && steps.cloud_live.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-cloud-live-report
+          path: output/cloud-live/readonly-report.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Check release ldflags version injection
+        run: bash scripts/check_release_ldflags.sh
+
       - name: Go vulnerability check (root)
         run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
 
@@ -60,16 +155,28 @@ jobs:
       - name: Frontend lint (ci)
         run: cd frontend && pnpm run lint:ci
 
+      - name: Frontend unit tests (Vitest)
+        run: cd frontend && pnpm run test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Third-party license inventory tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_license_audit.py'
+
+      - name: Enforce third-party license and SBOM policy
+        # Fails closed on stale inventory, missing evidence, strong copyleft,
+        # or known-incompatible licenses unless counsel has recorded an exact
+        # purl acknowledgement with a non-empty reason in the policy file.
+        run: python3 scripts/license_audit.py --check
+
       - name: Frontend security audit
         # --prod: only audit dependencies that actually ship in the app. The
         # high/critical advisories are all in dev/build tooling (vite/vitest)
         # that is never bundled into the desktop binary; gating the release on
         # those would block shipping for issues that don't affect users.
         run: cd frontend && pnpm audit --prod --audit-level=high
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: Install Playwright Python package
         run: |
@@ -97,7 +204,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          # Pinned to the pnpm version in frontend/package.json packageManager.
+          version: 10.33.0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -115,6 +223,7 @@ jobs:
   Build-Windows:
     needs: Build-Frontend
     runs-on: windows-latest
+    environment: stable-release
     env:
       APP_NAME: PrivateDeploy
     steps:
@@ -123,26 +232,93 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0 # pinned to the wails version in go.mod
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist
 
+      - name: Import Windows signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX: ${{ secrets.WINDOWS_SIGNING_CERT_PFX }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+          WINDOWS_SIGNING_CERT_SHA256: ${{ secrets.WINDOWS_SIGNING_CERT_SHA256 }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "windows-signing.pfx"
+
+          try {
+            $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_PFX)
+            [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+            $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERT_PASSWORD -AsPlainText -Force
+            $imported = Import-PfxCertificate `
+              -FilePath $pfxPath `
+              -CertStoreLocation "Cert:\CurrentUser\My" `
+              -Password $password `
+              -Exportable:$false
+
+            $certificate = @($imported) | Where-Object {
+              $_.HasPrivateKey -and
+              ($_.EnhancedKeyUsageList.ObjectId.Value -contains "1.3.6.1.5.5.7.3.3")
+            } | Select-Object -First 1
+            if ($null -eq $certificate) {
+              throw "The PFX does not contain a private-key certificate with the Code Signing EKU."
+            }
+            $expectedSha256 = $env:WINDOWS_SIGNING_CERT_SHA256.Replace(":", "").Replace(" ", "").ToUpperInvariant()
+            $actualSha256 = $certificate.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256).ToUpperInvariant()
+            if ($expectedSha256 -notmatch '^[0-9A-F]{64}$' -or $actualSha256 -ne $expectedSha256) {
+              throw "The Windows signing certificate does not match WINDOWS_SIGNING_CERT_SHA256."
+            }
+            "WINDOWS_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File `
+              -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          finally {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build & Pack Windows
         shell: pwsh
         run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $signTool = Get-ChildItem `
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" `
+            -ErrorAction Stop | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signTool) { throw "signtool.exe was not found on the runner." }
+
           function Build-And-Pack {
             param([string]$arch)
             $env:GOOS="windows"
             $env:GOARCH=$arch
 
             Write-Host "==> Building Windows $arch..."
-            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o "$env:APP_NAME.exe"
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -ldflags "-X privatedeploy/bridge.AppVersion=$env:GITHUB_REF_NAME" -o "$env:APP_NAME.exe"
 
             cd build/bin
+            $exePath = Join-Path (Get-Location) "$env:APP_NAME.exe"
+            & $signTool.FullName sign `
+              /sha1 $env:WINDOWS_CERT_THUMBPRINT `
+              /s My `
+              /fd SHA256 `
+              /tr "http://timestamp.digicert.com" `
+              /td SHA256 `
+              $exePath
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed for Windows $arch." }
+
+            # Both checks must pass before the executable can enter a release
+            # archive: Authenticode policy validation and exact-cert matching.
+            & $signTool.FullName verify /pa /all /v $exePath
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for Windows $arch." }
+            $signature = Get-AuthenticodeSignature -FilePath $exePath
+            if ($signature.Status -ne "Valid" -or
+                $signature.SignerCertificate.Thumbprint -ne $env:WINDOWS_CERT_THUMBPRINT) {
+              throw "The Windows $arch signature is invalid or was made by an unexpected certificate."
+            }
+
             $zipName = "$env:APP_NAME-windows-$arch.zip"
-            Compress-Archive -Path "$env:APP_NAME.exe" -DestinationPath $zipName -Force
+            Compress-Archive -Path "$env:APP_NAME.exe","..\..\LICENSE","..\..\THIRD_PARTY_LICENSES.md","..\..\third_party\THIRD_PARTY_NOTICES.txt","..\..\third_party\sbom.spdx.json" -DestinationPath $zipName -Force
             cd ../..
           }
 
@@ -154,9 +330,19 @@ jobs:
           name: windows-builds
           path: build/bin/*.zip
 
+      - name: Remove Windows signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERT_THUMBPRINT) {
+            Remove-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERT_THUMBPRINT" `
+              -Force -ErrorAction SilentlyContinue
+          }
+
   Build-macOS:
     needs: Build-Frontend
     runs-on: macos-latest
+    environment: stable-release
     env:
       APP_NAME: PrivateDeploy
     steps:
@@ -165,7 +351,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0 # pinned to the wails version in go.mod
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
@@ -174,18 +360,118 @@ jobs:
           go mod vendor
           sed -i "" "s/\[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular\]/[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory]/g" vendor/github.com/wailsapp/wails/v2/internal/frontend/desktop/darwin/AppDelegate.m
 
-      - name: Build & Pack macOS
+      - name: Configure macOS signing and notarization credentials
+        env:
+          MACOS_SIGNING_CERT_P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          MACOS_SIGNING_CERT_SHA256: ${{ secrets.MACOS_SIGNING_CERT_SHA256 }}
+          APPLE_DEVELOPER_TEAM_ID: ${{ secrets.APPLE_DEVELOPER_TEAM_ID }}
         run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/macos-signing.p12"
+          notary_key_path="$RUNNER_TEMP/notary-api-key.p8"
+          keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+
+          # Secret values are decoded directly into runner-temporary files and
+          # are never printed or persisted as artifacts.
+          printf '%s' "$MACOS_SIGNING_CERT_P12" | openssl base64 -d -A -out "$certificate_path"
+          printf '%s' "$APPLE_NOTARY_API_KEY" | openssl base64 -d -A -out "$notary_key_path"
+          chmod 600 "$certificate_path" "$notary_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -k "$keychain_path" \
+            -P "$MACOS_SIGNING_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          identity_lines="$(security find-identity -v -p codesigning "$keychain_path" | grep 'Developer ID Application' || true)"
+          identity_count="$(printf '%s\n' "$identity_lines" | grep -c 'Developer ID Application' || true)"
+          if [ "$identity_count" -ne 1 ]; then
+            echo "::error::The P12 must contain exactly one valid Developer ID Application identity."
+            exit 1
+          fi
+          signing_identity="$(printf '%s\n' "$identity_lines" | awk '{print $2}')"
+          identity_name="$(printf '%s\n' "$identity_lines" | sed -E 's/.*"([^"]+)".*/\1/')"
+          case "$identity_name" in
+            *"($APPLE_DEVELOPER_TEAM_ID)" ) ;;
+            * ) echo "::error::Developer ID identity does not belong to APPLE_DEVELOPER_TEAM_ID."; exit 1 ;;
+          esac
+          certificate_pem="$RUNNER_TEMP/macos-signing.pem"
+          security find-certificate -c "$identity_name" -p "$keychain_path" > "$certificate_pem"
+          actual_sha256="$(openssl x509 -in "$certificate_pem" -outform DER | shasum -a 256 | awk '{print toupper($1)}')"
+          expected_sha256="$(printf '%s' "$MACOS_SIGNING_CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':[:space:]')"
+          if ! [[ "$expected_sha256" =~ ^[0-9A-F]{64}$ ]] || [ "$actual_sha256" != "$expected_sha256" ]; then
+            echo "::error::Developer ID certificate does not match MACOS_SIGNING_CERT_SHA256."
+            exit 1
+          fi
+
+          rm -f "$certificate_path"
+          {
+            echo "MACOS_SIGNING_IDENTITY=$signing_identity"
+            echo "MACOS_SIGNING_KEYCHAIN=$keychain_path"
+            echo "MACOS_NOTARY_KEY_PATH=$notary_key_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Build & Pack macOS
+        env:
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          set -euo pipefail
           build_and_pack() {
             arch=$1
             export GOOS=darwin GOARCH=$arch
 
             echo "==> Building macOS $arch..."
-            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -ldflags "-X privatedeploy/bridge.AppVersion=${GITHUB_REF_NAME}" -o $APP_NAME.exe
 
-            cd build/bin
-            zip -q -r $APP_NAME-darwin-$arch.zip $APP_NAME.app
-            cd ../..
+            app_path="build/bin/$APP_NAME.app"
+            if [ ! -d "$app_path" ]; then
+              echo "::error::Expected application bundle not found: $app_path"
+              exit 1
+            fi
+
+            codesign --force --options runtime --timestamp \
+              --keychain "$MACOS_SIGNING_KEYCHAIN" \
+              --sign "$MACOS_SIGNING_IDENTITY" "$app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            if ! codesign -d --verbose=4 "$app_path" 2>&1 | grep -Eq 'flags=.*runtime'; then
+              echo "::error::Hardened Runtime is not present on the macOS $arch signature."
+              exit 1
+            fi
+
+            notary_archive="$RUNNER_TEMP/$APP_NAME-$arch-notary.zip"
+            ditto -c -k --keepParent "$app_path" "$notary_archive"
+            xcrun notarytool submit "$notary_archive" \
+              --key "$MACOS_NOTARY_KEY_PATH" \
+              --key-id "$APPLE_NOTARY_API_KEY_ID" \
+              --issuer "$APPLE_NOTARY_API_ISSUER" \
+              --wait
+            rm -f "$notary_archive"
+
+            xcrun stapler staple "$app_path"
+            xcrun stapler validate "$app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+
+            release_stage="$RUNNER_TEMP/$APP_NAME-darwin-$arch-stage"
+            verify_stage="$RUNNER_TEMP/$APP_NAME-darwin-$arch-verify"
+            rm -rf "$release_stage" "$verify_stage"
+            mkdir -p "$release_stage" "$verify_stage"
+            ditto "$app_path" "$release_stage/$APP_NAME.app"
+            cp LICENSE THIRD_PARTY_LICENSES.md third_party/THIRD_PARTY_NOTICES.txt third_party/sbom.spdx.json "$release_stage/"
+            archive="$PWD/build/bin/$APP_NAME-darwin-$arch.zip"
+            (cd "$release_stage" && ditto -c -k --sequesterRsrc . "$archive")
+            ditto -x -k "$archive" "$verify_stage"
+            final_app="$verify_stage/$APP_NAME.app"
+            codesign --verify --deep --strict --verbose=2 "$final_app"
+            xcrun stapler validate "$final_app"
+            spctl --assess --type execute --verbose=4 "$final_app"
           }
 
           for arch in amd64 arm64; do build_and_pack $arch; done
@@ -194,6 +480,17 @@ jobs:
         with:
           name: macos-builds
           path: build/bin/*.zip
+
+      - name: Remove macOS signing credentials
+        if: always()
+        run: |
+          keychain_path="${MACOS_SIGNING_KEYCHAIN:-$RUNNER_TEMP/app-signing.keychain-db}"
+          security delete-keychain "$keychain_path" 2>/dev/null || true
+          rm -f \
+            "$RUNNER_TEMP/macos-signing.p12" \
+            "$RUNNER_TEMP/macos-signing.pem" \
+            "$RUNNER_TEMP/notary-api-key.p8" \
+            "$RUNNER_TEMP"/*-notary.zip
 
   Build-Linux:
     needs: Build-Frontend
@@ -206,7 +503,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0 # pinned to the wails version in go.mod
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
@@ -222,11 +519,12 @@ jobs:
             export GOOS=linux GOARCH=$arch
 
             echo "==> Building Linux $arch..."
-            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -o $APP_NAME.exe
+            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -ldflags "-X privatedeploy/bridge.AppVersion=${GITHUB_REF_NAME}" -o $APP_NAME.exe
 
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
-            zip $APP_NAME-linux-$arch.zip $APP_NAME
+            cp ../../LICENSE ../../THIRD_PARTY_LICENSES.md ../../third_party/THIRD_PARTY_NOTICES.txt ../../third_party/sbom.spdx.json .
+            zip $APP_NAME-linux-$arch.zip $APP_NAME LICENSE THIRD_PARTY_LICENSES.md THIRD_PARTY_NOTICES.txt sbom.spdx.json
             cd ../..
           }
 
@@ -240,7 +538,13 @@ jobs:
   Release:
     needs: [Build-Windows, Build-macOS, Build-Linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -249,6 +553,37 @@ jobs:
           cd release-assets
           find . -name '*.zip' -exec sha256sum {} + | sed 's|  \./[^/]*/|  |' | sort -k2 > ../checksums.sha256
           cat ../checksums.sha256
+      - name: Generate and verify exact website release handoff
+        env:
+          PD_RELEASE_CHECKSUMS_FILE: checksums.sha256
+          PD_RELEASE_ASSET_DIR: release-assets
+          PD_RELEASE_VERSION: ${{ github.ref_name }}
+          PD_EXPECT_VERSION: ${{ github.ref_name }}
+        run: |
+          test ! -e release-website
+          cp -a website release-website
+          export PD_WEBSITE_DIR="$PWD/release-website"
+          node website/tools/render-localized-pages.js --update-release
+          node website/tools/render-localized-pages.js --verify-checksums
+          node website/tools/render-localized-pages.js --check
+      - name: Upload deployable website release handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-release-handoff-${{ github.ref_name }}
+          path: release-website/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attest release archive provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          # checksums.sha256 contains the final release basenames and digests,
+          # so the attestation subjects match files downloaded from Releases
+          # instead of their temporary download-artifact directory paths.
+          subject-checksums: checksums.sha256
+      - name: Attest checksum manifest provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: checksums.sha256
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -265,4 +600,10 @@ jobs:
             ## Verify Downloads
             ```
             sha256sum -c checksums.sha256
+            ```
+
+            GitHub artifact provenance is available for every archive and the
+            checksum manifest:
+            ```
+            gh attestation verify <downloaded-file> --repo veilconnect/PrivateDeploy
             ```

@@ -60,6 +60,18 @@ internal object NativeEgressProbe {
         EgressProbeEndpoint("https://icanhazip.com"),
     )
 
+    // The start/restart gate needs a diverse but bounded liveness sample, not
+    // the full diagnostics sweep. Put two DNS-independent endpoints first so
+    // a dead dns-resolver cannot spend ~30 seconds on each hostname before the
+    // 90-second Flutter start timeout. Cloudflare trace also returns `ip=...`,
+    // which the existing payload parser understands; Google's 204 still proves
+    // round-trip reachability; AWS is the provider-diverse hostname fallback.
+    val STARTUP_TUNNEL_REQUIRED_ENDPOINTS: List<EgressProbeEndpoint> = listOf(
+        EgressProbeEndpoint("https://1.1.1.1/cdn-cgi/trace"),
+        EgressProbeEndpoint("https://8.8.8.8/generate_204"),
+        EgressProbeEndpoint("https://checkip.amazonaws.com"),
+    )
+
     // Pure reachability endpoints: any HTTP success here proves the tunnel is
     // forwarding traffic, even if no public IP can be extracted. Used as a
     // fallback for the dart-facing probe (when DEFAULT_ENDPOINTS all fail
@@ -97,6 +109,10 @@ internal object NativeEgressProbe {
      *   endpoints from domestic-direct ones) MUST pass false, otherwise the
      *   fallback silently turns a TUNNEL_REQUIRED-only call into a
      *   REACHABILITY_ENDPOINTS call when the upstream is dead.
+     * @param returnOnReachability Return as soon as any endpoint produces an
+     *   HTTP response, even when it has no parseable IP. Health checks only
+     *   need round-trip proof; diagnostics leave this false so later providers
+     *   still get a chance to return the IP shown in the UI.
      */
     fun probe(
         connectivityManager: ConnectivityManager?,
@@ -104,11 +120,15 @@ internal object NativeEgressProbe {
         timeoutMs: Int = DEFAULT_TIMEOUT_MS,
         allowDomesticFallback: Boolean = true,
         requireVpnNetwork: Boolean = false,
+        returnOnReachability: Boolean = false,
     ): EgressProbeResult {
         var lastError: String? = null
         var reachableSource: String? = null
 
         for (endpoint in endpoints) {
+            if (Thread.currentThread().isInterrupted) {
+                return EgressProbeResult(error = "VPN egress probe was cancelled.")
+            }
             try {
                 val response = fetchProbeResponse(
                     connectivityManager,
@@ -136,6 +156,12 @@ internal object NativeEgressProbe {
                     "VPN egress probe reachable via ${endpoint.url} " +
                         "(status ${response.statusCode}, no public IP)",
                 )
+                if (returnOnReachability) {
+                    return EgressProbeResult(
+                        source = endpoint.url,
+                        reachable = true,
+                    )
+                }
             } catch (timeout: SocketTimeoutException) {
                 Log.w(TAG, "VPN egress probe timed out for ${endpoint.url}", timeout)
                 lastError = "Timed out contacting public IP probe endpoints."
@@ -157,6 +183,9 @@ internal object NativeEgressProbe {
         // probe that must NOT be satisfied by domestic-direct success).
         if (allowDomesticFallback && endpoints !== REACHABILITY_ENDPOINTS) {
             for (endpoint in REACHABILITY_ENDPOINTS) {
+                if (Thread.currentThread().isInterrupted) {
+                    return EgressProbeResult(error = "VPN egress probe was cancelled.")
+                }
                 try {
                     val response = fetchProbeResponse(
                         connectivityManager,
@@ -177,6 +206,39 @@ internal object NativeEgressProbe {
         }
 
         return EgressProbeResult(error = lastError ?: "Unable to determine current egress IP.")
+    }
+
+    /**
+     * Executes the otherwise-blocking endpoint sweep behind a true total
+     * deadline. Per-connection timeouts alone are insufficient on Android:
+     * VPN-bound hostname resolution can block before HttpURLConnection starts
+     * applying connectTimeout/readTimeout.
+     */
+    fun probeWithinBudget(
+        connectivityManager: ConnectivityManager?,
+        endpoints: List<EgressProbeEndpoint>,
+        timeoutMs: Int,
+        allowDomesticFallback: Boolean,
+        requireVpnNetwork: Boolean,
+        returnOnReachability: Boolean,
+        totalBudgetMs: Long,
+    ): EgressProbeResult = runWithinExecutionBudget(
+        budgetMs = totalBudgetMs,
+        onTimeout = {
+            Log.w(TAG, "VPN egress probe exceeded ${totalBudgetMs}ms total budget")
+            EgressProbeResult(
+                error = "VPN egress probe exceeded its total time budget.",
+            )
+        },
+    ) {
+        probe(
+            connectivityManager = connectivityManager,
+            endpoints = endpoints,
+            timeoutMs = timeoutMs,
+            allowDomesticFallback = allowDomesticFallback,
+            requireVpnNetwork = requireVpnNetwork,
+            returnOnReachability = returnOnReachability,
+        )
     }
 
     fun waitForVpnNetwork(
@@ -211,7 +273,7 @@ internal object NativeEgressProbe {
     /**
      * Issues the probe GET and returns the HTTP status plus body. Crucially it
      * does NOT throw on 4xx/5xx: a status line of any kind means the request
-     * traversed the bound network end-to-end (the far host answered), which is
+     * traversed the intended network end-to-end (the far host answered), which is
      * the reachability signal the health verdict needs. Only genuine
      * connection-level failures (DNS, connect timeout, TLS reset, no route)
      * propagate as exceptions — those are the real "tunnel doesn't forward".
@@ -272,6 +334,16 @@ internal object NativeEgressProbe {
         if (requireVpnNetwork && preferredNetwork == null) {
             throw IllegalStateException("VPN network is not visible to ConnectivityManager yet")
         }
+        val preferredNetworkKind = classifyProbeNetwork(
+            connectivityManager,
+            preferredNetwork,
+        )
+        if (requireVpnNetwork && preferredNetworkKind != ProbeNetworkKind.VPN) {
+            // The VPN may disappear between findPreferredProbeNetwork() and
+            // this capability read. Fail closed instead of letting the
+            // unbound connection fall through to cellular in that race.
+            throw IllegalStateException("VPN network disappeared before the probe connection opened")
+        }
         if (connectivityManager != null) {
             Log.d(
                 TAG,
@@ -280,9 +352,41 @@ internal object NativeEgressProbe {
                     " for ${url.host}",
             )
         }
-        val connection = preferredNetwork?.openConnection(url) ?: url.openConnection()
+        val connection = if (
+            ProbeNetworkBindingPolicy.shouldBindExplicitly(
+                networkKind = preferredNetworkKind,
+                requireVpnNetwork = requireVpnNetwork,
+            )
+        ) {
+            // Non-VPN diagnostics retain the old deterministic physical-network
+            // binding. The policy only permits this branch for a known,
+            // non-null physical Network.
+            preferredNetwork!!.openConnection(url)
+        } else {
+            // Do not call Network.openConnection() for a VPN Network. An
+            // ordinary unprotected socket from this app is routed into its VPN
+            // by Android, while explicitly binding it to that same VPN Network
+            // fails with Network.bindSocket(...): EPERM on Android 17.
+            url.openConnection()
+        }
         return connection as? HttpURLConnection
             ?: throw IllegalStateException("Unsupported probe connection type for $url")
+    }
+
+    private fun classifyProbeNetwork(
+        connectivityManager: ConnectivityManager?,
+        network: Network?,
+    ): ProbeNetworkKind {
+        if (network == null) {
+            return ProbeNetworkKind.NONE
+        }
+        val capabilities = connectivityManager?.getNetworkCapabilities(network)
+            ?: return ProbeNetworkKind.UNKNOWN
+        return if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+            ProbeNetworkKind.VPN
+        } else {
+            ProbeNetworkKind.NON_VPN
+        }
     }
 
     /**

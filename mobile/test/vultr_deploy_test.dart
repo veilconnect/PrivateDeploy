@@ -109,7 +109,8 @@ void main() {
       expect(s, contains('verify_checksum'));
       expect(
           s, contains('SINGBOX_FALLBACK_VERSION="1.11.0"')); // proven fallback
-      expect(s, contains('SKIP_SINGBOX'));
+      expect(s, isNot(contains('SKIP_SINGBOX')));
+      expect(s, contains(pinnedShadowsocksImage));
       // Integrity check verifies against a pinned hash (not the non-existent
       // upstream .sha256sum file, which 404s and made the check a no-op).
       expect(s,
@@ -127,6 +128,7 @@ void main() {
           matches(RegExp(r'^[0-9a-f]{64}$')));
       expect(singBoxSha256(defaultSingBoxFallbackVersion),
           matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(() => singBoxSha256('99.99.99'), throwsArgumentError);
     });
 
     test('lightweight script is hardened to match desktop', () async {
@@ -138,6 +140,35 @@ void main() {
       expect(s, contains('fail2ban'));
       expect(s, contains("ufw limit 22/tcp comment 'SSH (rate-limited)'"));
       expect(s, contains('/etc/ssh/sshd_config.d/99-privatedeploy.conf'));
+    });
+
+    // Regression test: the script runs under `set -euo pipefail`, and
+    // Shadowsocks is deployed before Hysteria2/VLESS/Trojan. If the explicit
+    // `docker pull` for the pinned Shadowsocks image isn't fault-tolerant, a
+    // single transient pull failure (registry rate limit, a momentary
+    // network blip on a fresh VPS) kills the whole script and silently
+    // takes every other protocol down with it — with no self-heal, since
+    // the script never runs again. Mirrors the same fix + test on the
+    // desktop side (bridge/cloud/deploy/deploy_test.go).
+    test('shadowsocks docker pull failure does not abort the script',
+        () async {
+      for (final planRam in [512, 1024]) {
+        final bundle = await VultrDeploymentBuilder.build(
+          planRam: planRam,
+          portProfile: PortProfileAllocator.randomProfile,
+        );
+        final s = bundle.userData;
+        expect(s, contains('set -euo pipefail'));
+        final idx = s.indexOf('docker pull --quiet');
+        expect(idx, greaterThanOrEqualTo(0),
+            reason: 'expected a docker pull for the pinned Shadowsocks image '
+                '(planRam=$planRam)');
+        final lineEnd = s.indexOf('\n', idx);
+        final line = s.substring(idx, lineEnd < 0 ? s.length : lineEnd);
+        expect(line.trim(), endsWith('|| true'),
+            reason: 'docker pull for Shadowsocks must tolerate failure, got '
+                'line: $line (planRam=$planRam)');
+      }
     });
 
     test('multi-protocol bundle provisions VLESS relay block', () async {

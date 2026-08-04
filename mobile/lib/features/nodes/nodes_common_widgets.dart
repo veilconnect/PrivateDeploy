@@ -9,11 +9,11 @@ class NodesSectionHeader extends StatelessWidget {
   final int count;
 
   const NodesSectionHeader({
-    Key? key,
+    super.key,
     required this.title,
     this.subtitle,
     required this.count,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +77,7 @@ class NodesInlineInfoCard extends StatelessWidget {
   final Color accentColor;
 
   const NodesInlineInfoCard({
-    Key? key,
+    super.key,
     required this.icon,
     required this.title,
     required this.message,
@@ -86,7 +86,7 @@ class NodesInlineInfoCard extends StatelessWidget {
     this.secondaryActionLabel,
     this.onSecondaryAction,
     this.accentColor = const Color(0xFF3F5E88),
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +144,7 @@ class NodesInlineInfoCard extends StatelessWidget {
 
 class NodesInlineBanner extends StatelessWidget {
   const NodesInlineBanner({
-    Key? key,
+    super.key,
     required this.icon,
     required this.title,
     required this.message,
@@ -153,7 +153,7 @@ class NodesInlineBanner extends StatelessWidget {
     this.secondaryLabel,
     this.onSecondary,
     this.accentColor = const Color(0xFF1452CC),
-  }) : super(key: key);
+  });
 
   final IconData icon;
   final String title;
@@ -246,10 +246,10 @@ class NodesStatusChip extends StatelessWidget {
   final Color color;
 
   const NodesStatusChip({
-    Key? key,
+    super.key,
     required this.text,
     required this.color,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -280,14 +280,14 @@ class NodesMetricTile extends StatelessWidget {
   final bool preferVertical;
 
   const NodesMetricTile({
-    Key? key,
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
     this.hint,
     required this.color,
     this.preferVertical = false,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -410,7 +410,7 @@ class _MetricTileCopy extends StatelessWidget {
 
 class NodesJourneyCard extends StatelessWidget {
   const NodesJourneyCard({
-    Key? key,
+    super.key,
     required this.eyebrow,
     required this.title,
     required this.message,
@@ -421,7 +421,7 @@ class NodesJourneyCard extends StatelessWidget {
     this.secondaryLabel,
     this.onSecondary,
     this.steps = const [],
-  }) : super(key: key);
+  });
 
   final String eyebrow;
   final String title;
@@ -442,8 +442,8 @@ class NodesJourneyCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(28.r),
       ),
       child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
             colors: [
               Color(0xFF081223),
               Color(0xFF0F2B57),

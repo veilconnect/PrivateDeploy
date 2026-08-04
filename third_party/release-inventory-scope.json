@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "scopes": [
+    {
+      "id": "go-desktop",
+      "status": "covered",
+      "evidenceFiles": ["go.sum"]
+    },
+    {
+      "id": "go-api",
+      "status": "covered",
+      "evidenceFiles": ["api/go.sum"]
+    },
+    {
+      "id": "go-mobile",
+      "status": "covered",
+      "evidenceFiles": ["mobile/gomobile/go.sum"]
+    },
+    {
+      "id": "npm-frontend",
+      "status": "covered",
+      "evidenceFiles": ["frontend/pnpm-lock.yaml"]
+    },
+    {
+      "id": "pub-mobile",
+      "status": "covered",
+      "evidenceFiles": ["mobile/pubspec.lock"]
+    },
+    {
+      "id": "android-native",
+      "status": "blocked",
+      "reason": "No checked-in resolved Gradle/Maven dependency lock and distributable license-text inventory yet; build.gradle declarations omit transitive runtime artifacts and Android toolchain payloads."
+    },
+    {
+      "id": "ios-native",
+      "status": "blocked",
+      "reason": "mobile/ios/Podfile.lock and a CocoaPods license-text inventory are not checked in, so the resolved IPA native graph cannot be proven complete."
+    },
+    {
+      "id": "flutter-engine-native",
+      "status": "blocked",
+      "reason": "The pinned Flutter engine/native artifacts do not yet have a checked-in redistribution notice inventory tied to their exact release hashes."
+    }
+  ]
+}

@@ -13,7 +13,7 @@ import 'settings_help_section.dart';
 import 'settings_server_section.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   Future<void> _popRootRoute(BuildContext context) async {
     final navigator = Navigator.of(context, rootNavigator: true);

@@ -26,7 +26,7 @@ import '../settings/settings_screen.dart';
 import '../vpn/vpn_provider.dart';
 
 class NodesScreen extends StatefulWidget {
-  const NodesScreen({Key? key}) : super(key: key);
+  const NodesScreen({super.key});
 
   @override
   State<NodesScreen> createState() => _NodesScreenState();

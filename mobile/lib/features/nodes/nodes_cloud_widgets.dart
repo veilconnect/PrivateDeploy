@@ -22,7 +22,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
   final VoidCallback? onChooseEndpoint;
 
   const NodesCloudInstanceCard({
-    Key? key,
+    super.key,
     required this.instance,
     this.latencyCheck,
     this.activeEndpointLabel,
@@ -37,7 +37,7 @@ class NodesCloudInstanceCard extends StatelessWidget {
     this.onUseNode,
     this.onTestLatency,
     this.onChooseEndpoint,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -60,11 +60,10 @@ class NodesCloudInstanceCard extends StatelessWidget {
     final throughputLabel = _formatThroughput(latencyCheck?.throughputMbps);
     final latencyLabel = isLatencyTesting
         ? l10n.testing
-        : throughputLabel != null
-            ? throughputLabel
-            : latencyCheck?.error != null
+        : throughputLabel ??
+            (latencyCheck?.error != null
                 ? l10n.retrySpeedTest
-                : l10n.speedTest;
+                : l10n.speedTest);
     final latencyDetail = _latencyDetailText(latencyCheck, l10n);
     final planLabel = _normalizedPlanLabel(instance.plan);
     final metadataLine = _metadataLine(instance, planLabel);

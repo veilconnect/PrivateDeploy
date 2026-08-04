@@ -26,7 +26,7 @@ export type ProtocolHealthMap = Record<string, Partial<Record<ManagedProtocol, P
 
 // ─── Cloud Node Types ────────────────────────────────────────────────────────
 
-export type CloudNodeStatus = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
+export type CloudNodeStatus = 'unknown' | 'deploying' | 'pending' | 'applying' | 'connected' | 'error'
 
 // ─── Subscription & Routing IDs ──────────────────────────────────────────────
 

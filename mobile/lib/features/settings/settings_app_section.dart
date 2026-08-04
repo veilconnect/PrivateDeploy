@@ -8,7 +8,7 @@ import 'settings_routing_rules_dialog.dart';
 import 'settings_vpn_diagnostics_screen.dart';
 
 class SettingsAppSection extends StatelessWidget {
-  const SettingsAppSection({Key? key}) : super(key: key);
+  const SettingsAppSection({super.key});
 
   Future<void> _openDiagnostics(BuildContext context) {
     return Navigator.of(context, rootNavigator: true).push(

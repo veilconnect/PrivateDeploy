@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
-func (p *Provider) loadNodeRecords() (map[string]nodeRecord, error) {
-	nodesMu.Lock()
-	defer nodesMu.Unlock()
-
+// loadNodeRecordsLocked reads the records file. Callers must hold nodesMu.
+func (p *Provider) loadNodeRecordsLocked() (map[string]nodeRecord, error) {
 	data, err := os.ReadFile(p.nodesPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]nodeRecord{}, nil
@@ -34,10 +33,8 @@ func (p *Provider) loadNodeRecords() (map[string]nodeRecord, error) {
 	return records, nil
 }
 
-func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
-	nodesMu.Lock()
-	defer nodesMu.Unlock()
-
+// saveNodeRecordsLocked writes the records file. Callers must hold nodesMu.
+func (p *Provider) saveNodeRecordsLocked(records map[string]nodeRecord) error {
 	if err := os.MkdirAll(filepath.Dir(p.nodesPath), 0o750); err != nil {
 		return err
 	}
@@ -46,7 +43,44 @@ func (p *Provider) saveNodeRecords(records map[string]nodeRecord) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p.nodesPath, data, 0o600)
+	return persistence.WritePrivateFileAtomic(p.nodesPath, data)
+}
+
+// loadNodeRecords returns a snapshot of the node records. It must only be used
+// for read-only access: any load→modify→save sequence built on top of it can
+// lose updates to a concurrent writer. Mutations must go through
+// mutateNodeRecords instead.
+func (p *Provider) loadNodeRecords() (map[string]nodeRecord, error) {
+	nodesMu.Lock()
+	defer nodesMu.Unlock()
+	return p.loadNodeRecordsLocked()
+}
+
+// mutateNodeRecords runs an atomic read-modify-write cycle on the records
+// file, holding nodesMu for the whole load→mutate→save sequence so concurrent
+// mutations can never overwrite each other's writes. The callback may modify
+// the records map in place and returns whether the result should be persisted;
+// returning save=false skips the write for no-op flows. The callback must not
+// call back into loadNodeRecords / mutateNodeRecords (the mutex is not
+// reentrant).
+func (p *Provider) mutateNodeRecords(mutate func(records map[string]nodeRecord) (save bool, err error)) error {
+	nodesMu.Lock()
+	defer nodesMu.Unlock()
+
+	records, err := p.loadNodeRecordsLocked()
+	if err != nil {
+		return err
+	}
+
+	save, err := mutate(records)
+	if err != nil {
+		return err
+	}
+	if !save {
+		return nil
+	}
+
+	return p.saveNodeRecordsLocked(records)
 }
 
 func parseTime(value string) time.Time {
@@ -77,7 +111,7 @@ func toCloudInstance(inst vultrInstance, record nodeRecord) cloud.Instance {
 		Label:              firstNonEmpty(inst.Label, record.Label),
 		Status:             inst.Status,
 		Region:             firstNonEmpty(inst.Region, record.Region),
-		Plan:               record.Plan,
+		Plan:               firstNonEmpty(inst.Plan, record.Plan),
 		OSID:               record.OSID,
 		IPv4:               firstNonEmpty(inst.MainIP, record.IPv4),
 		IPv6:               firstNonEmpty(inst.V6MainIP, record.IPv6),
@@ -100,6 +134,7 @@ func toCloudInstance(inst vultrInstance, record nodeRecord) cloud.Instance {
 		TrojanServerName:   record.TrojanServerName,
 		TrojanInsecure:     record.TrojanInsecure,
 		VLESSRelayPort:     record.VLESSRelayPort,
+		LastDeployWarning:  record.LastDeployWarning,
 	}
 }
 

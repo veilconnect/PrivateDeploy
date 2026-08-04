@@ -1,0 +1,46 @@
+name: Stable Cloud Live Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-live-smoke:
+    name: Vultr + DigitalOcean read-only gate
+    runs-on: ubuntu-24.04
+    environment: stable-release
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify live-test credentials are configured
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          DIGITALOCEAN_API_KEY: ${{ secrets.DIGITALOCEAN_API_KEY }}
+        run: |
+          test -n "$VULTR_API_KEY" || { echo "::error::VULTR_API_KEY is missing from the stable-release environment"; exit 1; }
+          test -n "$DIGITALOCEAN_API_KEY" || { echo "::error::DIGITALOCEAN_API_KEY is missing from the stable-release environment"; exit 1; }
+          echo "::add-mask::$VULTR_API_KEY"
+          echo "::add-mask::$DIGITALOCEAN_API_KEY"
+
+      - name: Run read-only provider gate
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          DIGITALOCEAN_API_KEY: ${{ secrets.DIGITALOCEAN_API_KEY }}
+        run: bash scripts/cloud_live_readonly_gate.sh
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-cloud-live-report
+          path: output/cloud-live/readonly-report.json
+          if-no-files-found: error
+          retention-days: 14

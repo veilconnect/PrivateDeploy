@@ -52,6 +52,7 @@ class DigitalOceanCloudClient implements CloudApiClient {
   /// can treat the result uniformly. DO returns `{regions: [{slug, name, ...}]}`;
   /// Vultr returns `{regions: [{id, city, country, ...}]}`. We map slug→id
   /// and derive city/country from the display name.
+  @override
   Future<Map<String, dynamic>> listRegions() async {
     final raw = await _requestJson('GET', '/regions');
     final items = (raw['regions'] as List?) ?? const [];
@@ -77,6 +78,7 @@ class DigitalOceanCloudClient implements CloudApiClient {
   /// existing plan-picker UI keeps working. The slug becomes id;
   /// vcpus/memory/disk/transfer/monthly/hourly are forwarded directly,
   /// and `locations` holds the list of region slugs where the size runs.
+  @override
   Future<Map<String, dynamic>> listPlans() async {
     final raw = await _requestJson('GET', '/sizes');
     final items = (raw['sizes'] as List?) ?? const [];
@@ -106,6 +108,7 @@ class DigitalOceanCloudClient implements CloudApiClient {
 
   /// DO's /droplets returns `{droplets: [...]}`. We translate each droplet
   /// into the Vultr-instance shape (id/main_ip/v6_main_ip/region/plan/status).
+  @override
   Future<Map<String, dynamic>> listInstances() async {
     final raw = await _requestJson('GET', '/droplets');
     final items = (raw['droplets'] as List?) ?? const [];
@@ -135,16 +138,31 @@ class DigitalOceanCloudClient implements CloudApiClient {
   /// DO does not expose the user-data back via API after creation, so
   /// there is no equivalent of Vultr's GET /instances/{id}/user-data.
   /// We always return null; recovery from user-data is Vultr-only.
+  @override
   Future<String?> getInstanceUserData(String instanceId) async => null;
 
+  @override
   Future<Map<String, dynamic>> deleteInstance(String instanceId) async {
     final id = _stripIdPrefix(instanceId);
-    return _requestJson('DELETE', '/droplets/$id');
+    try {
+      return await _requestJson('DELETE', '/droplets/$id');
+    } on CloudApiException catch (e) {
+      // A 404 means the droplet is already gone on DigitalOcean's side —
+      // the caller's goal of "this instance should no longer exist" is
+      // already satisfied, so this must not be reported as a failure.
+      // Otherwise the local record is stuck: it can never be deleted
+      // through the normal flow again.
+      if (e.statusCode == 404) {
+        return const {};
+      }
+      rethrow;
+    }
   }
 
   /// Creates a droplet and returns a Vultr-instance-shaped record.
   /// `osId` is ignored (DO uses image slugs, not ids); we default to
   /// debian-12-x64 to match the Go backend's behaviour.
+  @override
   Future<Map<String, dynamic>> createInstance({
     required String region,
     required String plan,
@@ -514,8 +532,11 @@ class DigitalOceanCloudClient implements CloudApiClient {
       if (response.statusCode != null &&
           response.statusCode! >= 400 &&
           response.statusCode! <= 599) {
-        throw StateError(_extractDoError(normalized) ??
-            'DigitalOcean API error (${response.statusCode})');
+        throw CloudApiException(
+          _extractDoError(normalized) ??
+              'DigitalOcean API error (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
       }
       if (normalized == null) {
         return const {};
@@ -529,7 +550,7 @@ class DigitalOceanCloudClient implements CloudApiClient {
       return {'data': normalized};
     } on DioException catch (error) {
       final message = _extractDioErrorMessage(error);
-      throw StateError(message);
+      throw CloudApiException(message, statusCode: error.response?.statusCode);
     } finally {
       if (timeout != null) {
         _dio.options.connectTimeout = previousConnectTimeout;

@@ -11,6 +11,7 @@ import (
 func TestSaveConfigRedactsSensitiveSSHExtra(t *testing.T) {
 	basePath := t.TempDir()
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", basePath)
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(basePath, "secrets"))
 
 	provider := New(nil)
 	cfg := &cloud.ProviderConfig{
@@ -47,11 +48,19 @@ func TestSaveConfigRedactsSensitiveSSHExtra(t *testing.T) {
 	if persisted.Extra["host"] != "203.0.113.10" {
 		t.Fatalf("expected host to persist, got %#v", persisted.Extra["host"])
 	}
+	stored, err := provider.loadAuth(sshProviderAuthScope)
+	if err != nil {
+		t.Fatalf("load securely stored provider auth: %v", err)
+	}
+	if stored["password"] != "secret" {
+		t.Fatalf("secure provider auth did not preserve the password")
+	}
 }
 
 func TestLoadConfigMigratesLegacySensitiveSSHExtra(t *testing.T) {
 	basePath := t.TempDir()
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", basePath)
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(basePath, "secrets"))
 
 	configPath := filepath.Join(basePath, configFileRelPath)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
@@ -90,5 +99,12 @@ func TestLoadConfigMigratesLegacySensitiveSSHExtra(t *testing.T) {
 	}
 	if string(data) == string(payload) {
 		t.Fatal("expected legacy config to be rewritten without secrets")
+	}
+	stored, err := provider.loadAuth(sshProviderAuthScope)
+	if err != nil {
+		t.Fatalf("load migrated provider auth: %v", err)
+	}
+	if stored["password"] != "secret" {
+		t.Fatal("legacy password was not migrated into secure storage")
 	}
 }

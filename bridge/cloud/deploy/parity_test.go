@@ -68,6 +68,18 @@ func TestSingBoxVersionParityAcrossEnds(t *testing.T) {
 	}
 }
 
+func TestShadowsocksImageDigestParityAcrossEnds(t *testing.T) {
+	dart := readFileOrSkip(t, dartClientFile)
+	if got := dartStringConst(t, dart, "pinnedShadowsocksImage"); got != ShadowsocksImage {
+		t.Fatalf("Shadowsocks image digest drift: Go=%s Dart=%s", ShadowsocksImage, got)
+	}
+	for _, source := range []string{sampleMultiProtocolScript(), GenerateLightweightScript(12345, "secret"), dart, readFileOrSkip(t, dartDeployFile)} {
+		if strings.Contains(source, "teddysun/shadowsocks-libev:latest") || strings.Contains(source, "docker pull --quiet teddysun/shadowsocks-libev || true") {
+			t.Fatal("mutable/fail-open Shadowsocks image reference remains")
+		}
+	}
+}
+
 // TestSingBoxPinParityAcrossEnds is the integrity-critical guard: the SHA-256
 // the mobile deploy script verifies the sing-box tarball against MUST be byte-
 // identical to the Go pin. A version-string match alone isn't enough — if Go
@@ -133,7 +145,7 @@ func TestDeployHardeningParityAcrossEnds(t *testing.T) {
 	// firewall/integrity anchors, the SSH-hardening sshd_config directives are
 	// listed individually so dropping any one on either end fails CI.
 	multiMarkers := []string{
-		"fail2ban", "ufw limit 22/tcp", "99-privatedeploy.conf", "verify_checksum", "SKIP_SINGBOX",
+		"fail2ban", "ufw limit 22/tcp", "99-privatedeploy.conf", "verify_checksum",
 		"PermitEmptyPasswords", "MaxAuthTries", "NoNewPrivileges", "X11Forwarding", "ClientAliveInterval",
 	}
 	goMulti := sampleMultiProtocolScript()

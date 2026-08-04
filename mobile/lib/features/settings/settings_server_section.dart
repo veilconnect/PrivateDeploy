@@ -10,12 +10,12 @@ import 'settings_cloud_dialogs.dart';
 
 class SettingsServerSection extends StatelessWidget {
   const SettingsServerSection({
-    Key? key,
+    super.key,
     required this.onEditApiKey,
     required this.onExportBackup,
     required this.onImportBackup,
     required this.onClearLocalCloudData,
-  }) : super(key: key);
+  });
 
   final Future<void> Function(CloudProvider cloud) onEditApiKey;
   final Future<void> Function(CloudProvider cloud) onExportBackup;

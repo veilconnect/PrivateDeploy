@@ -9,7 +9,7 @@ import '../../l10n/app_localizations.dart';
 /// looking to add a new locale only needs to copy [_zhContent]/[_enContent]
 /// and wire it into [_helpContent].
 class CellularHelpScreen extends StatelessWidget {
-  const CellularHelpScreen({Key? key}) : super(key: key);
+  const CellularHelpScreen({super.key});
 
   @override
   Widget build(BuildContext context) {

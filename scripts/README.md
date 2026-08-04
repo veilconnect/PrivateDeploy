@@ -13,8 +13,10 @@
 | `protocol_speed_compare.py` | Linux/macOS | 按协议测速（SS/HY2/VLESS/Trojan，基于 sing-box + curl） | `output/benchmarks/protocol_speed_compare_*.{json,tsv}` |
 | `local_gui_vultr_smoke.sh` | Linux | 在本机桌面会话里通过 GUI 真实创建 1 台 Vultr 节点、验端口并销毁 | `output/gui-smoke/<run-id>/` |
 | `local_gui_container_smoke.sh` | Linux | 在 Docker 容器里做本机非破坏性 GUI smoke；默认用隔离 Xvfb 做 headless DOM-ready 功能验收，显式开启宿主显示直通时仅作实验用途 | `output/gui-smoke/<run-id>/` |
+| `cloud_live_readonly_gate.sh` | Linux/macOS/CI | 使用 Vultr + DigitalOcean 测试账号执行只读稳定版 API 门禁，不创建收费资源 | `output/cloud-live/readonly-report.json` |
 | `run_mobile_dead_node_integration.sh` | Linux | 在 Android 模拟器上导入一个不可达订阅、自动接受 VPN 授权并断言应用回到失败态 | 失败时保留 `/tmp/pd-dead-node-it.*` |
 | `windows_remote_vpn_browser_smoke.py` | Linux + Windows 远端 | 通过 WinRM + RDP 在远端 Windows 主机上连接 PrivateDeploy、打开 Chrome 并顺序浏览站点 | `output/windows-vpn-browser-smoke/<run-id>/` |
+| `license_audit.py` | 全平台 | 离线重建第三方组件 SPDX 清单、去重许可证原文包并执行策略门禁 | `third_party/sbom.spdx.json`、`third_party/THIRD_PARTY_NOTICES.txt`、`THIRD_PARTY_LICENSES.md` |
 
 ## 快速使用
 
@@ -47,6 +49,9 @@ SINGBOX_SHA256=<sha256> \
 
 # 协议测速（默认读取 data/cloud/vultr-nodes.json）
 python3 scripts/protocol_speed_compare.py --rounds 3
+
+# 离线核验第三方许可证证据与 SPDX 清单（不会下载依赖）
+python3 scripts/license_audit.py --check
 
 # 本机 GUI 真部署 smoke（默认读取 /tmp/vultr_api_key.txt）
 ./scripts/local_gui_vultr_smoke.sh

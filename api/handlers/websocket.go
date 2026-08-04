@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"privatedeploy/api/models"
@@ -19,74 +21,230 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// WSMessage represents a WebSocket message
+const (
+	defaultWSWriteWait  = 10 * time.Second
+	defaultWSPongWait   = 60 * time.Second
+	defaultWSPingPeriod = 30 * time.Second
+	defaultWSSendBuffer = 256
+	defaultWSReadLimit  = 64 * 1024
+)
+
+var errWSControlQueueFull = errors.New("websocket control queue is full")
+
+// WSMessage represents a WebSocket message.
 type WSMessage struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
 }
 
-// WSHub manages WebSocket connections
-type WSHub struct {
-	clients    map[*websocket.Conn]bool
-	broadcast  chan WSMessage
-	register   chan *websocket.Conn
-	unregister chan *websocket.Conn
-	origins    []string
-	mu         sync.RWMutex
+type wsHubConfig struct {
+	writeWait  time.Duration
+	pongWait   time.Duration
+	pingPeriod time.Duration
+	sendBuffer int
+	readLimit  int64
 }
 
-// NewWSHub creates a new WebSocket hub
-func NewWSHub(allowedOrigins []string) *WSHub {
-	hub := &WSHub{
-		clients:    make(map[*websocket.Conn]bool),
-		broadcast:  make(chan WSMessage, 256),
-		register:   make(chan *websocket.Conn),
-		unregister: make(chan *websocket.Conn),
-		origins:    allowedOrigins,
+func defaultWSHubConfig() wsHubConfig {
+	return wsHubConfig{
+		writeWait:  defaultWSWriteWait,
+		pongWait:   defaultWSPongWait,
+		pingPeriod: defaultWSPingPeriod,
+		sendBuffer: defaultWSSendBuffer,
+		readLimit:  defaultWSReadLimit,
 	}
-
-	go hub.run()
-
-	return hub
 }
 
-// run starts the WebSocket hub event loop
-func (h *WSHub) run() {
+type wsFrame struct {
+	messageType int
+	payload     []byte
+}
+
+// wsClient owns one websocket connection. Only writePump may call websocket
+// write methods; readPump forwards control replies to it instead of writing
+// from the reader goroutine.
+type wsClient struct {
+	hub     *WSHub
+	conn    *websocket.Conn
+	send    chan []byte
+	control chan wsFrame
+	ready   chan struct{}
+	done    chan struct{}
+	once    sync.Once
+}
+
+func (c *wsClient) close() {
+	c.once.Do(func() {
+		close(c.done)
+		_ = c.conn.Close()
+	})
+}
+
+func (c *wsClient) queueControl(messageType int, payload []byte) bool {
+	frame := wsFrame{messageType: messageType, payload: append([]byte(nil), payload...)}
+	select {
+	case <-c.done:
+		return false
+	case c.control <- frame:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *wsClient) readPump() {
+	defer func() {
+		c.hub.unregisterClient(c)
+		c.close()
+	}()
+
+	c.conn.SetReadLimit(c.hub.config.readLimit)
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.hub.config.pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(c.hub.config.pongWait))
+	})
+	c.conn.SetPingHandler(func(payload string) error {
+		if !c.queueControl(websocket.PongMessage, []byte(payload)) {
+			return errWSControlQueueFull
+		}
+		return nil
+	})
+
 	for {
-		select {
-		case conn := <-h.register:
-			h.mu.Lock()
-			h.clients[conn] = true
-			h.mu.Unlock()
-			log.Printf("[WSHub] Client connected, total clients: %d", len(h.clients))
-
-		case conn := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[conn]; ok {
-				delete(h.clients, conn)
-				conn.Close()
+		if _, _, err := c.conn.ReadMessage(); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure, websocket.CloseAbnormalClosure) {
+				log.Printf("[WSHub] ERROR: Unexpected close: %v", err)
 			}
-			h.mu.Unlock()
-			log.Printf("[WSHub] Client disconnected, total clients: %d", len(h.clients))
-
-		case message := <-h.broadcast:
-			h.mu.RLock()
-			for conn := range h.clients {
-				err := conn.WriteJSON(message)
-				if err != nil {
-					log.Printf("[WSHub] ERROR: Failed to write message: %v", err)
-					conn.Close()
-					h.mu.RUnlock()
-					h.unregister <- conn
-					h.mu.RLock()
-				}
-			}
-			h.mu.RUnlock()
+			return
 		}
 	}
 }
 
-// Broadcast sends a message to all connected clients
+func (c *wsClient) writePump() {
+	ticker := time.NewTicker(c.hub.config.pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.hub.unregisterClient(c)
+		c.close()
+	}()
+
+	write := func(messageType int, payload []byte) error {
+		if err := c.conn.SetWriteDeadline(time.Now().Add(c.hub.config.writeWait)); err != nil {
+			return err
+		}
+		return c.conn.WriteMessage(messageType, payload)
+	}
+
+	for {
+		select {
+		case <-c.done:
+			return
+		case payload := <-c.send:
+			if err := write(websocket.TextMessage, payload); err != nil {
+				log.Printf("[WSHub] ERROR: Failed to write message: %v", err)
+				return
+			}
+		case frame := <-c.control:
+			if err := write(frame.messageType, frame.payload); err != nil {
+				return
+			}
+		case <-ticker.C:
+			if err := write(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// WSHub manages WebSocket connections.
+type WSHub struct {
+	clients    map[*wsClient]struct{}
+	broadcast  chan WSMessage
+	register   chan *wsClient
+	unregister chan *wsClient
+	origins    []string
+	config     wsHubConfig
+}
+
+// NewWSHub creates a new WebSocket hub.
+func NewWSHub(allowedOrigins []string) *WSHub {
+	return newWSHub(allowedOrigins, defaultWSHubConfig())
+}
+
+func newWSHub(allowedOrigins []string, config wsHubConfig) *WSHub {
+	hub := &WSHub{
+		clients:    make(map[*wsClient]struct{}),
+		broadcast:  make(chan WSMessage, 256),
+		register:   make(chan *wsClient, 256),
+		unregister: make(chan *wsClient, 256),
+		origins:    append([]string(nil), allowedOrigins...),
+		config:     config,
+	}
+
+	go hub.run()
+	return hub
+}
+
+func (h *WSHub) newClient(conn *websocket.Conn) *wsClient {
+	return &wsClient{
+		hub:     h,
+		conn:    conn,
+		send:    make(chan []byte, h.config.sendBuffer),
+		control: make(chan wsFrame, 8),
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+func (h *WSHub) unregisterClient(client *wsClient) {
+	h.unregister <- client
+}
+
+func (h *WSHub) removeClient(client *wsClient) bool {
+	if _, ok := h.clients[client]; !ok {
+		return false
+	}
+	delete(h.clients, client)
+	client.close()
+	return true
+}
+
+// run starts the WebSocket hub event loop. It never performs network I/O, so
+// one failed or slow peer cannot stop registration or delivery to other peers.
+func (h *WSHub) run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.clients[client] = struct{}{}
+			close(client.ready)
+			log.Printf("[WSHub] Client connected, total clients: %d", len(h.clients))
+
+		case client := <-h.unregister:
+			if h.removeClient(client) {
+				log.Printf("[WSHub] Client disconnected, total clients: %d", len(h.clients))
+			}
+
+		case message := <-h.broadcast:
+			payload, err := json.Marshal(message)
+			if err != nil {
+				log.Printf("[WSHub] ERROR: Failed to encode message: %v", err)
+				continue
+			}
+			for client := range h.clients {
+				select {
+				case client.send <- payload:
+				default:
+					// A full queue means the peer cannot keep up. Remove it here;
+					// never self-send to unregister from inside the hub loop.
+					h.removeClient(client)
+					log.Printf("[WSHub] Slow client disconnected, total clients: %d", len(h.clients))
+				}
+			}
+		}
+	}
+}
+
+// Broadcast sends a message to all connected clients.
 func (h *WSHub) Broadcast(msgType string, data interface{}) {
 	h.broadcast <- WSMessage{
 		Type: msgType,
@@ -94,7 +252,7 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 	}
 }
 
-// HandleWS handles WebSocket connections
+// HandleWS handles WebSocket connections.
 func (h *WSHub) HandleWS(c *gin.Context) {
 	origin := strings.TrimSpace(c.GetHeader("Origin"))
 	if !isWebSocketOriginAllowed(origin, h.origins) {
@@ -105,47 +263,17 @@ func (h *WSHub) HandleWS(c *gin.Context) {
 		return
 	}
 
-	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[WSHub] ERROR: Failed to upgrade connection: %v", err)
 		return
 	}
 
-	// Register the client
-	h.register <- conn
-
-	// Read messages from client (for keep-alive)
-	go func() {
-		defer func() {
-			h.unregister <- conn
-		}()
-
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("[WSHub] ERROR: Unexpected close: %v", err)
-				}
-				break
-			}
-		}
-	}()
-
-	// Send ping messages to keep connection alive
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					return
-				}
-			}
-		}
-	}()
+	client := h.newClient(conn)
+	h.register <- client
+	<-client.ready
+	go client.writePump()
+	go client.readPump()
 }
 
 func isWebSocketOriginAllowed(origin string, allowedOrigins []string) bool {
@@ -170,7 +298,7 @@ func isWebSocketOriginAllowed(origin string, allowedOrigins []string) bool {
 	return false
 }
 
-// BroadcastVPNStatus broadcasts VPN status change
+// BroadcastVPNStatus broadcasts VPN status change.
 func (h *WSHub) BroadcastVPNStatus(status, profileID string) {
 	h.Broadcast("vpn_status", gin.H{
 		"status":    status,
@@ -178,7 +306,7 @@ func (h *WSHub) BroadcastVPNStatus(status, profileID string) {
 	})
 }
 
-// BroadcastTrafficUpdate broadcasts traffic statistics
+// BroadcastTrafficUpdate broadcasts traffic statistics.
 func (h *WSHub) BroadcastTrafficUpdate(upload, download, uploadSpeed, downloadSpeed int64) {
 	h.Broadcast("traffic_update", gin.H{
 		"upload":        upload,
@@ -188,7 +316,7 @@ func (h *WSHub) BroadcastTrafficUpdate(upload, download, uploadSpeed, downloadSp
 	})
 }
 
-// BroadcastInstanceStatus broadcasts cloud instance status change
+// BroadcastInstanceStatus broadcasts cloud instance status change.
 func (h *WSHub) BroadcastInstanceStatus(instanceID, status string) {
 	h.Broadcast("instance_status", gin.H{
 		"id":     instanceID,

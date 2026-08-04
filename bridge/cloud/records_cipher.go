@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // Node records hold full protocol credentials (passwords, UUIDs, Reality keys)
@@ -38,11 +39,20 @@ const (
 // new key, which would guarantee a decrypt failure and silently orphan records).
 var errRecordsKeyMissing = errors.New("records encryption key not found in secret store")
 
+// recordsDataKeyMu serializes the complete load/generate/save transaction for
+// the shared records DEK. Without this lock, two first-time encoders can both
+// observe a missing key, mint different keys, and overwrite the same secret
+// slot, leaving one encoder's ciphertext permanently undecryptable.
+var recordsDataKeyMu sync.Mutex
+
 // recordsDataKey loads the 32-byte AES key used to seal node records from the OS
 // secret backend. When createIfMissing is true (encode path) it mints and
 // persists one if absent; when false (decode path) it returns
 // errRecordsKeyMissing rather than creating a new (useless) key.
 func recordsDataKey(createIfMissing bool) ([]byte, error) {
+	recordsDataKeyMu.Lock()
+	defer recordsDataKeyMu.Unlock()
+
 	// Use the same accessor layer as cloud API keys so the DEK honours the
 	// PRIVATEDEPLOY_SECRET_STORE_DIR override (headless / tests) and the
 	// platform keychain everywhere else.
@@ -51,10 +61,14 @@ func recordsDataKey(createIfMissing bool) ([]byte, error) {
 		if decErr == nil && len(key) == 32 {
 			return key, nil
 		}
-		if !createIfMissing {
-			return nil, fmt.Errorf("%w: stored key is corrupt", errRecordsKeyMissing)
+		// An entry exists, so corruption is materially different from a first
+		// run. Never replace it: doing so would make every record encrypted with
+		// the previous key permanently unreadable. Only ErrSecretNotFound below
+		// is allowed to generate a DEK.
+		if decErr != nil {
+			return nil, fmt.Errorf("stored records encryption key is corrupt: invalid base64: %w", decErr)
 		}
-		// A corrupt key entry on the encode path: fall through and mint a fresh one.
+		return nil, fmt.Errorf("stored records encryption key is corrupt: decoded length is %d, want 32", len(key))
 	} else if errors.Is(err, errSecretNotFound) {
 		if !createIfMissing {
 			return nil, errRecordsKeyMissing

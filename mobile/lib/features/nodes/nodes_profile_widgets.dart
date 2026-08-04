@@ -39,7 +39,7 @@ class NodesProfileCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   const NodesProfileCard({
-    Key? key,
+    super.key,
     required this.profile,
     required this.isActive,
     this.isConnected = false,
@@ -50,7 +50,7 @@ class NodesProfileCard extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onDelete,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

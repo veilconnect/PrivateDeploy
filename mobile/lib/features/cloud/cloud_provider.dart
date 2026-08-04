@@ -643,7 +643,7 @@ class CloudProvider extends CloudProviderBase {
     }
     final key = await _getStoredApiKey();
     if (key == null || key.isEmpty) {
-      throw StateError('${providerDisplayName} API key is not configured');
+      throw StateError('$providerDisplayName API key is not configured');
     }
     return _buildClient(_providerId, key);
   }
@@ -1400,23 +1400,38 @@ class CloudProvider extends CloudProviderBase {
       _error = 'Failed to load instances: ${cloudProviderMessageFromError(e)}';
       AppLogger.error('[CloudProvider] Load instances error', e);
     } finally {
-      if (_isStaleProviderRequest(providerId, requestEpoch)) {
-        return;
-      }
-      // Refresh the merged-view cache for every non-active provider from its
-      // persisted node records so the UI can show all providers' nodes at
-      // once. This reads from local storage only (no API calls) — switching
-      // active provider is still the way to force a live refresh for it.
-      await _loadOtherProviderInstancesFromCache();
-      if (_isStaleProviderRequest(providerId, requestEpoch)) {
-        return;
-      }
-      _isLoading = false;
-      if (notify) {
-        notifyListeners();
-      }
-      _evaluatePendingPoll();
+      // Delegated to a helper: `return` statements inside a `finally` clause
+      // silently swallow any in-flight exception (control_flow_in_finally);
+      // early-returning from the helper keeps the same staleness short-circuit
+      // semantics without that hazard.
+      await _finishLoadInstances(providerId, requestEpoch, notify);
     }
+  }
+
+  // Post-loadInstances cleanup shared by the success and error paths. Bails
+  // out (without touching shared state) whenever a newer provider request
+  // superseded this one.
+  Future<void> _finishLoadInstances(
+    CloudProviderId providerId,
+    int requestEpoch,
+    bool notify,
+  ) async {
+    if (_isStaleProviderRequest(providerId, requestEpoch)) {
+      return;
+    }
+    // Refresh the merged-view cache for every non-active provider from its
+    // persisted node records so the UI can show all providers' nodes at
+    // once. This reads from local storage only (no API calls) — switching
+    // active provider is still the way to force a live refresh for it.
+    await _loadOtherProviderInstancesFromCache();
+    if (_isStaleProviderRequest(providerId, requestEpoch)) {
+      return;
+    }
+    _isLoading = false;
+    if (notify) {
+      notifyListeners();
+    }
+    _evaluatePendingPoll();
   }
 
   bool _hasPendingInstances() {

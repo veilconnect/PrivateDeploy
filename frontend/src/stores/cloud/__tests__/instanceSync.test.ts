@@ -347,4 +347,50 @@ describe('createInstanceSync', () => {
       error: undefined,
     })
   })
+
+  it('shows a deploying placeholder immediately and replaces it once CreateCloudInstance resolves', async () => {
+    let resolveCreate: (value: unknown) => void = () => {}
+    mocks.createCloudInstance.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve }),
+    )
+    const harness = createHarness()
+
+    const pending = harness.api.createInstance({ label: 'New LAX', region: 'lax', plan: 'vc2-1c-1gb' })
+
+    // Before CreateCloudInstance (which blocks for minutes server-side) has
+    // resolved at all, the node must already be visible in the list.
+    expect(harness.instances.value).toHaveLength(1)
+    expect(harness.instances.value[0]).toMatchObject({
+      label: 'New LAX',
+      region: 'lax',
+      plan: 'vc2-1c-1gb',
+      statusText: 'deploying',
+    })
+
+    resolveCreate({
+      instanceId: 'node-new',
+      label: 'New LAX',
+      region: 'lax',
+      plan: 'vc2-1c-1gb',
+      ipv4: '1.2.3.4',
+      ssPort: 8388,
+      ssPassword: 'secret',
+    })
+    await pending
+
+    expect(harness.instances.value.some((n) => n.statusText === 'deploying')).toBe(false)
+    expect(harness.instances.value.some((n) => n.instanceId === 'node-new')).toBe(true)
+  })
+
+  it('removes the deploying placeholder and rethrows when CreateCloudInstance fails', async () => {
+    mocks.createCloudInstance.mockRejectedValue(new Error('vultr api error (500): boom'))
+    const harness = createHarness()
+
+    await expect(
+      harness.api.createInstance({ label: 'New LAX', region: 'lax', plan: 'vc2-1c-1gb' }),
+    ).rejects.toThrow('vultr api error (500): boom')
+
+    expect(harness.instances.value).toEqual([])
+    expect(harness.creatingInstance.value).toBe(false)
+  })
 })

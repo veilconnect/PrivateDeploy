@@ -125,6 +125,10 @@ func (p *Provider) repairProtocolReadiness(
 }
 
 func (p *Provider) rebootDroplet(ctx context.Context, dropletID int) error {
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return err
+	}
 	payload := map[string]string{"type": "reboot"}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -136,7 +140,7 @@ func (p *Provider) rebootDroplet(ctx context.Context, dropletID int) error {
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)

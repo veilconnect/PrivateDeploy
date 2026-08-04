@@ -30,7 +30,8 @@ type accountResponse struct {
 // fail open (state="unknown", CanDeploy=true) so a transient upstream blip
 // does not block the operator from retrying a deploy.
 func (p *Provider) GetAccountStatus(ctx context.Context) (*cloud.AccountStatus, error) {
-	if p.config == nil || strings.TrimSpace(p.config.APIKey) == "" {
+	cfg, err := p.ensureConfig()
+	if err != nil {
 		return &cloud.AccountStatus{
 			State:     "invalid_key",
 			Message:   "DigitalOcean API key not configured",
@@ -43,7 +44,7 @@ func (p *Provider) GetAccountStatus(ctx context.Context) (*cloud.AccountStatus, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := p.client.Do(req)

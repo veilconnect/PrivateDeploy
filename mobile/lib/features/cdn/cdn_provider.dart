@@ -44,6 +44,12 @@ class CdnProvider with ChangeNotifier {
   // Compatibility date the Worker is deployed with. Bumping this can change
   // runtime behavior, so it lives next to the worker template.
   static const _kCompatDate = '2026-06-01';
+  // Persisted alongside each deployment. Bump whenever an existing Worker
+  // must be uploaded again rather than merely reusing its hostname/secret.
+  // Revision 2 opts binary WebSocket frames into ArrayBuffer before accept();
+  // without it, the 2026-06-01 runtime delivers Blob and the TCP writer closes
+  // the tunnel before any useful bytes cross it.
+  static const currentWorkerTemplateRevision = 2;
 
   static const _verifyEndpoint =
       'https://api.cloudflare.com/client/v4/user/tokens/verify';
@@ -79,6 +85,7 @@ class CdnProvider with ChangeNotifier {
 
   CdnStatus get status => _status;
   String? get accountId => _accountId;
+
   /// Cloudflare accounts the current token can access (id + human name). When
   /// this has more than one entry the UI must let the user choose which one to
   /// deploy Workers under, instead of defaulting to the first.
@@ -125,6 +132,7 @@ class CdnProvider with ChangeNotifier {
   bool deploymentNeedsRedeploy(String nodeId) {
     final dep = _deployments[nodeId];
     if (dep == null) return false;
+    if (dep.needsWorkerTemplateUpgrade) return true;
     if (dep.customHostStatus == 'failed') return true;
     // A 401/403 from the Worker means it is up but rejects our stored
     // pathSecret — the secret was rotated, or the Worker was deployed under a
@@ -567,7 +575,8 @@ class CdnProvider with ChangeNotifier {
       (a) => a['id'] == accountId,
       orElse: () => const {'name': ''},
     );
-    _accountEmail = (acc['name'] ?? '').isNotEmpty ? acc['name'] : _accountEmail;
+    _accountEmail =
+        (acc['name'] ?? '').isNotEmpty ? acc['name'] : _accountEmail;
     _workersSubdomain = workersSub;
     await StorageService.saveString(_kAccountIdKey, accountId);
     await StorageService.saveString(_kAccountEmailKey, _accountEmail ?? '');
@@ -914,6 +923,7 @@ class CdnProvider with ChangeNotifier {
         accountId: _accountId,
         pathSecret: pathSecret,
         deployedBy: deployedBy,
+        workerTemplateRevision: currentWorkerTemplateRevision,
       );
       await _persistDeployments();
       if (customHost != null) {
@@ -1916,6 +1926,7 @@ class CdnProvider with ChangeNotifier {
         accountId: accountId,
         pathSecret: dep.pathSecret,
         deployedBy: dep.deployedBy,
+        workerTemplateRevision: currentWorkerTemplateRevision,
       );
       await _persistDeployments();
       notifyListeners();
@@ -2232,6 +2243,7 @@ class CdnProvider with ChangeNotifier {
       accountId: dep.accountId,
       deployedBy: dep.deployedBy,
       pathSecret: dep.pathSecret,
+      workerTemplateRevision: dep.workerTemplateRevision,
     );
     await _persistDeployments();
     notifyListeners();
@@ -2332,6 +2344,7 @@ class CdnDeployment {
     this.accountId,
     this.pathSecret,
     this.deployedBy,
+    this.workerTemplateRevision = 0,
   });
 
   /// The PrivateDeploy cloud node id this Worker fronts (e.g. Vultr instance
@@ -2395,6 +2408,14 @@ class CdnDeployment {
   /// created from ones the app provisioned in the background.
   final String? deployedBy;
 
+  /// Version of the Worker source uploaded for this deployment. Missing/zero
+  /// records predate revision tracking and must be refreshed once so runtime
+  /// compatibility fixes reach already-provisioned Cloudflare scripts.
+  final int workerTemplateRevision;
+
+  bool get needsWorkerTemplateUpgrade =>
+      workerTemplateRevision < CdnProvider.currentWorkerTemplateRevision;
+
   Map<String, dynamic> toJson() => {
         'nodeId': nodeId,
         'scriptName': scriptName,
@@ -2412,6 +2433,7 @@ class CdnDeployment {
           'pathSecret': pathSecret,
         if (deployedBy != null && deployedBy!.isNotEmpty)
           'deployedBy': deployedBy,
+        'workerTemplateRevision': workerTemplateRevision,
       };
 
   factory CdnDeployment.fromJson(Map json) => CdnDeployment(
@@ -2439,6 +2461,8 @@ class CdnDeployment {
         deployedBy: (json['deployedBy']?.toString().isEmpty ?? true)
             ? null
             : json['deployedBy'].toString(),
+        workerTemplateRevision:
+            int.tryParse(json['workerTemplateRevision']?.toString() ?? '') ?? 0,
       );
 
   /// True only when CF has confirmed the customHost is reachable. Use

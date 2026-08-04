@@ -12,7 +12,7 @@ import '../vpn/vpn_provider.dart';
 import '../vpn/vpn_status_messages.dart';
 
 class SettingsVpnDiagnosticsScreen extends StatefulWidget {
-  const SettingsVpnDiagnosticsScreen({Key? key}) : super(key: key);
+  const SettingsVpnDiagnosticsScreen({super.key});
 
   @override
   State<SettingsVpnDiagnosticsScreen> createState() =>

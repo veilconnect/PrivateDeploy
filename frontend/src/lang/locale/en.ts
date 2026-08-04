@@ -57,7 +57,8 @@ export default {
     globalDesc: 'Only follow the Global group',
     directDesc: 'Directly connect all traffic',
     errors: {
-      coreMissing: 'Sing-box core binary is missing. Please download it from Settings → Kernel and retry.',
+      coreMissing:
+        'Sing-box core binary is missing. Please download it from Settings → Kernel and retry.',
       autoDownloadingCore: 'Downloading the sing-box core…',
       cacheResetting: 'Detected invalid cache file. Cleaning it up and retrying...',
       portResetting: 'Detected port conflict. Reassigning new ports automatically...',
@@ -326,9 +327,11 @@ export default {
       label: 'Provider',
       switched: 'Cloud provider switched successfully',
       categoryAuto: 'Automated deployment',
-      categoryAutoHint: 'PrivateDeploy provisions the VPS and installs the proxy stack using your API key.',
+      categoryAutoHint:
+        'PrivateDeploy provisions the VPS and installs the proxy stack using your API key.',
       categoryByo: 'Bring your own server',
-      categoryByoHint: 'PrivateDeploy connects to an existing VPS over SSH and installs the proxy stack there. Provisioning the VPS itself is up to you.',
+      categoryByoHint:
+        'PrivateDeploy connects to an existing VPS over SSH and installs the proxy stack there. Provisioning the VPS itself is up to you.',
     },
     credentials: {
       title: 'Cloud Credentials',
@@ -337,10 +340,13 @@ export default {
       syncMeta: 'Reload regions & plans',
       syncedNodes: 'Synced {count} deployed node(s).',
       syncedNodesEmpty: 'No deployed nodes were found for this account.',
-      validatedWithNodes: 'API key verified. Synced {count} deployed node(s) and refreshed regions and plans.',
-      validatedEmpty: 'API key verified. No deployed nodes were found; regions and plans were refreshed.',
+      validatedWithNodes:
+        'API key verified. Synced {count} deployed node(s) and refreshed regions and plans.',
+      validatedEmpty:
+        'API key verified. No deployed nodes were found; regions and plans were refreshed.',
       loadedSavedKeyWithNodes: 'Loaded the saved API key and synced {count} deployed node(s).',
-      loadedSavedKeyEmpty: 'Loaded the saved API key. No deployed nodes were found for this account.',
+      loadedSavedKeyEmpty:
+        'Loaded the saved API key. No deployed nodes were found for this account.',
       hint: 'The API key is kept on this device. Provide a key with deployment permissions.',
     },
     create: {
@@ -350,20 +356,26 @@ export default {
       labelPlaceholder: 'Instance label',
       deploy: 'Create & Deploy',
       refresh: 'Refresh Nodes',
-      deployingHint: 'Deployment started. It typically completes in about 2-5 minutes; we will refresh automatically and apply the node once it is ready.',
-      deployingProgress: 'Provisioning in progress… expect 2-5 minutes before the node shows up in Overview and becomes usable.',
+      deployingHint:
+        'Deployment started. It typically completes in about 2-5 minutes; we will refresh automatically and apply the node once it is ready.',
+      deployingProgress:
+        'Provisioning in progress… expect 2-5 minutes before the node shows up in Overview and becomes usable.',
     },
     accountStatus: {
       lockedTitle: 'Provider account is locked',
-      lockedHint: 'New deployments are disabled until the upstream account is restored. Sign in to the provider console to resolve the lock, then refresh.',
-      lockedSoftHint: 'Deployments may still succeed by reusing an existing configuration, but no new upstream resources of the constrained kind can be created until you free up headroom in the provider console.',
+      lockedHint:
+        'New deployments are disabled until the upstream account is restored. Sign in to the provider console to resolve the lock, then refresh.',
+      lockedSoftHint:
+        'Deployments may still succeed by reusing an existing configuration, but no new upstream resources of the constrained kind can be created until you free up headroom in the provider console.',
       warningTitle: 'Provider account warning',
-      warningHint: 'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.',
+      warningHint:
+        'Deployments are still permitted, but the provider has flagged the account. Review the message in the provider console.',
     },
     nodes: {
       title: 'Deployed Nodes',
       loading: 'Fetching node status...',
-      loadingHint: 'Initial deployment typically finishes within 2-5 minutes. Status refreshes automatically.',
+      loadingHint:
+        'Initial deployment typically finishes within 2-5 minutes. Status refreshes automatically.',
       empty: 'No cloud nodes have been deployed yet.',
       deployWarning: 'Deploy completed with a residual issue — hover for details.',
       copy: 'Copy',
@@ -376,17 +388,20 @@ export default {
       rotateIP: 'Rotate IP',
       rotatingIP: 'Rotating IP…',
       rotateIPSuccess: 'IP rotation completed. New node created.',
-      rotateIPConfirm: 'This will destroy the current node and create a new one with a different IP. Continue?',
+      rotateIPConfirm:
+        'This will destroy the current node and create a new one with a different IP. Continue?',
       rotateIPBlocked: 'This node appears unreachable. Would you like to rotate its IP address?',
       repair: 'Repair / Redeploy',
       repairing: 'Repairing…',
       repairSuccess: 'Node repair completed.',
       redeploySuccess: 'Replacement node is deploying. The old node was kept.',
-      repairConfirm: 'Repair "{label}"? SSH nodes will redeploy on the same server. Cloud provider nodes will create a same-region replacement and keep the old node until you delete it.',
+      repairConfirm:
+        'Repair "{label}"? SSH nodes will redeploy on the same server. Cloud provider nodes will create a same-region replacement and keep the old node until you delete it.',
       repairBlocked: 'Manual nodes cannot be repaired automatically.',
     },
     status: {
       unknown: 'Unknown',
+      deploying: 'Deploying…',
       pending: 'Pending',
       applying: 'Applying…',
       connected: 'Active',
@@ -475,7 +490,8 @@ export default {
       formIncomplete: 'Complete the region, plan, and label before deploying.',
       ipv4Missing: 'The instance IPv4 address is not ready yet. Please wait and try again.',
       planUnavailable: 'Selected plan is unavailable in this region. Please choose another plan.',
-      memoryTooLow: 'The selected plan does not meet the minimum memory requirement ({required}MB).',
+      memoryTooLow:
+        'The selected plan does not meet the minimum memory requirement ({required}MB).',
       protocolUnavailable: 'This protocol is not ready for the selected node.',
       noProtocols: 'No protocol links are available yet for this node.',
       manualLabelRequired: 'Please provide a node name.',
@@ -516,8 +532,10 @@ export default {
       ssPort: 'Shadowsocks Port',
       ssPassword: 'Shadowsocks Password',
       optionalProtocols: 'Optional protocol settings',
-      addDescription: 'Provide at least one protocol configuration, e.g. Shadowsocks port and password, or Hysteria/VLESS/Trojan details.',
-      importPlaceholder: 'Accepts JSON objects or arrays. Each object should include label, IP, and protocol fields.',
+      addDescription:
+        'Provide at least one protocol configuration, e.g. Shadowsocks port and password, or Hysteria/VLESS/Trojan details.',
+      importPlaceholder:
+        'Accepts JSON objects or arrays. Each object should include label, IP, and protocol fields.',
       importHint: 'Example: label=Example, ipv4=203.0.113.10, ssPort=443, ssPassword=password',
       addSuccess: 'Manual node added successfully.',
       updateSuccess: 'Manual node updated successfully.',
@@ -878,7 +896,8 @@ export default {
     },
     emptyProfile: 'No profile selected',
     emptyNodes: 'No nodes are currently available.',
-    emptyNodesHint: 'Import a subscription or deploy a cloud node first, then come back here to connect.',
+    emptyNodesHint:
+      'Import a subscription or deploy a cloud node first, then come back here to connect.',
     emptyImport: 'Import subscription',
     emptyDeploy: 'Deploy cloud node',
     notSynced: 'Not synced yet',
@@ -913,7 +932,12 @@ export default {
     updateSuccess: 'Plugin-Hub updated successfully',
     total: 'Number of plug-ins',
     removeConfiguration: 'Do you want to remove the plugin configuration?',
-    codeChanged: 'The plugin code changed since you approved it. Run the new code only if you trust the source.',
+    codeChanged:
+      'The plugin code changed since you approved it. Run the new code only if you trust the source.',
+    fullTrustTitle: 'Plugins run as fully trusted code',
+    fullTrustWarning:
+      'This plugin will run with the same privileges as the app itself — it is NOT sandboxed.\n\nOnce added and enabled, it can:\n· read and modify your files\n· access the network and send data anywhere\n· execute commands on this device\n\nOnly continue if you trust the plugin author and its source.',
+    fullTrustAccept: 'I understand the risk, add it',
     testRun: 'TestRun',
     deprecated: 'Deprecated',
     newVersion: 'New',
@@ -1184,17 +1208,19 @@ export default {
       noSubdomain: 'No workers.dev subdomain claimed yet',
     },
     confirm: {
-      clear: 'Clear the saved token and all worker deployments? Workers on Cloudflare will not be deleted automatically.',
+      clear:
+        'Clear the saved token and all worker deployments? Workers on Cloudflare will not be deleted automatically.',
       delete: 'Delete the CDN Worker for "{label}"?',
     },
     customDomain: {
       title: 'Custom domain (optional)',
       subtitle:
-        "Bind the same Worker to a domain on your Cloudflare zone (e.g. relay.example.com). Use this when you want a stable hostname you control instead of a workers.dev host.",
+        'Bind the same Worker to a domain on your Cloudflare zone (e.g. relay.example.com). Use this when you want a stable hostname you control instead of a workers.dev host.',
       enable: 'Use a custom domain',
       zone: 'Zone',
       zonePlaceholder: 'Loading…',
-      noZones: 'The current token has no active zones in view. Add a site to Cloudflare first, and make sure the token includes Zone permissions for it.',
+      noZones:
+        'The current token has no active zones in view. Add a site to Cloudflare first, and make sure the token includes Zone permissions for it.',
       subdomainLabel: 'Subdomain',
       subdomainHint: 'Single label only (no "."). Final host = subdomain.zone-name.',
       subdomainPlaceholder: 'relay',
@@ -1202,7 +1228,8 @@ export default {
       save: 'Save binding',
       saving: 'Saving…',
       clear: 'Disable and unbind',
-      cleared: 'Disabled. Existing deployments keep their custom-domain bindings until they are re-deployed.',
+      cleared:
+        'Disabled. Existing deployments keep their custom-domain bindings until they are re-deployed.',
       bound: 'Bound: {host}',
       reload: 'Refresh zones',
     },
@@ -1214,10 +1241,8 @@ export default {
       statusPending: 'Provisioning',
       statusFailed: 'Unreachable',
       statusWorkersDev: 'workers.dev',
-      detailPending:
-        'Verifying CDN relay path; this can take up to ~4 minutes after deploy.',
-      detailPendingWithFallback:
-        'Verifying CDN relay path; using workers.dev meanwhile.',
+      detailPending: 'Verifying CDN relay path; this can take up to ~4 minutes after deploy.',
+      detailPendingWithFallback: 'Verifying CDN relay path; using workers.dev meanwhile.',
       detailFailed:
         'Probe could not reach the relay. Check the VPS firewall + relay port, then redeploy.',
       detailFailedWithFallback:

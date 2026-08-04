@@ -84,12 +84,23 @@ export default {
     let tcp;
     try {
       tcp = connect({ hostname: host, port });
+      // connect() returns a Socket immediately; only `opened` proves that the
+      // Worker actually established the upstream TCP connection. Do not send
+      // 101 to the client until that promise resolves, otherwise an
+      // unreachable relay is reported as a healthy WebSocket and then closes.
+      await tcp.opened;
     } catch (_) {
       return new Response(null, { status: 502 });
     }
 
     const wsPair = new WebSocketPair();
     const [client, server] = Object.values(wsPair);
+    // Compatibility dates >= 2026-03-17 default binary WebSocket messages to
+    // Blob. tcp.writable only accepts Uint8Array (or a typed-array view), so
+    // forwarding that Blob directly makes writer.write() reject and closes the
+    // tunnel before the VLESS header reaches the relay. Opt into the historical
+    // ArrayBuffer shape before accept() can dispatch the first client frame.
+    server.binaryType = 'arraybuffer';
     server.accept();
 
     pipeWsToTcp(server, tcp).catch(() => server.close());

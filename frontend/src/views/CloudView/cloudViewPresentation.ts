@@ -4,7 +4,7 @@ import type { CloudPlan, CloudProvider, CloudRegion, RegionLatency } from '@/typ
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
-export type StatusKey = 'unknown' | 'pending' | 'applying' | 'connected' | 'error'
+export type StatusKey = 'unknown' | 'deploying' | 'pending' | 'applying' | 'connected' | 'error'
 export type TagColor = 'cyan' | 'green' | 'red' | 'default' | 'primary'
 export type RegionOption = {
   label: string
@@ -50,6 +50,7 @@ const reachabilityRiskRating: Record<string, RiskLevel> = {
 
 const statusColors: Record<StatusKey, TagColor> = {
   unknown: 'default',
+  deploying: 'cyan',
   pending: 'green',
   applying: 'cyan',
   connected: 'primary',

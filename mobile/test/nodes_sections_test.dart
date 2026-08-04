@@ -132,6 +132,36 @@ void main() {
     });
 
     testWidgets(
+        'does not show connected while startup egress verification is pending',
+        (tester) async {
+      await pumpNodesTestApp(
+        tester,
+        child: NodesVpnSection(
+          vpnProvider: TestVpnProvider(
+            status: VpnStatus.connected,
+            isLoading: true,
+            isStartupVerificationInProgress: true,
+          ),
+          profileProvider: TestProfileProvider(
+            activeProfile: testProfile(name: 'Pending node'),
+          ),
+          cloudProvider: TestCloudProvider(hasApiKey: true),
+          onConnect: () {},
+          onDisconnect: () {},
+          onRestart: () {},
+          onConfigureApiKey: () {},
+          onImportProfile: () {},
+          onCreateCloudNode: () {},
+          onRefreshRoutes: () {},
+        ),
+      );
+
+      expect(find.text('Connecting...'), findsWidgets);
+      expect(find.text('Connected'), findsNothing);
+      expect(find.text('Processing VPN...'), findsOneWidget);
+    });
+
+    testWidgets(
         'shows unsupported native VPN notice when runtime is unavailable',
         (tester) async {
       await pumpNodesTestApp(

@@ -1,5 +1,17 @@
 import 'cloud_models.dart';
 
+/// A [StateError] that additionally carries the HTTP status code, so callers
+/// that need to distinguish e.g. 404 (already gone) from other failures
+/// don't have to pattern-match the human-readable message text. Still an
+/// ordinary [StateError] to every existing `is StateError` / `.message`
+/// call site. Shared by every provider client so callers ([CloudProvider])
+/// don't need provider-specific exception types to make that distinction.
+class CloudApiException extends StateError {
+  CloudApiException(super.message, {this.statusCode});
+
+  final int? statusCode;
+}
+
 /// Common REST surface shared by every provider-specific client
 /// ([VultrCloudClient], [DigitalOceanCloudClient], …). CloudProvider talks
 /// to providers only through this interface, so adding a new provider is a

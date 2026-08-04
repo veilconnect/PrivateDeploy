@@ -49,6 +49,10 @@ fi
 
 echo "→ Building release APKs for $PUBSPEC_VERSION"
 
+# Never let this release-named helper silently fall back to Gradle's unsigned
+# output. The stable publication workflow adds certificate pinning on top.
+export PRIVATEDEPLOY_REQUIRE_RELEASE_SIGNING=true
+
 FLUTTER_EXTRA_ARGS=()
 case "${PRIVATEDEPLOY_VPNCORE_DEBUG_LOGS:-}" in
   1|true|TRUE|yes|YES)

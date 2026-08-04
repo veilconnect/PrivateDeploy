@@ -33,7 +33,7 @@ void main() {
         region: 'lax',
         plan: 'vc2-1c-1gb',
         ipv4: '5.6.7.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -118,7 +118,7 @@ void main() {
         region: 'sea',
         plan: 'vc2-1c-1gb',
         ipv4: '5.6.7.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -176,7 +176,7 @@ void main() {
         region: 'lax',
         plan: 'vc2-1c-1gb',
         ipv4: '5.6.7.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -253,7 +253,7 @@ void main() {
         region: 'hk',
         plan: 'vc2-1c-1gb',
         ipv4: '5.6.7.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -355,7 +355,7 @@ void main() {
         region: 'fra',
         plan: 'vc2-1c-1gb',
         ipv4: '5.6.7.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -391,9 +391,7 @@ void main() {
               'just give urltest two probes against the same hostname');
     });
 
-    test(
-        'direct tier leads the tier chooser and CDN edge leads the CDN '
-        'fallback tier (tiered failover, not a flat CDN-first pool)',
+    test('flat automatic pool starts on CDN and can reselect direct leaves',
         () {
       final instance = CloudInstance(
         id: 'lax-1',
@@ -403,7 +401,7 @@ void main() {
         region: 'lax',
         plan: 'vc2-1c-1gb',
         ipv4: '8.8.8.8',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 12345,
           ssPassword: 'pw',
           hyPort: 23456,
@@ -453,16 +451,13 @@ void main() {
         (o) => o['tag'] == 'cdn-auto',
         orElse: () => <String, Object?>{},
       );
+      final dnsResolver = outbounds.firstWhere(
+        (o) => o['tag'] == 'dns-resolver',
+        orElse: () => <String, Object?>{},
+      );
       expect(selector['default'], 'auto',
           reason: 'CDN members belong in urltest failover; the main selector '
               'must not pin a single CDN path that can fail independently');
-      // Tiered design: the outer chooser prefers the stable DIRECT tier and
-      // only falls back to the CDN tier -- the reverse of the old flat pool.
-      // Carrier-filtered direct variants no longer exhaust probe timeouts
-      // because the direct tier is Hy2-first (UDP punches through) instead of
-      // relying on the CDN leading a single flat pool.
-      expect(auto['outbounds'], ['direct-auto', 'cdn-auto'],
-          reason: 'direct tier must lead the chooser; CDN is the fallback tier');
       final directMembers = (directAuto['outbounds'] as List).cast<String>();
       expect(directMembers, contains('lax-1-SS'),
           reason: 'direct tier must enumerate bare-IP node protocols');
@@ -474,6 +469,24 @@ void main() {
       expect(cdnMembers.indexOf('lax-1-CDN-edge1'),
           lessThan(cdnMembers.indexOf('lax-1-CDN')),
           reason: 'DNS-independent CDN edge should lead DNS-resolved CDN');
+      expect(auto['outbounds'], [...cdnMembers, ...directMembers],
+          reason: 'automatic data failover must probe real transports in one '
+              'flat pool; nested urltests pin cold-start traffic to direct');
+      expect(auto['tolerance'], 1500,
+          reason: 'a tiny probe must not pull real traffic from a working CDN '
+              'back onto a carrier-throttled direct port');
+
+      // DNS uses its own non-interrupting selector, but it must retain the
+      // same last-resort CDN reachability as the data plane. Raw members are
+      // flattened so direct-auto/cdn-auto re-selection cannot interrupt DoH.
+      final resolverMembers = (dnsResolver['outbounds'] as List).cast<String>();
+      expect(dnsResolver['interrupt_exist_connections'], isFalse);
+      expect(resolverMembers, [...cdnMembers, ...directMembers]);
+      expect(resolverMembers.toSet(), hasLength(resolverMembers.length));
+      expect(resolverMembers.first, cdnMembers.first);
+      expect(resolverMembers, contains('lax-1-CDN-edge1'));
+      final outboundTags = outbounds.map((outbound) => outbound['tag']).toSet();
+      expect(resolverMembers.every(outboundTags.contains), isTrue);
     });
 
     test('omits CDN variant when relay port is zero (older deploys)', () {
@@ -485,7 +498,7 @@ void main() {
         region: 'lax',
         plan: 'vc2-1c-1gb',
         ipv4: '9.9.9.9',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,
@@ -533,7 +546,7 @@ void main() {
         region: 'nrt',
         plan: 'vc2-1c-1gb',
         ipv4: '1.2.3.4',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 443,
           ssPassword: 'ss-pass',
           hyPort: 8443,
@@ -719,8 +732,6 @@ void main() {
         'edge-1-VLESS',
         'edge-1-SS',
       ]);
-      // Outer auto only chooses between tiers.
-      expect(urltest['outbounds'], ['direct-auto']);
       // Direct tier prefers Hysteria2 first (China-Mobile punch-through), then
       // keeps Trojan 443 ahead of the high-port protocols (stable partition).
       expect(directAuto['outbounds'], [
@@ -729,6 +740,7 @@ void main() {
         'edge-1-VLESS',
         'edge-1-SS',
       ]);
+      expect(urltest['outbounds'], directAuto['outbounds']);
     });
 
     test('manual endpoint selection omits auto urltest and unused protocols',
@@ -741,7 +753,7 @@ void main() {
         region: 'nrt',
         plan: 'vc2-1c-1gb',
         ipv4: '1.2.3.4',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 443,
           ssPassword: 'ss-pass',
           hyPort: 8443,
@@ -890,7 +902,7 @@ void main() {
         region: 'nrt',
         plan: 'vc2-1c-1gb',
         ipv4: '1.2.3.4',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 443,
           ssPassword: 'ss-pass',
           hyPort: 8443,
@@ -1318,7 +1330,7 @@ void main() {
         region: 'sgp',
         plan: 'vc2-1c-1gb',
         ipv4: '9.9.9.9',
-        nodeInfo: NodeInfo(
+        nodeInfo: const NodeInfo(
           ssPort: 0,
           ssPassword: '',
           hyPort: 0,

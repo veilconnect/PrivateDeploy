@@ -80,8 +80,14 @@ Future<void> confirmDeleteCloudNode({
   if (!confirmed) {
     return;
   }
+  // The confirmation dialog is itself an async gap — bail out if the screen
+  // was torn down while it was open.
+  if (!context.mounted) {
+    return;
+  }
 
-  // Capture before any await so we don't touch context across async gaps.
+  // Capture before any further await so we don't touch context across async
+  // gaps.
   final cdnProvider = context.read<CdnProvider>();
   final profileName = cloudProfileName(instance);
   final linkedProfile = profileProvider.getProfileByName(profileName);
@@ -154,6 +160,12 @@ Future<void> confirmRepairCloudNode({
     confirmColor: Colors.orange,
   );
   if (!confirmed) {
+    return;
+  }
+  // The confirmation dialog is an async gap — the screen may have been torn
+  // down while it was open, in which case there is nothing to show progress
+  // on and the repair should not start.
+  if (!context.mounted) {
     return;
   }
 
@@ -415,6 +427,10 @@ Future<void> testCloudNodeLatency({
   required VpnProvider vpnProvider,
   Future<CloudThroughputSample> Function()? throughputProbe,
 }) async {
+  // Capture localized strings before the first await — the BuildContext must
+  // not be dereferenced across async gaps (use_build_context_synchronously).
+  final l10n = AppLocalizations.of(context)!;
+
   // Phase 1: TCP latency probe (benchmark mode for multiple samples).
   final latencyResult = await cloudProvider.testInstanceLatency(
     instance,
@@ -425,8 +441,7 @@ Future<void> testCloudNodeLatency({
   final config = cloudProvider.generateNodeConfig(instance);
   if (config == null) {
     final updated = latencyResult.copyWith(
-      error: latencyResult.error ??
-          AppLocalizations.of(context)!.nodeNotReadyForSpeedTest,
+      error: latencyResult.error ?? l10n.nodeNotReadyForSpeedTest,
     );
     cloudProvider.saveLatencyCheck(instance.id, updated);
     if (context.mounted && updated.error != null) {
@@ -473,11 +488,10 @@ Future<void> testCloudNodeLatency({
       );
       await vpnProvider.disconnect();
     } else {
-      final l10nFailure = AppLocalizations.of(context)!;
       benchmarkResult = benchmarkResult.copyWith(
         error: vpnProvider.error == null
-            ? l10nFailure.failedToConnectSpeedTestTunnel
-            : localizeVpnStatusMessage(vpnProvider.error, l10nFailure),
+            ? l10n.failedToConnectSpeedTestTunnel
+            : localizeVpnStatusMessage(vpnProvider.error, l10n),
       );
     }
 
@@ -534,6 +548,11 @@ Future<void> testAllCloudNodesLatency({
       confirmColor: Colors.orange,
     );
     if (!confirmed) {
+      return;
+    }
+    // The confirmation dialog is an async gap; don't keep using the context
+    // (snackbars below) if the screen went away while it was open.
+    if (!context.mounted) {
       return;
     }
   }

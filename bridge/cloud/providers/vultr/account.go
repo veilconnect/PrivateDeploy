@@ -41,7 +41,7 @@ const vultrFirewallWarnThreshold = 45
 //   - "unknown"     — transient probe failure; fails open to avoid freezing
 //     the UI on a network blip.
 func (p *Provider) GetAccountStatus(ctx context.Context) (*cloud.AccountStatus, error) {
-	if p.config == nil || strings.TrimSpace(p.config.APIKey) == "" {
+	if _, err := p.ensureConfig(); err != nil {
 		return &cloud.AccountStatus{
 			State:     "invalid_key",
 			Message:   "Vultr API key not configured",

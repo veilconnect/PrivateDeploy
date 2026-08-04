@@ -117,8 +117,9 @@ class SubscriptionParser {
     if (uri.startsWith('ss://')) return _parseShadowsocks(uri);
     if (uri.startsWith('vless://')) return _parseVless(uri);
     if (uri.startsWith('trojan://')) return _parseTrojan(uri);
-    if (uri.startsWith('hysteria2://') || uri.startsWith('hy2://'))
+    if (uri.startsWith('hysteria2://') || uri.startsWith('hy2://')) {
       return _parseHysteria2(uri);
+    }
     if (uri.startsWith('vmess://')) return _parseVmess(uri);
     return null;
   }
@@ -164,7 +165,9 @@ class SubscriptionParser {
         String decoded;
         try {
           var clean = userInfo;
-          while (clean.length % 4 != 0) clean += '=';
+          while (clean.length % 4 != 0) {
+            clean += '=';
+          }
           decoded = utf8.decode(base64Decode(clean));
         } catch (_) {
           decoded = userInfo;
@@ -179,7 +182,9 @@ class SubscriptionParser {
         String decoded;
         try {
           var clean = body;
-          while (clean.length % 4 != 0) clean += '=';
+          while (clean.length % 4 != 0) {
+            clean += '=';
+          }
           decoded = utf8.decode(base64Decode(clean));
         } catch (_) {
           return null;
@@ -315,7 +320,9 @@ class SubscriptionParser {
   static ProxyNode? _parseVmess(String uri) {
     try {
       var body = uri.substring(8); // remove vmess://
-      while (body.length % 4 != 0) body += '=';
+      while (body.length % 4 != 0) {
+        body += '=';
+      }
       final decoded = utf8.decode(base64Decode(body));
       final json = jsonDecode(decoded) as Map<String, dynamic>;
 

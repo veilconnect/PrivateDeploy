@@ -223,7 +223,7 @@ fpm -s dir -t deb \
     --description "${DESCRIPTION}" \
     --url "${HOMEPAGE}" \
     --maintainer "${MAINTAINER}" \
-    --license "MIT" \
+    --license "GPL-3.0" \
     --category "net" \
     --depends "libgtk-3-0" \
     --after-install "${POSTINST_SCRIPT}" \
@@ -240,7 +240,7 @@ fpm -s dir -t rpm \
     --description "${DESCRIPTION}" \
     --url "${HOMEPAGE}" \
     --maintainer "${MAINTAINER}" \
-    --license "MIT" \
+    --license "GPL-3.0" \
     --category "Applications/Internet" \
     --depends "gtk3" \
     --after-install "${POSTINST_SCRIPT}" \

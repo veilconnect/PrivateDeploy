@@ -34,6 +34,49 @@ void main() {
       );
     });
 
+    // Regression test: a droplet already deleted out-of-band makes the real
+    // DELETE call 404. That still satisfies "this instance should no longer
+    // exist", so deleteInstance must succeed instead of leaving the local
+    // record permanently stuck. Mirrors the Vultr client's fix + test.
+    test('deleteInstance treats 404 as already gone', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.headers.contentType = ContentType.json;
+        request.response
+            .write(jsonEncode({'id': 'not_found', 'message': 'not found'}));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = DigitalOceanCloudClient('test-key', dio: dio);
+
+      await expectLater(client.deleteInstance('12345'), completes);
+    });
+
+    test('deleteInstance still surfaces a real API failure', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
+        request.response
+            .write(jsonEncode({'id': 'server_error', 'message': 'boom'}));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = DigitalOceanCloudClient('test-key', dio: dio);
+
+      expect(
+        () => client.deleteInstance('12345'),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('listRegions filters unavailable and maps slug→id with city/country',
         () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

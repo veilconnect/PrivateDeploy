@@ -1,0 +1,494 @@
+name: Mobile - Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Signed mobile platform(s) to build
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - android
+          - ios
+      publish_assets:
+        description: Attach verified assets to the existing GitHub tag release
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-stable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    name: Stable release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.7
+          channel: stable
+          cache: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            mobile/gomobile/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Require a stable version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::Run this workflow from the immutable stable tag, not a branch."
+            exit 1
+          fi
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match VERSION v$version."
+            exit 1
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Mobile stable releases require a plain semantic version (no prerelease suffix)."
+            exit 1
+          fi
+
+      - name: Check repository/mobile versions
+        run: bash scripts/check_versions.sh
+
+      - name: Check mobile release structure
+        run: bash mobile/scripts/check_stable_release_readiness.sh
+
+      - name: Reject tracked credentials and secret material
+        run: bash scripts/secret_scan.sh
+
+      - name: Test mobile release configuration
+        run: bash mobile/scripts/test_stable_release_config.sh
+
+      - name: Enforce third-party license and SPDX policy
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_license_audit.py'
+          python3 scripts/license_audit.py --check
+
+      - name: Run Flutter quality gates
+        working-directory: mobile
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter analyze
+          dart format --set-exit-if-changed lib test integration_test
+          dart run dependency_validator
+          flutter test
+
+      - name: Test deploy parity and VPN core
+        run: |
+          go test ./bridge/cloud/deploy/...
+          (cd mobile/gomobile && go test ./...)
+
+  android:
+    name: Signed Android APK and AAB
+    if: inputs.platform == 'both' || inputs.platform == 'android'
+    needs: readiness
+    runs-on: ubuntu-latest
+    # Configure required reviewers and restrict deployment branches/tags for
+    # this environment in repository settings. Signing secrets should be
+    # environment secrets, not unrestricted repository secrets.
+    environment: stable-release
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mobile/gomobile/go.mod
+          cache-dependency-path: mobile/gomobile/go.sum
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned Android build tools and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'build-tools;35.0.0' 'ndk;27.0.12077973'
+          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Install checksum-pinned bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundletool="$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            -o "$bundletool"
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  '"$bundletool" | sha256sum --check --strict
+          echo "BUNDLETOOL_JAR=$bundletool" >> "$GITHUB_ENV"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.7
+          channel: stable
+          cache: true
+
+      - name: Install pinned gomobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260312152759-81488f6aeb60
+          gomobile init
+
+      - name: Build VPN core AAR
+        working-directory: mobile/gomobile
+        run: ./build-android.sh
+
+      - name: Flutter dependencies and generated sources
+        working-directory: mobile
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+
+      - name: Decode and validate Android signing material
+        env:
+          PRIVATEDEPLOY_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PRIVATEDEPLOY_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PRIVATEDEPLOY_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PRIVATEDEPLOY_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          PRIVATEDEPLOY_ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: mobile/scripts/prepare_android_release_signing.sh
+
+      - name: Build strictly signed APK and App Bundle
+        working-directory: mobile
+        env:
+          PRIVATEDEPLOY_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PRIVATEDEPLOY_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PRIVATEDEPLOY_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          flutter build apk --release
+          flutter build appbundle --release
+
+      - name: Verify certificate and package release handoff
+        env:
+          PRIVATEDEPLOY_ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: mobile/scripts/package_android_release.sh
+
+      - name: Upload verified Android release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-android-${{ github.ref_name }}
+          path: mobile/build/release-ready/android/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove Android signing material
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/privatedeploy-release.jks"
+
+  ios:
+    name: Signed iOS IPA
+    if: inputs.platform == 'both' || inputs.platform == 'ios'
+    needs: readiness
+    runs-on: macos-latest
+    environment: stable-release
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mobile/gomobile/go.mod
+          cache-dependency-path: mobile/gomobile/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.7
+          channel: stable
+          cache: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned gomobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260312152759-81488f6aeb60
+          gomobile init
+
+      - name: Build VPN core XCFramework
+        working-directory: mobile/gomobile
+        run: ./build-ios.sh
+
+      - name: Flutter dependencies and generated sources
+        working-directory: mobile
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+
+      - name: Decode and validate Apple signing material
+        env:
+          PRIVATEDEPLOY_IOS_CERT_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERT_P12_BASE64 }}
+          PRIVATEDEPLOY_IOS_CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERT_PASSWORD }}
+          PRIVATEDEPLOY_IOS_SIGNING_CERT_SHA256: ${{ secrets.IOS_SIGNING_CERT_SHA256 }}
+          PRIVATEDEPLOY_IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          PRIVATEDEPLOY_IOS_EXTENSION_PROFILE_BASE64: ${{ secrets.IOS_VPN_EXTENSION_PROFILE_BASE64 }}
+          PRIVATEDEPLOY_IOS_EXPORT_OPTIONS_BASE64: ${{ secrets.IOS_EXPORT_OPTIONS_BASE64 }}
+          PRIVATEDEPLOY_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: mobile/scripts/prepare_ios_release_signing.sh
+
+      - name: Prepare Flutter and CocoaPods build metadata
+        working-directory: mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+          flutter build ios --release --config-only \
+            --build-name="${version%+*}" \
+            --build-number="${version#*+}"
+          cd ios
+          pod install
+
+      - name: Archive signed app and VPN extension
+        working-directory: mobile
+        shell: bash
+        env:
+          PRIVATEDEPLOY_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/PrivateDeploy.xcarchive" \
+            archive \
+            PRIVATEDEPLOY_APPLE_TEAM_ID="$PRIVATEDEPLOY_APPLE_TEAM_ID" \
+            PRIVATEDEPLOY_IOS_APP_PROFILE_NAME="$PRIVATEDEPLOY_IOS_APP_PROFILE_NAME" \
+            PRIVATEDEPLOY_IOS_EXTENSION_PROFILE_NAME="$PRIVATEDEPLOY_IOS_EXTENSION_PROFILE_NAME"
+
+      - name: Export signed IPA
+        shell: bash
+        env:
+          PRIVATEDEPLOY_IOS_SIGNING_CERT_SHA256: ${{ secrets.IOS_SIGNING_CERT_SHA256 }}
+          PRIVATEDEPLOY_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ios-export"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/PrivateDeploy.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ios-export" \
+            -exportOptionsPlist "$PRIVATEDEPLOY_IOS_EXPORT_OPTIONS_PATH"
+          ipa="$(find "$RUNNER_TEMP/ios-export" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          if [ -z "$ipa" ]; then
+            echo '::error::Xcode export produced no IPA.'
+            exit 1
+          fi
+          mobile/scripts/package_ios_release.sh \
+            "$ipa" \
+            mobile/build/release-ready/ios \
+            "$RUNNER_TEMP/PrivateDeploy.xcarchive"
+
+      - name: Upload verified iOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ios-${{ github.ref_name }}
+          path: mobile/build/release-ready/ios/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove Apple signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          security delete-keychain "$PRIVATEDEPLOY_IOS_KEYCHAIN_PATH" 2>/dev/null
+          rm -f "$RUNNER_TEMP/privatedeploy-distribution.p12" \
+            "$RUNNER_TEMP/privatedeploy-distribution.pem" \
+            "$RUNNER_TEMP/privatedeploy-distribution.der" \
+            "$RUNNER_TEMP/privatedeploy-app.mobileprovision" \
+            "$RUNNER_TEMP/privatedeploy-extension.mobileprovision" \
+            "$RUNNER_TEMP/ExportOptions.plist"
+          if [ -n "${PRIVATEDEPLOY_IOS_APP_PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PRIVATEDEPLOY_IOS_APP_PROFILE_UUID.mobileprovision"
+          fi
+          if [ -n "${PRIVATEDEPLOY_IOS_EXTENSION_PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PRIVATEDEPLOY_IOS_EXTENSION_PROFILE_UUID.mobileprovision"
+          fi
+
+  release-ready:
+    name: Mobile release-ready gate
+    if: always()
+    needs: [readiness, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every requested signed build
+        env:
+          PREFLIGHT_RESULT: ${{ needs.readiness.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          REQUESTED_PLATFORM: ${{ inputs.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$PREFLIGHT_RESULT" = success ] || { echo '::error::Release preflight failed.'; exit 1; }
+          if [ "$REQUESTED_PLATFORM" = android ] || [ "$REQUESTED_PLATFORM" = both ]; then
+            [ "$ANDROID_RESULT" = success ] || { echo '::error::Signed Android release failed.'; exit 1; }
+          fi
+          if [ "$REQUESTED_PLATFORM" = ios ] || [ "$REQUESTED_PLATFORM" = both ]; then
+            [ "$IOS_RESULT" = success ] || { echo '::error::Signed iOS release failed.'; exit 1; }
+          fi
+          echo 'All requested mobile artifacts passed signature and checksum verification.'
+          echo 'Physical-device validation is not performed by this workflow.'
+          if [ "${{ inputs.publish_assets }}" = true ]; then
+            {
+              echo '## Exact-artifact approval required'
+              echo
+              echo "Download and device-test artifacts from this exact run ($GITHUB_RUN_ID)."
+              echo 'Then approve the waiting protected `stable-release` publish job in this same run.'
+              echo 'Do not rerun to publish: a rebuild is a different binary.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Attach mobile assets to GitHub release
+    if: always() && inputs.publish_assets && needs.release-ready.result == 'success'
+    needs: [release-ready, android, ios]
+    runs-on: ubuntu-latest
+    environment: stable-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download Android assets
+        if: inputs.platform == 'both' || inputs.platform == 'android'
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-android-${{ github.ref_name }}
+          path: dist/android
+
+      - name: Download iOS assets
+        if: inputs.platform == 'both' || inputs.platform == 'ios'
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-ios-${{ github.ref_name }}
+          path: dist/ios
+
+      - name: Verify downloaded release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A expected_files=()
+          checksum_count=0
+          while IFS= read -r checksum; do
+            (cd "$(dirname "$checksum")" && sha256sum --check "$(basename "$checksum")")
+            if [[ -n "${expected_files[$checksum]+set}" ]]; then
+              echo "::error::Duplicate checksum manifest path: $checksum"
+              exit 1
+            fi
+            expected_files["$checksum"]=1
+            while read -r digest filename; do
+              filename="${filename#\*}"
+              if ! [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || \
+                 ! [[ "$filename" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+                echo "::error::Malformed or unsafe checksum entry in $checksum: $digest $filename"
+                exit 1
+              fi
+              asset="$(dirname "$checksum")/$filename"
+              if [[ -n "${expected_files[$asset]+set}" ]]; then
+                echo "::error::Duplicate checksummed asset path: $asset"
+                exit 1
+              fi
+              expected_files["$asset"]=1
+            done < "$checksum"
+            checksum_count=$((checksum_count + 1))
+          done < <(find dist -type f -name 'checksums-*.sha256' -print)
+          if [ "$checksum_count" -eq 0 ]; then
+            echo '::error::No checksum manifest found for mobile assets.'
+            exit 1
+          fi
+          mapfile -d '' assets < <(find dist -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo '::error::No verified mobile assets found.'
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            if [[ -z "${expected_files[$asset]+set}" ]]; then
+              echo "::error::Unexpected unchecksummed mobile release file: $asset"
+              exit 1
+            fi
+          done
+          if [ "${#assets[@]}" -ne "${#expected_files[@]}" ]; then
+            echo '::error::Checksum manifests reference a missing or duplicate release file.'
+            exit 1
+          fi
+
+      - name: Refuse to replace immutable stable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t existing_assets < <(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          declare -A existing=()
+          for name in "${existing_assets[@]}"; do existing["$name"]=1; done
+          while IFS= read -r -d '' asset; do
+            name="$(basename "$asset")"
+            if [[ -n "${existing[$name]+set}" ]]; then
+              echo "::error::Stable release asset already exists and will not be replaced: $name"
+              exit 1
+            fi
+          done < <(find dist -type f -print0)
+
+      - name: Attest every final mobile release file
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/**/*
+
+      - name: Upload attested assets to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # No checkout is needed in this publish-only job, so tell gh which
+          # repository to use instead of asking it to infer a git remote.
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' assets < <(find dist -type f -print0)
+          gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}"

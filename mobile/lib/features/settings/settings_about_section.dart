@@ -5,7 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../l10n/app_localizations.dart';
 
 class SettingsAboutSection extends StatelessWidget {
-  const SettingsAboutSection({Key? key}) : super(key: key);
+  const SettingsAboutSection({super.key});
 
   @override
   Widget build(BuildContext context) {

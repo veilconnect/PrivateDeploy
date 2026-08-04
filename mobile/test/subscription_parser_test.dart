@@ -5,7 +5,7 @@ import 'package:privatedeploy_mobile/core/subscription/parser.dart';
 void main() {
   group('SubscriptionParser URI Parsing', () {
     test('parse Shadowsocks URI', () {
-      final raw = 'ss://YWVzLTI1Ni1nY206dGVzdHBhc3M=@1.2.3.4:8388#MyServer';
+      const raw = 'ss://YWVzLTI1Ni1nY206dGVzdHBhc3M=@1.2.3.4:8388#MyServer';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
 
@@ -26,7 +26,7 @@ void main() {
     });
 
     test('parse VLESS Reality URI', () {
-      final raw =
+      const raw =
           'vless://uuid-1234@5.6.7.8:443?security=reality&sni=www.microsoft.com&pbk=pubkey123&sid=abcd&flow=xtls-rprx-vision&type=tcp&fp=chrome#VLESS-Node';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
@@ -42,7 +42,7 @@ void main() {
     });
 
     test('parse Trojan URI', () {
-      final raw = 'trojan://mypassword@9.8.7.6:443?sni=example.com#Trojan-Node';
+      const raw = 'trojan://mypassword@9.8.7.6:443?sni=example.com#Trojan-Node';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
 
@@ -55,7 +55,7 @@ void main() {
     });
 
     test('parse Hysteria2 URI', () {
-      final raw =
+      const raw =
           'hysteria2://hypass@10.0.0.1:8443?insecure=1&sni=test.com#Hy2-Node';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
@@ -69,13 +69,13 @@ void main() {
     });
 
     test('parse hy2:// short URI', () {
-      final raw = 'hy2://pass@1.1.1.1:443#Short';
+      const raw = 'hy2://pass@1.1.1.1:443#Short';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
     });
 
     test('parse base64 encoded URI list', () {
-      final uriList =
+      const uriList =
           'ss://YWVzLTI1Ni1nY206dGVzdA==@1.1.1.1:1234#SS1\ntrojan://pass@2.2.2.2:443#TJ1';
       final encoded = base64Encode(utf8.encode(uriList));
       final config = SubscriptionParser.parseToSingboxConfig(encoded);
@@ -89,7 +89,7 @@ void main() {
     });
 
     test('parse multi-line plain URI list', () {
-      final raw = '''
+      const raw = '''
 ss://YWVzLTI1Ni1nY206cGFzcw==@1.1.1.1:8388#SS-1
 trojan://pass@2.2.2.2:443?sni=example.com#Trojan-1
 vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
@@ -107,7 +107,7 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
     });
 
     test('parse sing-box JSON directly', () {
-      final singboxJson = '{"outbounds":[{"type":"direct","tag":"direct"}]}';
+      const singboxJson = '{"outbounds":[{"type":"direct","tag":"direct"}]}';
       final config = SubscriptionParser.parseToSingboxConfig(singboxJson);
       expect(config, singboxJson);
     });
@@ -152,7 +152,7 @@ vless://uuid@3.3.3.3:443?security=tls&sni=test.com#VLESS-1
     });
 
     test('generated config has required structure', () {
-      final raw = 'ss://YWVzLTI1Ni1nY206cGFzcw==@1.1.1.1:8388#Test';
+      const raw = 'ss://YWVzLTI1Ni1nY206cGFzcw==@1.1.1.1:8388#Test';
       final config = SubscriptionParser.parseToSingboxConfig(raw);
       expect(config, isNotNull);
 

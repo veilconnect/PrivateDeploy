@@ -1,0 +1,73 @@
+name: Third-party license and SBOM audit
+
+on:
+  push:
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "api/go.mod"
+      - "api/go.sum"
+      - "mobile/gomobile/go.mod"
+      - "mobile/gomobile/go.sum"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "mobile/pubspec.yaml"
+      - "mobile/pubspec.lock"
+      - "mobile/android/app/build.gradle"
+      - "mobile/android/build.gradle"
+      - "mobile/android/settings.gradle"
+      - "mobile/android/gradle.lockfile"
+      - "mobile/ios/Podfile"
+      - "mobile/ios/Podfile.lock"
+      - ".github/workflows/mobile-release.yml"
+      - "third_party/**"
+      - "THIRD_PARTY_LICENSES.md"
+      - "scripts/license_audit.py"
+      - "scripts/tests/test_license_audit.py"
+      - ".github/workflows/license-audit.yml"
+  pull_request:
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "api/go.mod"
+      - "api/go.sum"
+      - "mobile/gomobile/go.mod"
+      - "mobile/gomobile/go.sum"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "mobile/pubspec.yaml"
+      - "mobile/pubspec.lock"
+      - "mobile/android/app/build.gradle"
+      - "mobile/android/build.gradle"
+      - "mobile/android/settings.gradle"
+      - "mobile/android/gradle.lockfile"
+      - "mobile/ios/Podfile"
+      - "mobile/ios/Podfile.lock"
+      - ".github/workflows/mobile-release.yml"
+      - "third_party/**"
+      - "THIRD_PARTY_LICENSES.md"
+      - "scripts/license_audit.py"
+      - "scripts/tests/test_license_audit.py"
+      - ".github/workflows/license-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-audit:
+    name: Offline license policy and SPDX consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_license_audit.py'
+      - name: Rebuild inventory and enforce policy
+        run: python3 scripts/license_audit.py --check
+      - name: Explain the boundary
+        run: |
+          echo "This offline gate verifies lockfile inventory, recorded evidence, and repository policy."
+          echo "It does not download packages and does not replace legal review."

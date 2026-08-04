@@ -53,7 +53,7 @@ class EncryptedShareCodec {
       throw const FormatException('Passphrase cannot be empty');
     }
     if (iterations < minimumEncryptedSharePbkdf2Iterations) {
-      throw FormatException(
+      throw const FormatException(
         'PBKDF2 iterations must be at least $minimumEncryptedSharePbkdf2Iterations',
       );
     }

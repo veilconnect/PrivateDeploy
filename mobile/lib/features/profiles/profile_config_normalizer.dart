@@ -16,6 +16,7 @@ const _dnsRemoteFallbackTag = managedDnsRemoteFallbackTag;
 const _dnsBootstrapTag = managedDnsBootstrapTag;
 const _dnsLocalTag = managedDnsLocalTag;
 const _dnsCnTag = managedDnsCnTag;
+const _dnsResolverOutboundTag = 'dns-resolver';
 const _dnsRemoteAddress = managedDnsRemoteAddress;
 const _dnsRemoteFallbackAddress = managedDnsRemoteFallbackAddress;
 const _dnsBootstrapAddress = managedDnsBootstrapAddress;
@@ -293,7 +294,102 @@ bool _normalizeAndroidConfig(Map<String, dynamic> decoded) {
     }
   }
 
+  // Migrate previously persisted cloud profiles whose automatic data path
+  // nested direct-auto/cdn-auto. On a pure-cellular network that blackholes
+  // the VPS, sing-box can keep a cold-start connection pinned to the initial
+  // direct child while the CDN child is already healthy. Expanding the two
+  // managed groups to their raw leaves lets the urltest reselect the real
+  // connection immediately. Restrict this repair to PrivateDeploy cloud
+  // profiles so imported configs that intentionally use nested groups are not
+  // rewritten.
+  if (shouldForceSystemForCloudProfile &&
+      _flattenManagedCloudAutoUrltest(decoded)) {
+    changed = true;
+  }
+
   return changed;
+}
+
+bool _flattenManagedCloudAutoUrltest(Map<String, dynamic> decoded) {
+  final auto = _findTaggedOutbound(decoded, tag: 'auto');
+  if (auto == null || auto['type']?.toString() != 'urltest') {
+    return false;
+  }
+
+  final currentMembers = _coerceStringList(auto['outbounds']);
+  if (!currentMembers.contains('direct-auto') &&
+      !currentMembers.contains('cdn-auto')) {
+    return false;
+  }
+
+  final taggedOutbounds = <String, Map<String, dynamic>>{};
+  final outbounds = decoded['outbounds'];
+  if (outbounds is! List<dynamic>) {
+    return false;
+  }
+  for (final outbound in outbounds.whereType<Map<String, dynamic>>()) {
+    final tag = outbound['tag']?.toString().trim();
+    if (tag != null && tag.isNotEmpty) {
+      taggedOutbounds[tag] = outbound;
+    }
+  }
+
+  List<String>? tierLeaves(String tag) {
+    final tier = taggedOutbounds[tag];
+    if (tier == null || tier['type']?.toString() != 'urltest') {
+      return null;
+    }
+    final leaves = _dedupeStrings(_coerceStringList(tier['outbounds']));
+    if (leaves.isEmpty) {
+      return null;
+    }
+    final allLeavesExist = leaves.every((leafTag) {
+      final leaf = taggedOutbounds[leafTag];
+      if (leaf == null) return false;
+      return switch (leaf['type']?.toString().trim()) {
+        'selector' || 'urltest' || 'direct' || 'dns' || 'block' => false,
+        null || '' => false,
+        _ => true,
+      };
+    });
+    return allLeavesExist ? leaves : null;
+  }
+
+  final directLeaves = currentMembers.contains('direct-auto')
+      ? tierLeaves('direct-auto')
+      : const <String>[];
+  final cdnLeaves = currentMembers.contains('cdn-auto')
+      ? tierLeaves('cdn-auto')
+      : const <String>[];
+  // A malformed managed tier must not be silently discarded; leave the whole
+  // topology untouched so the later reference validator can report or repair
+  // it using its existing rules.
+  if (directLeaves == null || cdnLeaves == null) {
+    return false;
+  }
+  final flattened = _dedupeStrings([
+    // CDN first is the cold-start default before urltest history exists. With
+    // the builder's low tolerance a healthy faster direct leaf can take over
+    // after the concurrent first sweep.
+    ...cdnLeaves,
+    ...directLeaves,
+    ...currentMembers.where(
+      (member) => member != 'direct-auto' && member != 'cdn-auto',
+    ),
+  ]);
+  if (flattened.isEmpty || _sameStringList(currentMembers, flattened)) {
+    return false;
+  }
+  auto['outbounds'] = flattened;
+  return true;
+}
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 bool _looksLikeAndroidCloudProfileConfig(Map<String, dynamic> decoded) {
@@ -576,6 +672,12 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     _ensureBlockOutbound(outbounds);
   }
 
+  // Cloud configs created before the cellular DNS fallback fix may carry a
+  // dedicated resolver that only knows about direct-auto's members. Repair it
+  // before collecting outbound tags so invalid/empty managed resolvers can be
+  // removed and the DNS servers below safely fall back to the selected proxy.
+  _repairManagedDnsResolver(decoded);
+
   final outboundMaps = outbounds.whereType<Map>().map<Map<String, dynamic>>(
         (outbound) => Map<String, dynamic>.from(outbound),
       );
@@ -631,20 +733,22 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
     routingSettings: routingSettings,
     hasDirectOutbound: hasDirectOutbound,
     proxyOutboundTag: proxyOutboundTag,
+    availableDetourTags: outboundTags,
   );
   _ensureManagedDnsDefaults(decoded);
   _ensureProxyServerDomainsResolveDirect(decoded);
 
   final existingRules = _coerceMapList(route['rules']);
   final preservedRules = existingRules
-      .where((rule) => !_isManagedOrLegacyRule(rule))
+      .where(
+        (rule) =>
+            !_isManagedOrLegacyRule(rule) &&
+            !_isAndroidPrivateDnsCompatRule(rule, privateDnsProbeCidrs),
+      )
       .toList(growable: false);
   final managedRules = <Map<String, dynamic>>[];
 
-  if (privateDnsProbeCidrs.isNotEmpty &&
-      outboundTags.contains('block') &&
-      !_containsAndroidPrivateDnsCompatRule(
-          existingRules, privateDnsProbeCidrs)) {
+  if (privateDnsProbeCidrs.isNotEmpty && outboundTags.contains('block')) {
     managedRules.add({
       'network': 'tcp',
       'port': _androidTunDnsTlsPort,
@@ -804,7 +908,11 @@ bool _applyRoutingSettings(Map<String, dynamic> decoded,
   final dns = _ensureMap(decoded, 'dns');
   final existingDnsRules = _coerceMapList(dns['rules']);
   final preservedDnsRules = existingDnsRules
-      .where((rule) => !_isManagedDnsRule(rule))
+      .where(
+        (rule) =>
+            !_isManagedDnsRule(rule) &&
+            !_isManagedProxyServerDnsRule(rule, proxyServerDomains),
+      )
       .toList(growable: false);
   final managedDnsRules = <Map<String, dynamic>>[];
   if (hasDirectOutbound) {
@@ -913,6 +1021,99 @@ Map<String, dynamic> _buildBundledRuleSet({
   };
 }
 
+void _repairManagedDnsResolver(Map<String, dynamic> decoded) {
+  final outbounds = decoded['outbounds'];
+  if (outbounds is! List<dynamic>) {
+    return;
+  }
+
+  final taggedOutbounds = <String, Map<String, dynamic>>{};
+  for (final outbound in outbounds.whereType<Map<String, dynamic>>()) {
+    final tag = outbound['tag']?.toString().trim();
+    if (tag != null && tag.isNotEmpty) {
+      taggedOutbounds[tag] = outbound;
+    }
+  }
+
+  final resolver = taggedOutbounds[_dnsResolverOutboundTag];
+  if (resolver == null) {
+    return;
+  }
+
+  void removeInvalidResolver() {
+    outbounds.removeWhere(
+      (outbound) =>
+          outbound is Map &&
+          outbound['tag']?.toString().trim() == _dnsResolverOutboundTag,
+    );
+  }
+
+  if (resolver['type']?.toString().trim() != 'urltest') {
+    removeInvalidResolver();
+    return;
+  }
+
+  bool isLeafProxyMember(String tag) {
+    if (tag == _dnsResolverOutboundTag) {
+      return false;
+    }
+    final outbound = taggedOutbounds[tag];
+    if (outbound == null) {
+      return false;
+    }
+    return switch (outbound['type']?.toString().trim()) {
+      'selector' || 'urltest' || 'direct' || 'dns' || 'block' => false,
+      null || '' => false,
+      _ => true,
+    };
+  }
+
+  List<String>? tierMembers(String tierTag) {
+    final tier = taggedOutbounds[tierTag];
+    if (tier == null) {
+      return null;
+    }
+    final members = _dedupeStrings(_coerceStringList(tier['outbounds']));
+    if (members.isEmpty || !members.every(isLeafProxyMember)) {
+      // An existing tier with no usable raw members is malformed. Returning an
+      // empty list distinguishes that from an intentionally absent tier.
+      return const <String>[];
+    }
+    return members;
+  }
+
+  final directMembers = tierMembers('direct-auto');
+  final cdnMembers = tierMembers('cdn-auto');
+  final hasTierTopology = directMembers != null || cdnMembers != null;
+
+  late final List<String> resolverMembers;
+  if (hasTierTopology) {
+    if ((directMembers != null && directMembers.isEmpty) ||
+        (cdnMembers != null && cdnMembers.isEmpty)) {
+      removeInvalidResolver();
+      return;
+    }
+    resolverMembers = _dedupeStrings([
+      ...?cdnMembers,
+      ...?directMembers,
+    ]);
+  } else {
+    resolverMembers = _dedupeStrings(_coerceStringList(resolver['outbounds']));
+    if (!resolverMembers.every(isLeafProxyMember)) {
+      removeInvalidResolver();
+      return;
+    }
+  }
+
+  if (resolverMembers.isEmpty) {
+    removeInvalidResolver();
+    return;
+  }
+
+  resolver['outbounds'] = resolverMembers;
+  resolver['interrupt_exist_connections'] = false;
+}
+
 Map<String, dynamic> _ensureMap(Map<String, dynamic> source, String key) {
   final existing = source[key];
   if (existing is Map<String, dynamic>) {
@@ -934,21 +1135,31 @@ void _ensureManagedDnsServers(
   required VpnRoutingSettings routingSettings,
   required bool hasDirectOutbound,
   required String? proxyOutboundTag,
+  required Set<String> availableDetourTags,
 }) {
   final dns = _ensureMap(decoded, 'dns');
   final servers = _ensureList<Map<String, dynamic>>(dns, 'servers');
+  // Preserve only the dedicated resolver installed by the cloud config
+  // builder. Keeping any arbitrary still-existing outbound here would make a
+  // stale node-specific detour survive later routing-mode changes.
+  final managedResolverDetours =
+      availableDetourTags.contains(_dnsResolverOutboundTag)
+          ? const <String>{_dnsResolverOutboundTag}
+          : const <String>{};
   if (proxyOutboundTag != null) {
     _upsertDnsServer(
       servers,
       tag: _dnsRemoteTag,
       address: _dnsRemoteAddress,
       detour: proxyOutboundTag,
+      preserveExistingDetourFrom: managedResolverDetours,
     );
     _upsertDnsServer(
       servers,
       tag: _dnsRemoteFallbackTag,
       address: _dnsRemoteFallbackAddress,
       detour: proxyOutboundTag,
+      preserveExistingDetourFrom: managedResolverDetours,
     );
   }
   if (!hasDirectOutbound) {
@@ -995,13 +1206,23 @@ void _upsertDnsServer(
   required String tag,
   required String address,
   required String detour,
+  Set<String> preserveExistingDetourFrom = const <String>{},
 }) {
   final index =
       servers.indexWhere((server) => server['tag']?.toString() == tag);
+  final existingDetour =
+      index == -1 ? null : servers[index]['detour']?.toString().trim();
+  final effectiveDetour = existingDetour != null &&
+          existingDetour.isNotEmpty &&
+          existingDetour != 'dns-out' &&
+          existingDetour != 'block' &&
+          preserveExistingDetourFrom.contains(existingDetour)
+      ? existingDetour
+      : detour;
   final next = <String, dynamic>{
     'tag': tag,
     'address': address,
-    'detour': detour,
+    'detour': effectiveDetour,
   };
   if (index == -1) {
     servers.add(next);
@@ -1010,7 +1231,7 @@ void _upsertDnsServer(
   servers[index]
     ..['tag'] = tag
     ..['address'] = address
-    ..['detour'] = detour;
+    ..['detour'] = effectiveDetour;
 }
 
 List<T> _ensureList<T>(Map<String, dynamic> source, String key) {
@@ -1167,27 +1388,19 @@ String? _normalizeTunSubnetCidr(String cidr) {
       '${networkValue & 0xff}/$prefixLength';
 }
 
-bool _containsAndroidPrivateDnsCompatRule(
-  List<Map<String, dynamic>> rules,
+bool _isAndroidPrivateDnsCompatRule(
+  Map<String, dynamic> rule,
   List<String> probeCidrs,
 ) {
   final expectedCidrs = probeCidrs.toSet();
-  for (final rule in rules) {
-    if (rule['outbound']?.toString().trim() != 'block') {
-      continue;
-    }
-    if (rule['network']?.toString().trim().toLowerCase() != 'tcp') {
-      continue;
-    }
-    if (!_matchesPort(rule['port'], _androidTunDnsTlsPort)) {
-      continue;
-    }
-    final cidrs = _coerceStringList(rule['ip_cidr']).toSet();
-    if (expectedCidrs.every(cidrs.contains)) {
-      return true;
-    }
+  if (expectedCidrs.isEmpty ||
+      rule['outbound']?.toString().trim() != 'block' ||
+      rule['network']?.toString().trim().toLowerCase() != 'tcp' ||
+      !_matchesPort(rule['port'], _androidTunDnsTlsPort)) {
+    return false;
   }
-  return false;
+  final cidrs = _coerceStringList(rule['ip_cidr']).toSet();
+  return expectedCidrs.every(cidrs.contains);
 }
 
 List<String> _coerceStringList(dynamic value) {
@@ -1308,6 +1521,15 @@ bool _isManagedDnsRule(Map<String, dynamic> rule) {
     return true;
   }
   return false;
+}
+
+bool _isManagedProxyServerDnsRule(
+  Map<String, dynamic> rule,
+  Set<String> proxyServerDomains,
+) {
+  return proxyServerDomains.isNotEmpty &&
+      rule['server']?.toString().trim() == _dnsBootstrapTag &&
+      _sameStringSet(rule['domain'], proxyServerDomains);
 }
 
 bool _isCatchAllDnsRule(Map<String, dynamic> rule) {

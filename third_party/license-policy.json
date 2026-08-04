@@ -1,0 +1,35 @@
+{
+  "acknowledgements": {
+    "incompatible": {},
+    "strong-copyleft": {},
+    "unknown": {}
+  },
+  "failOn": [
+    "incompatible",
+    "missing-license-text",
+    "strong-copyleft",
+    "unknown"
+  ],
+  "licenseMarkers": {
+    "incompatible": [
+      "AGPL-",
+      "BUSL-",
+      "CC-BY-NC-",
+      "Commons-Clause",
+      "LicenseRef-Proprietary",
+      "SSPL-"
+    ],
+    "strong-copyleft": [
+      "GPL-1.0",
+      "GPL-2.0",
+      "GPL-3.0"
+    ],
+    "weak-copyleft": [
+      "CDDL-",
+      "EPL-",
+      "LGPL-",
+      "MPL-"
+    ]
+  },
+  "policyVersion": 1
+}

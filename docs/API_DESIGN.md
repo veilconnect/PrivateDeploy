@@ -4,8 +4,19 @@
 
 **Base URL:** `https://api.privatedeploy.local:8443`
 **版本:** v1
-**认证方式:** 默认绑定本地回环、无需登录；当 API 监听非回环地址时必须设置
-`API_AUTH_TOKEN`（请求头 `Authorization: Bearer <token>`，见 `api/config`）。
+**认证方式:** token 认证**默认开启**。优先读 `API_AUTH_TOKEN` / `API_AUTH_TOKEN_FILE`；
+两者都未设置时，服务端在首次启动生成持久随机 token 文件（权限 0600，默认路径
+`<DB 目录>/api_auth_token`，可用 `API_AUTH_TOKEN_PATH` 覆盖；启动日志只打印路径，
+不打印 token）。请求头支持 `Authorization: Bearer <token>`、`X-PrivateDeploy-Token`
+或 `X-API-Key`。`/api/v1/health`、`/api/v1/version`、`/api/v1/openapi.yaml` 免 token
+（仍受回环限制）。确需无认证运行必须显式设置 `API_ALLOW_UNAUTHENTICATED=true`，
+且仅对回环监听生效；API 监听非回环地址（`API_ALLOW_REMOTE=true` 或非回环
+`API_HOST`）时必须显式配置 `API_AUTH_TOKEN`/`API_AUTH_TOKEN_FILE`，自动生成的
+token 不满足该要求（fail-closed）。
+幂等请求指纹使用独立的持久随机密钥（默认
+`<DB 目录>/api_idempotency_secret`），不会从 API token 派生；可用
+`API_IDEMPOTENCY_SECRET` / `API_IDEMPOTENCY_SECRET_FILE` 或
+`API_IDEMPOTENCY_SECRET_PATH` 覆盖。
 **数据格式:** JSON
 
 > **权威来源：** 实际可用端点以 Gin 路由(`api/routes/routes.go`)和运行时生成的
@@ -116,37 +127,67 @@ Response:
 }
 ```
 
-### 创建服务器
+### 创建服务器（异步）
+创建是**异步操作**：请求体必须显式指定 `provider`（变更类接口不再依赖全局
+active provider），服务端立即返回 `202 Accepted` 和一个持久化的 operation 记录，
+用 `GET /api/v1/cloud/operations/:id` 轮询 `pending → running → succeeded/failed`。
+可选请求头 `Idempotency-Key`：相同 key 的重复提交返回同一个 operation，
+不会重复建机。operation 的 `result`/`error` 不含任何凭据；节点完整连接信息走
+`GET /api/v1/cloud/instances`。
+
 ```http
 POST /api/v1/cloud/instances
 Authorization: Bearer <token>
+Idempotency-Key: deploy-tokyo-2-attempt1
 Content-Type: application/json
 
 {
   "provider": "vultr",
   "region": "nrt",
   "plan": "vc2-1c-1gb",
-  "label": "Tokyo-Node-2",
-  "osId": "ubuntu-22.04",
-  "enableIpv6": true
+  "label": "Tokyo-Node-2"
 }
 
-Response:
+Response: 202 Accepted
+Location: /api/v1/cloud/operations/op_1a2b3c...
 {
-  "instance": {
-    "id": "vultr-def456",
-    "label": "Tokyo-Node-2",
-    "status": "pending",
-    "region": "nrt",
-    "plan": "vc2-1c-1gb",
-    "createdAt": "2025-11-04T11:00:00Z"
+  "success": true,
+  "data": {
+    "operation": {
+      "id": "op_1a2b3c...",
+      "type": "create_instance",
+      "provider": "vultr",
+      "status": "pending",
+      "requestSummary": "{\"label\":\"Tokyo-Node-2\",\"plan\":\"vc2-1c-1gb\",\"region\":\"nrt\"}"
+    }
   }
 }
 ```
 
-### 删除服务器
+### 查询异步操作
 ```http
-DELETE /api/v1/cloud/instances/:id
+GET /api/v1/cloud/operations/:id
+Authorization: Bearer <token>
+
+Response:
+{
+  "success": true,
+  "data": {
+    "operation": {
+      "id": "op_1a2b3c...",
+      "status": "succeeded",
+      "result": "{\"id\":\"vultr-def456\",\"label\":\"Tokyo-Node-2\",\"region\":\"nrt\",...}"
+    }
+  }
+}
+```
+operation 持久化于 SQLite：进程重启不会静默丢失——被重启打断的 operation 会被
+标记为 `failed` 并注明原因，提示先到服务商控制台核对实例状态再重试。
+
+### 删除服务器
+必须用 `provider` 查询参数显式指定实例所属服务商（不依赖全局 active provider）：
+```http
+DELETE /api/v1/cloud/instances/:id?provider=vultr
 Authorization: Bearer <token>
 
 Response:

@@ -65,11 +65,20 @@ jobs:
       - name: Run code generation
         run: flutter pub run build_runner build --delete-conflicting-outputs
 
+      # No --no-fatal-infos escape hatch: analysis_options.yaml now enables
+      # flutter_lints and the tree is clean, so any new finding must fail CI.
       - name: Analyze code
-        run: flutter analyze --no-fatal-infos
+        run: flutter analyze
 
       - name: Check formatting
         run: dart format --set-exit-if-changed lib test
+
+      # Real gate (no continue-on-error): dependency_validator is declared in
+      # pubspec dev_dependencies with its exceptions documented in
+      # dart_dependency_validator.yaml, so a missing/unused dependency fails
+      # the build instead of being silently swallowed.
+      - name: Dependency audit
+        run: dart run dependency_validator
 
   test-unit:
     name: Unit Tests
@@ -108,10 +117,49 @@ jobs:
           files: coverage/lcov.info
           fail_ci_if_error: false
 
+  # mobile-only pushes used to skip every Go test: the desktop↔mobile deploy
+  # parity suite (bridge/cloud/deploy) reads the Dart sources under
+  # mobile/lib/features/cloud/, so a mobile/** change can break it without any
+  # Go file changing — and mobile/gomobile (the vpncore glue the AAR is built
+  # from) has its own module and tests. Run both here so mobile changes are
+  # gated on them.
+  test-go:
+    name: Go Tests (parity + gomobile)
+    runs-on: ubuntu-latest
+    needs: version-consistency
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Pin to the ROOT go.mod (1.25.11), not mobile/gomobile's (1.25.0):
+      # the root requirement is the higher of the two, so one toolchain
+      # satisfies both modules without a mid-job toolchain re-download.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            mobile/gomobile/go.sum
+
+      # Desktop↔mobile parity enforcement lives in the root Go module.
+      - name: Run deploy parity tests (bridge/cloud/deploy)
+        run: go test ./bridge/cloud/deploy/...
+        working-directory: ${{ github.workspace }}
+
+      # The gomobile module is separate from the root module; test it from
+      # its own directory.
+      - name: Run gomobile module tests
+        run: go test ./...
+        working-directory: ${{ github.workspace }}/mobile/gomobile
+
   build-android:
     name: Build Android (CI)
     runs-on: ubuntu-latest
-    needs: test-unit
+    # Gate the (expensive) APK build on both test jobs: the Dart unit suite
+    # and the Go parity/gomobile suite, so a red test never wastes a build.
+    needs: [test-unit, test-go]
 
     steps:
       - name: Checkout code
@@ -140,7 +188,7 @@ jobs:
 
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260312152759-81488f6aeb60
           gomobile init
 
       - name: Build Go Mobile AAR
@@ -203,7 +251,7 @@ jobs:
   notify:
     name: Notify Build Status
     runs-on: ubuntu-latest
-    needs: [lint, test-unit, build-android]
+    needs: [lint, test-unit, test-go, build-android]
     if: always()
 
     steps:
@@ -218,6 +266,7 @@ jobs:
         run: |
           if [ "${{ needs.lint.result }}" == "success" ] && \
              [ "${{ needs.test-unit.result }}" == "success" ] && \
+             [ "${{ needs.test-go.result }}" == "success" ] && \
              [ "${{ needs.build-android.result }}" == "success" ]; then
             echo "✅ All CI jobs passed!"
             echo "BUILD_STATUS=success" >> $GITHUB_ENV
@@ -234,4 +283,5 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Unit Tests | ${{ needs.test-unit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Tests (parity + gomobile) | ${{ needs.test-go.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Android | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY

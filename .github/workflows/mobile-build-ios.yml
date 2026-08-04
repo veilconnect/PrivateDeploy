@@ -1,4 +1,4 @@
-name: Mobile - Build iOS
+name: Mobile - iOS Simulator CI
 
 on:
   # iOS 构建跑在 macOS runner 上,private 仓按 10× 计费,会迅速抽干每月共享的
@@ -25,9 +25,9 @@ jobs:
         with:
           go-version-file: mobile/gomobile/go.mod
 
-      - name: Install gomobile
+      - name: Install pinned gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260312152759-81488f6aeb60
           gomobile init
 
       - name: Build Framework
@@ -43,53 +43,10 @@ jobs:
           path: mobile/ios/VPNCore.xcframework
           retention-days: 7
 
-  build-ipa:
-    name: Build iOS IPA
-    runs-on: macos-latest
-    needs: build-gomobile
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.35.7'
-          channel: 'stable'
-          cache: true
-
-      - name: Download Framework artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: vpncore-framework
-          path: mobile/ios/VPNCore.xcframework
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Run code generation
-        run: flutter pub run build_runner build --delete-conflicting-outputs
-
-      - name: Build iOS (no codesign)
-        run: flutter build ios --release --no-codesign
-
-      - name: Create IPA
-        run: |
-          cd build/ios/iphoneos
-          mkdir Payload
-          mv Runner.app Payload/
-          zip -r app-release.ipa Payload
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-ipa
-          path: build/ios/iphoneos/app-release.ipa
-          retention-days: 30
-
   build-ios-simulator:
-    name: Build iOS Simulator
+    # Simulator bundles are never IPAs and are not publishable. The signed
+    # device archive/export path lives only in mobile-release.yml.
+    name: Build iOS Simulator (CI only)
     runs-on: macos-latest
     needs: build-gomobile
 

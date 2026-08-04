@@ -260,7 +260,12 @@ Future<void> handleNodesConnect({
   required CloudProvider cloudProvider,
   required Future<void> Function(CloudInstance instance) onUseCloudNode,
 }) async {
-  final successMessage = AppLocalizations.of(context)!.vpnConnectedSuccess;
+  // Capture everything we need from the context before the first await —
+  // the BuildContext must not be dereferenced across async gaps.
+  final l10nConnect = AppLocalizations.of(context)!;
+  final successMessage = l10nConnect.vpnConnectedSuccess;
+  final routingSettings =
+      context.read<AppSettingsProvider>().vpnRoutingSettings;
   await connectSelectedProfile(
     context: context,
     vpnProvider: vpnProvider,
@@ -310,7 +315,7 @@ Future<void> handleNodesConnect({
     cloudProvider.saveLatencyCheck(
       firstTried.id,
       CloudLatencyCheck.failure(
-        error: AppLocalizations.of(context)!.restoreConnectionFailed,
+        error: l10nConnect.restoreConnectionFailed,
         updatedAt: DateTime.now(),
         mode: CloudProbeMode.quick,
       ),
@@ -355,7 +360,7 @@ Future<void> handleNodesConnect({
     cloudProvider.saveLatencyCheck(
       next.id,
       CloudLatencyCheck.failure(
-        error: AppLocalizations.of(context)!.restoreConnectionFailed,
+        error: l10nConnect.restoreConnectionFailed,
         updatedAt: DateTime.now(),
         mode: CloudProbeMode.quick,
       ),
@@ -370,7 +375,9 @@ Future<void> handleNodesConnect({
       profileProvider: profileProvider,
       vpnProvider: vpnProvider,
       triedProfileNames: tried,
-      routingSettings: context.read<AppSettingsProvider>().vpnRoutingSettings,
+      // Captured before the first await; reading it from the context here
+      // would dereference it across async gaps.
+      routingSettings: routingSettings,
     );
     if (switched ||
         (vpnProvider.status == VpnStatus.connected &&
@@ -469,6 +476,10 @@ Future<void> connectSelectedProfile({
     if (vpnProvider.status == VpnStatus.connected) {
       await vpnProvider.disconnect();
     }
+    // The waits above are async gaps — stop if the screen went away.
+    if (!context.mounted) {
+      return;
+    }
   }
 
   if (vpnProvider.isLoading ||
@@ -512,6 +523,11 @@ Future<void> connectSelectedProfile({
         return;
       }
     }
+    // saveProfileContent above is an async gap — re-check before any further
+    // context use below.
+    if (!context.mounted) {
+      return;
+    }
   }
 
   // A confirmed-deleted node ("已在云端删除") must never be connected — its VPS
@@ -537,6 +553,10 @@ Future<void> connectSelectedProfile({
       onUseCloudNode: onUseCloudNode,
     );
     if (usedFastestNode) {
+      return;
+    }
+    // _useFastestReadyCloudNode above is an async gap.
+    if (!context.mounted) {
       return;
     }
   }
@@ -668,7 +688,7 @@ Future<bool> _useFastestReadyCloudNode({
     final metricSuffix = cachedThroughput != null && cachedThroughput > 0
         ? ' (${cachedThroughput >= 100 ? cachedThroughput.toStringAsFixed(0) : cachedThroughput >= 10 ? cachedThroughput.toStringAsFixed(1) : cachedThroughput.toStringAsFixed(2)} Mbps)'
         : cachedLatencyMs != null
-            ? ' (${cachedLatencyMs} ms)'
+            ? ' ($cachedLatencyMs ms)'
             : '';
     final endpointSuffix = cachedEndpoint != null && cachedEndpoint.isNotEmpty
         ? ' via $cachedEndpoint'

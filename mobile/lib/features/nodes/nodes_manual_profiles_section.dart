@@ -17,7 +17,7 @@ class NodesManualProfilesSection extends StatelessWidget {
   final ValueChanged<Profile> onDelete;
 
   const NodesManualProfilesSection({
-    Key? key,
+    super.key,
     required this.profiles,
     required this.activeProfileId,
     this.isConnected = false,
@@ -27,7 +27,7 @@ class NodesManualProfilesSection extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onDelete,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

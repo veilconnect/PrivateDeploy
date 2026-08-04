@@ -196,7 +196,7 @@ fpm -s dir -t deb \
   --description "$DESCRIPTION" \
   --url "$HOMEPAGE" \
   --maintainer "$MAINTAINER" \
-  --license "MIT" \
+  --license "GPL-3.0" \
   --category "net" \
   --depends "libgtk-3-0" \
   --depends "libwebkit2gtk-4.1-0" \
@@ -214,7 +214,7 @@ fpm -s dir -t rpm \
   --description "$DESCRIPTION" \
   --url "$HOMEPAGE" \
   --maintainer "$MAINTAINER" \
-  --license "MIT" \
+  --license "GPL-3.0" \
   --category "Applications/Internet" \
   --depends "gtk3" \
   --depends "webkit2gtk4.1" \

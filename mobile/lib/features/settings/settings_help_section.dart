@@ -6,7 +6,7 @@ import '../cdn/cdn_settings_screen.dart';
 import '../help/cellular_help_screen.dart';
 
 class SettingsHelpSection extends StatelessWidget {
-  const SettingsHelpSection({Key? key}) : super(key: key);
+  const SettingsHelpSection({super.key});
 
   @override
   Widget build(BuildContext context) {

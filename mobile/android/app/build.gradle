@@ -53,8 +53,19 @@ def releaseSigning = [
 
 def hasReleaseSigning = releaseSigning.values().every { it }
 if (hasReleaseSigning && !file(releaseSigning.storeFile).exists()) {
-    logger.lifecycle("[PrivateDeploy] Release keystore not found at ${releaseSigning.storeFile}; release builds will be unsigned until signing credentials are provided.")
+    logger.lifecycle("[PrivateDeploy] Release keystore was not found; release builds will be unsigned unless strict signing is enabled.")
     hasReleaseSigning = false
+}
+
+// CI stable-release jobs set this flag.  It deliberately turns the historical
+// "build an unsigned release" fallback into a hard failure, so an artifact
+// named release can never silently lose its signature because a secret was
+// missing or a keystore path was wrong.
+def requireReleaseSigning = System.getenv('PRIVATEDEPLOY_REQUIRE_RELEASE_SIGNING') == 'true'
+if (requireReleaseSigning && !hasReleaseSigning) {
+    throw new GradleException(
+        'Stable Android release signing is required, but the keystore or one or more signing values are missing.'
+    )
 }
 
 android {
@@ -127,6 +138,8 @@ repositories {
 
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+
+    testImplementation 'junit:junit:4.13.2'
 
     // VPN Core (gomobile AAR)
     implementation(name: 'vpncore', ext: 'aar')

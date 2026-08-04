@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,13 @@ type SSHSession struct {
 
 // NewSession establishes a new SSH connection.
 func NewSession(host string, port int, user string, auth ssh.AuthMethod) (*SSHSession, error) {
+	return NewSessionContext(context.Background(), host, port, user, auth)
+}
+
+// NewSessionContext establishes SSH with cancellation propagated through the
+// TCP dial and SSH handshake. The fixed dial timeout remains a ceiling when
+// the caller's deadline is longer.
+func NewSessionContext(ctx context.Context, host string, port int, user string, auth ssh.AuthMethod) (*SSHSession, error) {
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{auth},
@@ -28,10 +36,25 @@ func NewSession(host string, port int, user string, auth ssh.AuthMethod) (*SSHSe
 	}
 
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	client, err := ssh.Dial("tcp", addr, config)
+	netConn, err := (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("SSH connect to %s failed: %w", addr, err)
 	}
+	handshakeDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = netConn.Close()
+		case <-handshakeDone:
+		}
+	}()
+	conn, chans, reqs, err := ssh.NewClientConn(netConn, addr, config)
+	close(handshakeDone)
+	if err != nil {
+		_ = netConn.Close()
+		return nil, fmt.Errorf("SSH handshake with %s failed: %w", addr, err)
+	}
+	client := ssh.NewClient(conn, chans, reqs)
 
 	return &SSHSession{
 		client: client,
@@ -48,6 +71,10 @@ func (s *SSHSession) TestConnection() error {
 
 // RunCommand executes a single command and returns its combined output.
 func (s *SSHSession) RunCommand(cmd string) (string, error) {
+	return s.RunCommandContext(context.Background(), cmd)
+}
+
+func (s *SSHSession) RunCommandContext(ctx context.Context, cmd string) (string, error) {
 	session, err := s.client.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
@@ -58,9 +85,19 @@ func (s *SSHSession) RunCommand(cmd string) (string, error) {
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
-	if err := session.Run(cmd); err != nil {
+	done := make(chan error, 1)
+	go func() { done <- session.Run(cmd) }()
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-ctx.Done():
+		_ = session.Close()
+		<-done
+		return "", ctx.Err()
+	}
+	if runErr != nil {
 		combined := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
-		return combined, fmt.Errorf("command failed: %w\noutput: %s", err, combined)
+		return combined, fmt.Errorf("command failed: %w\noutput: %s", runErr, combined)
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
@@ -69,6 +106,10 @@ func (s *SSHSession) RunCommand(cmd string) (string, error) {
 // RunScript pipes a script into bash -s and streams output to the provided writer.
 // If out is nil, output is discarded.
 func (s *SSHSession) RunScript(script string, out io.Writer) error {
+	return s.RunScriptContext(context.Background(), script, out)
+}
+
+func (s *SSHSession) RunScriptContext(ctx context.Context, script string, out io.Writer) error {
 	session, err := s.client.NewSession()
 	if err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
@@ -81,8 +122,17 @@ func (s *SSHSession) RunScript(script string, out io.Writer) error {
 		session.Stderr = out
 	}
 
-	if err := session.Run("bash -s"); err != nil {
-		return fmt.Errorf("script execution failed: %w", err)
+	done := make(chan error, 1)
+	go func() { done <- session.Run("bash -s") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("script execution failed: %w", err)
+		}
+	case <-ctx.Done():
+		_ = session.Close()
+		<-done
+		return ctx.Err()
 	}
 
 	return nil
@@ -97,12 +147,19 @@ type ServerInfo struct {
 
 // DetectServer gathers basic information about the remote server.
 func (s *SSHSession) DetectServer() (*ServerInfo, error) {
-	osInfo, _ := s.RunCommand("cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'\"' -f2")
+	return s.DetectServerContext(context.Background())
+}
+
+func (s *SSHSession) DetectServerContext(ctx context.Context) (*ServerInfo, error) {
+	osInfo, _ := s.RunCommandContext(ctx, "cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'\"' -f2")
 	if osInfo == "" {
-		osInfo, _ = s.RunCommand("uname -s")
+		osInfo, _ = s.RunCommandContext(ctx, "uname -s")
 	}
-	arch, _ := s.RunCommand("uname -m")
-	memStr, _ := s.RunCommand("grep MemTotal /proc/meminfo 2>/dev/null | awk '{print int($2/1024)}'")
+	arch, _ := s.RunCommandContext(ctx, "uname -m")
+	memStr, _ := s.RunCommandContext(ctx, "grep MemTotal /proc/meminfo 2>/dev/null | awk '{print int($2/1024)}'")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	memMB := 0
 	fmt.Sscanf(memStr, "%d", &memMB)
@@ -116,14 +173,30 @@ func (s *SSHSession) DetectServer() (*ServerInfo, error) {
 
 // CheckPorts checks which of the given ports are currently listening.
 func (s *SSHSession) CheckPorts(ports []int) (map[int]bool, error) {
+	return s.checkPortsContext(context.Background(), ports, "tcp")
+}
+
+func (s *SSHSession) CheckTCPPortsContext(ctx context.Context, ports []int) (map[int]bool, error) {
+	return s.checkPortsContext(ctx, ports, "tcp")
+}
+
+func (s *SSHSession) CheckUDPPortsContext(ctx context.Context, ports []int) (map[int]bool, error) {
+	return s.checkPortsContext(ctx, ports, "udp")
+}
+
+func (s *SSHSession) checkPortsContext(ctx context.Context, ports []int, network string) (map[int]bool, error) {
 	result := make(map[int]bool, len(ports))
 	for _, p := range ports {
 		result[p] = false
 	}
 
-	output, err := s.RunCommand("ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null")
+	command := "ss -H -ltn 2>/dev/null || netstat -ltn 2>/dev/null"
+	if network == "udp" {
+		command = "ss -H -lun 2>/dev/null || netstat -lun 2>/dev/null"
+	}
+	output, err := s.RunCommandContext(ctx, command)
 	if err != nil {
-		return result, nil // non-fatal
+		return result, err
 	}
 
 	for _, p := range ports {

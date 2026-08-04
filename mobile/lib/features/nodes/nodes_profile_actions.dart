@@ -108,6 +108,9 @@ Future<void> showImportProfileFlow({
   if (request == null || !context.mounted) {
     return;
   }
+  // Capture localized strings before the decrypt await below — the context
+  // must not be dereferenced across async gaps.
+  final l10nImport = AppLocalizations.of(context)!;
 
   try {
     final payload = await EncryptedShareCodec.decrypt(
@@ -126,7 +129,7 @@ Future<void> showImportProfileFlow({
       case EncryptedShareKind.profileConfig:
         final configError = validateSingboxConfig(
           payload.content,
-          AppLocalizations.of(context)!,
+          l10nImport,
         );
         if (configError != null) {
           throw FormatException(configError);
@@ -303,11 +306,12 @@ Future<ProfileSpeedResult> testProfileSpeed({
       );
       await vpnProvider.disconnect();
     } else {
-      final l10n = AppLocalizations.of(context)!;
+      // Reuse the l10n captured before the first await — the context must not
+      // be dereferenced across the connect() async gap.
       result = ProfileSpeedResult(
         error: vpnProvider.error == null
-            ? l10n.failedToConnectSpeedTestTunnel
-            : localizeVpnStatusMessage(vpnProvider.error, l10n),
+            ? l10nEarly.failedToConnectSpeedTestTunnel
+            : localizeVpnStatusMessage(vpnProvider.error, l10nEarly),
       );
     }
   } finally {

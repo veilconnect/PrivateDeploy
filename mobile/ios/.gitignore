@@ -27,6 +27,13 @@ Flutter/flutter_export_environment.sh
 ServiceDefinitions.json
 Runner/GeneratedPluginRegistrant.*
 
+# Local release-signing material. CI decodes these under RUNNER_TEMP; only the
+# redacted ExportOptions.example.plist template belongs in source control.
+*.p12
+*.mobileprovision
+ExportOptions.plist
+!ExportOptions.example.plist
+
 # Exceptions to above rules.
 !default.mode1v3
 !default.mode2v3

@@ -33,6 +33,50 @@ void main() {
       );
     });
 
+    // Regression test: a Vultr instance that was already deleted out-of-band
+    // (console, expired trial, etc.) makes the real DELETE call 404. That
+    // still satisfies "this instance should no longer exist", so
+    // deleteInstance must succeed instead of leaving the local record
+    // permanently stuck (un-deletable through the normal UI flow). Mirrors
+    // the same fix + test on the desktop side
+    // (bridge/cloud/providers/vultr/destroy_instance_test.go).
+    test('deleteInstance treats 404 as already gone', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': 'Instance not found'}));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = VultrCloudClient('test-key', dio: dio);
+
+      await expectLater(client.deleteInstance('inst-gone'), completes);
+    });
+
+    test('deleteInstance still surfaces a real API failure', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': 'boom'}));
+        await request.response.close();
+      });
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final client = VultrCloudClient('test-key', dio: dio);
+
+      expect(
+        () => client.deleteInstance('inst-gone'),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('loads plans from Vultr json payload', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));

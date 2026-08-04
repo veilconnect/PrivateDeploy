@@ -1,10 +1,33 @@
 package digitalocean
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"privatedeploy/bridge/cloud"
 )
+
+func TestConcurrentConfigLoadSaveIsRaceFree(t *testing.T) {
+	t.Setenv("PRIVATEDEPLOY_BASE_PATH", t.TempDir())
+	p := New(&cloud.ProviderConfig{Provider: "digitalocean", APIKey: "initial-key"})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			_ = p.SaveConfig(&cloud.ProviderConfig{Provider: "digitalocean", APIKey: fmt.Sprintf("key-%d", i)})
+		}(i)
+		go func() {
+			defer wg.Done()
+			_, _ = p.ensureConfig()
+		}()
+	}
+	wg.Wait()
+	if _, err := p.ensureConfig(); err != nil {
+		t.Fatalf("final config unavailable: %v", err)
+	}
+}
 
 func TestNew_NilConfig(t *testing.T) {
 	p := New(nil)

@@ -628,6 +628,22 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
 
   const createInstance = async (options: { label: string; region: string; plan: string }) => {
     creatingInstance.value = true
+    // Provider CreateInstance (Vultr/DO) blocks synchronously until the VPS is
+    // active and its protocol ports answer — commonly several minutes, up to
+    // ~15+8 on a slow box. Without this placeholder the node is invisible in
+    // the list for that entire wait; show it immediately as 'deploying' so the
+    // user sees something happened right away instead of nothing.
+    const placeholderId = `deploying-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const placeholder: ManagedCloudNode = {
+      instanceId: placeholderId,
+      label: options.label,
+      region: options.region,
+      plan: options.plan,
+      provider: currentProvider.value,
+      statusText: 'deploying',
+    }
+    instances.value = [placeholder, ...instances.value]
+    instancesUpdatedAt.value = Date.now()
     try {
       const rawNode = await retryWithBackoff(
         () => CreateCloudInstance(options),
@@ -638,7 +654,10 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
       if (node.instanceId) {
         await ensureRegionAvailability(node.region || '')
         const cloudNode: ManagedCloudNode = { ...node, statusText: 'applying' }
-        instances.value = [cloudNode, ...instances.value.filter((n) => n.instanceId !== node.instanceId)]
+        instances.value = [
+          cloudNode,
+          ...instances.value.filter((n) => n.instanceId !== node.instanceId && n.instanceId !== placeholderId),
+        ]
         instancesUpdatedAt.value = Date.now()
         syncManualNodesIntoInstances()
         startAutoRefresh(true)
@@ -694,8 +713,18 @@ export function createInstanceSync(deps: InstanceSyncDeps) {
             logError('[CloudStore] Kernel start/restart failed after deployment:', error)
           }
         }
+      } else {
+        // No usable instance id came back — nothing to show in its place, so
+        // just drop the placeholder rather than leaving a permanent "deploying"
+        // ghost row.
+        instances.value = instances.value.filter((n) => n.instanceId !== placeholderId)
+        instancesUpdatedAt.value = Date.now()
       }
       return node
+    } catch (error) {
+      instances.value = instances.value.filter((n) => n.instanceId !== placeholderId)
+      instancesUpdatedAt.value = Date.now()
+      throw error
     } finally {
       creatingInstance.value = false
     }

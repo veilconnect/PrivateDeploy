@@ -19,6 +19,35 @@ patterns=(
   'CLOUDFLARE_API_TOKEN[[:space:]]*=[[:space:]]*['"'"'"'"'"']?[A-Za-z0-9_-]{20,}'
 )
 
+# Never allow release credential containers/configuration to be tracked, even
+# if a developer force-adds a path covered by .gitignore. `rg` follows ignore
+# rules, but `git ls-files` is the authoritative release input set.
+tracked_sensitive_re='(^|/)(key\.properties|ExportOptions\.plist|.*\.(jks|keystore|p12|pfx|mobileprovision))$'
+tracked_sensitive="$(git ls-files | grep -E "$tracked_sensitive_re" || true)"
+if [[ -n "$tracked_sensitive" ]]; then
+  echo "secret scan failed: tracked signing credential/configuration file(s):" >&2
+  printf '%s\n' "$tracked_sensitive" >&2
+  exit 1
+fi
+
+# Scan tracked working-tree files separately. Unlike the broad rg pass below,
+# git grep includes a force-added file even when an ignore rule matches it.
+git_grep_args=(--line-number -I --extended-regexp)
+for pattern in "${patterns[@]}"; do
+  git_grep_args+=(-e "$pattern")
+done
+git_paths=(
+  -- .
+  ':(exclude)scripts/secret_scan.sh'
+  ':(exclude).gitleaks.toml'
+  ':(exclude)frontend/src/views/CloudView/components/SSHConfigForm.vue'
+  ':(exclude)frontend/src/views/WizardView/components/StepCredentials.vue'
+)
+if git grep "${git_grep_args[@]}" "${git_paths[@]}"; then
+  echo "secret scan failed: possible credential material found in tracked files" >&2
+  exit 1
+fi
+
 args=(
   --hidden
   --line-number

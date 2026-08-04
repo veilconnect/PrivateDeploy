@@ -294,6 +294,61 @@ void main() {
       expect(vpnProvider.activeProfile, 'Test');
     });
 
+    test(
+        'keeps startup verification pending after native reports connected until egress is confirmed',
+        () async {
+      final dartProbeStarted = Completer<void>();
+      final dartProbeResult = Completer<String?>();
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () {
+          dartProbeStarted.complete();
+          return dartProbeResult.future;
+        },
+        softFailStartupConnectivityProbe: true,
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'startVpn':
+            return true;
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'probe pending',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      final connectFuture = vpnProvider.connect(
+        configJson: '{}',
+        profileName: 'Pending node',
+      );
+      await dartProbeStarted.future;
+
+      expect(vpnProvider.status, VpnStatus.connected);
+      expect(vpnProvider.isLoading, isTrue);
+      expect(vpnProvider.isStartupVerificationInProgress, isTrue);
+
+      dartProbeResult.complete('203.0.113.42');
+      expect(await connectFuture, isTrue);
+      expect(vpnProvider.isStartupVerificationInProgress, isFalse);
+      expect(vpnProvider.status, VpnStatus.connected);
+    });
+
     test('connect waits for the stability window before reporting success',
         () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -1256,22 +1311,16 @@ void main() {
     });
 
     test(
-        'refreshDiagnostics falls back to active cloud node IP when probes fail',
+        'refreshDiagnostics does not report an unverified cloud node IP or clear degraded state when probes fail',
         () async {
-      var fallbackCalls = 0;
+      var dartProbeCalls = 0;
       var egressProbeCalls = 0;
       vpnProvider = VpnProvider(
         fetchEgressIp: () async {
-          fallbackCalls += 1;
+          dartProbeCalls += 1;
           throw Exception('probe failed');
         },
       );
-      vpnProvider.setFallbackEgressIpResolver((activeProfile) {
-        if (activeProfile == 'Cloud: smoke-2603302014') {
-          return '198.51.100.14';
-        }
-        return null;
-      });
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(methodChannel, (call) async {
@@ -1282,7 +1331,7 @@ void main() {
             return {
               'running': true,
               'status': 'connected',
-              'message': null,
+              'message': VpnProvider.tunnelUpstreamDegradedMessage,
               'connected_at': 123,
               'uptime': 5,
             };
@@ -1315,12 +1364,137 @@ void main() {
       );
 
       expect(connected, true);
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.error, VpnProvider.tunnelUpstreamDegradedMessage);
 
       await vpnProvider.refreshDiagnostics();
 
-      expect(vpnProvider.diagnosticsEgressIp, '198.51.100.14');
-      expect(vpnProvider.diagnosticsError, isNull);
-      expect(fallbackCalls, 0);
+      expect(vpnProvider.diagnosticsEgressIp, isNull);
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.egressProbeFailureMessage,
+      );
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.error, VpnProvider.tunnelUpstreamDegradedMessage);
+      expect(dartProbeCalls, 1);
+    });
+
+    test(
+        'small byte increases from failed probes do not hide consecutive egress failure',
+        () async {
+      var downloadBytes = 0;
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 0,
+              'download_bytes': downloadBytes,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'getRecentLogs':
+            return const [];
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.loadStatus();
+
+      downloadBytes += 31 * 1024;
+      await vpnProvider.loadStats();
+      await vpnProvider.refreshDiagnostics();
+      expect(vpnProvider.health, VpnHealth.healthy);
+
+      downloadBytes += 31 * 1024;
+      await vpnProvider.loadStats();
+      await vpnProvider.refreshDiagnostics();
+
+      expect(vpnProvider.health, VpnHealth.degraded);
+      expect(vpnProvider.diagnosticsEgressIp, isNull);
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.egressProbeFailureMessage,
+      );
+    });
+
+    test(
+        'substantial download throughput prevents a flaky egress probe from keeping health degraded',
+        () async {
+      var downloadBytes = 0;
+      vpnProvider = VpnProvider(
+        fetchEgressIp: () async => throw Exception('probe failed'),
+      );
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+        switch (call.method) {
+          case 'getStatus':
+            return {
+              'running': true,
+              'status': 'connected',
+              'message': null,
+              'connected_at': 123,
+              'uptime': 5,
+            };
+          case 'getStats':
+            return {
+              'upload_bytes': 0,
+              'download_bytes': downloadBytes,
+              'upload_speed': 0,
+              'download_speed': 0,
+            };
+          case 'getRecentLogs':
+            return const [];
+          case 'getEgressIp':
+            return {
+              'ip': null,
+              'source': 'android_native',
+              'error': 'Timed out contacting public IP probe endpoints.',
+            };
+          case 'isRunning':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      await vpnProvider.loadStatus();
+      await vpnProvider.refreshDiagnostics();
+      await vpnProvider.refreshDiagnostics();
+      expect(vpnProvider.health, VpnHealth.degraded);
+
+      downloadBytes += 2 * 1024 * 1024;
+      await vpnProvider.loadStats();
+      await vpnProvider.refreshDiagnostics();
+
+      expect(vpnProvider.health, VpnHealth.healthy);
+      expect(vpnProvider.diagnosticsEgressIp, isNull);
+      expect(
+        vpnProvider.diagnosticsError,
+        VpnProvider.egressProbeFailureMessage,
+      );
     });
 
     test('refreshDiagnostics keeps route decisions when egress IP probe fails',

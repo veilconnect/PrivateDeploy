@@ -35,8 +35,16 @@ const (
 // DO-only trade-off — it adds a persistent root credential to the account in
 // exchange for recoverability.
 func (p *Provider) ensureManagedSSHKey(ctx context.Context) (int, string, error) {
-	if p.config == nil || strings.TrimSpace(p.config.APIKey) == "" {
-		return 0, "", cloud.ErrMissingAPIKey
+	// Provisioning is a read-modify-write operation spanning both the local
+	// secret store and the DigitalOcean account. Keep the entire sequence
+	// serialized per provider so concurrent instance/recovery requests cannot
+	// generate different private keys, register duplicate account keys, or
+	// overwrite the persisted private key after another caller has returned.
+	p.managedSSHKeyMu.Lock()
+	defer p.managedSSHKeyMu.Unlock()
+
+	if _, err := p.ensureConfig(); err != nil {
+		return 0, "", err
 	}
 
 	if privPEM, err := cloud.LoadSecret(p.configPath, managedSSHKeyScope); err == nil && strings.TrimSpace(privPEM) != "" {
@@ -62,7 +70,10 @@ func (p *Provider) ensureManagedSSHKey(ctx context.Context) (int, string, error)
 	if merr != nil {
 		return 0, "", merr
 	}
-	privPEM := string(pem.EncodeToMemory(pemBlock))
+	// The secret backend normalizes surrounding whitespace on load. Normalize
+	// the first-use return value as well so the provisioning caller and every
+	// subsequent caller receive byte-for-byte identical private-key material.
+	privPEM := strings.TrimSpace(string(pem.EncodeToMemory(pemBlock)))
 
 	sshPub, nerr := ssh.NewPublicKey(pubKey)
 	if nerr != nil {
@@ -121,11 +132,15 @@ func sameAuthorizedKey(a, b string) bool {
 }
 
 func (p *Provider) listAccountKeys(ctx context.Context) ([]doAccountKey, error) {
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/account/keys?per_page=200", nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -145,12 +160,16 @@ func (p *Provider) listAccountKeys(ctx context.Context) ([]doAccountKey, error) 
 }
 
 func (p *Provider) createAccountKey(ctx context.Context, name, authorizedKey string) (int, error) {
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return 0, err
+	}
 	body, _ := json.Marshal(map[string]string{"name": name, "public_key": authorizedKey})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/account/keys", bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {

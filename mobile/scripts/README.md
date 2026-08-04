@@ -1,6 +1,12 @@
 # mobile/scripts
 
-Build and verification helpers for the Flutter Android client.
+Build and verification helpers for the Flutter mobile client.
+
+Stable Android/iOS signing, credential names, and the honest limits of CI
+validation are documented in [`../STABLE_RELEASE.md`](../STABLE_RELEASE.md).
+`check_stable_release_readiness.sh` is the credential-free structural gate;
+the `prepare_*_release_signing.sh` and `package_*_release.sh` scripts are used
+by the manual stable release workflow and fail closed on missing signatures.
 
 ## `build_release.sh`
 
@@ -17,6 +23,10 @@ This script exists because on 2026-04-07 we almost shipped 2.0.0 with
 stale 1.10.1 release APKs — pubspec had been bumped to 2.0.0+12 but only
 the debug APK was rebuilt. Always run this instead of `flutter build apk
 --release` directly.
+
+This is a local build helper, not the stable publication path. Stable handoff
+artifacts must come from `.github/workflows/mobile-release.yml`, which pins and
+verifies their signing certificates.
 
 ## `check_release_apks.sh`
 

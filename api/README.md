@@ -5,7 +5,7 @@ PrivateDeploy 的 REST API 服务，为桌面端和移动端提供统一的后�
 ## 📦 技术栈
 
 - **Web 框架:** Gin
-- **认证:** 默认仅限本机访问，可选 token 认证
+- **认证:** 默认仅限本机访问且 token 认证默认开启
 - **数据库:** SQLite (GORM)
 - **语言:** Go 1.23+
 
@@ -33,8 +33,10 @@ go run main.go
 | `API_HOST` | `127.0.0.1` | 服务器监听地址 |
 | `API_PORT` | `8443` | 服务器端口 |
 | `API_ALLOW_REMOTE` | `false` | 是否允许非 loopback 客户端访问 |
-| `API_AUTH_TOKEN` | `` | 可选共享 token，配置后需通过 `Authorization: Bearer <token>` 或 `X-PrivateDeploy-Token` 访问 |
+| `API_AUTH_TOKEN` | 自动生成 | 共享 token；未配置时在数据库目录生成权限 0600 的持久 token 文件 |
 | `API_AUTH_TOKEN_FILE` | `` | 从文件读取 token，适合容器/secret 挂载 |
+| `API_IDEMPOTENCY_SECRET` | 自动生成 | 幂等请求指纹的独立密钥；通常无需手工配置 |
+| `API_IDEMPOTENCY_SECRET_FILE` | `` | 从文件读取独立幂等密钥 |
 | `API_WRITE_TIMEOUT` | `120s` | HTTP 响应写超时，支持 Go duration 格式 |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |
 | `DB_PATH` | `data/privatedeploy.db` | SQLite 数据库路径 |
@@ -51,7 +53,7 @@ go build -o privatedeploy-api
 
 - 默认只接受 `127.0.0.1` / `::1` 的本机请求。
 - 如需局域网或远程访问，显式设置 `API_ALLOW_REMOTE=true`。
-- 如需共享访问，建议同时设置 `API_AUTH_TOKEN` 或 `API_AUTH_TOKEN_FILE`。
+- 远程访问必须同时显式设置 `API_AUTH_TOKEN` 或 `API_AUTH_TOKEN_FILE`。
 - 即使开启远程访问，也不建议直接暴露到公网；请放在反向代理、VPN 或受信任网络之后。
 
 ## 📖 API 文档

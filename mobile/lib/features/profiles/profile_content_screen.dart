@@ -11,10 +11,10 @@ class ProfileContentScreen extends StatefulWidget {
   final String content;
 
   const ProfileContentScreen({
-    Key? key,
+    super.key,
     required this.profile,
     required this.content,
-  }) : super(key: key);
+  });
 
   @override
   State<ProfileContentScreen> createState() => _ProfileContentScreenState();

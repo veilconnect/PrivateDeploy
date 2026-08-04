@@ -1,4 +1,4 @@
-name: Mobile - Build Android
+name: Mobile - Android CI Artifact
 
 on:
   push:
@@ -34,9 +34,9 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install gomobile
+      - name: Install pinned gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260312152759-81488f6aeb60
           gomobile init
 
       - name: Build AAR
@@ -54,62 +54,11 @@ jobs:
           path: mobile/android/app/libs/vpncore.aar
           retention-days: 7
 
-  build-apk:
-    name: Build Android APK
-    runs-on: ubuntu-latest
-    needs: build-gomobile
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.35.7'
-          channel: 'stable'
-          cache: true
-
-      - name: Download AAR artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: vpncore-aar
-          path: mobile/android/app/libs/
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Run code generation
-        run: flutter pub run build_runner build --delete-conflicting-outputs
-
-      - name: Build APK
-        run: flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
-
-      - name: Build App Bundle
-        run: flutter build appbundle --release
-
-      - name: Upload AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-aab
-          path: mobile/build/app/outputs/bundle/release/app-release.aab
-          retention-days: 30
-
   build-apk-debug:
-    name: Build Android APK (Debug)
+    # This branch/PR workflow intentionally emits only a short-lived debug
+    # artifact. Signed APK/AAB stable artifacts are produced exclusively by
+    # mobile-release.yml, whose missing-secret policy is fail-closed.
+    name: Build Android APK (Debug CI only)
     runs-on: ubuntu-latest
     needs: build-gomobile
 

@@ -26,7 +26,9 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 
 	// Handlers
 	systemHandler := handlers.NewSystemHandler(bridge.Env.AppVersion, "/opt/privatedeploy")
-	cloudHandler := handlers.NewCloudHandler(cloudManager)
+	// A dedicated persistent secret keys idempotency request fingerprints. It
+	// remains stable across auth-token rotation and is never logged.
+	cloudHandler := handlers.NewCloudHandler(cloudManager, db, cfg.Server.IdempotencySecret)
 
 	profileHandler := handlers.NewProfileHandler(db)
 	subscriptionHandler := handlers.NewSubscriptionHandler(db)
@@ -91,6 +93,7 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config, wsHub *han
 			cloudGroup.GET("/instances", cloudHandler.ListInstances)
 			cloudGroup.POST("/instances", cloudHandler.CreateInstance)
 			cloudGroup.DELETE("/instances/:id", cloudHandler.DestroyInstance)
+			cloudGroup.GET("/operations/:id", cloudHandler.GetOperation)
 			cloudGroup.GET("/regions", cloudHandler.ListRegions)
 			cloudGroup.GET("/plans", cloudHandler.ListPlans)
 			cloudGroup.GET("/availability", cloudHandler.ListAvailability)

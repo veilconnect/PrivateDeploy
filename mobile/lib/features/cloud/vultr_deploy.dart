@@ -16,17 +16,24 @@ const String defaultSingBoxFallbackVersion = '1.11.0';
 // default, verified against the upstream GitHub release assets. Kept in lockstep
 // with bridge/cloud/deploy/policy.go (singBoxKnownSHA256). The deploy script
 // integrity-checks the download against these (sing-box publishes no per-asset
-// .sha256sum file, so the pin is the trust anchor); a version with no entry
-// degrades to install-without-offline-verification rather than blocking.
+// .sha256sum file, so the pin is the trust anchor); an empty/unknown pin must
+// block installation.
 const Map<String, String> singBoxKnownSha256 = {
   '1.12.12': '7c103cb2f9a7dc54cb82962043596718ed27989a478d6405f0939a9b775f889f',
   '1.11.0': 'eff0237951bfbd2381be36f114e419f10d3ed57dbf929f680e4cc9f57e319d64',
 };
 
-/// Returns the pinned linux-amd64 tarball SHA-256 for [version], or '' when
-/// none is pinned. A leading 'v' and surrounding whitespace are tolerated.
-String singBoxSha256(String version) =>
-    singBoxKnownSha256[version.trim().replaceFirst(RegExp(r'^v'), '')] ?? '';
+/// Returns the pinned linux-amd64 tarball SHA-256 for [version]. Unknown
+/// versions fail closed instead of producing a bootstrap with an empty pin.
+String singBoxSha256(String version) {
+  final normalized = version.trim().replaceFirst(RegExp(r'^v'), '');
+  final digest = singBoxKnownSha256[normalized];
+  if (digest == null || digest.isEmpty) {
+    throw ArgumentError.value(
+        version, 'version', 'sing-box release is not checksum-pinned');
+  }
+  return digest;
+}
 
 const String defaultHysteriaServerName = 'www.bing.com';
 const String defaultHysteriaMasqueradeUrl = 'https://www.bing.com';
@@ -279,6 +286,7 @@ class VultrDeploymentBuilder {
       'SINGBOX_FALLBACK_VERSION': defaultSingBoxFallbackVersion,
       'SINGBOX_SHA256': singBoxSha256(defaultSingBoxVersion),
       'SINGBOX_FALLBACK_SHA256': singBoxSha256(defaultSingBoxFallbackVersion),
+      'SHADOWSOCKS_IMAGE': pinnedShadowsocksImage,
     };
     for (final entry in replacements.entries) {
       script = script.replaceAll('{{${entry.key}}}', entry.value);
@@ -416,10 +424,15 @@ systemctl enable fail2ban 2>/dev/null || true
 systemctl restart fail2ban 2>/dev/null || true
 
 docker rm -f ss-server >/dev/null 2>&1 || true
-docker pull --quiet teddysun/shadowsocks-libev || true
+# A transient pull hiccup here (registry rate limit, momentary network blip on
+# a fresh VPS) must not abort the whole script under set -e: Shadowsocks is
+# deployed before Hysteria2/VLESS/Trojan below it, which would never get
+# deployed either. 'docker run' below still resolves and pulls the same
+# pinned digest on demand, so this explicit pull failing here is not fatal.
+docker pull --quiet {{SHADOWSOCKS_IMAGE}} || true
 docker run -d --name ss-server --restart=always \
   -p {{SS_PORT}}:{{SS_PORT}}/tcp -p {{SS_PORT}}:{{SS_PORT}}/udp \
-  teddysun/shadowsocks-libev ss-server \
+  {{SHADOWSOCKS_IMAGE}} ss-server \
   -s 0.0.0.0 -p {{SS_PORT}} -k "{{SS_PASSWORD}}" -m aes-256-gcm
 
 SINGBOX_VERSION="{{SINGBOX_VERSION}}"
@@ -437,12 +450,12 @@ EXPECTED_SHA256="$SINGBOX_SHA256"
 # app source (verified against the upstream GitHub release). sing-box publishes
 # no per-asset .sha256sum file, and re-fetching a hash from the same origin would
 # add no supply-chain protection over TLS, so the pin is the trust anchor. An
-# empty pin (a version we have no hash for) degrades to a warning.
+# empty pin is a configuration/programming error and must fail.
 verify_checksum() {
   local file="$1" expected="$2"
   if [ -z "$expected" ]; then
-    echo "[WARN] No pinned checksum for this sing-box version; skipping verification" >&2
-    return 0
+    echo "[ERROR] No pinned checksum for this sing-box version" >&2
+    return 1
   fi
   local actual
   actual="$(sha256sum "$file" | cut -d' ' -f1)"
@@ -454,37 +467,31 @@ verify_checksum() {
   return 1
 }
 
-# Skip download if sing-box is already installed.
-if command -v sing-box >/dev/null 2>&1; then
-  echo "[OK] sing-box already installed: $(sing-box version 2>/dev/null | head -1)"
-elif ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
+# Always replace any existing binary with a freshly downloaded, pinned one.
+if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$SINGBOX_URL"; then
   if [ -n "$SINGBOX_FALLBACK_VERSION" ] && [ "$SINGBOX_FALLBACK_VERSION" != "$SINGBOX_VERSION" ]; then
     echo "[WARN] Failed to download sing-box ${SINGBOX_VERSION}, attempting fallback ${SINGBOX_FALLBACK_VERSION}..." >&2
     if ! curl -fsSLo /tmp/privatedeploy/singbox.tar.gz "$FALLBACK_URL"; then
-      echo "[ERROR] Could not download sing-box binaries. Skipping VLESS/Trojan/Hysteria deployment." >&2
-      SKIP_SINGBOX=1
+      echo "[ERROR] Could not download pinned sing-box binaries." >&2
+      exit 1
     else
       SINGBOX_VERSION="$SINGBOX_FALLBACK_VERSION"
       EXPECTED_SHA256="$SINGBOX_FALLBACK_SHA256"
     fi
   else
-    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured. Skipping VLESS/Trojan/Hysteria deployment." >&2
-    SKIP_SINGBOX=1
+    echo "[ERROR] Could not download sing-box ${SINGBOX_VERSION} and no valid fallback is configured." >&2
+    exit 1
   fi
 fi
 
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
-  if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$EXPECTED_SHA256"; then
-    echo "[ERROR] sing-box integrity check failed. Aborting sing-box deployment." >&2
-    SKIP_SINGBOX=1
-  fi
+if ! verify_checksum /tmp/privatedeploy/singbox.tar.gz "$EXPECTED_SHA256"; then
+  echo "[ERROR] sing-box integrity check failed. Aborting deployment." >&2
+  exit 1
 fi
 
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && [ -f /tmp/privatedeploy/singbox.tar.gz ]; then
-  tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
-  find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
-  chmod +x /usr/local/bin/sing-box
-fi
+tar -xzf /tmp/privatedeploy/singbox.tar.gz -C /tmp/privatedeploy
+find /tmp/privatedeploy -name "sing-box" -type f -executable -exec mv {} /usr/local/bin/sing-box \;
+chmod +x /usr/local/bin/sing-box
 
 cat > /etc/privatedeploy/hysteria/config.json <<EOF
 {
@@ -676,7 +683,7 @@ systemctl daemon-reload
 # Only bring up the sing-box services if sing-box actually installed. If its
 # download/checksum failed, Shadowsocks still serves traffic rather than the
 # whole deploy aborting.
-if [ "${SKIP_SINGBOX:-0}" -ne 1 ] && command -v sing-box >/dev/null 2>&1; then
+if command -v sing-box >/dev/null 2>&1; then
   systemctl enable hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
   systemctl restart hysteria-server vless-server trojan-server{{VLESS_RELAY_SERVICES}}
 else

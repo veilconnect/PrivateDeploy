@@ -116,6 +116,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   Timer? _logNotifyTimer;
   Timer? _deferredStartupDiagnosticsTimer;
   int _startupVerificationGeneration = 0;
+  bool _isStartupVerificationInProgress = false;
   Future<void>? _initializeTask;
   bool _initialized = false;
   bool _disposed = false;
@@ -127,7 +128,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   final bool _softFailStartupConnectivityProbe;
   final Duration _androidStartupRetryDelay;
   final Duration _androidStartupFallbackProbeDelay;
-  String? Function(String? activeProfile)? _resolveFallbackEgressIp;
   // Set when the user wires up an auto-failover handler (typically in
   // main.dart, which has access to CloudProvider + ProfileProvider). The
   // watchdog calls this once its same-node restart budget is exhausted,
@@ -220,9 +220,13 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   // cellular. Prevents a spurious 'upstream blocked' degrade + auto-CDN
   // redeploy while the user is happily streaming.
   int _egressCheckDownloadBytes = 0;
-  // Real traffic floor between two egress checks. Anything above this over the
-  // (~30-120s) window means the tunnel is routing; idle keepalives stay below.
-  static const int _egressTrafficFloorBytes = 24 * 1024;
+  // High-throughput floor between two egress checks. Failed public-IP probes,
+  // TLS error pages, and resolver retries can themselves account for tens of
+  // KiB (about 31 KiB in the cellular failure we reproduced), so a small byte
+  // increase is not proof that user traffic can reach the internet. A MiB in
+  // the normal ~30-120s window still protects active browsing/streaming from a
+  // flaky probe without letting probe-generated traffic hide a broken route.
+  static const int _egressTrafficFloorBytes = 1024 * 1024;
 
   void setOnAutoCdnDeployRequest(
     Future<bool> Function(String? activeProfileName) handler,
@@ -273,6 +277,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
   }
 
   bool get isConnected => _status == VpnStatus.connected;
+  bool get isStartupVerificationInProgress => _isStartupVerificationInProgress;
   bool get isSupported => _isSupported;
   String? get unsupportedReason => _unsupportedReason;
   String? get diagnosticsEgressIp => _diagnosticsEgressIp;
@@ -297,12 +302,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
         _androidStartupFallbackProbeDelay = androidStartupFallbackProbeDelay ??
             VpnProvider.androidStartupFallbackProbeDelay {
     WidgetsBinding.instance.addObserver(this);
-  }
-
-  void setFallbackEgressIpResolver(
-    String? Function(String? activeProfile)? resolver,
-  ) {
-    _resolveFallbackEgressIp = resolver;
   }
 
   /// Register the auto-failover handler. The watchdog calls this when the
@@ -473,6 +472,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     }
 
     _cancelStartupVerification();
+    _isStartupVerificationInProgress = true;
     _isLoading = true;
     _error = null;
     _status = VpnStatus.connecting;
@@ -575,6 +575,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       AppLogger.error('[VpnProvider] Start error', e);
       return false;
     } finally {
+      _isStartupVerificationInProgress = false;
       _isLoading = false;
       _handleUpstreamDegradedSignal(
         degraded: _shouldArmUpstreamDegradedWatchdog,
@@ -753,6 +754,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       return false;
     }
     _cancelStartupVerification();
+    _isStartupVerificationInProgress = true;
     _isLoading = true;
     _error = null;
     _upstreamDegradedRestartAttempts = 0;
@@ -787,6 +789,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       AppLogger.error('[VpnProvider] Restart error', e);
       return false;
     } finally {
+      _isStartupVerificationInProgress = false;
       _isLoading = false;
       _handleUpstreamDegradedSignal(
         degraded: _shouldArmUpstreamDegradedWatchdog,
@@ -896,11 +899,6 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     final normalizedProbeError = nativeError != null && nativeError.isNotEmpty
         ? _normalizeEgressProbeError(nativeError)
         : egressProbeFailureMessage;
-    final fallbackEgressIp = _resolveFallbackEgressIp?.call(_activeProfile);
-    if (fallbackEgressIp != null && fallbackEgressIp.trim().isNotEmpty) {
-      _recordEgressIpSuccess(fallbackEgressIp);
-      return;
-    }
 
     try {
       final fetched = await _fetchEgressIp();
@@ -924,11 +922,10 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     // Did real traffic move since the last egress check? The public-IP probe
     // endpoints (native ipinfo/ident/checkip + Dart icanhazip/ifconfig/ipify)
     // are DNS-heavy and routinely time out on throttled cellular even while
-    // the selected Hy2 outbound streams video fine. If download bytes grew,
-    // the route is alive — surface the probe error on the diagnostics card but
-    // do NOT mark degraded or fire auto-CDN self-heal (which would needlessly
-    // redeploy CDN mid-stream). Only a probe failure with NO throughput is a
-    // real 'tunnel up but nothing routes' signal.
+    // the selected Hy2 outbound streams video fine. Only a high-volume byte
+    // increase proves useful traffic is flowing: small increases can be caused
+    // by the failed probes themselves. Keep the diagnostics error either way,
+    // but suppress degraded/self-heal only for substantial throughput.
     final downloaded = _stats.downloadBytes - _egressCheckDownloadBytes;
     _egressCheckDownloadBytes = _stats.downloadBytes;
     final trafficFlowing = downloaded > _egressTrafficFloorBytes;
@@ -1010,8 +1007,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       // flaky, DNS-heavy public-IP probes (they otherwise spam hundreds of
       // benign `dns: exchange failed` / timeout lines during normal use).
       final egressConfirmed = _diagnosticsEgressIp != null;
-      final trafficFlowing =
-          _stats.downloadSpeed > 0 || _stats.uploadSpeed > 0;
+      final trafficFlowing = _stats.downloadSpeed > 0 || _stats.uploadSpeed > 0;
       final probeDue = (egressConfirmed && trafficFlowing)
           ? (tick % 40 == 0)
           : (tick % 10 == 0);
@@ -1028,6 +1024,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _deferredStartupDiagnosticsTimer?.cancel();
     _deferredStartupDiagnosticsTimer = null;
     _startupVerificationGeneration += 1;
+    _isStartupVerificationInProgress = false;
   }
 
   Future<bool> _runStartupVerification({
@@ -1830,7 +1827,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       if (tunnelDown) {
         AppLogger.info(
           '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
-          '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
+          '($_upstreamDegradedRestartAttempts/$maxUpstreamDegradedRestartAttempts) '
           'and no failover candidate; tunnel is down — restarting once to '
           're-establish, then self-heal on the '
           '${upstreamDegradedRecoveryRetryDelay.inSeconds}s poll.',
@@ -1845,7 +1842,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
       } else {
         AppLogger.info(
           '[VpnProvider] Upstream-degraded watchdog: fast budget exhausted '
-          '(${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts}) '
+          '($_upstreamDegradedRestartAttempts/$maxUpstreamDegradedRestartAttempts) '
           'and no failover candidate; keeping the connected-degraded tunnel up '
           'WITHOUT a restart (avoids the periodic reconnect flip). Native '
           'monitor + urltest re-probe self-heal when the route recovers.',
@@ -1858,7 +1855,7 @@ class VpnProvider with ChangeNotifier, WidgetsBindingObserver {
     _upstreamDegradedRestartAttempts += 1;
     AppLogger.info(
       '[VpnProvider] Upstream-degraded watchdog firing restart attempt '
-      '${_upstreamDegradedRestartAttempts}/${maxUpstreamDegradedRestartAttempts} '
+      '$_upstreamDegradedRestartAttempts/$maxUpstreamDegradedRestartAttempts '
       'after ${upstreamDegradedRestartDelay.inSeconds}s of sustained warning',
     );
     try {

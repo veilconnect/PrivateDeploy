@@ -15,7 +15,7 @@ import 'cdn_provider.dart';
 /// account info and points at the manual deploy guide
 /// ([docs/cdn-acceleration/README.md]).
 class CdnSettingsScreen extends StatefulWidget {
-  const CdnSettingsScreen({Key? key}) : super(key: key);
+  const CdnSettingsScreen({super.key});
 
   @override
   State<CdnSettingsScreen> createState() => _CdnSettingsScreenState();
@@ -129,7 +129,7 @@ class _IntroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = const Color(0xFF1452CC);
+    const accent = Color(0xFF1452CC);
     return Container(
       padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
@@ -467,8 +467,8 @@ class _SetupSection extends StatelessWidget {
             width: 24.w,
             height: 24.w,
             margin: EdgeInsets.only(top: 2.h),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1452CC),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1452CC),
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
@@ -1060,10 +1060,7 @@ class _NodeRow extends StatelessWidget {
                   Text(
                       hasRelay
                           ? '${node.ipv4} · relay :$relayPort'
-                          : '${node.ipv4} · ' +
-                              (isZh
-                                  ? 'CDN 不可用(需重新部署)'
-                                  : 'CDN unavailable (re-deploy)'),
+                          : '${node.ipv4} · ${isZh ? 'CDN 不可用(需重新部署)' : 'CDN unavailable (re-deploy)'}',
                       style: TextStyle(
                           fontSize: 11.sp,
                           color: hasRelay ? Colors.grey[600] : Colors.orange,
@@ -1432,6 +1429,9 @@ class _RetryProbeButtonState extends State<_RetryProbeButton> {
     final ok = await widget.provider.repairCustomHostForNode(widget.nodeId);
     if (!mounted) return;
     setState(() => _running = false);
+    // The State's own `mounted` above doesn't vouch for the passed-in
+    // BuildContext (use_build_context_synchronously); check it explicitly.
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         ok

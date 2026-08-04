@@ -17,7 +17,14 @@ import {
   asyncPool,
 } from '@/utils'
 
-import { fetchAllowedPluginCode, sha256Hex } from './pluginSecurity'
+import {
+  clearPluginTrustConsent,
+  confirmPluginFullTrust,
+  fetchAllowedPluginCode,
+  hasPluginTrustConsent,
+  markPluginTrustConsent,
+  sha256Hex,
+} from './pluginSecurity'
 
 import type { Plugin, Subscription } from '@/types/app'
 
@@ -77,15 +84,36 @@ export const usePluginsStore = defineStore('plugins', () => {
   const plugins = ref<Plugin[]>([])
   const pluginHub = ref<Plugin[]>([])
 
+  const sanitizePluginHub = (value: unknown): Plugin[] => {
+    if (!Array.isArray(value)) return []
+    return value.map((item) => {
+      const plugin = deepClone(item) as Plugin
+      if (plugin && typeof plugin === 'object') clearPluginTrustConsent(plugin)
+      return plugin
+    })
+  }
+
   const setupPlugins = async () => {
+    // setupPlugins may be re-run after settings/import changes. Rebuild the
+    // execution registry from the persisted list so removed or unconfirmed
+    // plugins cannot survive in module-level caches from an earlier setup.
+    for (const id of Object.keys(PluginsCache)) delete PluginsCache[id]
+    for (const trigger of Object.values(PluginsTriggerMap)) trigger.observers = []
+
     const data = await ignoredError(ReadFile, PluginsFilePath)
     data && (plugins.value = parse(data))
 
     const list = await ignoredError(ReadFile, PluginHubFilePath)
-    list && (pluginHub.value = JSON.parse(list))
+    list && (pluginHub.value = sanitizePluginHub(JSON.parse(list)))
 
     for (let i = 0; i < plugins.value.length; i++) {
       const { id, triggers, path, context, hasUI, tags } = plugins.value[i]
+
+      // Persisted plugins from versions before the trust disclosure must not
+      // enter the execution cache or register trigger observers until the
+      // user has accepted the current disclosure version.
+      if (!(await ensurePluginTrustConsent(plugins.value[i]))) continue
+
       const code = await ignoredError(ReadFile, path)
       if (code) {
         // Verify the on-disk code against the pinned hash. A mismatch (possible
@@ -208,12 +236,66 @@ export const usePluginsStore = defineStore('plugins', () => {
     }
   }
 
-  const savePlugins = debounce(async () => {
+  const persistPlugins = async () => {
     const p = omitArray(plugins.value, ['updating', 'loading', 'running'])
     await WriteFile(PluginsFilePath, stringify(p))
-  }, 100)
+  }
+
+  const savePlugins = debounce(persistPlugins, 100)
+
+  // Plugins whose full-trust dialog was declined in this session. Prevents an
+  // event-driven trigger sweep (startup, core start, subscribe, …) from
+  // re-prompting on every event; an explicitly user-initiated action
+  // (installing, running manually) always prompts again via `reprompt`.
+  const trustConsentDeclined = new Set<string>()
+
+  // Single choke point for the full-trust informed consent. EVERY path that
+  // installs a plugin (Plugin-Hub Install button, manual File/Http form) or
+  // lets one execute (trigger sweeps, manual runs) funnels through here:
+  //  - a plugin that already confirmed the current consent version passes;
+  //  - anything else — including plugins installed before the consent
+  //    mechanism existed, whose persisted record has no consent field —
+  //    gets the same complete disclosure dialog first;
+  //  - accepting persists the confirmed version so the dialog is one-time;
+  //  - declining means the plugin must not register/execute.
+  const ensurePluginTrustConsent = async (
+    plugin: Plugin,
+    options: { reprompt?: boolean; okText?: string; message?: string } = {},
+  ): Promise<boolean> => {
+    if (hasPluginTrustConsent(plugin)) return true
+    if (!options.reprompt && trustConsentDeclined.has(plugin.id)) return false
+    const accepted = await confirmPluginFullTrust(confirm, plugin, {
+      okText: options.okText,
+      message: options.message,
+    })
+    if (!accepted) {
+      trustConsentDeclined.add(plugin.id)
+      return false
+    }
+    trustConsentDeclined.delete(plugin.id)
+    markPluginTrustConsent(plugin)
+    const stored = plugins.value.find((p) => p.id === plugin.id)
+    if (stored) {
+      if (stored !== plugin) markPluginTrustConsent(stored)
+      // Consent is a security decision, so it must reach durable storage
+      // before any plugin code is registered or executed. Do not use the
+      // debounced best-effort settings writer for this transition.
+      await persistPlugins()
+    }
+    return true
+  }
 
   const addPlugin = async (plugin: Plugin) => {
+    // Informed consent BEFORE any code is fetched or pinned: plugins run as
+    // fully trusted code (files, network, native commands — no sandbox), so
+    // adding one must be an explicit, eyes-open decision. Cancelling aborts
+    // the add entirely. See pluginSecurity.ts for the trust model.
+    // The object may originate in Plugin-Hub JSON, an import, or a manual
+    // caller. Never honor a consent marker supplied by that untrusted object.
+    clearPluginTrustConsent(plugin)
+    const accepted = await ensurePluginTrustConsent(plugin, { reprompt: true })
+    if (!accepted) throw 'common.canceled'
+
     plugins.value.push(plugin)
     try {
       await _doUpdatePlugin(plugin)
@@ -249,6 +331,13 @@ export const usePluginsStore = defineStore('plugins', () => {
   const editPlugin = async (id: string, newPlugin: Plugin) => {
     const idx = plugins.value.findIndex((v) => v.id === id)
     if (idx === -1) return
+    // New metadata is untrusted. Strip any supplied marker first, then inherit
+    // only an exact-current marker already stored locally for this identity.
+    // Capture before clearing because some internal updates pass the same
+    // object as both the old and new record.
+    const inheritLocalConsent = hasPluginTrustConsent(plugins.value[idx])
+    clearPluginTrustConsent(newPlugin)
+    if (inheritLocalConsent) markPluginTrustConsent(newPlugin)
     const plugin = plugins.value.splice(idx, 1, newPlugin)[0]
     try {
       await savePlugins()
@@ -376,7 +465,7 @@ export const usePluginsStore = defineStore('plugins', () => {
       const { body: body2 } = await HttpGet<string>(
         'https://raw.githubusercontent.com/GUI-for-Cores/Plugin-Hub/main/plugins/gfs.json',
       )
-      pluginHub.value = [...JSON.parse(body1), ...JSON.parse(body2)]
+      pluginHub.value = sanitizePluginHub([...JSON.parse(body1), ...JSON.parse(body2)])
       await WriteFile(PluginHubFilePath, JSON.stringify(pluginHub.value))
     } finally {
       pluginHubLoading.value = false
@@ -397,6 +486,10 @@ export const usePluginsStore = defineStore('plugins', () => {
       const cache = PluginsCache[pluginId]
 
       if (isPluginUnavailable(cache)) continue
+      // Pre-consent plugins (installed before the consent mechanism, or a
+      // bumped consent version) must confirm the full-trust disclosure before
+      // their first execution; a decline skips them without failing the sweep.
+      if (!(await ensurePluginTrustConsent(cache.plugin))) continue
 
       const metadata = getPluginMetadata(cache.plugin)
       try {
@@ -426,6 +519,10 @@ export const usePluginsStore = defineStore('plugins', () => {
       const cache = PluginsCache[pluginId]
 
       if (isPluginUnavailable(cache)) continue
+      // Pre-consent plugins (installed before the consent mechanism, or a
+      // bumped consent version) must confirm the full-trust disclosure before
+      // their first execution; a decline skips them without failing the sweep.
+      if (!(await ensurePluginTrustConsent(cache.plugin))) continue
 
       const metadata = getPluginMetadata(cache.plugin)
       try {
@@ -456,6 +553,10 @@ export const usePluginsStore = defineStore('plugins', () => {
       const cache = PluginsCache[pluginId]
 
       if (isPluginUnavailable(cache)) continue
+      // Pre-consent plugins (installed before the consent mechanism, or a
+      // bumped consent version) must confirm the full-trust disclosure before
+      // their first execution; a decline skips them without failing the sweep.
+      if (!(await ensurePluginTrustConsent(cache.plugin))) continue
 
       const metadata = getPluginMetadata(cache.plugin)
       try {
@@ -482,6 +583,10 @@ export const usePluginsStore = defineStore('plugins', () => {
       const cache = PluginsCache[pluginId]
 
       if (isPluginUnavailable(cache)) continue
+      // Pre-consent plugins (installed before the consent mechanism, or a
+      // bumped consent version) must confirm the full-trust disclosure before
+      // their first execution; a decline skips them without failing the sweep.
+      if (!(await ensurePluginTrustConsent(cache.plugin))) continue
 
       const metadata = getPluginMetadata(cache.plugin)
       try {
@@ -502,6 +607,16 @@ export const usePluginsStore = defineStore('plugins', () => {
   const manualTrigger = async (id: string, event: PluginTriggerEvent, ...args: any[]) => {
     const plugin = getPluginById(id)
     if (!plugin) throw id + ' Not Found'
+
+    // A manual run is user-initiated, so always re-offer the dialog even if
+    // it was declined earlier in the session.
+    const accepted = await ensurePluginTrustConsent(plugin, { reprompt: true })
+    if (!accepted) throw 'common.canceled'
+
+    // A legacy plugin declined during startup was deliberately kept out of
+    // the cache and trigger maps. Once it is explicitly approved, load and
+    // register it before this manual execution.
+    if (!PluginsCache[plugin.id]) await reloadPlugin(plugin, '', true)
     const cache = PluginsCache[plugin.id]
 
     if (!cache) throw `${plugin.name} is Missing source code`
@@ -570,6 +685,7 @@ export const usePluginsStore = defineStore('plugins', () => {
     updatePluginTrigger,
     getPluginCodefromCache,
     getPluginMetadata,
+    ensurePluginTrustConsent,
 
     pluginHub,
     pluginHubLoading,

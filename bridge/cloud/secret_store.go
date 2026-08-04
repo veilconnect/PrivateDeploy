@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"privatedeploy/bridge/cloud/persistence"
 )
 
 const (
@@ -160,7 +162,7 @@ func writeFileSecret(storeDir, configPath, provider, secret string) error {
 		return fmt.Errorf("failed to encode secret payload: %w", err)
 	}
 
-	if err := os.WriteFile(fileSecretPath(storeDir, configPath, provider), payload, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(fileSecretPath(storeDir, configPath, provider), payload); err != nil {
 		return fmt.Errorf("failed to write secret payload: %w", err)
 	}
 	return nil

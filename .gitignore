@@ -24,6 +24,7 @@ mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.ja
 mobile/ios/Flutter/Generated.xcconfig
 mobile/ios/Flutter/flutter_export_environment.sh
 mobile/android/.gradle/
+mobile/android/.kotlin/
 mobile/android/local.properties
 mobile/android/key.properties
 mobile/android/*.jks

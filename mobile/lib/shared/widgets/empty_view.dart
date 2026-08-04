@@ -9,13 +9,13 @@ class EmptyView extends StatelessWidget {
   final String? actionLabel;
 
   const EmptyView({
-    Key? key,
+    super.key,
     required this.icon,
     required this.title,
     required this.message,
     this.onAction,
     this.actionLabel,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

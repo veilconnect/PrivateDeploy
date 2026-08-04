@@ -5,9 +5,18 @@ vi.mock('@/bridge', () => ({ HttpGet: (...args: any[]) => httpGet(...args) }))
 
 import {
   assertAllowedPluginURL,
+  clearPluginTrustConsent,
+  confirmPluginFullTrust,
   fetchAllowedPluginCode,
+  hasPluginTrustConsent,
+  markPluginTrustConsent,
   sha256Hex,
   PluginSecurityError,
+  PLUGIN_FULL_TRUST_ACCEPT_KEY,
+  PLUGIN_FULL_TRUST_TITLE_KEY,
+  PLUGIN_FULL_TRUST_WARNING_KEY,
+  PLUGIN_TRUST_CONSENT_VERSION,
+  pluginTrustWarningKey,
 } from '../pluginSecurity'
 
 describe('assertAllowedPluginURL', () => {
@@ -62,9 +71,9 @@ describe('fetchAllowedPluginCode', () => {
         body: '',
       })
       .mockResolvedValueOnce({ status: 200, headers: {}, body: 'CODE' })
-    await expect(
-      fetchAllowedPluginCode('https://github.com/a/b/raw/main/x.js'),
-    ).resolves.toBe('CODE')
+    await expect(fetchAllowedPluginCode('https://github.com/a/b/raw/main/x.js')).resolves.toBe(
+      'CODE',
+    )
     expect(httpGet).toHaveBeenCalledTimes(2)
   })
 
@@ -97,6 +106,98 @@ describe('fetchAllowedPluginCode', () => {
     await expect(
       fetchAllowedPluginCode('https://raw.githubusercontent.com/a/b/main/x.js'),
     ).rejects.toBeInstanceOf(PluginSecurityError)
+  })
+})
+
+describe('pluginTrustWarningKey', () => {
+  it('returns the full-trust warning for a plain plugin', () => {
+    expect(pluginTrustWarningKey({ id: 'plugin-x' })).toBe(PLUGIN_FULL_TRUST_WARNING_KEY)
+  })
+
+  it('still returns the FULL warning when a plugin declares capabilities (nothing enforces them)', () => {
+    expect(pluginTrustWarningKey({ id: 'plugin-x', capabilities: ['network'] })).toBe(
+      PLUGIN_FULL_TRUST_WARNING_KEY,
+    )
+    expect(pluginTrustWarningKey(undefined)).toBe(PLUGIN_FULL_TRUST_WARNING_KEY)
+  })
+
+  it('exposes distinct i18n keys for title and body', () => {
+    expect(PLUGIN_FULL_TRUST_TITLE_KEY).not.toBe(PLUGIN_FULL_TRUST_WARNING_KEY)
+    expect(PLUGIN_FULL_TRUST_TITLE_KEY).toMatch(/^plugins\./)
+    expect(PLUGIN_FULL_TRUST_WARNING_KEY).toMatch(/^plugins\./)
+  })
+})
+
+describe('hasPluginTrustConsent (legacy-data migration semantics)', () => {
+  it('treats a record without the consent field as unconfirmed', () => {
+    // Plugins persisted before the consent mechanism existed have no
+    // trustConsentVersion at all — they must NOT be considered confirmed.
+    expect(hasPluginTrustConsent({ id: 'legacy', name: 'Legacy Plugin' })).toBe(false)
+    expect(hasPluginTrustConsent(undefined)).toBe(false)
+    expect(hasPluginTrustConsent(null)).toBe(false)
+  })
+
+  it('treats malformed or stale consent versions as unconfirmed', () => {
+    expect(hasPluginTrustConsent({ trustConsentVersion: '1' })).toBe(false)
+    expect(hasPluginTrustConsent({ trustConsentVersion: 0 })).toBe(false)
+    expect(
+      hasPluginTrustConsent({ trustConsentVersion: PLUGIN_TRUST_CONSENT_VERSION - 1 }),
+    ).toBe(false)
+  })
+
+  it('accepts only the exact current consent version', () => {
+    expect(hasPluginTrustConsent({ trustConsentVersion: PLUGIN_TRUST_CONSENT_VERSION })).toBe(true)
+    expect(
+      hasPluginTrustConsent({ trustConsentVersion: PLUGIN_TRUST_CONSENT_VERSION + 1 }),
+    ).toBe(false)
+  })
+
+  it('markPluginTrustConsent stamps the current version onto the record', () => {
+    const plugin: Record<string, unknown> = { id: 'p' }
+    markPluginTrustConsent(plugin)
+    expect(plugin.trustConsentVersion).toBe(PLUGIN_TRUST_CONSENT_VERSION)
+    expect(hasPluginTrustConsent(plugin)).toBe(true)
+    clearPluginTrustConsent(plugin)
+    expect(plugin.trustConsentVersion).toBeUndefined()
+    expect(hasPluginTrustConsent(plugin)).toBe(false)
+  })
+})
+
+describe('confirmPluginFullTrust', () => {
+  it('shows the full-trust title/body with the accept okText by default', async () => {
+    const confirmFn = vi.fn().mockResolvedValue(true)
+
+    await expect(confirmPluginFullTrust(confirmFn, { id: 'p' })).resolves.toBe(true)
+
+    expect(confirmFn).toHaveBeenCalledWith(
+      PLUGIN_FULL_TRUST_TITLE_KEY,
+      PLUGIN_FULL_TRUST_WARNING_KEY,
+      { type: 'text', okText: PLUGIN_FULL_TRUST_ACCEPT_KEY },
+    )
+  })
+
+  it('passes okText and body overrides through to the dialog', async () => {
+    const confirmFn = vi.fn().mockResolvedValue(true)
+
+    await confirmPluginFullTrust(confirmFn, { id: 'p' }, {
+      okText: 'custom.okText',
+      message: 'custom.body',
+    })
+
+    expect(confirmFn).toHaveBeenCalledWith(PLUGIN_FULL_TRUST_TITLE_KEY, 'custom.body', {
+      type: 'text',
+      okText: 'custom.okText',
+    })
+  })
+
+  it('returns false when the dialog is cancelled (rejects)', async () => {
+    const confirmFn = vi.fn().mockRejectedValue('common.canceled')
+    await expect(confirmPluginFullTrust(confirmFn, { id: 'p' })).resolves.toBe(false)
+  })
+
+  it('returns false when the dialog resolves falsy', async () => {
+    const confirmFn = vi.fn().mockResolvedValue(false)
+    await expect(confirmPluginFullTrust(confirmFn, { id: 'p' })).resolves.toBe(false)
   })
 })
 

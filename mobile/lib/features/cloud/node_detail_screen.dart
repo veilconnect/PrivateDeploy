@@ -12,7 +12,7 @@ import 'cloud_models.dart';
 class NodeDetailScreen extends StatelessWidget {
   final CloudInstance node;
 
-  const NodeDetailScreen({Key? key, required this.node}) : super(key: key);
+  const NodeDetailScreen({super.key, required this.node});
 
   @override
   Widget build(BuildContext context) {
@@ -258,7 +258,7 @@ class NodeDetailScreen extends StatelessWidget {
       return null;
     }
 
-    final method = 'aes-256-gcm';
+    const method = 'aes-256-gcm';
     final userInfo = base64Encode(utf8.encode('$method:$password'));
     return 'ss://$userInfo@${node.ipv4!}:${_nodeInfo.ssPort}'
         '#${Uri.encodeComponent('SS ${node.ipv4}')}';

@@ -52,7 +52,19 @@ func main() {
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	router := gin.Default()
+	// gin.Default()'s logger would print the full request URL including the
+	// query string; /api/v1/ws accepts ?token=... (browser WebSocket clients
+	// cannot set headers), so the access log must never contain queries.
+	router := gin.New()
+	// Gin otherwise trusts forwarding headers from every proxy by default.
+	// This API has no configured reverse-proxy trust boundary, so accepting a
+	// caller-controlled X-Forwarded-For would let remote clients evade the
+	// per-IP limiter/audit identity and create an unbounded stream of visitor
+	// keys. Use the socket peer until an explicit trusted-CIDR setting exists.
+	if err := configureClientIPTrust(router); err != nil {
+		log.Fatalf("❌ Failed to disable untrusted proxy headers: %v", err)
+	}
+	router.Use(gin.LoggerWithFormatter(requestLogFormatter), gin.Recovery())
 
 	// Distinguish 405 (wrong method) from 404 (no such path) so clients
 	// can tell whether to fix their verb or fix their URL. Without this,
@@ -81,10 +93,14 @@ func main() {
 	} else {
 		log.Println("🏠 Remote API access disabled; localhost clients only")
 	}
-	if strings.TrimSpace(cfg.Server.AuthToken) != "" {
+	switch cfg.Server.AuthTokenSource {
+	case config.AuthTokenSourceGenerated:
+		// Log only the path — the token value must never reach the logs.
+		log.Printf("🔐 API token authentication enabled (auto-generated token file: %s)", cfg.Server.AuthTokenPath)
+	case config.AuthTokenSourceDisabled:
+		log.Println("🔓 API token authentication DISABLED via API_ALLOW_UNAUTHENTICATED=true (loopback-only)")
+	default:
 		log.Println("🔐 API token authentication enabled")
-	} else {
-		log.Println("🔓 API token authentication disabled")
 	}
 	log.Printf("🔐 CORS allowed origins: %s", strings.Join(cfg.CORS.AllowedOrigins, ","))
 	if cfg.RateLimit.Rate > 0 {
@@ -106,6 +122,29 @@ func main() {
 	}
 }
 
+func configureClientIPTrust(router *gin.Engine) error {
+	return router.SetTrustedProxies(nil)
+}
+
+// requestLogFormatter renders one access-log line. It deliberately logs only
+// URL.Path — never the query string — because query parameters can carry
+// credentials (the WebSocket endpoint authenticates via ?token=...). Do not
+// switch this back to param.Path: gin appends the raw query to it.
+func requestLogFormatter(param gin.LogFormatterParams) string {
+	path := ""
+	if param.Request != nil && param.Request.URL != nil {
+		path = param.Request.URL.Path
+	}
+	return fmt.Sprintf("[GIN] %s | %3d | %13v | %15s | %-7s %s\n",
+		param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+		param.StatusCode,
+		param.Latency,
+		param.ClientIP,
+		param.Method,
+		path,
+	)
+}
+
 // setupDatabase initializes the database
 func setupDatabase(dbPath string) (*gorm.DB, error) {
 	// Ensure data directory exists
@@ -119,6 +158,22 @@ func setupDatabase(dbPath string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Background cloud operations write concurrently with request handlers;
+	// without a busy timeout SQLite fails those writes with "database is locked".
+	if err := db.Exec("PRAGMA busy_timeout = 5000").Error; err != nil {
+		return nil, fmt.Errorf("failed to set sqlite busy timeout: %w", err)
+	}
+
+	// SQLite allows only one writer at a time; funneling all gorm access
+	// through a single connection serializes writers in Go instead of racing
+	// for the file lock (busy_timeout stays as the safety net for external
+	// processes touching the same file).
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to access sql database handle: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 
 	return db, nil
 }

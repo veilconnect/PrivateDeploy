@@ -154,7 +154,7 @@ type Instance struct {
 	// Cloudflare Worker forwards WS frames to this port over plain TCP; auth
 	// is via the same VLESSUUID. 0 means the node was deployed with an older
 	// userdata script and CDN front-ending is unavailable until re-deploy.
-	VLESSRelayPort     int    `json:"vlessRelayPort,omitempty"`     // VLESS plain (CDN-relay) port
+	VLESSRelayPort int `json:"vlessRelayPort,omitempty"` // VLESS plain (CDN-relay) port
 }
 
 // CreateInstanceOptions contains options for creating a new instance
@@ -170,6 +170,7 @@ type CreateInstanceOptions struct {
 
 // InstanceRecord stores instance metadata for persistence
 type InstanceRecord struct {
+	LastDeployWarning  string `json:"lastDeployWarning,omitempty"`
 	Plan               string `json:"plan"`
 	OSID               int    `json:"osId"`
 	IPv4               string `json:"ipv4"`

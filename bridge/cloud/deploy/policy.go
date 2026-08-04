@@ -29,6 +29,9 @@ const (
 	// VLESS gets its own pool of stable single-origin targets — never microsoft.
 	DefaultVLESSServerName  = "dl.google.com"
 	DefaultTrojanServerName = "www.microsoft.com"
+	// Multi-architecture manifest-list digest resolved from Docker Registry.
+	// Never use a mutable tag for a root-run proxy container.
+	ShadowsocksImage = "teddysun/shadowsocks-libev@sha256:d9a991d15b93c9b1fd7a37d222e8e4406b2015bb28819f10a5f1428369da14f6"
 )
 
 // singBoxKnownSHA256 pins the SHA-256 of the linux-amd64 sing-box release
@@ -37,7 +40,8 @@ const (
 // (sing-box publishes no per-asset .sha256sum file, so the pin is the trust
 // anchor). A version with no entry here — e.g. a user-overridden version we have
 // no hash for — degrades to install-without-offline-verification rather than
-// blocking the deploy. Update alongside DefaultSingBox*Version on a version bump.
+// blocking the deploy. Unknown versions are rejected by normalization; update
+// this map alongside DefaultSingBox*Version on a version bump.
 var singBoxKnownSHA256 = map[string]string{
 	"1.12.12": "7c103cb2f9a7dc54cb82962043596718ed27989a478d6405f0939a9b775f889f",
 	"1.11.0":  "eff0237951bfbd2381be36f114e419f10d3ed57dbf929f680e4cc9f57e319d64",
@@ -51,8 +55,9 @@ func SingBoxSHA256(version string) string {
 }
 
 var (
-	hostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
-	versionPattern  = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}(?:[-+._a-zA-Z0-9]+)?$`)
+	hostnamePattern      = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	versionPattern       = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}(?:[-+._a-zA-Z0-9]+)?$`)
+	masqueradeURLPattern = regexp.MustCompile(`^[A-Za-z0-9:/?&=._~%+@,-]+$`)
 
 	hysteriaServerNamePool = []string{
 		"www.bing.com",
@@ -323,13 +328,14 @@ func normalizeHostname(raw, fallback string) string {
 func normalizeVersion(raw, fallback string) string {
 	candidate := strings.TrimSpace(raw)
 	candidate = strings.TrimPrefix(candidate, "v")
-	if candidate == "" {
+	if candidate != "" && versionPattern.MatchString(candidate) && SingBoxSHA256(candidate) != "" {
+		return candidate
+	}
+	fallback = strings.TrimPrefix(strings.TrimSpace(fallback), "v")
+	if versionPattern.MatchString(fallback) && SingBoxSHA256(fallback) != "" {
 		return fallback
 	}
-	if !versionPattern.MatchString(candidate) {
-		return fallback
-	}
-	return candidate
+	return DefaultSingBoxVersion
 }
 
 func normalizeMasqueradeURL(raw, fallbackHost string) string {
@@ -369,6 +375,12 @@ func normalizeMasqueradeURL(raw, fallbackHost string) string {
 	}
 	if u.RawQuery != "" {
 		normalized += "?" + u.RawQuery
+	}
+	// The normalized value is embedded in both a root shell assignment and a
+	// JSON heredoc. Keep only URL characters that are inert in both contexts;
+	// percent-encoding remains available for all other URL data.
+	if !masqueradeURLPattern.MatchString(normalized) {
+		return fallback
 	}
 	return normalized
 }

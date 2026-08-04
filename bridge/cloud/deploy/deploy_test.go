@@ -26,6 +26,25 @@ func TestShellEscape_PlainStringPassesThrough(t *testing.T) {
 	}
 }
 
+func TestMasqueradeURLRejectsShellAndJSONInjection(t *testing.T) {
+	fallback := "https://www.bing.com"
+	for _, raw := range []string{
+		"https://example.com/$(id)",
+		"https://example.com/;touch%20/tmp/pwned",
+		"https://example.com/`id`",
+		"https://example.com/path?x=\"break-json",
+		"https://example.com/path?x=line\nnext",
+	} {
+		if got := normalizeMasqueradeURL(raw, "www.bing.com"); !masqueradeURLPattern.MatchString(got) {
+			t.Fatalf("unsafe URL %q normalized to unsafe value %q (fallback %q)", raw, got, fallback)
+		}
+		script := GenerateMultiProtocolScript(MultiProtocolParams{HysteriaMasqURL: raw})
+		if strings.Contains(script, raw) {
+			t.Fatalf("unsafe URL appeared verbatim in root script: %q", raw)
+		}
+	}
+}
+
 func TestShellEscape_SingleQuoteInInput(t *testing.T) {
 	// A password containing a single quote must not allow shell injection.
 	input := "pass'word"
@@ -314,5 +333,64 @@ func TestGenerateMultiProtocolScript_AllowsNonRootSingBoxToBindPrivilegedPorts(t
 	}
 	if got := strings.Count(script, "CapabilityBoundingSet=CAP_NET_BIND_SERVICE"); got != 4 {
 		t.Fatalf("expected all sing-box systemd units to bound low-port bind capability, got %d", got)
+	}
+}
+
+// TestGenerateMultiProtocolScript_ShadowsocksPullFailureDoesNotAbortScript
+// guards against a real regression: the script runs under 'set -euo
+// pipefail', and Shadowsocks (step 6/8) is deployed before Hysteria2/VLESS/
+// Trojan (steps 7-8). If the explicit `docker pull` for the pinned
+// Shadowsocks image is not fault-tolerant, a single transient pull failure
+// (registry rate limit, a momentary network blip on a fresh VPS) kills the
+// whole script and silently takes every other protocol down with it — with
+// no self-heal, since the script never runs again.
+func TestGenerateMultiProtocolScript_ShadowsocksPullFailureDoesNotAbortScript(t *testing.T) {
+	script := GenerateMultiProtocolScript(MultiProtocolParams{
+		SSPort:           24443,
+		SSPassword:       "ss-pass",
+		HysteriaPort:     443,
+		HysteriaPassword: "hy-pass",
+		HysteriaServer:   "www.cloudflare.com",
+		VLESSPort:        8443,
+		VLESSUUID:        GenerateUUID(),
+		VLESSPrivateKey:  "private-key",
+		VLESSPublicKey:   "public-key",
+		VLESSShortID:     "1234abcd",
+		VLESSServer:      "www.cloudflare.com",
+		TrojanPort:       443,
+		TrojanPassword:   "trojan-pass",
+		TrojanServer:     "www.cloudflare.com",
+	})
+
+	if !strings.Contains(script, "set -euo pipefail") {
+		t.Fatalf("expected script to run under set -euo pipefail (this test's premise)")
+	}
+
+	idx := strings.Index(script, "docker pull --quiet")
+	if idx < 0 {
+		t.Fatalf("expected a docker pull for the pinned Shadowsocks image")
+	}
+	line := script[idx:]
+	if end := strings.IndexByte(line, '\n'); end >= 0 {
+		line = line[:end]
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "|| true") {
+		t.Fatalf("docker pull for Shadowsocks must tolerate failure (|| true), got line: %q", line)
+	}
+}
+
+func TestGenerateLightweightScript_ShadowsocksPullFailureDoesNotAbortScript(t *testing.T) {
+	script := GenerateLightweightScript(24443, "ss-pass")
+
+	idx := strings.Index(script, "docker pull --quiet")
+	if idx < 0 {
+		t.Fatalf("expected a docker pull for the pinned Shadowsocks image")
+	}
+	line := script[idx:]
+	if end := strings.IndexByte(line, '\n'); end >= 0 {
+		line = line[:end]
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "|| true") {
+		t.Fatalf("docker pull for Shadowsocks must tolerate failure (|| true), got line: %q", line)
 	}
 }

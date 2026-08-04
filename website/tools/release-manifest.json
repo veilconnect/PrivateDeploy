@@ -1,0 +1,45 @@
+{
+  "version": "2.0.14",
+  "date": "2026-06-30",
+  "artifacts": [
+    {
+      "platform": "windows",
+      "name": "PrivateDeploy-windows-amd64.zip",
+      "size": "6.5 MB",
+      "sha256": "6920ea05bc74c82c49a53dccd79e0d6aa735f26bb2c9e7f504ac8d42737d0ed8",
+      "primary": true
+    },
+    {
+      "platform": "windows",
+      "name": "PrivateDeploy-windows-arm64.zip",
+      "size": "6.0 MB",
+      "sha256": "668e2b76a87d89b6a9d9a4f91525e5a15ae7eece9855bc1f3549e0a80b7276d7"
+    },
+    {
+      "platform": "windows",
+      "name": "PrivateDeploy-windows-386.zip",
+      "size": "6.4 MB",
+      "sha256": "e72f18d1c6ceb10e7bf77b2db991b2db4e0771bc6c421cf275412f8622c7eac5"
+    },
+    {
+      "platform": "macos",
+      "name": "PrivateDeploy-darwin-arm64.zip",
+      "size": "5.7 MB",
+      "sha256": "b78f9d43a11cbc0d61d62ce8c26847206d7b57faa149d78a359c2d1e95697530",
+      "primary": true
+    },
+    {
+      "platform": "macos",
+      "name": "PrivateDeploy-darwin-amd64.zip",
+      "size": "6.2 MB",
+      "sha256": "7b91c07fafadc20e3913e062052e8da595ff5028fbc873d023bada15b2aed27f"
+    },
+    {
+      "platform": "linux",
+      "name": "PrivateDeploy-linux-amd64.zip",
+      "size": "6.1 MB",
+      "sha256": "485629542ede99b3b71c6ede6740a4ac4b2868ee9db1bf5676eee6c865f992a5",
+      "primary": true
+    }
+  ]
+}

@@ -33,7 +33,7 @@ class NodesCloudSection extends StatelessWidget {
       onManageProviderChanged;
 
   const NodesCloudSection({
-    Key? key,
+    super.key,
     required this.cloudProvider,
     required this.profileProvider,
     required this.vpnProvider,
@@ -49,7 +49,7 @@ class NodesCloudSection extends StatelessWidget {
     required this.onTestCloudNodeLatency,
     required this.onTestAllCloudNodesLatency,
     required this.onManageProviderChanged,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

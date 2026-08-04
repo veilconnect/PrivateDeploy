@@ -38,7 +38,7 @@ class NodesVpnSection extends StatelessWidget {
   final bool busy;
 
   const NodesVpnSection({
-    Key? key,
+    super.key,
     required this.vpnProvider,
     required this.profileProvider,
     required this.cloudProvider,
@@ -52,7 +52,7 @@ class NodesVpnSection extends StatelessWidget {
     this.showSetupShortcuts = true,
     this.proxyConnected,
     this.busy = false,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -61,9 +61,17 @@ class NodesVpnSection extends StatelessWidget {
     // The proxy (网络访问) connection state, which can differ from the raw tunnel
     // state: the tunnel may be up carrying only the intranet WireGuard overlay.
     final proxyUp = proxyConnected ?? vpnProvider.isConnected;
-    final effStatus = proxyConnected == null
+    final tunnelStatus = proxyConnected == null
         ? vpnProvider.status
         : (proxyConnected! ? vpnProvider.status : VpnStatus.disconnected);
+    // Native reports `connected` as soon as the tun/core is running, before
+    // VpnProvider's startup egress verification has proved the route usable.
+    // Keep the card in its orange connecting state throughout that window so
+    // it never flashes a green success immediately before a failed probe.
+    final effStatus = tunnelStatus == VpnStatus.connected &&
+            vpnProvider.isStartupVerificationInProgress
+        ? VpnStatus.connecting
+        : tunnelStatus;
     final statusColor = _statusColor(effStatus, degraded: isDegraded);
     final selectedProfile = profileProvider.activeProfile;
     final stats = vpnProvider.stats;

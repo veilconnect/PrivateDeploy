@@ -20,14 +20,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
+// baseURL is a variable (not a const) so tests can point the provider at a
+// fake API server.
+var baseURL = "https://api.digitalocean.com/v2"
+
 const (
-	baseURL           = "https://api.digitalocean.com/v2"
 	configFileRelPath = "data/cloud/digitalocean-config.json"
 	nodesFileRelPath  = "data/cloud/digitalocean-nodes.json"
 
@@ -40,11 +45,13 @@ var digitaloceanNodesMu sync.Mutex
 
 // Provider implements cloud.CloudProvider for DigitalOcean.
 type Provider struct {
-	config     *cloud.ProviderConfig
-	client     *http.Client
-	basePath   string
-	configPath string
-	nodesPath  string
+	configMu        sync.Mutex
+	managedSSHKeyMu sync.Mutex
+	config          *cloud.ProviderConfig
+	client          *http.Client
+	basePath        string
+	configPath      string
+	nodesPath       string
 }
 
 // New creates a new DigitalOcean provider instance.
@@ -75,7 +82,7 @@ func New(config *cloud.ProviderConfig) *Provider {
 	}
 
 	return &Provider{
-		config:     config,
+		config:     cloneProviderConfig(config),
 		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		basePath:   basePath,
 		configPath: configPath,
@@ -95,11 +102,19 @@ func (p *Provider) DisplayName() string {
 
 // LoadConfig loads the DigitalOcean configuration from disk.
 func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+	return p.loadConfigLocked()
+}
+
+// loadConfigLocked loads configuration while configMu is held.
+func (p *Provider) loadConfigLocked() (*cloud.ProviderConfig, error) {
 	data, err := os.ReadFile(p.configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return &cloud.ProviderConfig{
+		p.config = &cloud.ProviderConfig{
 			Provider: "digitalocean",
-		}, nil
+		}
+		return cloneProviderConfig(p.config), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -108,7 +123,8 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 	var config cloud.ProviderConfig
 	if len(data) == 0 {
 		config.Provider = "digitalocean"
-		return &config, nil
+		p.config = cloneProviderConfig(&config)
+		return cloneProviderConfig(p.config), nil
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -128,17 +144,24 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal sanitized config: %w", err)
 		}
-		if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+		if err := persistence.WritePrivateFileAtomic(p.configPath, data); err != nil {
 			return nil, fmt.Errorf("failed to rewrite sanitized config file: %w", err)
 		}
 	}
 
-	p.config = &config
-	return &config, nil
+	p.config = cloneProviderConfig(&config)
+	return cloneProviderConfig(p.config), nil
 }
 
 // SaveConfig saves the DigitalOcean configuration to disk.
 func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
+	if config == nil {
+		return cloud.ErrInvalidConfig
+	}
+	config = cloneProviderConfig(config)
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+
 	if config.Provider != "digitalocean" {
 		return fmt.Errorf("invalid provider: expected digitalocean, got %s", config.Provider)
 	}
@@ -157,12 +180,58 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(p.configPath, data); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	p.config = config
+	p.config = cloneProviderConfig(config)
 	return nil
+}
+
+// ensureConfig makes sure the in-memory config carries an API key before any
+// authenticated API call. The defaults registry constructs this provider with
+// an empty config, so after a process restart a direct CreateInstance (without
+// a prior GetConfig/SaveConfig round-trip) would otherwise send an empty
+// "Bearer " header. LoadConfig already restores the key from the OS secret
+// store, so reuse it here — same pattern as the Vultr provider's ensureConfig.
+// When the in-memory config already has a key, no disk access happens.
+func (p *Provider) ensureConfig() (*cloud.ProviderConfig, error) {
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+
+	if p.config == nil || strings.TrimSpace(p.config.APIKey) == "" {
+		cfg, err := p.loadConfigLocked()
+		if err != nil {
+			return nil, err
+		}
+		p.config = cloneProviderConfig(cfg)
+	}
+	if strings.TrimSpace(p.config.APIKey) == "" {
+		return nil, cloud.ErrMissingAPIKey
+	}
+	return cloneProviderConfig(p.config), nil
+}
+
+func cloneProviderConfig(config *cloud.ProviderConfig) *cloud.ProviderConfig {
+	if config == nil {
+		return nil
+	}
+	clone := *config
+	if config.Extra != nil {
+		clone.Extra = make(map[string]string, len(config.Extra))
+		for key, value := range config.Extra {
+			clone.Extra[key] = value
+		}
+	}
+	return &clone
+}
+
+func (p *Provider) apiKey() (string, error) {
+	cfg, err := p.ensureConfig()
+	if err != nil {
+		return "", err
+	}
+	return cfg.APIKey, nil
 }
 
 // ValidateConfig validates the DigitalOcean configuration.

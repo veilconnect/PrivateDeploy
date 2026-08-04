@@ -581,7 +581,8 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         core.restart()
                     }
                     isRunning = true
-                    captureCurrentUnderlyingNetworkSnapshot()
+                    val attemptUnderlyingSnapshot =
+                        captureCurrentUnderlyingNetworkSnapshot()
 
                     // Another check at the success boundary — start
                     // may have taken several seconds; the user could
@@ -605,6 +606,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         // (any-attempt-passes) and in accepting Unreachable as
                         // connected-degraded rather than in slow multi-probe retries.
                         upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                        totalBudgetMs = StartupHealthProbePolicy.TOTAL_BUDGET_MS,
                     )
                     when (health) {
                         TunnelHealth.Healthy -> {
@@ -680,19 +682,62 @@ class PrivateDeployVpnService : VpnService(), Platform {
                             )
                         }
                         TunnelHealth.Unreachable -> {
-                            val onCellular = lastObservedUnderlyingNetworkType ==
-                                INTERFACE_TYPE_CELLULAR
-                            if (onCellular) {
-                                // On cellular a genuinely blackholed tun should
-                                // yield to direct traffic (carrier SYN-block
-                                // case), so keep the historical fail-start here.
+                            // Refresh the physical-network capabilities at the
+                            // decision boundary. A callback snapshot captured
+                            // before the tunnel started can be stale after a
+                            // Wi-Fi -> cellular handover, and VALIDATED is the
+                            // guard that separates a confirmed carrier block
+                            // from a mobile network that is still settling.
+                            val underlyingSnapshot =
+                                captureCurrentUnderlyingNetworkSnapshot()
+                            val onCellular = underlyingSnapshot?.type ==
+                                INTERFACE_TYPE_CELLULAR ||
+                                (
+                                    underlyingSnapshot == null &&
+                                        lastObservedUnderlyingNetworkType ==
+                                        INTERFACE_TYPE_CELLULAR
+                                )
+                            val failFast = StartupUnreachablePolicy.shouldFailFast(
+                                isCellular = onCellular,
+                                isValidated = underlyingSnapshot?.validated == true,
+                                isSameNetwork =
+                                    attemptUnderlyingSnapshot != null &&
+                                        attemptUnderlyingSnapshot.handle ==
+                                        underlyingSnapshot?.handle,
+                            )
+                            if (failFast) {
+                                // Both proxy and direct probes failed even
+                                // though Android has already validated the
+                                // cellular transport. Rebuilding the same tun
+                                // up to three more times cannot improve that
+                                // explicit verdict and can exceed Flutter's
+                                // 90-second start timeout. Tear it down now so
+                                // ordinary mobile traffic is restored.
                                 lastError = IllegalStateException(
                                     startupConnectivityFailureMessage(),
                                 )
                                 Log.w(
                                     TAG,
-                                    "VPN start attempt $attempt: cellular Unreachable " +
-                                        "— failing start so device falls back to direct",
+                                    "VPN start attempt $attempt: validated cellular " +
+                                        "Unreachable — tearing down immediately and " +
+                                        "skipping same-network retries",
+                                )
+                                teardownVpnCore("validated-cellular-unreachable")
+                                break
+                            } else if (onCellular) {
+                                // Preserve retries while the mobile transport
+                                // itself is not yet validated, or when its
+                                // Network handle changed during verification.
+                                // Those states are normal handover/radio-settle
+                                // windows, not proof that the configured
+                                // upstream is blocked.
+                                lastError = IllegalStateException(
+                                    startupConnectivityFailureMessage(),
+                                )
+                                Log.w(
+                                    TAG,
+                                    "VPN start attempt $attempt: unvalidated cellular " +
+                                        "Unreachable — retaining transient retry",
                                 )
                             } else {
                                 // On Wi-Fi: DO NOT tear the tunnel down. The tun
@@ -813,7 +858,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
                     // wanted to abort), but still stopSelf so the
                     // service tears down cleanly.
                     if (desiredRunning.get()) {
-                        broadcastError(failedStartErrorMessage(lastError))
+                        // The start worker has already serialized teardown and
+                        // stopSelf() runs immediately below. Tell VpnPlugin not
+                        // to enqueue a second ACTION_STOP: Dart may begin a
+                        // backup-node start as soon as this error is delivered,
+                        // and the stale STOP would kill that new service.
+                        broadcastError(
+                            failedStartErrorMessage(lastError),
+                            serviceOwnsShutdown = true,
+                        )
                     } else {
                         Log.i(
                             TAG,
@@ -1065,6 +1118,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
                         // (any-attempt-passes) and in accepting Unreachable as
                         // connected-degraded rather than in slow multi-probe retries.
                         upstreamRepeats = EGRESS_VERIFY_STARTUP_UPSTREAM_REPEATS,
+                        totalBudgetMs = StartupHealthProbePolicy.TOTAL_BUDGET_MS,
                     )
                     // Don't retry on UpstreamDegraded: the same node on the same
                     // underlying network won't suddenly pass offshore probes on a
@@ -1381,7 +1435,29 @@ class PrivateDeployVpnService : VpnService(), Platform {
      */
     private fun checkTunnelHealth(
         upstreamRepeats: Int = EGRESS_VERIFY_UPSTREAM_REPEATS,
+        totalBudgetMs: Long? = null,
     ): TunnelHealth {
+        // Startup/restart passes a hard total budget. The diagnostics sweep is
+        // deliberately provider-diverse, but Android VPN-bound DNS resolution
+        // is not covered by HttpURLConnection's connectTimeout and one dead
+        // hostname consumed 36 seconds on-device. Without an outer deadline,
+        // six serial endpoints finished only ~2 seconds before VpnPlugin's
+        // 90-second START_TIMEOUT. Periodic checks leave this null and retain
+        // the full, slower sweep.
+        val deadlineNanos = totalBudgetMs
+            ?.takeIf { it > 0L }
+            ?.let { System.nanoTime() + (it * 1_000_000L) }
+
+        fun remainingBudgetMs(): Long? {
+            val deadline = deadlineNanos ?: return null
+            val remainingNanos = deadline - System.nanoTime()
+            if (remainingNanos <= 0L) return 0L
+            // Round up a positive sub-millisecond remainder so the budget
+            // runner gets one last bounded attempt instead of treating it as
+            // already expired.
+            return ((remainingNanos + 999_999L) / 1_000_000L).coerceAtLeast(1L)
+        }
+
         // Tun-existence guard. Without this, the probe sockets fall back to
         // the underlying physical network (carrier DPI strips them, baidu
         // works, gstatic doesn't) and we mis-report this as
@@ -1400,15 +1476,22 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
         val connectivityManager =
             getSystemService(ConnectivityManager::class.java) ?: return TunnelHealth.Unreachable
+        val vpnNetworkWaitMs = remainingBudgetMs()
+            ?.coerceAtMost(EGRESS_VERIFY_VPN_NETWORK_WAIT_MS)
+            ?: EGRESS_VERIFY_VPN_NETWORK_WAIT_MS
+        if (vpnNetworkWaitMs <= 0L) {
+            Log.w(TAG, "checkTunnelHealth: startup health budget expired before VPN visibility")
+            return TunnelHealth.Unreachable
+        }
         if (!NativeEgressProbe.waitForVpnNetwork(
                 connectivityManager,
-                EGRESS_VERIFY_VPN_NETWORK_WAIT_MS,
+                vpnNetworkWaitMs,
             )
         ) {
             Log.w(
                 TAG,
                 "checkTunnelHealth: VPN Network was not visible after " +
-                    "${EGRESS_VERIFY_VPN_NETWORK_WAIT_MS}ms; skipping probes " +
+                    "${vpnNetworkWaitMs}ms; skipping probes " +
                     "that would otherwise use the cellular default network",
             )
             return TunnelHealth.Unreachable
@@ -1429,13 +1512,41 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // EVERY attempt fails do we treat upstream as down.
         var upstreamHealthy = false
         for (attempt in 1..upstreamRepeats) {
-            val result = NativeEgressProbe.probe(
-                connectivityManager,
-                endpoints = NativeEgressProbe.TUNNEL_REQUIRED_ENDPOINTS,
-                timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
-                allowDomesticFallback = false,
-                requireVpnNetwork = true,
-            )
+            val startupRemainingMs = remainingBudgetMs()
+            val result = if (startupRemainingMs == null) {
+                NativeEgressProbe.probe(
+                    connectivityManager,
+                    endpoints = NativeEgressProbe.TUNNEL_REQUIRED_ENDPOINTS,
+                    timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
+                    allowDomesticFallback = false,
+                    requireVpnNetwork = true,
+                    returnOnReachability = true,
+                )
+            } else {
+                // Always retain a domestic-direct window. That final probe is
+                // what distinguishes a carrier-blocked upstream from a dead
+                // TUN, so spending the entire 25 seconds offshore would lose
+                // the most actionable verdict.
+                val upstreamWindowMs =
+                    startupRemainingMs - StartupHealthProbePolicy.DOMESTIC_RESERVE_MS
+                if (upstreamWindowMs <= 0L) {
+                    EgressProbeResult(
+                        error = "Startup upstream probe exhausted its total time budget.",
+                    )
+                } else {
+                    val attemptsLeft = (upstreamRepeats - attempt + 1).coerceAtLeast(1)
+                    NativeEgressProbe.probeWithinBudget(
+                        connectivityManager = connectivityManager,
+                        endpoints = NativeEgressProbe.STARTUP_TUNNEL_REQUIRED_ENDPOINTS,
+                        timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
+                        allowDomesticFallback = false,
+                        requireVpnNetwork = true,
+                        returnOnReachability = true,
+                        totalBudgetMs =
+                            (upstreamWindowMs / attemptsLeft).coerceAtLeast(1L),
+                    )
+                }
+            }
             if (result.reachable) {
                 upstreamHealthy = true
                 lastUpstreamSource = result.source
@@ -1454,7 +1565,16 @@ class PrivateDeployVpnService : VpnService(), Platform {
             )
             if (attempt < upstreamRepeats) {
                 try {
-                    Thread.sleep(EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS)
+                    val remainingForSleep = remainingBudgetMs()
+                    val sleepMs = if (remainingForSleep == null) {
+                        EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS
+                    } else {
+                        (remainingForSleep - StartupHealthProbePolicy.DOMESTIC_RESERVE_MS)
+                            .coerceAtLeast(0L)
+                            .coerceAtMost(EGRESS_VERIFY_UPSTREAM_REPEAT_DELAY_MS)
+                    }
+                    if (sleepMs <= 0L) break
+                    Thread.sleep(sleepMs)
                 } catch (ignored: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return TunnelHealth.Unreachable
@@ -1465,13 +1585,33 @@ class PrivateDeployVpnService : VpnService(), Platform {
         // Always probe domestic-direct once. When upstream passed we still need
         // this to catch the post-handover settle window; when upstream failed
         // we still need this to distinguish "node blocked" from "tunnel dead".
-        val domesticResult = NativeEgressProbe.probe(
-            connectivityManager,
-            endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
-            timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
-            allowDomesticFallback = false,
-            requireVpnNetwork = true,
-        )
+        val domesticRemainingMs = remainingBudgetMs()
+        val domesticResult = if (domesticRemainingMs == null) {
+            NativeEgressProbe.probe(
+                connectivityManager,
+                endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
+                timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
+                allowDomesticFallback = false,
+                requireVpnNetwork = true,
+                returnOnReachability = true,
+            )
+        } else if (domesticRemainingMs <= 0L) {
+            EgressProbeResult(
+                error = "Startup domestic probe exhausted its total time budget.",
+            )
+        } else {
+            NativeEgressProbe.probeWithinBudget(
+                connectivityManager = connectivityManager,
+                endpoints = NativeEgressProbe.REACHABILITY_ENDPOINTS,
+                timeoutMs = EGRESS_VERIFY_PROBE_TIMEOUT_MS,
+                allowDomesticFallback = false,
+                requireVpnNetwork = true,
+                returnOnReachability = true,
+                totalBudgetMs = domesticRemainingMs.coerceAtMost(
+                    StartupHealthProbePolicy.DOMESTIC_RESERVE_MS,
+                ),
+            )
+        }
 
         if (upstreamHealthy && domesticResult.reachable) {
             Log.i(
@@ -1880,7 +2020,11 @@ class PrivateDeployVpnService : VpnService(), Platform {
         }
     }
 
-    private fun broadcastStatus(status: String, message: String?) {
+    private fun broadcastStatus(
+        status: String,
+        message: String?,
+        serviceOwnsShutdown: Boolean = false,
+    ) {
         // Cache the latest connected-state message so polling getStatus()
         // returns it; clear it on any non-connected transition so a stale
         // degraded warning doesn't survive into a fresh connect attempt.
@@ -1889,13 +2033,21 @@ class PrivateDeployVpnService : VpnService(), Platform {
             setPackage(packageName)
             putExtra("status", status)
             putExtra("message", message)
+            putExtra(EXTRA_SERVICE_OWNS_SHUTDOWN, serviceOwnsShutdown)
             // Tunnel-mode echo, same as statusMap(): lets the Dart layer keep
         })
     }
 
-    private fun broadcastError(message: String) {
+    private fun broadcastError(
+        message: String,
+        serviceOwnsShutdown: Boolean = false,
+    ) {
         Log.e(TAG, message)
-        broadcastStatus("error", message)
+        broadcastStatus(
+            "error",
+            message,
+            serviceOwnsShutdown = serviceOwnsShutdown,
+        )
     }
 
     private fun broadcastLog(message: String, timestamp: Long) {
@@ -2345,7 +2497,15 @@ class PrivateDeployVpnService : VpnService(), Platform {
                                 cancelDelayedRestart()
                                 delayedRestartAttempt = 0
                             }
-                            val outcome = describeTunnelHealth(health)
+                            // Keep periodic transitions transport-aware too.
+                            // A session can pass the one-shot restart probe on
+                            // cellular and lose its direct VPS path shortly
+                            // afterwards. Using the generic mapper here hid
+                            // that case behind UpstreamDegraded, so Dart ran
+                            // same-node restart/failover recovery instead of
+                            // the cellular CDN guidance/self-heal path used by
+                            // startVpn() and restartVpn().
+                            val outcome = degradedOutcomeForCurrentTransport(health)
                             // Stay in the "connected" status family — we don't
                             // want to flip the user back into a connecting/error
                             // banner just because a probe came back ambiguous.
@@ -2890,6 +3050,9 @@ class PrivateDeployVpnService : VpnService(), Platform {
             interfaceName = interfaceName,
             interfaceIndex = runCatching { NetworkInterface.getByName(interfaceName)?.index ?: 0 }
                 .getOrDefault(0),
+            validated = capabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+            ),
             expensive = !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
             constrained = Build.VERSION.SDK_INT >= 36 &&
                 !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED),
@@ -3081,6 +3244,7 @@ class PrivateDeployVpnService : VpnService(), Platform {
         val type: Int,
         val interfaceName: String,
         val interfaceIndex: Int,
+        val validated: Boolean,
         val expensive: Boolean,
         val constrained: Boolean,
     )
@@ -3105,3 +3269,4 @@ const val ACTION_VPN_STATUS = "com.privatedeploy.mobile.VPN_STATUS"
 const val ACTION_VPN_LOG = "com.privatedeploy.mobile.VPN_LOG"
 
 const val EXTRA_CONFIG = "config"
+const val EXTRA_SERVICE_OWNS_SHUTDOWN = "service_owns_shutdown"

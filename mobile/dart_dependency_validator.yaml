@@ -1,0 +1,23 @@
+# Exceptions for the `dart run dependency_validator` CI gate (mobile-ci
+# "Dependency audit" step). Every entry needs a reason — anything not listed
+# here fails the build if unused.
+exclude:
+  # Maintenance scripts (tool/) import hive directly; lib/ reaches it via
+  # hive_flutter, so the validator sees it as "only used outside lib/".
+  - tool
+ignore:
+  # Imported by tool/ scripts only (see exclude above); keeping the direct
+  # dependency pins the same major version hive_flutter resolves.
+  - hive
+  # No Dart imports today, but kept deliberately: fl_chart (traffic charts),
+  # flutter_local_notifications + permission_handler (VPN status
+  # notifications), flutter_svg (asset icons), retrofit (paired with
+  # retrofit_generator codegen), web_socket_channel (kernel API). Remove from
+  # this list the moment a real import appears, or delete the package instead
+  # of ignoring it.
+  - fl_chart
+  - flutter_local_notifications
+  - flutter_svg
+  - permission_handler
+  - retrofit
+  - web_socket_channel

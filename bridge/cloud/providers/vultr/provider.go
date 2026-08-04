@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
 const (
@@ -64,6 +65,7 @@ const (
 
 // Provider implements cloud.CloudProvider for Vultr.
 type Provider struct {
+	configMu   sync.Mutex
 	config     *cloud.ProviderConfig
 	configPath string
 	nodesPath  string
@@ -84,6 +86,7 @@ type vultrInstance struct {
 	Label     string `json:"label"`
 	Status    string `json:"status"`
 	Region    string `json:"region"`
+	Plan      string `json:"plan"`
 	MainIP    string `json:"main_ip"`
 	V6MainIP  string `json:"v6_main_ip"`
 	CreatedAt string `json:"created_at"`
@@ -150,7 +153,7 @@ func New(config *cloud.ProviderConfig) *Provider {
 	nodesPath := filepath.Join(basePath, nodesFileRelPath)
 
 	return &Provider{
-		config:     config,
+		config:     cloneProviderConfig(config),
 		configPath: configPath,
 		nodesPath:  nodesPath,
 	}
@@ -168,11 +171,19 @@ func (p *Provider) DisplayName() string {
 
 // LoadConfig loads the Vultr configuration from disk.
 func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+	return p.loadConfigLocked()
+}
+
+// loadConfigLocked loads configuration while configMu is held.
+func (p *Provider) loadConfigLocked() (*cloud.ProviderConfig, error) {
 	data, err := os.ReadFile(p.configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return &cloud.ProviderConfig{
+		p.config = &cloud.ProviderConfig{
 			Provider: "vultr",
-		}, nil
+		}
+		return cloneProviderConfig(p.config), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -181,7 +192,8 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 	var config cloud.ProviderConfig
 	if len(data) == 0 {
 		config.Provider = "vultr"
-		return &config, nil
+		p.config = cloneProviderConfig(&config)
+		return cloneProviderConfig(p.config), nil
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -197,17 +209,24 @@ func (p *Provider) LoadConfig() (*cloud.ProviderConfig, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(p.configPath, mustJSON(sanitized), 0o600); err != nil {
+		if err := persistence.WritePrivateFileAtomic(p.configPath, mustJSON(sanitized)); err != nil {
 			return nil, fmt.Errorf("failed to rewrite sanitized config: %w", err)
 		}
 	}
 
-	p.config = &config
-	return &config, nil
+	p.config = cloneProviderConfig(&config)
+	return cloneProviderConfig(p.config), nil
 }
 
 // SaveConfig saves the Vultr configuration to disk.
 func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
+	if config == nil {
+		return cloud.ErrInvalidConfig
+	}
+	config = cloneProviderConfig(config)
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+
 	if config.Provider != "vultr" {
 		return fmt.Errorf("invalid provider: expected vultr, got %s", config.Provider)
 	}
@@ -226,11 +245,11 @@ func (p *Provider) SaveConfig(config *cloud.ProviderConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(p.configPath, data, 0o600); err != nil {
+	if err := persistence.WritePrivateFileAtomic(p.configPath, data); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	p.config = config
+	p.config = cloneProviderConfig(config)
 	return nil
 }
 
@@ -257,17 +276,36 @@ func (p *Provider) ValidateConfig(config *cloud.ProviderConfig) error {
 }
 
 func (p *Provider) ensureConfig() (*cloud.ProviderConfig, error) {
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+
 	if p.config == nil || strings.TrimSpace(p.config.APIKey) == "" {
-		cfg, err := p.LoadConfig()
+		cfg, err := p.loadConfigLocked()
 		if err != nil {
 			return nil, err
 		}
-		p.config = cfg
+		p.config = cloneProviderConfig(cfg)
 	}
 	if strings.TrimSpace(p.config.APIKey) == "" {
 		return nil, cloud.ErrMissingAPIKey
 	}
-	return p.config, nil
+	return cloneProviderConfig(p.config), nil
+}
+
+// cloneProviderConfig prevents callers from mutating the provider's live
+// configuration (including its Extra map) without holding configMu.
+func cloneProviderConfig(config *cloud.ProviderConfig) *cloud.ProviderConfig {
+	if config == nil {
+		return nil
+	}
+	clone := *config
+	if config.Extra != nil {
+		clone.Extra = make(map[string]string, len(config.Extra))
+		for key, value := range config.Extra {
+			clone.Extra[key] = value
+		}
+	}
+	return &clone
 }
 
 func (p *Provider) apiRequest(ctx context.Context, method, path string, payload any) (*http.Response, error) {

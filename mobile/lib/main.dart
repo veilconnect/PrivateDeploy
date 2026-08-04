@@ -38,9 +38,31 @@ void main() async {
   runApp(PrivateDeployApp(appSettingsProvider: appSettingsProvider));
 }
 
+/// Applies an AutoCDN profile rebuild to the tunnel that is actually running.
+///
+/// A connected-but-degraded session cannot accept another cold [connect]: the
+/// Android service rejects it as `ALREADY_RUNNING`, leaving the old config in
+/// place. Use the provider's stop/start config swap in that state, and only
+/// report success when the native tunnel accepted the rebuilt config.
+Future<bool> applyAutoCdnRebuiltConfig({
+  required VpnProvider vpnProvider,
+  required String rebuiltConfig,
+  required String? profileName,
+}) {
+  if (vpnProvider.isConnected) {
+    return vpnProvider.swapRunningConfig(
+      configJson: rebuiltConfig,
+      profileName: profileName,
+    );
+  }
+  return vpnProvider.connect(
+    configJson: rebuiltConfig,
+    profileName: profileName,
+  );
+}
+
 class PrivateDeployApp extends StatelessWidget {
-  const PrivateDeployApp({Key? key, this.appSettingsProvider})
-      : super(key: key);
+  const PrivateDeployApp({super.key, this.appSettingsProvider});
 
   final AppSettingsProvider? appSettingsProvider;
 
@@ -66,9 +88,6 @@ class PrivateDeployApp extends StatelessWidget {
             VpnProvider>(
           create: (_) => VpnProvider(),
           update: (ctx, cloudProvider, profileProvider, vpnProvider) {
-            vpnProvider?.setFallbackEgressIpResolver(
-              cloudProvider.resolveEgressIpForProfileName,
-            );
             final appSettings = ctx.read<AppSettingsProvider>();
             // Auto-failover: when the same-node restart budget for an
             // UpstreamDegraded condition is exhausted, cycle through the
@@ -336,16 +355,25 @@ class PrivateDeployApp extends StatelessWidget {
               // saved pathSecret is stale and re-deployment is needed.
               final reach = await cdn.debugTestCdnWorkerReachable(instance.id);
               trace('worker reachable with stored secret = $reach');
-              trace('restarting VPN with rebuilt profile (CDN-front first)');
+              trace('applying rebuilt VPN profile (CDN-front first)');
               showGlobalSnackBar(
-                '已启用 CDN 加速，正在重新连接…',
+                '正在应用 CDN 加速并重新连接…',
                 duration: const Duration(seconds: 3),
               );
-              await vpnProvider.connect(
-                configJson: rebuiltConfig,
+              final applied = await applyAutoCdnRebuiltConfig(
+                vpnProvider: vpnProvider,
+                rebuiltConfig: rebuiltConfig,
                 profileName: activeProfileName,
               );
-              return true;
+              trace('rebuilt VPN profile applied = $applied');
+              if (!applied) {
+                showGlobalSnackBar(
+                  'CDN 加速配置已保存，但重新连接失败：'
+                  '${vpnProvider.error ?? "未知错误"}',
+                  duration: const Duration(seconds: 6),
+                );
+              }
+              return applied;
             });
             return cdnProvider!;
           },

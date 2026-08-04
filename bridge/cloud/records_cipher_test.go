@@ -1,8 +1,11 @@
 package cloud
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -30,6 +33,33 @@ func TestEncodeRecordsRoundTrip(t *testing.T) {
 	}
 	if decoded["node-1"]["password"] != "s3cr3t" || decoded["node-1"]["uuid"] != "abc-123" {
 		t.Fatalf("round trip mismatch: %+v", decoded)
+	}
+}
+
+func TestEncodeRecordsRejectsAndPreservesMalformedExistingDEK(t *testing.T) {
+	for _, malformed := range []string{
+		"not-base64%%",
+		base64.StdEncoding.EncodeToString([]byte("too-short")),
+	} {
+		malformed := malformed
+		t.Run(malformed, func(t *testing.T) {
+			t.Setenv(secretStoreDirEnv, t.TempDir())
+			if err := SaveSecret(recordsDEKConfigPath, recordsDEKProvider, malformed); err != nil {
+				t.Fatalf("seed malformed DEK: %v", err)
+			}
+
+			if _, err := EncodeRecords(map[string]string{"secret": "value"}); err == nil || !strings.Contains(err.Error(), "corrupt") {
+				t.Fatalf("EncodeRecords error = %v, want corrupt-key failure", err)
+			}
+
+			got, err := LoadSecret(recordsDEKConfigPath, recordsDEKProvider)
+			if err != nil {
+				t.Fatalf("reload malformed DEK: %v", err)
+			}
+			if got != malformed {
+				t.Fatalf("malformed DEK was overwritten: got %q, want %q", got, malformed)
+			}
+		})
 	}
 }
 
@@ -75,5 +105,53 @@ func TestDecodeRecordsFailsWhenKeyMissing(t *testing.T) {
 	var decoded map[string]string
 	if err := DecodeRecords(blob, &decoded); err == nil {
 		t.Fatal("expected DecodeRecords to fail when the data key is missing")
+	}
+}
+
+func TestConcurrentFirstEncodeRecordsSharePersistedKey(t *testing.T) {
+	t.Setenv(secretStoreDirEnv, t.TempDir())
+
+	const recordCount = 128
+	type record struct {
+		ID     int    `json:"id"`
+		Secret string `json:"secret"`
+	}
+	type result struct {
+		blob []byte
+		err  error
+	}
+
+	start := make(chan struct{})
+	results := make([]result, recordCount)
+	var wg sync.WaitGroup
+	wg.Add(recordCount)
+	for i := 0; i < recordCount; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-start
+			results[i].blob, results[i].err = EncodeRecords(record{
+				ID:     i,
+				Secret: fmt.Sprintf("secret-%d", i),
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	// Every independently encoded record must be decryptable with the single
+	// DEK that remains in the shared secret slot after first initialization.
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("EncodeRecords(%d): %v", i, result.err)
+		}
+
+		var decoded record
+		if err := DecodeRecords(result.blob, &decoded); err != nil {
+			t.Fatalf("DecodeRecords(%d): %v", i, err)
+		}
+		if decoded.ID != i || decoded.Secret != fmt.Sprintf("secret-%d", i) {
+			t.Fatalf("record %d round trip mismatch: %+v", i, decoded)
+		}
 	}
 }

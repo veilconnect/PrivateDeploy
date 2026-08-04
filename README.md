@@ -51,9 +51,10 @@ Reality parameters (public key + short ID) are stored on the VPS under `/etc/pri
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) – System topology, module map, deployment flow.
 - [`docs/MULTI-PROTOCOL-DESIGN.md`](docs/MULTI-PROTOCOL-DESIGN.md) – Deep dive into the multi-protocol deployment flow.
 - [`docs/MULTI-CLOUD-ARCHITECTURE.md`](docs/MULTI-CLOUD-ARCHITECTURE.md) – Provider abstraction and adding a new cloud.
-- [`docs/API_DESIGN.md`](docs/API_DESIGN.md) – HTTP API surface.
+- [`docs/API_DESIGN.md`](docs/API_DESIGN.md) – HTTP API surface. The standalone API ships with token auth **on by default**: it honors `API_AUTH_TOKEN` / `API_AUTH_TOKEN_FILE`, otherwise it generates a persistent random token file (mode 0600, path logged at startup — default `<db dir>/api_auth_token`). Opting out requires the explicit `API_ALLOW_UNAUTHENTICATED=true` switch (loopback-only); remote exposure always requires an explicitly configured token. Instance creation is asynchronous (`202` + operation id, `Idempotency-Key` supported) and create/delete must name their `provider` explicitly.
 - [`docs/DEPLOYMENT-IMPROVEMENTS.md`](docs/DEPLOYMENT-IMPROVEMENTS.md) – Notes on user-data hardening and firewall fixes.
 - [`docs/GO-NO-GO-CHECKLIST.md`](docs/GO-NO-GO-CHECKLIST.md) – Release decision checklist with rollback template.
+- [`docs/STABLE-RELEASE-CHECKLIST.md`](docs/STABLE-RELEASE-CHECKLIST.md) – Fail-closed stable-release evidence, signing, live-cloud, device, and legal gates.
 - [`docs/archive/`](docs/archive/) – Phase reports and one-off completion summaries (frozen, kept for history).
 
 ## Quality Gate (Local)
@@ -69,4 +70,4 @@ The cloud UI regression script always uses an isolated localhost port (`127.0.0.
 
 ## License
 
-This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+This project is released under the GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for details. Third-party dependencies remain under their own licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

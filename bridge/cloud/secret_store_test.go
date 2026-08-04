@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -49,6 +50,27 @@ func TestPrepareAndRestoreProviderConfigForSave(t *testing.T) {
 	}
 	if loaded.APIKey != "top-secret" {
 		t.Fatalf("expected restored api key, got %q", loaded.APIKey)
+	}
+}
+
+func TestFileSecretStoreUsesPrivateFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix file permission bits")
+	}
+
+	secretDir := t.TempDir()
+	t.Setenv(secretStoreDirEnv, secretDir)
+	configPath := filepath.Join(t.TempDir(), "provider.json")
+	if err := SaveSecret(configPath, "permission-test", "top-secret"); err != nil {
+		t.Fatalf("SaveSecret: %v", err)
+	}
+
+	info, err := os.Stat(fileSecretPath(secretDir, configPath, "permission-test"))
+	if err != nil {
+		t.Fatalf("stat secret: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("secret mode = %04o, want 0600", got)
 	}
 }
 

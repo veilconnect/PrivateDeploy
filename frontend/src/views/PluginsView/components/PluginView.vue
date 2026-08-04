@@ -48,6 +48,12 @@ const testing = ref(false)
 
 const handleTest = async (event: PluginTriggerEvent, arg1?: any, arg2?: any) => {
   if (!plugin.value || testing.value) return
+
+  // The editor executes the unsaved buffer directly, so it cannot rely on
+  // the normal trigger runner's consent gate. Require the same versioned,
+  // persisted full-trust consent before constructing AsyncFunction.
+  if (!(await pluginsStore.ensurePluginTrustConsent(plugin.value, { reprompt: true }))) return
+
   testing.value = true
   try {
     const metadata = JSON.stringify({

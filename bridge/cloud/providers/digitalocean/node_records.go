@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/persistence"
 )
 
-func (p *Provider) loadNodeRecords() (map[string]cloud.InstanceRecord, error) {
-	digitaloceanNodesMu.Lock()
-	defer digitaloceanNodesMu.Unlock()
-
+// loadNodeRecordsLocked reads the records file. Callers must hold
+// digitaloceanNodesMu.
+func (p *Provider) loadNodeRecordsLocked() (map[string]cloud.InstanceRecord, error) {
 	data, err := os.ReadFile(p.nodesPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]cloud.InstanceRecord{}, nil
@@ -32,10 +32,9 @@ func (p *Provider) loadNodeRecords() (map[string]cloud.InstanceRecord, error) {
 	return records, nil
 }
 
-func (p *Provider) saveNodeRecords(records map[string]cloud.InstanceRecord) error {
-	digitaloceanNodesMu.Lock()
-	defer digitaloceanNodesMu.Unlock()
-
+// saveNodeRecordsLocked writes the records file. Callers must hold
+// digitaloceanNodesMu.
+func (p *Provider) saveNodeRecordsLocked(records map[string]cloud.InstanceRecord) error {
 	if err := os.MkdirAll(filepath.Dir(p.nodesPath), 0o750); err != nil {
 		return err
 	}
@@ -45,19 +44,52 @@ func (p *Provider) saveNodeRecords(records map[string]cloud.InstanceRecord) erro
 		return err
 	}
 
-	return os.WriteFile(p.nodesPath, data, 0o600)
+	return persistence.WritePrivateFileAtomic(p.nodesPath, data)
 }
 
-func (p *Provider) deleteNodeRecord(instanceID string) error {
-	records, err := p.loadNodeRecords()
+// loadNodeRecords returns a snapshot of the node records. It must only be used
+// for read-only access: any load→modify→save sequence built on top of it can
+// lose updates to a concurrent writer. Mutations must go through
+// mutateNodeRecords instead.
+func (p *Provider) loadNodeRecords() (map[string]cloud.InstanceRecord, error) {
+	digitaloceanNodesMu.Lock()
+	defer digitaloceanNodesMu.Unlock()
+	return p.loadNodeRecordsLocked()
+}
+
+// mutateNodeRecords runs an atomic read-modify-write cycle on the records
+// file, holding digitaloceanNodesMu for the whole load→mutate→save sequence so
+// concurrent mutations can never overwrite each other's writes. The callback
+// may modify the records map in place and returns whether the result should be
+// persisted; returning save=false skips the write for no-op flows. The
+// callback must not call back into loadNodeRecords / mutateNodeRecords (the
+// mutex is not reentrant).
+func (p *Provider) mutateNodeRecords(mutate func(records map[string]cloud.InstanceRecord) (save bool, err error)) error {
+	digitaloceanNodesMu.Lock()
+	defer digitaloceanNodesMu.Unlock()
+
+	records, err := p.loadNodeRecordsLocked()
 	if err != nil {
 		return err
 	}
 
-	if _, ok := records[instanceID]; !ok {
+	save, err := mutate(records)
+	if err != nil {
+		return err
+	}
+	if !save {
 		return nil
 	}
 
-	delete(records, instanceID)
-	return p.saveNodeRecords(records)
+	return p.saveNodeRecordsLocked(records)
+}
+
+func (p *Provider) deleteNodeRecord(instanceID string) error {
+	return p.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
+		if _, ok := records[instanceID]; !ok {
+			return false, nil
+		}
+		delete(records, instanceID)
+		return true, nil
+	})
 }

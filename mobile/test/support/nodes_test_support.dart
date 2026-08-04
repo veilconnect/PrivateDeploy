@@ -250,13 +250,14 @@ class TestCloudProvider extends ChangeNotifier
   final bool setApiKeyResult;
   final bool setSshAccessResult;
   final String exportBackupPayload;
+  @override
   bool hasPersistedActiveProviderSelection;
 
   bool _hasApiKey;
   CloudProviderId _providerId;
   Map<String, String> _providerExtra;
   Map<String, CloudLatencyCheck> _latencyChecks;
-  Map<String, String> _preferredEndpointLabels;
+  final Map<String, String> _preferredEndpointLabels;
   final CloudFastestNodeSelection? _fastestSelection;
 
   @override
@@ -675,6 +676,7 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
     this.activeProfile,
     this.isSupported = true,
     this.isLoading = false,
+    this.isStartupVerificationInProgress = false,
     this.unsupportedReason,
     TrafficStats? stats,
     this.diagnosticsEgressIp,
@@ -704,6 +706,9 @@ class TestVpnProvider extends ChangeNotifier with Fake implements VpnProvider {
 
   @override
   final bool isLoading;
+
+  @override
+  final bool isStartupVerificationInProgress;
 
   @override
   final String? unsupportedReason;
