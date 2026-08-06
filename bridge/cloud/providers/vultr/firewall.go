@@ -48,20 +48,28 @@ func (p *Provider) ensureFirewallGroup(ctx context.Context, requiredRules int) (
 	}
 
 	hasPrivateDeployGroup := false
+	var existingPrivateDeploy *vultrFirewallGroup
 	for _, fg := range listPayload.FirewallGroups {
 		if strings.Contains(fg.Description, "PrivateDeploy") {
 			hasPrivateDeployGroup = true
+			if existingPrivateDeploy == nil {
+				group := fg
+				existingPrivateDeploy = &group
+			}
 			if firewallGroupHasCapacity(fg, requiredRules) {
 				return fg.ID, nil
 			}
 		}
 	}
 
-	// Fall back to any existing PrivateDeploy group when the API omits capacity metadata.
-	for _, fg := range listPayload.FirewallGroups {
-		if strings.Contains(fg.Description, "PrivateDeploy") && fg.MaxRuleCount == 0 && fg.RuleCount == 0 {
-			return fg.ID, nil
-		}
+	// Reuse an existing group even when its reported capacity is full or
+	// missing. ensureFirewallRules will compare the actual rules and only add
+	// missing ports. This prevents creating one group per node and eventually
+	// hitting Vultr's account-level 50-group limit. If all required rules are
+	// already present, a full group is perfectly valid; if not, the provider
+	// returns the actionable per-group rule-limit error instead.
+	if existingPrivateDeploy != nil {
+		return existingPrivateDeploy.ID, nil
 	}
 
 	description := "PrivateDeploy Auto-Managed Firewall"
