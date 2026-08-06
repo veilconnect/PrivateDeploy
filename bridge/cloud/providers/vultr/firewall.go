@@ -255,16 +255,35 @@ func (p *Provider) attachFirewallToInstance(ctx context.Context, instanceID, fir
 		"firewall_group_id": firewallID,
 	}
 
-	res, err := p.apiRequest(ctx, http.MethodPatch, "/instances/"+instanceID, payload)
-	if err != nil {
-		return fmt.Errorf("failed to attach firewall: %w", err)
-	}
-	defer res.Body.Close()
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		res, err := p.apiRequest(ctx, http.MethodPatch, "/instances/"+instanceID, payload)
+		if err != nil {
+			return fmt.Errorf("failed to attach firewall: %w", err)
+		}
+		body, readErr := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("failed to read firewall attach response: %w", readErr)
+		}
+		if res.StatusCode < 400 {
+			return nil
+		}
 
-	if res.StatusCode >= 400 {
-		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("failed to attach firewall to instance: %s", decodeVultrError(body))
+		message := decodeVultrError(body)
+		// Vultr has returned a 400 with this remote-proxy message while the
+		// instance patch was still being processed. Treat it like a transient
+		// 5xx; PATCHing the same firewall_group_id is idempotent.
+		retryable := res.StatusCode >= http.StatusInternalServerError ||
+			(res.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(message), "remote") && strings.Contains(strings.ToLower(message), "response"))
+		if !retryable || attempt == maxAttempts {
+			return fmt.Errorf("failed to attach firewall to instance: %s", message)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
 	}
-
 	return nil
 }
