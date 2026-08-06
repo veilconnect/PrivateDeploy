@@ -354,7 +354,16 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 				fwErr,
 			))
 		}
-		if readyErr := p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra); readyErr != nil {
+		readyErr := p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
+		if readyErr != nil {
+			// Cloud-init can finish just as the first readiness window expires
+			// while Docker/systemd is still starting the managed protocols. Give
+			// the same deployment one bounded second window before recording a
+			// residual warning; users should not need to click redeploy merely
+			// because the VPS was slow to start.
+			readyErr = p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
+		}
+		if readyErr != nil {
 			warnings = append(warnings, fmt.Sprintf("service readiness failed: %v", readyErr))
 		}
 	} else {
