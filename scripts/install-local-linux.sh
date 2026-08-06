@@ -5,6 +5,7 @@ set -euo pipefail
 APP_NAME="PrivateDeploy"
 SOURCE_BIN="build/bin/${APP_NAME}"
 SOURCE_CORE="build/bin/data/sing-box/sing-box"
+SOURCE_TRAY="build/bin/privatedeploy-tray"
 TARGET_BIN_DIR="${HOME}/.local/bin"
 TARGET_DATA_DIR="${TARGET_BIN_DIR}/data/sing-box"
 TARGET_DESKTOP="${HOME}/.local/share/applications/privatedeploy.desktop"
@@ -28,6 +29,14 @@ chmod +x "${TARGET_BIN_DIR}/${APP_NAME}"
 cp -f "${SOURCE_CORE}" "${TARGET_DATA_DIR}/sing-box"
 chmod +x "${TARGET_DATA_DIR}/sing-box"
 
+# The desktop binary can run without the tray sidecar, but Linux close-to-tray
+# behavior then leaves no way to reopen the hidden window. Install it whenever
+# the build produced one.
+if [[ -f "${SOURCE_TRAY}" ]]; then
+  cp -f "${SOURCE_TRAY}" "${TARGET_BIN_DIR}/privatedeploy-tray"
+  chmod +x "${TARGET_BIN_DIR}/privatedeploy-tray"
+fi
+
 if [[ -f "build/appicon.png" ]]; then
   cp -f "build/appicon.png" "${TARGET_ICON}"
 fi
@@ -47,4 +56,7 @@ EOF
 echo "✅ 已安装到:"
 echo "  Binary: ${TARGET_BIN_DIR}/${APP_NAME}"
 echo "  Core:   ${TARGET_DATA_DIR}/sing-box"
+if [[ -f "${SOURCE_TRAY}" ]]; then
+  echo "  Tray:   ${TARGET_BIN_DIR}/privatedeploy-tray"
+fi
 echo "  Desktop:${TARGET_DESKTOP}"

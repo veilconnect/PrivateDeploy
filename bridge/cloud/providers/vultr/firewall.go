@@ -187,17 +187,36 @@ func firewallRuleKey(protocol, port string) string {
 }
 
 func (p *Provider) addFirewallRule(ctx context.Context, firewallID string, rule vultrFirewallRule) error {
-	res, err := p.apiRequest(ctx, http.MethodPost, "/firewalls/"+firewallID+"/rules", rule)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
+	// Vultr occasionally returns a transient 5xx while accepting otherwise
+	// valid rule requests. Retrying here is safe: ensureFirewallRules reloads
+	// the rule list before each deployment and Vultr rejects duplicate rules.
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		res, err := p.apiRequest(ctx, http.MethodPost, "/firewalls/"+firewallID+"/rules", rule)
+		if err != nil {
+			return err
+		}
 
-	if res.StatusCode >= 400 {
-		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("failed to add firewall rule: %s", decodeVultrError(body))
-	}
+		body, readErr := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("failed to read firewall rule response: %w", readErr)
+		}
+		if res.StatusCode < 400 {
+			return nil
+		}
+		if res.StatusCode < http.StatusInternalServerError || attempt == maxAttempts {
+			return fmt.Errorf("failed to add firewall rule: %s", decodeVultrError(body))
+		}
 
+		// Small bounded backoff keeps the deployment responsive while giving
+		// a transient provider fault a chance to clear.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
 	return nil
 }
 
