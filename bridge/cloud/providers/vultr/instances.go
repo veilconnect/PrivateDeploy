@@ -348,23 +348,32 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	instance, err := p.waitForInstance(ctx, instanceID, 15*time.Minute)
 	if err == nil {
 		record = p.updateRecordFromInstance(instanceID, instance, record)
-		if fwErr := p.configureInstanceFirewall(ctx, instanceID, creds.ports, opts.Label); fwErr != nil {
+		var fwErr error
+		if err := p.configureInstanceFirewall(ctx, instanceID, creds.ports, opts.Label); err != nil {
+			fwErr = err
 			warnings = append(warnings, fmt.Sprintf(
 				"Vultr firewall not attached: %v. Instance is running but only protected by OS-level rules. Free up firewall-group capacity in the Vultr console and redeploy to recover.",
-				fwErr,
+				err,
 			))
 		}
-		readyErr := p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
-		if readyErr != nil {
-			// Cloud-init can finish just as the first readiness window expires
-			// while Docker/systemd is still starting the managed protocols. Give
-			// the same deployment one bounded second window before recording a
-			// residual warning; users should not need to click redeploy merely
-			// because the VPS was slow to start.
-			readyErr = p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
-		}
-		if readyErr != nil {
-			warnings = append(warnings, fmt.Sprintf("service readiness failed: %v", readyErr))
+		if fwErr == nil {
+			readyErr := p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
+			if readyErr != nil {
+				// Cloud-init can finish just as the first readiness window expires
+				// while Docker/systemd is still starting the managed protocols. Give
+				// the same deployment one bounded second window before recording a
+				// residual warning; users should not need to click redeploy merely
+				// because the VPS was slow to start.
+				readyErr = p.waitForServiceReady(ctx, instance.MainIP, creds.ports, planRAM, extra)
+			}
+			if readyErr != nil {
+				warnings = append(warnings, fmt.Sprintf("service readiness failed: %v", readyErr))
+			}
+		} else {
+			// Without the provider firewall, external port probes are not
+			// meaningful and can consume two full readiness windows. The node is
+			// already active; persist the actionable firewall warning immediately.
+			warnings = append(warnings, "service readiness check skipped because Vultr firewall setup failed")
 		}
 	} else {
 		warnings = append(warnings, fmt.Sprintf("instance readiness failed: %v", err))
