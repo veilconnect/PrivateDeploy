@@ -41,6 +41,66 @@ export namespace bridge {
 		    return a;
 		}
 	}
+	export class CloudOperationSnapshot {
+	    operationId: string;
+	    provider: string;
+	    state: string;
+	    label: string;
+	    region: string;
+	    plan: string;
+	    createdAt: string;
+	    updatedAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CloudOperationSnapshot(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.operationId = source["operationId"];
+	        this.provider = source["provider"];
+	        this.state = source["state"];
+	        this.label = source["label"];
+	        this.region = source["region"];
+	        this.plan = source["plan"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class CloudOperationStatus {
+	    state: string;
+	    instance?: cloud.Instance;
+	    error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CloudOperationStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.instance = this.convertValues(source["instance"], cloud.Instance);
+	        this.error = source["error"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CloudProviderInfo {
 	    name: string;
 	    displayName: string;
@@ -225,6 +285,8 @@ export namespace bridge {
 	}
 	export class MultiDeployResult {
 	    id: string;
+	    operationId: string;
+	    state: string;
 	    success: boolean;
 	    error?: string;
 	
@@ -235,6 +297,8 @@ export namespace bridge {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.operationId = source["operationId"];
+	        this.state = source["state"];
 	        this.success = source["success"];
 	        this.error = source["error"];
 	    }
@@ -458,6 +522,7 @@ export namespace cdn {
 export namespace cloud {
 	
 	export class CreateInstanceOptions {
+	    operationId?: string;
 	    label: string;
 	    region: string;
 	    plan: string;
@@ -472,6 +537,7 @@ export namespace cloud {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.operationId = source["operationId"];
 	        this.label = source["label"];
 	        this.region = source["region"];
 	        this.plan = source["plan"];
@@ -661,4 +727,3 @@ export namespace ssh {
 	}
 
 }
-

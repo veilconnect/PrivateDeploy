@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"privatedeploy/bridge/cloud"
@@ -30,13 +29,10 @@ const vultrFirewallWarnThreshold = 45
 // DigitalOcean provider:
 //
 //   - "active"      — comfortably under quota.
-//   - "warning"     — over [vultrFirewallWarnThreshold] groups; deploys are
-//     still permitted because [ensureFirewallGroup] can reuse an existing
-//     PrivateDeploy group, but the user should prune unused groups before the
-//     cap is reached.
-//   - "locked"      — at or over [vultrFirewallGroupCap]; deploys may still
-//     succeed by reusing an existing group, but the UI surfaces this as a
-//     blocking state because Vultr will reject any new-group POST.
+//   - "warning"     — over [vultrFirewallWarnThreshold] groups; a new deploy
+//     still has headroom for its instance-owned group.
+//   - "locked"      — at or over [vultrFirewallGroupCap]; new deploys are
+//     blocked because sharing a mutable group across nodes would leak rules.
 //   - "invalid_key" — Vultr rejected the configured key.
 //   - "unknown"     — transient probe failure; fails open to avoid freezing
 //     the UI on a network blip.
@@ -86,41 +82,23 @@ func (p *Provider) GetAccountStatus(ctx context.Context) (*cloud.AccountStatus, 
 	}
 
 	total := len(listPayload.FirewallGroups)
-	reusable := 0
-	for _, fg := range listPayload.FirewallGroups {
-		if !strings.Contains(fg.Description, "PrivateDeploy") {
-			continue
-		}
-		if fg.MaxRuleCount == 0 || fg.RuleCount < fg.MaxRuleCount {
-			reusable++
-		}
-	}
-
-	return classifyVultrFirewallQuota(total, reusable), nil
+	return classifyVultrFirewallQuota(total), nil
 }
 
 // classifyVultrFirewallQuota turns a snapshot of firewall-group counts into a
 // provider-agnostic [cloud.AccountStatus]. Split out for unit-testing without
 // stubbing the HTTP client.
-func classifyVultrFirewallQuota(total, reusable int) *cloud.AccountStatus {
+func classifyVultrFirewallQuota(total int) *cloud.AccountStatus {
 	now := time.Now().UTC()
 	switch {
 	case total >= vultrFirewallGroupCap:
-		canDeploy := reusable > 0
-		msg := fmt.Sprintf(
-			"Vultr firewall-group cap reached (%d/%d). New groups will be rejected; delete unused groups in the Vultr console to recover deploy headroom.",
-			total, vultrFirewallGroupCap,
-		)
-		if canDeploy {
-			msg = fmt.Sprintf(
-				"Vultr firewall-group cap reached (%d/%d). Deploys will reuse an existing PrivateDeploy group, but no new groups can be created until you delete unused ones in the Vultr console.",
-				total, vultrFirewallGroupCap,
-			)
-		}
 		return &cloud.AccountStatus{
-			State:     "locked",
-			Message:   msg,
-			CanDeploy: canDeploy,
+			State: "locked",
+			Message: fmt.Sprintf(
+				"Vultr firewall-group cap reached (%d/%d). Each new node requires an isolated firewall group; delete an unused group before deploying.",
+				total, vultrFirewallGroupCap,
+			),
+			CanDeploy: false,
 			CheckedAt: now,
 		}
 	case total >= vultrFirewallWarnThreshold:

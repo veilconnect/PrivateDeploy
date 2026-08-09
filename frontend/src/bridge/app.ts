@@ -79,6 +79,35 @@ export const CreateCloudInstance = async (options: Record<string, any>): Promise
   return await App.CreateCloudInstanceTyped(options as any)
 }
 
+export const CancelCloudOperation = async (operationId: string): Promise<void> => {
+  await App.CancelCloudOperation(operationId)
+}
+
+export type CloudOperationStatus = {
+  state: 'running' | 'reconciling' | 'succeeded' | 'failed'
+  instance?: Record<string, any>
+  error?: string
+}
+
+export type PendingCloudOperation = {
+  operationId: string
+  provider: string
+  state: 'running' | 'reconciling'
+  label: string
+  region: string
+  plan: string
+  createdAt: string
+  updatedAt: string
+}
+
+export const GetCloudOperationStatus = async (operationId: string): Promise<CloudOperationStatus> => {
+  return await App.GetCloudOperationStatus(operationId) as CloudOperationStatus
+}
+
+export const ListPendingCloudOperations = async (): Promise<PendingCloudOperation[]> => {
+  return await App.ListPendingCloudOperations() as PendingCloudOperation[]
+}
+
 export const DestroyCloudInstance = async (instanceId: string): Promise<void> => {
   await App.DestroyCloudInstanceTyped(instanceId)
 }

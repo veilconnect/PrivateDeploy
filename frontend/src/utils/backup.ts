@@ -1,4 +1,5 @@
 import { logError, logInfo } from './logger'
+import { sanitizeForBrowserStorage } from './sensitiveData'
 
 export interface BackupData {
   version: string
@@ -103,7 +104,7 @@ export function autoBackup(data: Omit<BackupData, 'version' | 'timestamp'>) {
     const backup = {
       version: '1.0.0',
       timestamp: Date.now(),
-      ...data,
+      ...sanitizeForBrowserStorage(data),
     }
 
     localStorage.setItem('auto-backup', JSON.stringify(backup))
@@ -124,7 +125,11 @@ export function loadAutoBackup(): BackupData | null {
       return null
     }
 
-    return parseBackup(backupString)
+    const safeBackup = sanitizeForBrowserStorage(parseBackup(backupString))
+    // Migrate auto-backups created by older releases away from plaintext
+    // credentials as soon as they are accessed.
+    localStorage.setItem('auto-backup', JSON.stringify(safeBackup))
+    return safeBackup
   } catch (error) {
     logError('Failed to load auto-backup', error)
     return null

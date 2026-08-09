@@ -83,6 +83,18 @@ func (p *Provider) mutateNodeRecords(mutate func(records map[string]nodeRecord) 
 	return p.saveNodeRecordsLocked(records)
 }
 
+func (p *Provider) markFirewallCleanupPending(instanceID string) error {
+	return p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
+		record, ok := records[instanceID]
+		if !ok || record.FirewallCleanupPending {
+			return false, nil
+		}
+		record.FirewallCleanupPending = true
+		records[instanceID] = record
+		return true, nil
+	})
+}
+
 func parseTime(value string) time.Time {
 	if value == "" {
 		return time.Time{}
@@ -178,6 +190,16 @@ func clearNodeRecordCredentials(record *nodeRecord) bool {
 	resetString(&record.TrojanServerName)
 	resetBoolPtr(&record.TrojanInsecure)
 	resetInt(&record.VLESSRelayPort)
+	// A replacement is a different billable VM. Carrying the old instance's
+	// firewall ownership into it would make repair adopt the wrong group and
+	// Destroy potentially delete another instance's firewall.
+	resetString(&record.FirewallGroupID)
+	resetString(&record.FirewallOwnershipToken)
+	resetString(&record.ManagedSSHKeyFingerprint)
+	if record.FirewallCleanupPending {
+		record.FirewallCleanupPending = false
+		changed = true
+	}
 
 	return changed
 }
@@ -258,6 +280,9 @@ func findReplacementNodeRecord(
 func recordsToInstances(records map[string]nodeRecord) []cloud.Instance {
 	instances := make([]cloud.Instance, 0, len(records))
 	for id, record := range records {
+		if record.FirewallCleanupPending {
+			continue
+		}
 		_ = ensureManagedTLSDefaults(&record.InstanceRecord)
 		inst := vultrInstance{
 			ID:        id,

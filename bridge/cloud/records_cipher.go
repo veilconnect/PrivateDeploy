@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -52,28 +55,30 @@ var recordsDataKeyMu sync.Mutex
 func recordsDataKey(createIfMissing bool) ([]byte, error) {
 	recordsDataKeyMu.Lock()
 	defer recordsDataKeyMu.Unlock()
+	if key, err := loadRecordsDataKey(); err == nil {
+		return key, nil
+	} else if !errors.Is(err, errSecretNotFound) {
+		return nil, err
+	} else if !createIfMissing {
+		return nil, errRecordsKeyMissing
+	}
 
-	// Use the same accessor layer as cloud API keys so the DEK honours the
-	// PRIVATEDEPLOY_SECRET_STORE_DIR override (headless / tests) and the
-	// platform keychain everywhere else.
-	if encoded, err := loadProviderAPIKey(recordsDEKConfigPath, recordsDEKProvider); err == nil {
-		key, decErr := base64.StdEncoding.DecodeString(encoded)
-		if decErr == nil && len(key) == 32 {
-			return key, nil
-		}
-		// An entry exists, so corruption is materially different from a first
-		// run. Never replace it: doing so would make every record encrypted with
-		// the previous key permanently unreadable. Only ErrSecretNotFound below
-		// is allowed to generate a DEK.
-		if decErr != nil {
-			return nil, fmt.Errorf("stored records encryption key is corrupt: invalid base64: %w", decErr)
-		}
-		return nil, fmt.Errorf("stored records encryption key is corrupt: decoded length is %d, want 32", len(key))
-	} else if errors.Is(err, errSecretNotFound) {
-		if !createIfMissing {
-			return nil, errRecordsKeyMissing
-		}
-	} else {
+	// The mutex above protects goroutines, but PrivateDeploy can have multiple
+	// desktop processes alive during an upgrade/restart. Serialize the entire
+	// first-load/generate/save transaction across processes as well; otherwise
+	// two first encoders can persist different keys and permanently orphan one
+	// process's ciphertext.
+	processLock, err := acquireRecordsDataKeyProcessLock(recordsDataKeyLockPath())
+	if err != nil {
+		return nil, err
+	}
+	defer processLock.Close()
+
+	// Another process may have installed the key while this process waited for
+	// the lock. The lock owner is the only process allowed to generate/save.
+	if key, err := loadRecordsDataKey(); err == nil {
+		return key, nil
+	} else if !errors.Is(err, errSecretNotFound) {
 		return nil, err
 	}
 
@@ -85,6 +90,39 @@ func recordsDataKey(createIfMissing bool) ([]byte, error) {
 		return nil, fmt.Errorf("failed to persist records encryption key: %w", err)
 	}
 	return key, nil
+}
+
+func loadRecordsDataKey() ([]byte, error) {
+	// Use the same accessor layer as cloud API keys so the DEK honours the
+	// PRIVATEDEPLOY_SECRET_STORE_DIR override (headless / tests) and the
+	// platform keychain everywhere else.
+	encoded, err := loadProviderAPIKey(recordsDEKConfigPath, recordsDEKProvider)
+	if err != nil {
+		return nil, err
+	}
+	key, decodeErr := base64.StdEncoding.DecodeString(encoded)
+	if decodeErr != nil {
+		// An entry exists, so corruption is materially different from a first
+		// run. Never replace it: doing so would make every record encrypted with
+		// the previous key permanently unreadable.
+		return nil, fmt.Errorf("stored records encryption key is corrupt: invalid base64: %w", decodeErr)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("stored records encryption key is corrupt: decoded length is %d, want 32", len(key))
+	}
+	return key, nil
+}
+
+func recordsDataKeyLockPath() string {
+	storeDir := strings.TrimSpace(os.Getenv(secretStoreDirEnv))
+	if storeDir == "" {
+		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
+			storeDir = filepath.Join(configDir, "PrivateDeploy", "secrets")
+		} else if homeDir, err := os.UserHomeDir(); err == nil && strings.TrimSpace(homeDir) != "" {
+			storeDir = filepath.Join(homeDir, ".config", "PrivateDeploy", "secrets")
+		}
+	}
+	return filepath.Join(storeDir, ".records-dek.lock")
 }
 
 // EncodeRecords marshals v to JSON and returns an encrypted, file-writable

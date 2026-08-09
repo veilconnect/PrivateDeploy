@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildNodeProtocolLinks,
+  DeploymentDelayThresholdMs,
+  getDeploymentHint,
   getDeploymentSteps,
   getDeploymentSummary,
   hasCdnRelay,
@@ -15,7 +17,11 @@ import {
 
 import type { CloudNode } from '@/types/cloud'
 
-type DisplayNode = CloudNode & { statusText?: string }
+type DisplayNode = CloudNode & {
+  statusText?: string
+  deploymentState?: 'submitting' | 'provider-pending' | 'applying' | 'uncertain'
+  deploymentStartedAt?: number
+}
 
 const translate = (key: string, params?: Record<string, unknown>) => (
   params ? `${key}:${JSON.stringify(params)}` : key
@@ -117,30 +123,43 @@ describe('cloud node display helpers', () => {
     }))[0].url).toContain('#Edge%201')
   })
 
-  it('computes deployment step state and summaries', () => {
-    expect(shouldShowDeploymentProgress(node({ statusText: 'pending' }))).toBe(true)
+  it('shows honest finite operation states instead of inferred five-step progress', () => {
+    expect(shouldShowDeploymentProgress(node({ statusText: 'pending' }))).toBe(false)
+    expect(shouldShowDeploymentProgress(node({
+      statusText: 'deploying',
+      deploymentState: 'submitting',
+    }))).toBe(true)
     expect(shouldShowDeploymentProgress(node({ statusText: 'connected' }))).toBe(false)
     expect(shouldShowDeploymentProgress(node({ statusText: 'error' }))).toBe(false)
 
-    expect(getDeploymentSteps(node({ statusText: 'pending' }), translate)).toEqual([
-      { label: 'cloud.progress.submitted', state: 'done' },
-      { label: 'cloud.progress.provisioning', state: 'done' },
-      { label: 'cloud.progress.waitingIp', state: 'done' },
-      { label: 'cloud.progress.configuring', state: 'done' },
-      { label: 'cloud.progress.ready', state: 'current' },
+    expect(getDeploymentSteps(node({
+      statusText: 'deploying',
+      deploymentState: 'submitting',
+    }), translate)).toEqual([
+      { label: 'cloud.progress.requesting', state: 'current' },
     ])
 
-    expect(getDeploymentSteps(node({
-      status: 'creating',
-      ipv4: '',
-      ssPort: undefined,
-      hysteriaPort: undefined,
-      vlessPort: undefined,
-      trojanPort: undefined,
-    }), translate).map((step) => step.state)).toEqual(['done', 'current', 'pending', 'pending', 'pending'])
+    expect(getDeploymentSummary(node({
+      deploymentState: 'applying',
+    }), translate)).toBe('cloud.progress.applyingLocal')
+  })
 
-    expect(getDeploymentSummary(node({ statusText: 'connected' }), translate)).toBe(
-      'cloud.progress.summary:{"current":5,"total":5,"label":"cloud.progress.ready"}',
-    )
+  it('warns when an operation is delayed or has an uncertain result', () => {
+    const startedAt = 1_700_000_000_000
+    const delayedAt = startedAt + DeploymentDelayThresholdMs
+    const submitting = node({
+      statusText: 'deploying',
+      deploymentState: 'submitting',
+      deploymentStartedAt: startedAt,
+    })
+
+    expect(getDeploymentSummary(submitting, translate, startedAt)).toBe('cloud.progress.requesting')
+    expect(getDeploymentHint(submitting, translate, startedAt)).toBe('cloud.progress.cancelHint')
+    expect(getDeploymentSummary(submitting, translate, delayedAt)).toBe('cloud.progress.delayed')
+    expect(getDeploymentHint(submitting, translate, delayedAt)).toBe('cloud.progress.delayedHint')
+
+    const uncertain = node({ deploymentState: 'uncertain' })
+    expect(getDeploymentSummary(uncertain, translate)).toBe('cloud.progress.uncertain')
+    expect(getDeploymentHint(uncertain, translate)).toBe('cloud.progress.uncertainHint')
   })
 })

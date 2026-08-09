@@ -10,12 +10,13 @@ import { buildNodeProtocolLinks, hasCdnRelay } from './cloudNodeDisplay'
 
 import type { ManagedCloudNode } from '@/stores/cloud'
 import type { CloudNodeStatus } from '@/stores/cloud/constants'
-import type { CloudNode, RegionLatency } from '@/types/cloud'
+import type { CloudNode, CloudProvider, RegionLatency } from '@/types/cloud'
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
 type CloudStoreLike = {
   instances: ManagedCloudNode[]
+  currentProvider: CloudProvider
   loadBalanceEnabled: boolean
   markNodeStatus: (instanceId: string, status: CloudNodeStatus) => void
   applyNodeToProfile: (node: CloudNode) => Promise<unknown>
@@ -62,6 +63,33 @@ export const useCloudViewActions = ({
   const speedTestAllLoading = ref(false)
   const loadBalanceLoading = ref(false)
   const cdnStore = useCdnStore()
+
+  const isForeignProviderNode = (record: CloudNode | Record<string, any>) => {
+    const node = record as CloudNode
+    return !isManualNode(node)
+      && node.provider !== cloudStore.currentProvider
+  }
+
+  const canMutateNode = (record: CloudNode | Record<string, any>) =>
+    !isForeignProviderNode(record)
+
+  const selectedMutationBlocked = computed(() =>
+    Array.from(selectedNodeIds.value).some((nodeId) => {
+      const node = cloudStore.instances.find((item) => item.instanceId === nodeId)
+      return Boolean(node && isForeignProviderNode(node))
+    }),
+  )
+
+  const rejectForeignProviderMutation = (record: CloudNode | Record<string, any>) => {
+    if (!isForeignProviderNode(record)) return false
+    const node = record as CloudNode
+    const owner = node.provider || 'an unknown provider'
+    const target = node.provider || 'the owning provider'
+    handleError(new Error(
+      `Node ${node.label || node.instanceId} belongs to ${owner}. Switch to ${target} before changing it.`,
+    ))
+    return true
+  }
 
   const copyText = async (value: string) => {
     if (!value) return
@@ -150,6 +178,10 @@ export const useCloudViewActions = ({
       message.info(translate('cloud.batch.noSelection'))
       return
     }
+    if (selectedMutationBlocked.value) {
+      handleError(new Error('Switch to each selected node provider before rotating its IP.'))
+      return
+    }
 
     const confirmed = await confirm(
       translate('cloud.batch.rotateIP'),
@@ -190,6 +222,10 @@ export const useCloudViewActions = ({
   const handleBatchDestroy = async () => {
     if (selectedNodeIds.value.size === 0) {
       message.info(translate('cloud.batch.noSelection'))
+      return
+    }
+    if (selectedMutationBlocked.value) {
+      handleError(new Error('Switch to each selected node provider before deleting it.'))
       return
     }
 
@@ -306,6 +342,7 @@ export const useCloudViewActions = ({
       message.error(translate('cloud.nodes.rotateIPBlocked'))
       return
     }
+    if (rejectForeignProviderMutation(node)) return
 
     try {
       await confirm('common.warning', translate('cloud.nodes.rotateIPConfirm'))
@@ -331,6 +368,7 @@ export const useCloudViewActions = ({
       message.error(translate('cloud.nodes.repairBlocked'))
       return
     }
+    if (rejectForeignProviderMutation(node)) return
 
     try {
       await confirm('common.warning', translate('cloud.nodes.repairConfirm', { label: node.label }))
@@ -341,9 +379,8 @@ export const useCloudViewActions = ({
     redeployingNodeId.value = node.instanceId
     try {
       const repaired = await cloudStore.redeployInstance(node.instanceId)
-      const sameNode = repaired.instanceId === node.instanceId
-      message.success(translate(sameNode ? 'cloud.nodes.repairSuccess' : 'cloud.nodes.redeploySuccess'))
-      logInfo('[CloudView] Repair/redeploy submitted. Node:', repaired.instanceId)
+      message.success(translate('cloud.nodes.repairSuccess'))
+      logInfo('[CloudView] In-place repair completed. Node:', repaired.instanceId)
     } catch (error) {
       handleError(error)
     } finally {
@@ -353,6 +390,7 @@ export const useCloudViewActions = ({
 
   const handleDestroy = async (record: CloudNode | Record<string, any>) => {
     const node = record as CloudNode
+    if (rejectForeignProviderMutation(node)) return
     try {
       const messageText = isManualNode(node)
         ? translate('cloud.manual.confirmRemove', { label: node.label })
@@ -450,49 +488,59 @@ ${protocols.join('\n')}
     }
   }
 
+  const operationInFlight = (record: ManagedCloudNode) => Boolean(record.deploymentOperationId)
+
   const tableContextMenu = computed(() => [
     {
       label: translate('cloud.quickActions.useNode'),
       handler: (record: ManagedCloudNode) => handleUseNode(record),
+      hidden: operationInFlight,
     },
     {
       label: translate('cloud.quickActions.copyConfig'),
       handler: (record: ManagedCloudNode) => handleCopyNodeConfig(record),
+      hidden: operationInFlight,
     },
     {
       label: translate('cloud.quickActions.testConnectivity'),
       handler: (record: ManagedCloudNode) => handleQuickTestConnectivity(record),
+      hidden: operationInFlight,
     },
     {
       label: translate('cloud.quickActions.rotateIP'),
       handler: (record: ManagedCloudNode) => handleRotateIP(record),
-      hidden: (record: ManagedCloudNode) => isManualNode(record) || record.connectivityStatus !== 'blocked',
+      hidden: (record: ManagedCloudNode) => operationInFlight(record)
+        || isManualNode(record)
+        || isForeignProviderNode(record)
+        || record.connectivityStatus !== 'blocked',
     },
     {
       label: translate('cloud.quickActions.repair'),
       handler: (record: ManagedCloudNode) => handleRepairNode(record),
-      hidden: (record: ManagedCloudNode) => isManualNode(record),
+      hidden: (record: ManagedCloudNode) => operationInFlight(record) || isManualNode(record) || isForeignProviderNode(record),
     },
     {
       label: translate('cdn.node.deploy'),
       handler: (record: ManagedCloudNode) => handleDeployCdn(record),
       hidden: (record: ManagedCloudNode) =>
-        !hasCdnRelay(record) || Boolean(cdnStore.deploymentFor(record.instanceId)),
+        operationInFlight(record) || !hasCdnRelay(record) || Boolean(cdnStore.deploymentFor(record.instanceId)),
     },
     {
       label: translate('cdn.node.delete'),
       handler: (record: ManagedCloudNode) => handleDeleteCdn(record),
-      hidden: (record: ManagedCloudNode) => !cdnStore.deploymentFor(record.instanceId),
+      hidden: (record: ManagedCloudNode) => operationInFlight(record) || !cdnStore.deploymentFor(record.instanceId),
     },
     {
       label: translate('cloud.quickActions.destroy'),
       handler: (record: ManagedCloudNode) => handleDestroy(record),
+      hidden: (record: ManagedCloudNode) => operationInFlight(record) || isForeignProviderNode(record),
     },
   ])
 
   return {
     applyingNodeId,
     batchOperating,
+    canMutateNode,
     cdnStore,
     clearSelection,
     copyNodeConfig,
@@ -512,6 +560,7 @@ ${protocols.join('\n')}
     redeployingNodeId,
     rotatingNodeId,
     selectedNodeIds,
+    selectedMutationBlocked,
     speedTestAllLoading,
     tableContextMenu,
     toggleNodeSelection,

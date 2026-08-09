@@ -5,7 +5,6 @@
  * fetching regions/plans/availability data.
  */
 
-
 import {
   GetCloudConfig,
   SaveCloudConfig,
@@ -50,6 +49,10 @@ export type ProviderConfigDeps = {
   refreshInstances: (silent?: boolean, force?: boolean) => Promise<void>
 }
 
+export type LoadProviderConfigOptions = {
+  startAutoRefresh?: boolean
+}
+
 export function createProviderConfig(deps: ProviderConfigDeps) {
   const {
     availableProviders,
@@ -81,17 +84,19 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
   const isRegionsCacheValid = () => isCacheValid(regionsUpdatedAt.value, CACHE_TTL.regions)
   const isPlansCacheValid = () => isCacheValid(plansUpdatedAt.value, CACHE_TTL.plans)
 
-  const loadConfig = async () => {
+  const loadConfig = async (options: LoadProviderConfigOptions = {}) => {
     const loadedConfig = await GetCloudConfig()
     Object.assign(config, loadedConfig)
     config.provider = loadedConfig.provider ?? currentProvider.value
     config.extra = loadedConfig.extra ?? {}
     logInfo('[CloudStore] Loaded config, apiKey length:', config.apiKey?.length || 0)
     configLoaded.value = true
-    if (config.apiKey && config.apiKey.trim() !== '') {
-      startAutoRefresh(true)
-    } else {
-      stopAutoRefresh()
+    if (options.startAutoRefresh !== false) {
+      if (config.apiKey && config.apiKey.trim() !== '') {
+        startAutoRefresh(true)
+      } else {
+        stopAutoRefresh()
+      }
     }
   }
 
@@ -111,15 +116,11 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
       const payload = deepClone(config) as CloudConfig
       payload.provider = currentProvider.value
       payload.extra = payload.extra ?? {}
-      await retryWithBackoff(
-        () => SaveCloudConfig(payload),
-        'SaveCloudConfig',
-        {
-          maxAttempts: 3,
-          baseDelay: 1000,
-          shouldRetry: (err) => !String(err).toLowerCase().includes('provider mismatch'),
-        }
-      )
+      await retryWithBackoff(() => SaveCloudConfig(payload), 'SaveCloudConfig', {
+        maxAttempts: 3,
+        baseDelay: 1000,
+        shouldRetry: (err) => !String(err).toLowerCase().includes('provider mismatch'),
+      })
       if (payload.apiKey && payload.apiKey.trim() !== '') {
         startAutoRefresh(true)
       } else {
@@ -128,7 +129,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
       notifications.configSaved()
     } catch (error) {
-      notifications.error('Configuration Save Failed', error instanceof Error ? error.message : String(error))
+      notifications.error(
+        'Configuration Save Failed',
+        error instanceof Error ? error.message : String(error),
+      )
       throw error
     } finally {
       savingConfig.value = false
@@ -153,11 +157,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
     loadingRegions.value = true
     try {
-      regions.value = await retryWithBackoff(
-        () => ListCloudRegions(),
-        'ListCloudRegions',
-        { maxAttempts: 2, baseDelay: 1000 }
-      )
+      regions.value = await retryWithBackoff(() => ListCloudRegions(), 'ListCloudRegions', {
+        maxAttempts: 2,
+        baseDelay: 1000,
+      })
       regionsUpdatedAt.value = Date.now()
 
       saveToOfflineCache('regions', regions.value)
@@ -195,11 +198,10 @@ export function createProviderConfig(deps: ProviderConfigDeps) {
 
     loadingPlans.value = true
     try {
-      plans.value = await retryWithBackoff(
-        () => ListCloudPlans(),
-        'ListCloudPlans',
-        { maxAttempts: 2, baseDelay: 1000 }
-      )
+      plans.value = await retryWithBackoff(() => ListCloudPlans(), 'ListCloudPlans', {
+        maxAttempts: 2,
+        baseDelay: 1000,
+      })
       plansUpdatedAt.value = Date.now()
 
       saveToOfflineCache('plans', plans.value)

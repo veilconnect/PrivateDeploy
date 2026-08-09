@@ -30,6 +30,43 @@ import type { Plugin, Subscription } from '@/types/app'
 
 const PluginsCache: Recordable<{ plugin: Plugin; code: string }> = {}
 
+// Startup hooks run after the workspace is visible, but they still execute in
+// registration order. Bound each plugin independently so one plugin that
+// returns a never-settling promise cannot prevent every later startup plugin
+// from running. Hooks whose callers rely on completion/cancellation semantics
+// (shutdown, before-stop, manual execution, and transforms) deliberately keep
+// their existing unbounded behaviour.
+export const STARTUP_PLUGIN_EXECUTION_TIMEOUT_MS = 5_000
+
+const waitForPluginWithTimeout = <T>(
+  execution: Promise<T>,
+  timeoutMs: number,
+  pluginName: string,
+): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    let settled = false
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error(`${pluginName} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+
+    execution.then(
+      (value) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+
 const PluginsTriggerMap: {
   [key in PluginTrigger]: {
     fnName: PluginTriggerEvent
@@ -510,7 +547,11 @@ export const usePluginsStore = defineStore('plugins', () => {
     return result
   }
 
-  const noParamsTrigger = async (trigger: PluginTrigger, interruptOnError = false) => {
+  const noParamsTrigger = async (
+    trigger: PluginTrigger,
+    options: { interruptOnError?: boolean; pluginTimeoutMs?: number } = {},
+  ) => {
+    const { interruptOnError = false, pluginTimeoutMs } = options
     const { fnName, observers } = PluginsTriggerMap[trigger]
     if (observers.length === 0) return
 
@@ -529,7 +570,10 @@ export const usePluginsStore = defineStore('plugins', () => {
         const fn = new window.AsyncFunction(
           `const Plugin = ${JSON.stringify(metadata)}; ${cache.code}; return await ${fnName}()`,
         )
-        const exitCode = await fn()
+        const execution = Promise.resolve(fn())
+        const exitCode = pluginTimeoutMs
+          ? await waitForPluginWithTimeout(execution, pluginTimeoutMs, cache.plugin.name)
+          : await execution
         if (isNumber(exitCode) && exitCode !== cache.plugin.status) {
           cache.plugin.status = exitCode
           editPlugin(cache.plugin.id, cache.plugin)
@@ -674,12 +718,20 @@ export const usePluginsStore = defineStore('plugins', () => {
     reloadPlugin,
     onSubscribeTrigger,
     onGenerateTrigger,
-    onStartupTrigger: () => noParamsTrigger(PluginTrigger.OnStartup),
-    onShutdownTrigger: () => noParamsTrigger(PluginTrigger.OnShutdown, true),
-    onReadyTrigger: () => noParamsTrigger(PluginTrigger.OnReady),
+    onStartupTrigger: () =>
+      noParamsTrigger(PluginTrigger.OnStartup, {
+        pluginTimeoutMs: STARTUP_PLUGIN_EXECUTION_TIMEOUT_MS,
+      }),
+    onShutdownTrigger: () =>
+      noParamsTrigger(PluginTrigger.OnShutdown, { interruptOnError: true }),
+    onReadyTrigger: () =>
+      noParamsTrigger(PluginTrigger.OnReady, {
+        pluginTimeoutMs: STARTUP_PLUGIN_EXECUTION_TIMEOUT_MS,
+      }),
     onCoreStartedTrigger: () => noParamsTrigger(PluginTrigger.OnCoreStarted),
     onCoreStoppedTrigger: () => noParamsTrigger(PluginTrigger.OnCoreStopped),
-    onBeforeCoreStopTrigger: () => noParamsTrigger(PluginTrigger.OnBeforeCoreStop, true),
+    onBeforeCoreStopTrigger: () =>
+      noParamsTrigger(PluginTrigger.OnBeforeCoreStop, { interruptOnError: true }),
     onBeforeCoreStartTrigger,
     manualTrigger,
     updatePluginTrigger,

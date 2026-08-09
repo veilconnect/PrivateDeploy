@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { EventsOn, EventsOff } from '@wails/runtime/runtime'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { CreateMultipleCloudInstances } from '@/bridge'
 import { useCloudStore } from '@/stores'
 import { logError } from '@/utils/logger'
 
@@ -71,7 +70,12 @@ const autoRecommend = () => {
   selectedRegions.value = picks
 }
 
-const canDeploy = computed(() => selectedCount.value > 0 && !deploying.value)
+const hasReconcilingOperation = computed(() =>
+  Array.from(cloudStore.multiDeployProgress.values()).some(
+    (item) => item.status === 'deploying' || item.status === 'reconciling',
+  ),
+)
+const canDeploy = computed(() => selectedCount.value > 0 && !deploying.value && !hasReconcilingOperation.value)
 
 const handleDeploy = async (): Promise<MultiDeployResult[] | null> => {
   if (!canDeploy.value) return null
@@ -96,7 +100,7 @@ const handleDeploy = async (): Promise<MultiDeployResult[] | null> => {
   })
 
   try {
-    results.value = await CreateMultipleCloudInstances(configs)
+    results.value = await cloudStore.createMultipleInstances(configs)
     emit('done', results.value)
     return results.value
   } catch (err: any) {
@@ -117,6 +121,7 @@ const statusColor = (status: DeployProgressStatus) => {
   switch (status) {
     case 'pending': return 'text-gray-500'
     case 'deploying': return 'text-blue-500'
+    case 'reconciling': return 'text-amber-500'
     case 'ready': return 'text-green-600'
     case 'failed': return 'text-red-500'
     default: return ''
@@ -127,6 +132,7 @@ const statusIcon = (status: DeployProgressStatus) => {
   switch (status) {
     case 'pending': return '○'
     case 'deploying': return '◌'
+    case 'reconciling': return '◒'
     case 'ready': return '●'
     case 'failed': return '✕'
     default: return '?'
@@ -141,19 +147,33 @@ const latencyDisplay = (regionId: string) => {
 
 // Listen for multi-deploy progress events
 onMounted(() => {
-  EventsOn('cloud:multi:progress', (idx: number, status: string, message: string) => {
+  EventsOn('cloud:multi:progress', (idx: number, status: string, message: string, operationId: string) => {
     const current = progress.value.get(idx)
     if (current) {
       progress.value.set(idx, {
         ...current,
-        status: status as DeployProgressStatus,
+        status: (status === 'succeeded' ? 'ready' : status) as DeployProgressStatus,
         message,
+        operationId,
       })
       // Force reactivity
       progress.value = new Map(progress.value)
     }
   })
 })
+
+watch(
+  () => cloudStore.multiDeployProgress,
+  (items) => {
+    for (const item of items.values()) {
+      const current = progress.value.get(item.index)
+      if (!current) continue
+      progress.value.set(item.index, { ...current, ...item })
+    }
+    progress.value = new Map(progress.value)
+  },
+  { deep: true },
+)
 
 onUnmounted(() => {
   EventsOff('cloud:multi:progress')

@@ -27,7 +27,7 @@ func (p *Provider) waitForInstanceAndTCPPorts(ctx context.Context, instanceID st
 		} else if instance != nil {
 			status := strings.ToLower(strings.TrimSpace(instance.Status))
 			if (status == "active" || status == "running") && strings.TrimSpace(instance.IPv4) != "" {
-				pending := provutil.PendingTCPPorts(instance.IPv4, requiredPorts, serviceReadyDialTimeout)
+				pending := provutil.PendingTCPPortsContext(waitCtx, instance.IPv4, requiredPorts, serviceReadyDialTimeout)
 				if len(pending) == 0 {
 					return instance, nil
 				}

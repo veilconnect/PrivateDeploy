@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,10 @@ import (
 // ListInstances returns all DigitalOcean droplets.
 func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) {
 	cfg, err := p.ensureConfig()
+	if err != nil {
+		return nil, err
+	}
+	recordsSnapshot, err := p.loadNodeRecords()
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +104,48 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 		}
 	}
 
+	liveSnapshotIDs := make(map[string]struct{}, len(result))
+	for _, droplet := range result {
+		liveSnapshotIDs[fmt.Sprintf("cloud-do-%d", droplet.ID)] = struct{}{}
+	}
+	missingCleanupSucceeded := make(map[string]struct{})
+	missingCleanupFailed := make(map[string]struct{})
+	missingCleanupDeferred := make(map[string]struct{})
+	for instanceID, record := range recordsSnapshot {
+		if _, live := liveSnapshotIDs[instanceID]; live {
+			continue
+		}
+		if p.isInstanceCreateActive(instanceID) {
+			missingCleanupDeferred[instanceID] = struct{}{}
+			continue
+		}
+		// A list response can be briefly incomplete. Never remove a firewall
+		// based on absence from the collection endpoint alone; require the
+		// authoritative per-droplet endpoint to confirm 404.
+		missing, confirmErr := p.dropletDefinitelyMissing(ctx, instanceID)
+		if confirmErr != nil || !missing {
+			missingCleanupDeferred[instanceID] = struct{}{}
+			continue
+		}
+		if strings.TrimSpace(record.FirewallOwnershipToken) == "" {
+			missingCleanupSucceeded[instanceID] = struct{}{}
+			continue
+		}
+		if err := p.cleanupInstanceFirewalls(ctx, instanceID, record.FirewallOwnershipToken); err != nil {
+			missingCleanupFailed[instanceID] = struct{}{}
+			fmt.Fprintf(os.Stderr, "[DigitalOceanProvider] preserving hidden record %s for firewall cleanup retry: %v\n", instanceID, err)
+			continue
+		}
+		missingCleanupSucceeded[instanceID] = struct{}{}
+	}
+
 	// Merge the live droplet list into the local records as one atomic
 	// read-modify-write: the records mutex is held for the whole cycle so a
 	// concurrent Create/Destroy/Get can never have its write overwritten by
 	// our save (load→modify→save as separate locked steps allowed lost
 	// updates).
 	var instances []cloud.Instance
-	if err := p.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
+	if err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 		dirty := false
 		seen := make(map[string]struct{}, len(result))
 
@@ -124,7 +164,11 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 
 			record, ok := records[instanceID]
 			if !ok {
-				record = cloud.InstanceRecord{}
+				record = nodeRecord{}
+			}
+			if record.FirewallCleanupPending {
+				record.FirewallCleanupPending = false
+				dirty = true
 			}
 
 			for _, net := range d.Networks.V4 {
@@ -162,14 +206,14 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			// the lock here would reopen the lost-update window this closure
 			// exists to close, and the recovery path never touches the records
 			// APIs itself.
-			if !cloud.HasMinimumProxyConfig(record) && instance.IPv4 != "" {
+			if !cloud.HasMinimumProxyConfig(record.InstanceRecord) && instance.IPv4 != "" {
 				if recovered, rok := p.recoverNodeRecordForInstance(ctx, instance.IPv4, record); rok {
 					record = recovered
 					dirty = true
 				}
 			}
 
-			if ensureManagedTLSDefaults(&record) {
+			if ensureManagedTLSDefaults(&record.InstanceRecord) {
 				dirty = true
 			}
 
@@ -235,13 +279,37 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			instances = append(instances, instance)
 		}
 
-		if len(records) > len(seen) {
-			for id := range records {
-				if _, ok := seen[id]; !ok {
-					dirty = true
-					delete(records, id)
-				}
+		for id, current := range records {
+			if _, live := seen[id]; live {
+				continue
 			}
+			snapshot, existedBeforeRequest := recordsSnapshot[id]
+			if !existedBeforeRequest {
+				// Created while the paginated API request was in flight.
+				continue
+			}
+			if _, deferred := missingCleanupDeferred[id]; deferred {
+				continue
+			}
+			if _, cleanupFailed := missingCleanupFailed[id]; cleanupFailed {
+				if current.FirewallGroupID == snapshot.FirewallGroupID &&
+					current.FirewallOwnershipToken == snapshot.FirewallOwnershipToken &&
+					!current.FirewallCleanupPending {
+					current.FirewallCleanupPending = true
+					records[id] = current
+					dirty = true
+				}
+				continue
+			}
+			if _, cleaned := missingCleanupSucceeded[id]; !cleaned {
+				continue
+			}
+			if current.FirewallGroupID != snapshot.FirewallGroupID ||
+				current.FirewallOwnershipToken != snapshot.FirewallOwnershipToken {
+				continue
+			}
+			delete(records, id)
+			dirty = true
 		}
 
 		return dirty, nil
@@ -275,10 +343,32 @@ func digitalOceanPaginationURL(next string) (string, error) {
 	return nextURL.String(), nil
 }
 
+// parseDigitalOceanInstanceID accepts only PrivateDeploy's canonical wrapper
+// around a positive decimal DigitalOcean droplet ID. Requiring a byte-for-byte
+// canonical representation rejects cross-provider IDs, whitespace aliases,
+// path/query injection and leading-zero variants before any cloud request.
+func parseDigitalOceanInstanceID(instanceID string) (int, error) {
+	if instanceID == "" || instanceID != strings.TrimSpace(instanceID) || !strings.HasPrefix(instanceID, "cloud-do-") {
+		return 0, cloud.ErrInstanceNotFound
+	}
+	rawID := strings.TrimPrefix(instanceID, "cloud-do-")
+	if rawID == "" || (len(rawID) > 1 && rawID[0] == '0') {
+		return 0, cloud.ErrInstanceNotFound
+	}
+	dropletID, err := strconv.Atoi(rawID)
+	if err != nil || dropletID <= 0 || strconv.Itoa(dropletID) != rawID {
+		return 0, cloud.ErrInstanceNotFound
+	}
+	return dropletID, nil
+}
+
 // CreateInstance creates a new DigitalOcean droplet.
 func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanceOptions) (*cloud.Instance, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("create options cannot be nil")
+	}
+	if strings.TrimSpace(opts.Label) == "" || strings.TrimSpace(opts.Region) == "" || strings.TrimSpace(opts.Plan) == "" {
+		return nil, fmt.Errorf("label, region and plan are required")
 	}
 
 	cfg, err := p.ensureConfig()
@@ -310,11 +400,13 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	trojanPassword := deploy.GenerateRandomPassword(22)
 	vlessRelayPort := ports.VLESSRelayPort
 
-	realityPrivateKey, realityPublicKey, err := deploy.GenerateRealityKeyPair()
+	generateRealityKeyPair := p.generateRealityKeyPair
+	if generateRealityKeyPair == nil {
+		generateRealityKeyPair = deploy.GenerateRealityKeyPair
+	}
+	realityPrivateKey, realityPublicKey, err := generateRealityKeyPair()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to generate Reality keypair: %v\n", err)
-		realityPrivateKey = ""
-		realityPublicKey = ""
+		return nil, fmt.Errorf("failed to generate reality key pair before create: %w", err)
 	}
 	realityShortID := provutil.GenerateShortID()
 
@@ -342,6 +434,48 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("failed to render deployment script")
 	}
 
+	// A running droplet cannot receive an SSH key retroactively. Establish and
+	// durably retain the managed recovery key only after all local input and
+	// payload preparation has succeeded, but before the billable POST. Creating
+	// a droplet without it would make the advertised in-place repair impossible.
+	managedSSHKeyID, _, managedSSHKeyFingerprint, err := p.ensureManagedSSHKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("prepare DigitalOcean managed SSH recovery key before create: %w", err)
+	}
+	if managedSSHKeyID == 0 || strings.TrimSpace(managedSSHKeyFingerprint) == "" {
+		return nil, errors.New("prepare DigitalOcean managed SSH recovery key before create: incomplete key identity")
+	}
+	preparedRecord := nodeRecord{
+		ManagedSSHKeyFingerprint: managedSSHKeyFingerprint,
+		InstanceRecord: cloud.InstanceRecord{
+			Plan:               opts.Plan,
+			SSPort:             ssPort,
+			SSPassword:         ssPassword,
+			HysteriaPort:       hysteriaPort,
+			HysteriaPassword:   hysteriaPassword,
+			HysteriaServerName: tuning.HysteriaServerName,
+			HysteriaInsecure:   deploy.BoolPtr(tuning.HysteriaInsecure),
+			VLESSPort:          vlessPort,
+			VLESSUUID:          vlessUUID,
+			VLESSPublicKey:     realityPublicKey,
+			VLESSShortID:       realityShortID,
+			VLESSServerName:    tuning.VLESSServerName,
+			TrojanPort:         trojanPort,
+			TrojanPassword:     trojanPassword,
+			TrojanServerName:   tuning.TrojanServerName,
+			TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
+			VLESSRelayPort:     vlessRelayPort,
+		},
+	}
+	if strings.TrimSpace(opts.OperationJournalPath) != "" {
+		if err := cloud.StoreCreateOperationProviderData(opts.OperationJournalPath, cloud.CreateOperationPrepared, digitalOceanCreateOperationData{
+			Record: preparedRecord,
+			Ports:  ports,
+		}); err != nil {
+			return nil, fmt.Errorf("journal DigitalOcean credentials before create: %w", err)
+		}
+	}
+
 	createReq := map[string]interface{}{
 		"name":       opts.Label,
 		"region":     opts.Region,
@@ -351,14 +485,13 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		"monitoring": true,
 		"ipv6":       true,
 	}
-
-	// Always attach PrivateDeploy's managed key so the node stays recoverable
-	// (DO can't add keys to a running droplet, nor return user-data later).
-	// Best-effort: a key-provisioning failure must not block the deploy.
-	sshKeyIDs := []interface{}{}
-	if managedID, _, kerr := p.ensureManagedSSHKey(ctx); kerr == nil && managedID != 0 {
-		sshKeyIDs = append(sshKeyIDs, managedID)
+	if strings.TrimSpace(opts.OperationID) != "" {
+		createReq["tags"] = []string{cloud.CreateOperationTag("digitalocean", opts.OperationID)}
 	}
+
+	// Always attach the already-persisted managed key. Failure to prepare it
+	// returned above, before the journal submission/billable POST boundary.
+	sshKeyIDs := []interface{}{managedSSHKeyID}
 	if opts.SSHKeyID != "" {
 		if keyID, err := strconv.Atoi(opts.SSHKeyID); err == nil {
 			sshKeyIDs = append(sshKeyIDs, keyID)
@@ -382,15 +515,25 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(opts.OperationJournalPath) != "" {
+		// Persist the irreversible boundary immediately before the one billable
+		// POST. A restarted process can only query this operation's exact tag.
+		if err := cloud.MarkCreateOperationSubmitted(opts.OperationJournalPath); err != nil {
+			return nil, fmt.Errorf("journal DigitalOcean create submission: %w", err)
+		}
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", cloud.ErrAPIRequestFailed, err)
+		return nil, fmt.Errorf("%w: DigitalOcean transport failure; request was not retried: %v", cloud.ErrCreateOutcomePending, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return nil, fmt.Errorf("%w: DigitalOcean create returned status %d; request was not retried: %s", cloud.ErrCreateOutcomePending, resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("%w: status %d, body: %s", cloud.ErrAPIRequestFailed, resp.StatusCode, string(body))
 	}
 
@@ -410,10 +553,15 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("%w: DigitalOcean accepted create but its response could not be decoded: %v", cloud.ErrCreateOutcomePending, err)
+	}
+	if result.Droplet.ID == 0 {
+		return nil, fmt.Errorf("%w: DigitalOcean accepted create but returned no droplet id", cloud.ErrCreateOutcomePending)
 	}
 
 	instanceID := fmt.Sprintf("cloud-do-%d", result.Droplet.ID)
+	p.beginInstanceCreate(instanceID)
+	defer p.endInstanceCreate(instanceID)
 
 	instance := &cloud.Instance{
 		ID:                 instanceID,
@@ -441,25 +589,18 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		VLESSRelayPort:     vlessRelayPort,
 	}
 
-	record := cloud.InstanceRecord{
-		Plan:               opts.Plan,
-		CreatedAt:          result.Droplet.CreatedAt.Format(time.RFC3339),
-		SSPort:             ssPort,
-		SSPassword:         ssPassword,
-		HysteriaPort:       hysteriaPort,
-		HysteriaPassword:   hysteriaPassword,
-		HysteriaServerName: tuning.HysteriaServerName,
-		HysteriaInsecure:   deploy.BoolPtr(tuning.HysteriaInsecure),
-		VLESSPort:          vlessPort,
-		VLESSUUID:          vlessUUID,
-		VLESSPublicKey:     realityPublicKey,
-		VLESSShortID:       realityShortID,
-		VLESSServerName:    tuning.VLESSServerName,
-		TrojanPort:         trojanPort,
-		TrojanPassword:     trojanPassword,
-		TrojanServerName:   tuning.TrojanServerName,
-		TrojanInsecure:     deploy.BoolPtr(tuning.TrojanInsecure),
-		VLESSRelayPort:     vlessRelayPort,
+	record := preparedRecord
+	record.CreatedAt = result.Droplet.CreatedAt.Format(time.RFC3339)
+	if strings.TrimSpace(opts.OperationJournalPath) != "" {
+		if err := cloud.StoreCreateOperationProviderData(opts.OperationJournalPath, cloud.CreateOperationSubmitted, digitalOceanCreateOperationData{
+			Record: record,
+			Ports:  ports,
+		}); err != nil {
+			return nil, fmt.Errorf("%w: DigitalOcean droplet %s exists but its operation journal could not be updated: %v", cloud.ErrCreateOutcomePending, instanceID, err)
+		}
+		if err := cloud.MarkCreateOperationRemote(opts.OperationJournalPath, instanceID); err != nil {
+			return nil, fmt.Errorf("%w: DigitalOcean droplet %s exists but its remote id could not be journaled: %v", cloud.ErrCreateOutcomePending, instanceID, err)
+		}
 	}
 
 	if instance.IPv4 != "" {
@@ -470,7 +611,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		record.IPv6 = instance.IPv6
 	}
 
-	if err := p.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
+	if err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 		records[instanceID] = record
 		return true, nil
 	}); err != nil {
@@ -478,15 +619,9 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 
 	warnings := make([]string, 0, 3)
-	firewallID, err := p.ensurePrivateDeployFirewall(ctx, ports)
-	if err != nil {
+	if err := p.configureInstanceFirewall(ctx, instanceID, result.Droplet.ID, ports); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to create/get firewall: %v\n", err)
 		warnings = append(warnings, fmt.Sprintf("DigitalOcean firewall setup failed: %v", err))
-	} else {
-		if err := p.associateFirewallWithDroplet(ctx, firewallID, result.Droplet.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to associate firewall with droplet: %v\n", err)
-			warnings = append(warnings, fmt.Sprintf("DigitalOcean firewall attachment failed: %v", err))
-		}
 	}
 
 	readyTimeout := provutil.ParseServiceReadyTimeout(extra, defaultServiceReadyTimeout)
@@ -506,7 +641,7 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 	instance.LastDeployWarning = strings.Join(warnings, "; ")
 	if instance.LastDeployWarning != "" {
-		if err := p.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
+		if err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 			record := records[instanceID]
 			record.LastDeployWarning = instance.LastDeployWarning
 			records[instanceID] = record
@@ -532,7 +667,8 @@ func (p *Provider) compensateUnrecordedInstance(instanceID string, persistErr er
 	// rewrites the local records file, which is exactly what just failed.
 	if _, delErr := p.deleteDropletRemote(ctx, instanceID); delErr != nil {
 		return fmt.Errorf(
-			"failed to persist node record for digitalocean instance %s: %v; compensating delete also failed: %v — delete the droplet manually in the DigitalOcean console",
+			"%w: failed to persist node record for digitalocean instance %s: %v; compensating delete also failed: %v — delete the droplet manually in the DigitalOcean console",
+			cloud.ErrCreateOutcomePending,
 			instanceID, persistErr, delErr,
 		)
 	}
@@ -542,19 +678,49 @@ func (p *Provider) compensateUnrecordedInstance(instanceID string, persistErr er
 	)
 }
 
+// dropletDefinitelyMissing guards destructive cleanup against eventually
+// consistent list responses. Only an authoritative 404 permits removal of a
+// node record or its owned firewall; every other response is "not confirmed".
+func (p *Provider) dropletDefinitelyMissing(ctx context.Context, instanceID string) (bool, error) {
+	dropletID, err := parseDigitalOceanInstanceID(instanceID)
+	if err != nil {
+		return false, cloud.ErrInstanceNotFound
+	}
+	actualID := strconv.Itoa(dropletID)
+	apiKey, err := p.apiKey()
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/droplets/"+actualID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("%w: %v", cloud.ErrAPIRequestFailed, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return true, nil
+	case http.StatusOK:
+		return false, nil
+	default:
+		return false, fmt.Errorf("%w: droplet confirmation status %d", cloud.ErrAPIRequestFailed, resp.StatusCode)
+	}
+}
+
 // deleteDropletRemote deletes the droplet on the DigitalOcean side only,
 // without touching local node records. It reports whether the droplet was
 // already gone (404).
 func (p *Provider) deleteDropletRemote(ctx context.Context, instanceID string) (notFound bool, err error) {
-	if instanceID == "" {
+	dropletID, err := parseDigitalOceanInstanceID(instanceID)
+	if err != nil {
 		return false, cloud.ErrInstanceNotFound
 	}
-
-	// DigitalOcean wants the numeric droplet ID; PrivateDeploy IDs are prefixed.
-	actualID := strings.TrimPrefix(instanceID, "cloud-do-")
-	if actualID == "" {
-		return false, cloud.ErrInstanceNotFound
-	}
+	actualID := strconv.Itoa(dropletID)
 
 	apiKey, err := p.apiKey()
 	if err != nil {
@@ -588,27 +754,55 @@ func (p *Provider) deleteDropletRemote(ctx context.Context, instanceID string) (
 
 // DestroyInstance destroys a DigitalOcean droplet.
 func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error {
-	notFound, err := p.deleteDropletRemote(ctx, instanceID)
+	if _, err := parseDigitalOceanInstanceID(instanceID); err != nil {
+		return cloud.ErrInstanceNotFound
+	}
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return fmt.Errorf("failed to load firewall ownership before destroying %s: %w", instanceID, err)
+	}
+	record, owned := records[instanceID]
+	if !owned {
+		return cloud.ErrInstanceNotFound
+	}
+	// A local record proves that this provider owns the action. An authoritative
+	// per-droplet GET then distinguishes a live target from an already-gone one;
+	// a transiently incomplete collection listing is never sufficient.
+	missing, err := p.dropletDefinitelyMissing(ctx, instanceID)
 	if err != nil {
 		return err
 	}
-	if notFound {
-		_ = p.deleteNodeRecord(instanceID)
-		return nil
+	if !missing {
+		if _, err := p.deleteDropletRemote(ctx, instanceID); err != nil {
+			return err
+		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := p.cleanupInstanceFirewalls(cleanupCtx, instanceID, record.FirewallOwnershipToken); err != nil {
+		if markErr := p.markFirewallCleanupPending(instanceID); markErr != nil {
+			return fmt.Errorf("droplet %s was deleted, but firewall cleanup failed: %v; failed to preserve hidden cleanup record: %w", instanceID, err, markErr)
+		}
+		return fmt.Errorf("droplet %s was deleted, but firewall cleanup failed: %w", instanceID, err)
 	}
 	return p.deleteNodeRecord(instanceID)
 }
 
 // GetInstance retrieves a specific DigitalOcean droplet.
 func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.Instance, error) {
-	if instanceID == "" {
+	dropletID, err := parseDigitalOceanInstanceID(instanceID)
+	if err != nil {
 		return nil, cloud.ErrInstanceNotFound
 	}
-
-	actualID := strings.TrimPrefix(instanceID, "cloud-do-")
-	if actualID == "" {
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return nil, err
+	}
+	ownedRecord, owned := records[instanceID]
+	if !owned {
 		return nil, cloud.ErrInstanceNotFound
 	}
+	actualID := strconv.Itoa(dropletID)
 
 	cfg, err := p.ensureConfig()
 	if err != nil {
@@ -630,6 +824,12 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
+		// Ownership was proven before the request. Never let an arbitrary
+		// canonical droplet ID trigger local-record or firewall cleanup.
+		if cleanupErr := p.cleanupInstanceFirewalls(ctx, instanceID, ownedRecord.FirewallOwnershipToken); cleanupErr != nil {
+			_ = p.markFirewallCleanupPending(instanceID)
+			return nil, fmt.Errorf("%w: firewall cleanup pending: %v", cloud.ErrInstanceNotFound, cleanupErr)
+		}
 		_ = p.deleteNodeRecord(instanceID)
 		return nil, cloud.ErrInstanceNotFound
 	}
@@ -695,7 +895,7 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 	// Best-effort atomic merge into the local record (errors ignored, as
 	// before): sync IP/plan/timestamps from the API and enrich the returned
 	// instance with the locally stored credentials.
-	_ = p.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
+	_ = p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 		record := records[instance.ID]
 		updated := false
 
@@ -717,7 +917,7 @@ func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.I
 			record.CreatedAt = createdAtStr
 			updated = true
 		}
-		if ensureManagedTLSDefaults(&record) {
+		if ensureManagedTLSDefaults(&record.InstanceRecord) {
 			updated = true
 		}
 

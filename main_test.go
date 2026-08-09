@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"privatedeploy/bridge"
 )
 
 func TestEnsureXAuthorityEnv_PreservesExplicitEnv(t *testing.T) {
@@ -213,6 +216,95 @@ func TestIsInstallerQuitRequest(t *testing.T) {
 				t.Fatalf("isInstallerQuitRequest(%v) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseRestartParentRequest(t *testing.T) {
+	validArgs := []string{
+		bridge.RestartParentPIDArg,
+		"1234",
+		bridge.RestartParentCreatedAtArg,
+		"1712345678901",
+	}
+
+	request, ok, err := parseRestartParentRequest(validArgs)
+	if err != nil {
+		t.Fatalf("parseRestartParentRequest(valid) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("parseRestartParentRequest(valid) ok = false")
+	}
+	if request.pid != 1234 || request.createdAt != 1712345678901 {
+		t.Fatalf("parseRestartParentRequest(valid) = %+v", request)
+	}
+
+	request, ok, err = parseRestartParentRequest([]string{"regular-launch"})
+	if err != nil || ok || request != (restartParentRequest{}) {
+		t.Fatalf("regular launch = (%+v, %v, %v), want zero, false, nil", request, ok, err)
+	}
+
+	invalid := [][]string{
+		{bridge.RestartParentPIDArg + "=1234", bridge.RestartParentCreatedAtArg + "=1712345678901"},
+		{bridge.RestartParentPIDArg, "0", bridge.RestartParentCreatedAtArg, "1712345678901"},
+		{bridge.RestartParentPIDArg, "1234", bridge.RestartParentCreatedAtArg, "0"},
+		{bridge.RestartParentCreatedAtArg, "1712345678901", bridge.RestartParentPIDArg, "1234"},
+		{bridge.RestartParentPIDArg, "1234", bridge.RestartParentCreatedAtArg, "1712345678901", installerQuitArg},
+	}
+	for _, args := range invalid {
+		if _, ok, err := parseRestartParentRequest(args); err == nil || ok {
+			t.Errorf("parseRestartParentRequest(%v) = (_, %v, %v), want error", args, ok, err)
+		}
+	}
+}
+
+func TestWaitForRestartParentWaitsForExactParent(t *testing.T) {
+	request := restartParentRequest{pid: 42, createdAt: 1000}
+	calls := 0
+	err := waitForRestartParent(request, time.Second, time.Nanosecond, func(pid int32) (bool, int64, error) {
+		calls++
+		if pid != request.pid {
+			t.Fatalf("probe pid = %d, want %d", pid, request.pid)
+		}
+		if calls == 1 {
+			return true, request.createdAt, nil
+		}
+		return false, 0, nil
+	})
+	if err != nil {
+		t.Fatalf("waitForRestartParent() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("probe calls = %d, want 2", calls)
+	}
+}
+
+func TestWaitForRestartParentAllowsPIDReuse(t *testing.T) {
+	request := restartParentRequest{pid: 42, createdAt: 1000}
+	err := waitForRestartParent(request, time.Second, time.Millisecond, func(int32) (bool, int64, error) {
+		return true, request.createdAt + 1, nil
+	})
+	if err != nil {
+		t.Fatalf("waitForRestartParent(reused pid) error = %v", err)
+	}
+}
+
+func TestWaitForRestartParentIsBounded(t *testing.T) {
+	request := restartParentRequest{pid: 42, createdAt: 1000}
+	err := waitForRestartParent(request, 0, time.Millisecond, func(int32) (bool, int64, error) {
+		return true, request.createdAt, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not exit") {
+		t.Fatalf("waitForRestartParent(timeout) error = %v, want timeout", err)
+	}
+}
+
+func TestProcessIdentityFindsCurrentProcess(t *testing.T) {
+	exists, createdAt, err := processIdentity(int32(os.Getpid()))
+	if err != nil {
+		t.Fatalf("processIdentity(current) error = %v", err)
+	}
+	if !exists || createdAt <= 0 {
+		t.Fatalf("processIdentity(current) = (%v, %d), want existing identity", exists, createdAt)
 	}
 }
 

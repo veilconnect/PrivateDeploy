@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { EventsOn, WindowHide, WindowShow, WindowUnminimise, IsStartup } from '@/bridge'
@@ -8,6 +8,7 @@ import * as Stores from '@/stores'
 import { exitApp, sampleID, sleep, message } from '@/utils'
 import { ensureBuiltinPresets } from '@/utils/builtinPresets'
 import { setupCoreHealthMonitor } from '@/utils/coreHealthMonitor'
+import { markApplicationReadyAndRunBackgroundTask } from '@/utils/frontendReady'
 import AboutView from '@/views/AboutView.vue'
 import CommandView from '@/views/CommandView.vue'
 import SplashView from '@/views/SplashView.vue'
@@ -95,6 +96,8 @@ window.addEventListener('keydown', (e) => {
 
 const bootstrapApp = async () => {
   let autoApplyPromise: Promise<void> | undefined
+  let shouldRunPluginLifecycle = false
+  let isStartupLaunch = false
 
   try {
     await envStore.setupEnv()
@@ -103,23 +106,24 @@ const bootstrapApp = async () => {
     await rulesetsStore.setupRulesets()
     await profilesStore.setupProfiles()
     await ensureBuiltinPresets()
-    await pluginsStore.setupPlugins()
+    shouldRunPluginLifecycle = true
 
     const startTime = performance.now()
     percent.value = 20
-    if (await IsStartup()) {
-      await pluginsStore.onStartupTrigger().catch(showStartupError)
-    }
+    isStartupLaunch = await IsStartup()
 
     percent.value = 40
-    await pluginsStore.onReadyTrigger().catch(showStartupError)
 
     // Auto-apply cloud nodes on startup
     percent.value = 60
     try {
+      await cloudStore.getCurrentProvider()
       await cloudStore.loadConfig()
       if (cloudStore.config.apiKey) {
-        await Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
+        // Region/plan metadata is useful only after the workspace is visible.
+        // A provider timeout here must not hold the splash screen or the
+        // installer's frontend-readiness handshake open for minutes.
+        void Promise.allSettled([cloudStore.fetchRegions(), cloudStore.fetchPlans()])
       }
       autoApplyPromise = cloudStore
         .refreshInstances(true)
@@ -140,6 +144,17 @@ const bootstrapApp = async () => {
   } finally {
     loading.value = false
     percent.value = 100
+
+    await nextTick()
+    markApplicationReadyAndRunBackgroundTask(
+      async () => {
+        if (!shouldRunPluginLifecycle) return
+        await pluginsStore.setupPlugins()
+        if (isStartupLaunch) await pluginsStore.onStartupTrigger()
+        await pluginsStore.onReadyTrigger()
+      },
+      showStartupError,
+    )
 
     await revealMainWindow().catch((error) => {
       console.error('[App] Failed to reveal main window:', error)
@@ -175,13 +190,15 @@ bootstrapApp()
   </SplashView>
   <template v-else>
     <TitleBar />
-    <div class="flex-1 overflow-y-auto flex flex-col px-8 pb-8 pt-6">
+    <div data-application-shell="true" class="flex-1 overflow-y-auto flex flex-col px-8 pb-8 pt-6">
       <WorkspaceHeader v-if="showWorkspaceHeader" />
       <div class="flex flex-col overflow-y-auto h-full px-8">
         <RouterView #="{ Component }">
-          <KeepAlive>
-            <component :is="Component" />
-          </KeepAlive>
+          <div v-if="Component" data-route-view-ready="true" style="display: contents">
+            <KeepAlive>
+              <component :is="Component" />
+            </KeepAlive>
+          </div>
         </RouterView>
       </div>
     </div>

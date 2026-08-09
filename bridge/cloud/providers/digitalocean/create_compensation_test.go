@@ -23,6 +23,13 @@ func newCompensationFakeServer(t *testing.T, provider *Provider, deleteStatus in
 	deleteCalls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/account/keys":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ssh_keys":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/account/keys":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ssh_key":{"id":7319}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/droplets":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -36,7 +43,6 @@ func newCompensationFakeServer(t *testing.T, provider *Provider, deleteStatus in
 			}
 			w.WriteHeader(deleteStatus)
 		default:
-			// ensureManagedSSHKey and other best-effort calls may land here.
 			http.NotFound(w, r)
 		}
 	}))
@@ -61,6 +67,7 @@ func newCompensationTestEnv(t *testing.T, deleteStatus int) (*Provider, *atomic.
 
 	basePath := t.TempDir()
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", basePath)
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(basePath, "secrets"))
 
 	provider := New(&cloud.ProviderConfig{
 		Provider: "digitalocean",

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -33,77 +34,148 @@ type DirEntry struct {
 	IsDir bool
 }
 
-// Service wraps common filesystem helpers rooted at a base directory.
+// Service wraps renderer-accessible filesystem helpers rooted at a base
+// directory. All actual I/O goes through secureBackend. In particular,
+// AbsolutePath is only a display/compatibility helper and is never used as an
+// authorization token for a later pathname-based open.
 type Service struct {
 	basePath string
+	backend  secureBackend
 }
 
 // NewService creates a new filesystem service rooted at basePath.
 func NewService(basePath string) *Service {
-	return &Service{basePath: filepath.Clean(basePath)}
+	basePath = filepath.Clean(basePath)
+	return &Service{basePath: basePath, backend: newSecureBackend(basePath)}
 }
 
-// resolve converts a path to an absolute path and ensures it's within basePath.
-// This prevents directory traversal attacks and unauthorized file access.
-func (s *Service) resolve(p string) (string, error) {
+// relative converts a renderer path into a clean path relative to basePath.
+// It performs only lexical authorization; the backend enforces the no-link
+// boundary atomically with each operation.
+func (s *Service) relative(p string) (string, error) {
+	if s == nil || s.backend == nil {
+		return "", errors.New("filesystem service is not initialized")
+	}
+	if strings.IndexByte(p, 0) >= 0 {
+		return "", errors.New("invalid path: contains NUL byte")
+	}
 	var fullPath string
 	if filepath.IsAbs(p) {
 		fullPath = filepath.Clean(p)
 	} else {
 		fullPath = filepath.Clean(filepath.Join(s.basePath, p))
 	}
-
-	// Ensure the resolved path is within basePath
-	// Use Rel to check if the path would escape basePath
 	rel, err := filepath.Rel(s.basePath, fullPath)
 	if err != nil {
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
-
-	// Check if the relative path tries to escape (contains "..")
-	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("access denied: path outside base directory: %s", p)
 	}
-
-	// Also check for absolute paths outside basePath
-	if filepath.IsAbs(p) && !strings.HasPrefix(fullPath, s.basePath) {
-		return "", fmt.Errorf("access denied: absolute path outside base directory: %s", p)
-	}
-
-	return fullPath, nil
+	return filepath.Clean(rel), nil
 }
 
-// WriteFile writes the provided content to the given path.
-func (s *Service) WriteFile(path string, content string, opts Options) error {
-	fullPath, err := s.resolve(path)
+// resolve returns a compatibility absolute path after validating every
+// currently existing component. Callers must still use Service methods for
+// I/O because a pathname cannot carry the backend's race-free guarantee.
+func (s *Service) resolve(p string) (string, error) {
+	rel, err := s.relative(p)
+	if err != nil {
+		return "", err
+	}
+	if err := s.backend.validate(rel); err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return s.basePath, nil
+	}
+	return filepath.Join(s.basePath, rel), nil
+}
+
+// OpenRead opens a regular file without following symbolic links. On Linux the
+// returned handle was opened relative to the anchored base directory FD, so a
+// concurrent symlink swap cannot redirect it outside the data root.
+func (s *Service) OpenRead(filePath string) (*os.File, error) {
+	rel, err := s.relative(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if rel == "." {
+		return nil, errors.New("access denied: application data root is not a regular file")
+	}
+	return s.backend.openRead(rel)
+}
+
+// ValidateReadPath performs a fail-fast boundary check before a caller starts
+// unrelated work. OpenRead remains the authoritative race-free operation.
+func (s *Service) ValidateReadPath(filePath string) error {
+	rel, err := s.relative(filePath)
 	if err != nil {
 		return err
 	}
+	if rel == "." {
+		return errors.New("access denied: application data root is not a regular file")
+	}
+	return s.backend.validate(rel)
+}
 
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
+// WriteStreamAtomic streams a complete new regular file into the data root.
+// The target is published by an atomic rename only after the callback, chmod,
+// and fsync have all succeeded; failures leave the previous target untouched.
+func (s *Service) WriteStreamAtomic(filePath string, mode os.FileMode, write func(io.Writer) error) error {
+	if write == nil {
+		return errors.New("write callback is required")
+	}
+	rel, err := s.relative(filePath)
+	if err != nil {
 		return err
 	}
+	if rel == "." {
+		return errors.New("access denied: cannot replace the application data root")
+	}
+	if mode.Perm() == 0 {
+		mode = 0o600
+	}
+	return s.backend.writeAtomic(rel, mode.Perm(), write)
+}
 
+// ValidateWritePath performs a cheap fail-fast check for callers that do work
+// (such as an HTTP request) before they can stream into WriteStreamAtomic. The
+// write itself still performs the authoritative race-free validation.
+func (s *Service) ValidateWritePath(filePath string) error {
+	rel, err := s.relative(filePath)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return errors.New("access denied: cannot replace the application data root")
+	}
+	return s.backend.validate(rel)
+}
+
+// WriteFile writes the provided content to the given path atomically.
+func (s *Service) WriteFile(filePath string, content string, opts Options) error {
 	data, err := s.decodeContent(content, opts)
 	if err != nil {
 		return err
 	}
-
-	return os.WriteFile(fullPath, data, 0o644)
+	return s.WriteStreamAtomic(filePath, 0o600, func(writer io.Writer) error {
+		_, err := writer.Write(data)
+		return err
+	})
 }
 
-// ReadFile reads a file with the requested mode.
-func (s *Service) ReadFile(path string, opts Options) (string, error) {
-	fullPath, err := s.resolve(path)
+// ReadFile reads a regular file with the requested mode.
+func (s *Service) ReadFile(filePath string, opts Options) (string, error) {
+	file, err := s.OpenRead(filePath)
 	if err != nil {
 		return "", err
 	}
-
-	data, err := os.ReadFile(fullPath)
+	defer file.Close()
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return "", err
 	}
-
 	switch opts.Mode {
 	case "", ModeText:
 		return string(data), nil
@@ -114,286 +186,241 @@ func (s *Service) ReadFile(path string, opts Options) (string, error) {
 	}
 }
 
-// MoveFile renames a file or directory.
+// MoveFile renames a file or directory without following any path links.
 func (s *Service) MoveFile(source, target string) error {
-	fullSource, err := s.resolve(source)
+	sourceRel, err := s.relative(source)
 	if err != nil {
 		return err
 	}
-
-	fullTarget, err := s.resolve(target)
+	if sourceRel == "." {
+		return errors.New("access denied: cannot move the application data root")
+	}
+	targetRel, err := s.relative(target)
 	if err != nil {
 		return err
 	}
-
-	if err := os.MkdirAll(filepath.Dir(fullTarget), 0o750); err != nil {
-		return err
+	if targetRel == "." {
+		return errors.New("access denied: cannot replace the application data root")
 	}
-
-	return os.Rename(fullSource, fullTarget)
+	return s.backend.rename(sourceRel, targetRel)
 }
 
-// RemoveFile deletes a file or directory recursively.
-func (s *Service) RemoveFile(path string) error {
-	fullPath, err := s.resolve(path)
+// RemoveFile deletes a file or directory recursively without following links.
+func (s *Service) RemoveFile(filePath string) error {
+	rel, err := s.relative(filePath)
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(fullPath)
+	if rel == "." {
+		return errors.New("access denied: cannot remove the application data root")
+	}
+	return s.backend.removeAll(rel)
 }
 
-// CopyFile copies a file from source to destination.
+// CopyFile copies a regular file to an atomically published target.
 func (s *Service) CopyFile(source, target string) error {
-	fullSource, err := s.resolve(source)
+	sourceFile, err := s.OpenRead(source)
 	if err != nil {
 		return err
 	}
-
-	fullTarget, err := s.resolve(target)
-	if err != nil {
+	defer sourceFile.Close()
+	return s.WriteStreamAtomic(target, 0o600, func(writer io.Writer) error {
+		_, err := io.Copy(writer, sourceFile)
 		return err
-	}
-
-	srcFile, err := os.Open(fullSource)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	if err := os.MkdirAll(filepath.Dir(fullTarget), 0o750); err != nil {
-		return err
-	}
-
-	dstFile, err := os.Create(fullTarget)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+	})
 }
 
-// MakeDir ensures a directory exists.
-func (s *Service) MakeDir(path string) error {
-	fullPath, err := s.resolve(path)
+// MakeDir ensures a real directory hierarchy exists below the data root.
+func (s *Service) MakeDir(dirPath string) error {
+	rel, err := s.relative(dirPath)
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(fullPath, 0o750)
+	return s.backend.mkdirAll(rel, 0o700)
 }
 
-// ReadDir lists directory entries with minimal metadata.
-func (s *Service) ReadDir(path string) ([]DirEntry, error) {
-	fullPath, err := s.resolve(path)
+// ReadDir lists directory entries using an anchored directory handle.
+func (s *Service) ReadDir(dirPath string) ([]DirEntry, error) {
+	rel, err := s.relative(dirPath)
 	if err != nil {
 		return nil, err
 	}
-
-	files, err := os.ReadDir(fullPath)
+	files, err := s.backend.readDir(rel)
 	if err != nil {
 		return nil, err
 	}
-
 	result := make([]DirEntry, 0, len(files))
 	for _, file := range files {
 		info, err := file.Info()
 		if err != nil {
 			continue
 		}
-		result = append(result, DirEntry{
-			Name:  info.Name(),
-			Size:  info.Size(),
-			IsDir: info.IsDir(),
-		})
+		result = append(result, DirEntry{Name: info.Name(), Size: info.Size(), IsDir: info.IsDir()})
 	}
-
 	return result, nil
 }
 
-// AbsolutePath resolves the provided path against the base directory.
-func (s *Service) AbsolutePath(path string) (string, error) {
-	return s.resolve(path)
+// AbsolutePath resolves a display path against the base directory. It must not
+// be followed by os.Open/os.WriteFile in security-sensitive code; use OpenRead
+// or WriteStreamAtomic instead.
+func (s *Service) AbsolutePath(filePath string) (string, error) {
+	return s.resolve(filePath)
 }
 
-// UnzipZIPFile extracts a zip archive to the target directory.
+func archiveEntryRelative(targetRel, entryName string) (string, error) {
+	if strings.IndexByte(entryName, 0) >= 0 {
+		return "", fmt.Errorf("unsafe archive entry: %s", entryName)
+	}
+	// Treat backslashes as separators on every platform. Otherwise an archive
+	// prepared on Unix could become a traversal only when extracted on Windows.
+	normalized := strings.ReplaceAll(entryName, "\\", "/")
+	cleanName := path.Clean(normalized)
+	if cleanName == "." || strings.HasPrefix(cleanName, "/") || cleanName == ".." || strings.HasPrefix(cleanName, "../") {
+		return "", fmt.Errorf("unsafe archive entry: %s", entryName)
+	}
+	if filepath.VolumeName(filepath.FromSlash(cleanName)) != "" {
+		return "", fmt.Errorf("unsafe archive entry: %s", entryName)
+	}
+	return filepath.Join(targetRel, filepath.FromSlash(cleanName)), nil
+}
+
+func privateArchiveFileMode(mode os.FileMode) os.FileMode {
+	if mode.Perm()&0o111 != 0 {
+		return 0o700
+	}
+	return 0o600
+}
+
+// UnzipZIPFile extracts regular files and directories from a zip archive.
 func (s *Service) UnzipZIPFile(source, target string) error {
-	fullSource, err := s.resolve(source)
+	archiveFile, err := s.OpenRead(source)
 	if err != nil {
 		return err
 	}
-
-	fullTarget, err := s.resolve(target)
+	defer archiveFile.Close()
+	archiveInfo, err := archiveFile.Stat()
 	if err != nil {
 		return err
 	}
-
-	archive, err := zip.OpenReader(fullSource)
+	archive, err := zip.NewReader(archiveFile, archiveInfo.Size())
 	if err != nil {
 		return err
 	}
-	defer archive.Close()
-
-	cleanOutputPath := fullTarget + string(os.PathSeparator)
-
-	for _, f := range archive.File {
-		filePath := filepath.Join(fullTarget, f.Name)
-
-		if !strings.HasPrefix(filePath, cleanOutputPath) {
-			continue
+	targetRel, err := s.relative(target)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.mkdirAll(targetRel, 0o700); err != nil {
+		return err
+	}
+	for _, entry := range archive.File {
+		entryRel, err := archiveEntryRelative(targetRel, entry.Name)
+		if err != nil {
+			return err
 		}
-
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(filePath, 0o750); err != nil {
+		mode := entry.Mode()
+		if mode.IsDir() {
+			if err := s.backend.mkdirAll(entryRel, 0o700); err != nil {
 				return err
 			}
 			continue
 		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
-			return err
+		if mode&os.ModeSymlink != 0 || !mode.IsRegular() {
+			return fmt.Errorf("unsafe zip entry type: %s", entry.Name)
 		}
-
-		src, err := f.Open()
+		err = s.backend.writeAtomic(entryRel, privateArchiveFileMode(mode), func(writer io.Writer) error {
+			sourceFile, openErr := entry.Open()
+			if openErr != nil {
+				return openErr
+			}
+			defer sourceFile.Close()
+			_, copyErr := io.Copy(writer, sourceFile)
+			return copyErr
+		})
 		if err != nil {
 			return err
 		}
-
-		dst, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			src.Close()
-			return err
-		}
-
-		if _, err := io.Copy(dst, src); err != nil {
-			src.Close()
-			dst.Close()
-			return err
-		}
-
-		src.Close()
-		dst.Close()
 	}
-
 	return nil
 }
 
-// UnzipTarGZFile extracts a tar.gz archive.
+// UnzipTarGZFile extracts only regular files and directories. Links, devices,
+// and other special tar records are rejected rather than materialized.
 func (s *Service) UnzipTarGZFile(source, target string) error {
-	fullSource, err := s.resolve(source)
+	archiveFile, err := s.OpenRead(source)
 	if err != nil {
 		return err
 	}
-
-	fullTarget, err := s.resolve(target)
-	if err != nil {
-		return err
-	}
-
-	gzipFile, err := os.Open(fullSource)
-	if err != nil {
-		return err
-	}
-	defer gzipFile.Close()
-
-	gzipReader, err := gzip.NewReader(gzipFile)
+	defer archiveFile.Close()
+	gzipReader, err := gzip.NewReader(archiveFile)
 	if err != nil {
 		return err
 	}
 	defer gzipReader.Close()
-
+	targetRel, err := s.relative(target)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.mkdirAll(targetRel, 0o700); err != nil {
+		return err
+	}
 	tarReader := tar.NewReader(gzipReader)
-	cleanOutputPath := fullTarget + string(os.PathSeparator)
-
 	for {
-		header, err := tarReader.Next()
-		if errors.Is(err, io.EOF) {
-			break
+		header, nextErr := tarReader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			return nil
 		}
+		if nextErr != nil {
+			return nextErr
+		}
+		entryRel, err := archiveEntryRelative(targetRel, header.Name)
 		if err != nil {
 			return err
 		}
-
-		filePath := filepath.Join(fullTarget, header.Name)
-		if !strings.HasPrefix(filePath, cleanOutputPath) {
-			continue
-		}
-
-		if header.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(filePath, 0o750); err != nil {
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := s.backend.mkdirAll(entryRel, 0o700); err != nil {
 				return err
 			}
-			continue
+		case tar.TypeReg, tar.TypeRegA:
+			mode := privateArchiveFileMode(os.FileMode(header.Mode))
+			if err := s.backend.writeAtomic(entryRel, mode, func(writer io.Writer) error {
+				_, copyErr := io.Copy(writer, tarReader)
+				return copyErr
+			}); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsafe tar entry type for %s", header.Name)
 		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
-			return err
-		}
-
-		dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, header.FileInfo().Mode())
-		if err != nil {
-			return err
-		}
-
-		if _, err := io.Copy(dstFile, tarReader); err != nil {
-			dstFile.Close()
-			return err
-		}
-		dstFile.Close()
 	}
-
-	return nil
 }
 
-// UnzipGZFile decompresses a gz archive to a single file.
+// UnzipGZFile decompresses a gz archive to one atomically published file.
 func (s *Service) UnzipGZFile(source, target string) error {
-	fullSource, err := s.resolve(source)
+	archiveFile, err := s.OpenRead(source)
 	if err != nil {
 		return err
 	}
-
-	fullTarget, err := s.resolve(target)
-	if err != nil {
-		return err
-	}
-
-	gzipFile, err := os.Open(fullSource)
-	if err != nil {
-		return err
-	}
-	defer gzipFile.Close()
-
-	outputFile, err := os.Create(fullTarget)
-	if err != nil {
-		return err
-	}
-	defer outputFile.Close()
-
-	gzipReader, err := gzip.NewReader(gzipFile)
+	defer archiveFile.Close()
+	gzipReader, err := gzip.NewReader(archiveFile)
 	if err != nil {
 		return err
 	}
 	defer gzipReader.Close()
-
-	_, err = io.Copy(outputFile, gzipReader)
-	return err
+	return s.WriteStreamAtomic(target, 0o600, func(writer io.Writer) error {
+		_, err := io.Copy(writer, gzipReader)
+		return err
+	})
 }
 
-// FileExists checks if the path exists.
-func (s *Service) FileExists(path string) (bool, error) {
-	fullPath, err := s.resolve(path)
+// FileExists checks whether a non-symlink path exists below the data root.
+func (s *Service) FileExists(filePath string) (bool, error) {
+	rel, err := s.relative(filePath)
 	if err != nil {
 		return false, err
 	}
-
-	_, err = os.Stat(fullPath)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
+	return s.backend.exists(rel)
 }
 
 func (s *Service) decodeContent(content string, opts Options) ([]byte, error) {

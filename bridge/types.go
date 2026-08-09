@@ -3,6 +3,8 @@ package bridge
 import (
 	"context"
 	"net/http"
+	"sync"
+	"time"
 
 	"privatedeploy/bridge/cdn"
 	"privatedeploy/bridge/cloud"
@@ -14,12 +16,31 @@ import (
 
 // App struct
 type App struct {
-	Ctx           context.Context
-	AppMenu       *menu.Menu
-	CloudManager  *cloud.Manager
-	HealthMonitor *health.Monitor
-	FileService   *filesystem.Service
-	CdnManager    *cdn.Manager
+	Ctx             context.Context
+	AppMenu         *menu.Menu
+	CloudManager    *cloud.Manager
+	HealthMonitor   *health.Monitor
+	FileService     *filesystem.Service
+	CdnManager      *cdn.Manager
+	cloudProviderMu sync.Mutex
+	cloudCreateMu   sync.Mutex
+	cloudCreateOps  map[string]*cloudCreateCall
+	// cloudOperationBasePath overrides the durable operation journal root in
+	// tests. Production resolves it from PRIVATEDEPLOY_BASE_PATH / Env.BasePath.
+	cloudOperationBasePath string
+	cloudReconcileMu       sync.Mutex
+	cloudReconcileOps      map[string]struct{}
+}
+
+type cloudCreateCall struct {
+	providerName string
+	operationID  string
+	done         chan struct{}
+	detached     chan struct{}
+	isDetached   bool
+	instance     *cloud.Instance
+	err          error
+	completed    time.Time
 }
 
 type EnvResult struct {

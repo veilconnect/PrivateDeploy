@@ -51,11 +51,44 @@ var (
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
-	nodesMu     sync.Mutex
-	osCache     []vultrOS
-	osCacheTime time.Time
-	osCacheMu   sync.Mutex
+	nodesMu sync.Mutex
+	// firewallLifecycleMu serializes Vultr's non-idempotent firewall group
+	// list-or-create cycle across every Provider instance in this process.
+	// Registry reloads can briefly leave more than one Provider alive.
+	firewallLifecycleMu   sync.Mutex
+	instanceCreateMu      sync.Mutex
+	activeInstanceCreates = make(map[string]int)
+	osCache               []vultrOS
+	osCacheTime           time.Time
+	osCacheMu             sync.Mutex
 )
+
+func (p *Provider) instanceCreateKey(instanceID string) string {
+	return p.nodesPath + "\x00" + instanceID
+}
+
+func (p *Provider) beginInstanceCreate(instanceID string) {
+	instanceCreateMu.Lock()
+	activeInstanceCreates[p.instanceCreateKey(instanceID)]++
+	instanceCreateMu.Unlock()
+}
+
+func (p *Provider) endInstanceCreate(instanceID string) {
+	instanceCreateMu.Lock()
+	key := p.instanceCreateKey(instanceID)
+	if activeInstanceCreates[key] <= 1 {
+		delete(activeInstanceCreates, key)
+	} else {
+		activeInstanceCreates[key]--
+	}
+	instanceCreateMu.Unlock()
+}
+
+func (p *Provider) isInstanceCreateActive(instanceID string) bool {
+	instanceCreateMu.Lock()
+	defer instanceCreateMu.Unlock()
+	return activeInstanceCreates[p.instanceCreateKey(instanceID)] > 0
+}
 
 const (
 	defaultServiceReadyTimeout = 8 * time.Minute
@@ -69,27 +102,37 @@ type Provider struct {
 	config     *cloud.ProviderConfig
 	configPath string
 	nodesPath  string
+
+	// runManagedSSHRepair is replaceable in package tests. Production always
+	// uses runRemoteDeploymentRepair; keeping the seam here avoids tests ever
+	// opening a real SSH connection or handling private-key material.
+	runManagedSSHRepair func(context.Context, string, string) error
 }
 
 // nodeRecord is the on-disk representation of a managed node, including legacy fields
 // kept for compatibility with older state files.
 type nodeRecord struct {
-	InstanceID string `json:"instanceId,omitempty"`
-	Label      string `json:"label,omitempty"`
-	Region     string `json:"region,omitempty"`
+	InstanceID               string `json:"instanceId,omitempty"`
+	Label                    string `json:"label,omitempty"`
+	Region                   string `json:"region,omitempty"`
+	ManagedSSHKeyFingerprint string `json:"managedSshKeyFingerprint,omitempty"`
+	FirewallGroupID          string `json:"firewallGroupId,omitempty"`
+	FirewallOwnershipToken   string `json:"firewallOwnershipToken,omitempty"`
+	FirewallCleanupPending   bool   `json:"firewallCleanupPending,omitempty"`
 	cloud.InstanceRecord
 }
 
 // vultrInstance mirrors the Vultr API instance response.
 type vultrInstance struct {
-	ID        string `json:"id"`
-	Label     string `json:"label"`
-	Status    string `json:"status"`
-	Region    string `json:"region"`
-	Plan      string `json:"plan"`
-	MainIP    string `json:"main_ip"`
-	V6MainIP  string `json:"v6_main_ip"`
-	CreatedAt string `json:"created_at"`
+	ID        string   `json:"id"`
+	Label     string   `json:"label"`
+	Status    string   `json:"status"`
+	Region    string   `json:"region"`
+	Plan      string   `json:"plan"`
+	MainIP    string   `json:"main_ip"`
+	V6MainIP  string   `json:"v6_main_ip"`
+	CreatedAt string   `json:"created_at"`
+	Tags      []string `json:"tags,omitempty"`
 }
 
 type vultrRegion struct {
@@ -153,9 +196,10 @@ func New(config *cloud.ProviderConfig) *Provider {
 	nodesPath := filepath.Join(basePath, nodesFileRelPath)
 
 	return &Provider{
-		config:     cloneProviderConfig(config),
-		configPath: configPath,
-		nodesPath:  nodesPath,
+		config:              cloneProviderConfig(config),
+		configPath:          configPath,
+		nodesPath:           nodesPath,
+		runManagedSSHRepair: runRemoteDeploymentRepair,
 	}
 }
 

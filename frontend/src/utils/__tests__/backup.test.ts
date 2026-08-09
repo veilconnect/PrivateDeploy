@@ -64,4 +64,27 @@ describe('backup utilities', () => {
     expect(loadAutoBackup()).toBeNull()
     expect(getAutoBackupAge()).toBeNull()
   })
+
+  it('redacts credentials from localStorage auto-backups', () => {
+    autoBackup({
+      cloudConfig: { apiKey: 'provider-token', defaultRegion: 'nrt' },
+      nodes: [{
+        instanceId: 'node-1',
+        label: 'Tokyo',
+        ssPassword: 'node-secret',
+        vlessUUID: '11111111-1111-4111-8111-111111111111',
+        shareLink: 'ss://plain-text-share-link',
+      }],
+    })
+
+    const raw = localStorage.getItem('auto-backup') || ''
+    expect(raw).not.toContain('provider-token')
+    expect(raw).not.toContain('node-secret')
+    expect(raw).not.toContain('11111111-1111-4111-8111-111111111111')
+    expect(raw).not.toContain('ss://')
+    expect(loadAutoBackup()).toMatchObject({
+      cloudConfig: { defaultRegion: 'nrt' },
+      nodes: [{ instanceId: 'node-1', label: 'Tokyo' }],
+    })
+  })
 })

@@ -13,7 +13,6 @@ import (
 	"privatedeploy/api/models"
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -258,64 +257,15 @@ func sanitizeInstanceResult(instance *cloud.Instance) sanitizedInstanceResult {
 	}
 }
 
-// secretExtraKeyPattern matches CreateInstanceOptions.Extra keys whose values
-// must be treated as secrets (SSH passwords, private keys, API tokens, ...).
-var secretExtraKeyPattern = regexp.MustCompile(
-	`(?i)(password|passwd|pwd|secret|passphrase|private[_-]?key|privkey|api[_-]?key|token|credential)`)
-
-// errorRedactionPatterns removes common credential shapes from provider error
-// text regardless of where the value came from. Ordering matters: the paired
-// BEGIN/END private-key block is redacted before the unterminated fallback.
-var errorRedactionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`),
-	regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*`),
-	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9\-._~+/=]+`),
-	regexp.MustCompile(`(?i)\b(password|passwd|pwd|passphrase)\s*[=:]\s*\S+`),
-	regexp.MustCompile(`(?i)\bapi[_-]?key\s*[=:]\s*\S+`),
-	regexp.MustCompile(`(?i)\btoken\s*[=:]\s*\S+`),
-	regexp.MustCompile(`(?i)\bsecret\s*[=:]\s*\S+`),
-}
-
 // sanitizeOperationError redacts credentials from a provider error before it
-// is persisted or logged:
-//
-//  1. every secret value from this request's Extra map (all non-empty values
-//     for the ssh provider, secret-named keys for the rest) is replaced by
-//     exact match, and
-//  2. common credential patterns (Bearer tokens, password=/token=/api_key=
-//     pairs, PEM private-key blocks) are redacted by regex.
-//
-// The result is finally capped at 500 bytes so an unexpected payload echo
-// cannot bloat the persistent log.
-func sanitizeOperationError(err error, providerName string, opts *cloud.CreateInstanceOptions) string {
-	if err == nil {
+// is persisted or logged. Desktop and API operations share the cloud-layer
+// implementation so new credential shapes cannot drift between surfaces.
+func sanitizeOperationError(err error, _ string, opts *cloud.CreateInstanceOptions) string {
+	safe := cloud.SanitizeCreateOperationError(err, opts)
+	if safe == nil {
 		return ""
 	}
-	msg := err.Error()
-
-	if opts != nil {
-		for key, value := range opts.Extra {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			// The ssh provider's Extra carries connection credentials almost
-			// exclusively, so all of its values are treated as secrets.
-			if providerName == "ssh" || secretExtraKeyPattern.MatchString(key) {
-				msg = strings.ReplaceAll(msg, value, "[REDACTED]")
-			}
-		}
-	}
-
-	for _, re := range errorRedactionPatterns {
-		msg = re.ReplaceAllString(msg, "[REDACTED]")
-	}
-
-	const maxLen = 500
-	if len(msg) > maxLen {
-		msg = msg[:maxLen] + "… (truncated)"
-	}
-	return msg
+	return safe.Error()
 }
 
 // createRequestFingerprint canonicalizes every behavior-affecting input of a

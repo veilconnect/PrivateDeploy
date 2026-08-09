@@ -6,6 +6,10 @@ export function AbsolutePath(arg1) {
   return window['go']['bridge']['App']['AbsolutePath'](arg1);
 }
 
+export function CancelCloudOperation(arg1) {
+  return window['go']['bridge']['App']['CancelCloudOperation'](arg1);
+}
+
 export function CleanInvalidCloudNodes() {
   return window['go']['bridge']['App']['CleanInvalidCloudNodes']();
 }
@@ -122,6 +126,10 @@ export function GetCloudConfigTyped() {
   return window['go']['bridge']['App']['GetCloudConfigTyped']();
 }
 
+export function GetCloudOperationStatus(arg1) {
+  return window['go']['bridge']['App']['GetCloudOperationStatus'](arg1);
+}
+
 export function GetCloudProvider() {
   return window['go']['bridge']['App']['GetCloudProvider']();
 }
@@ -222,6 +230,10 @@ export function ListCloudRegionsTyped() {
   return window['go']['bridge']['App']['ListCloudRegionsTyped']();
 }
 
+export function ListPendingCloudOperations() {
+  return window['go']['bridge']['App']['ListPendingCloudOperations']();
+}
+
 export function ListServer() {
   return window['go']['bridge']['App']['ListServer']();
 }
@@ -312,6 +324,10 @@ export function SetupSSHEventEmitter() {
 
 export function ShowMainWindow() {
   return window['go']['bridge']['App']['ShowMainWindow']();
+}
+
+export function SignalFrontendReady() {
+  return window['go']['bridge']['App']['SignalFrontendReady']();
 }
 
 export function StartHealthMonitor() {

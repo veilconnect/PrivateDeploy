@@ -2,15 +2,20 @@ package bridge
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"privatedeploy/bridge/cloud"
 	"privatedeploy/bridge/cloud/defaults"
+	"privatedeploy/bridge/cloud/persistence"
 	sshprovider "privatedeploy/bridge/cloud/providers/ssh"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -42,6 +47,124 @@ func (a *App) opCtx(timeout time.Duration) (context.Context, context.CancelFunc)
 type CloudProviderInfo struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
+}
+
+const activeCloudProviderFile = "active-provider"
+
+func (a *App) activeCloudProviderPath() string {
+	return filepath.Join(a.cloudOperationJournalBasePath(), "data", "cloud", activeCloudProviderFile)
+}
+
+func (a *App) loadActiveCloudProviderChoice() (string, bool) {
+	raw, err := os.ReadFile(a.activeCloudProviderPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("Warning: failed to read active cloud provider choice: %v", err)
+			return "", true
+		}
+		return "", false
+	}
+	name := strings.TrimSpace(string(raw))
+	if !defaults.IsPublicProvider(name) {
+		log.Printf("Warning: ignoring invalid active cloud provider choice %q", name)
+		return "", true
+	}
+	if _, err := a.CloudManager.GetProvider(name); err != nil {
+		log.Printf("Warning: ignoring unavailable active cloud provider choice %q: %v", name, err)
+		return "", true
+	}
+	return name, true
+}
+
+func (a *App) persistActiveCloudProviderChoice(name string) error {
+	if !defaults.IsPublicProvider(name) {
+		return fmt.Errorf("provider %s is not available in this build", name)
+	}
+	path := a.activeCloudProviderPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create cloud state directory: %w", err)
+	}
+	if err := persistence.WritePrivateFileAtomic(path, []byte(name+"\n")); err != nil {
+		return fmt.Errorf("persist active cloud provider: %w", err)
+	}
+	return nil
+}
+
+// inferLegacyActiveCloudProvider migrates data roots created before the active
+// provider marker existed. It never reads state contents (which can contain
+// credentials); it only compares regular, provider-owned config/node files.
+func (a *App) inferLegacyActiveCloudProvider(fallback string) string {
+	cloudDir := filepath.Join(a.cloudOperationJournalBasePath(), "data", "cloud")
+	var (
+		winner     string
+		winnerTime time.Time
+		tied       bool
+	)
+	for _, providerName := range a.CloudManager.ListProviders() {
+		if !defaults.IsPublicProvider(providerName) {
+			continue
+		}
+		var (
+			providerTime time.Time
+			hasState     bool
+		)
+		for _, suffix := range []string{"config.json", "nodes.json"} {
+			path := filepath.Join(cloudDir, providerName+"-"+suffix)
+			info, err := os.Lstat(path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				log.Printf("Warning: cannot inspect legacy cloud state %s: %v", path, err)
+				return fallback
+			}
+			if !info.Mode().IsRegular() {
+				log.Printf("Warning: ignoring non-regular legacy cloud state %s", path)
+				continue
+			}
+			hasState = true
+			if providerTime.IsZero() || info.ModTime().After(providerTime) {
+				providerTime = info.ModTime()
+			}
+		}
+		if !hasState {
+			continue
+		}
+		if winner == "" || providerTime.After(winnerTime) {
+			winner = providerName
+			winnerTime = providerTime
+			tied = false
+		} else if providerTime.Equal(winnerTime) {
+			tied = true
+		}
+	}
+	if winner == "" || tied {
+		return fallback
+	}
+	return winner
+}
+
+// restoreActiveCloudProvider selects the last provider used by this data root.
+// This is intentionally backend-owned: a renderer restart or packaging switch
+// must not silently fall back to Vultr and make another provider's saved API
+// key and nodes appear to have vanished.
+func (a *App) restoreActiveCloudProvider(fallback string) error {
+	name, markerExists := a.loadActiveCloudProviderChoice()
+	if name == "" {
+		name = fallback
+		if !markerExists {
+			name = a.inferLegacyActiveCloudProvider(fallback)
+		}
+	}
+	if err := a.CloudManager.SetActiveProvider(name); err != nil {
+		return err
+	}
+	if !markerExists {
+		if err := a.persistActiveCloudProviderChoice(name); err != nil {
+			return fmt.Errorf("persist migrated active cloud provider: %w", err)
+		}
+	}
+	return nil
 }
 
 func (a *App) ListCloudProvidersTyped() ([]CloudProviderInfo, error) {
@@ -89,12 +212,21 @@ func (a *App) ListCloudProviders() FlagResult {
 
 func (a *App) SetCloudProviderTyped(providerName string) (*CloudProviderInfo, error) {
 	log.Printf("[CloudBridge] SetCloudProviderTyped called with: %s", providerName)
+	a.cloudProviderMu.Lock()
+	defer a.cloudProviderMu.Unlock()
 
 	if !defaults.IsPublicProvider(providerName) {
 		return nil, fmt.Errorf("provider %s is experimental and not available in this build", providerName)
 	}
 
+	previous, _ := a.CloudManager.GetActiveProvider()
 	if err := a.CloudManager.SetActiveProvider(providerName); err != nil {
+		return nil, err
+	}
+	if err := a.persistActiveCloudProviderChoice(providerName); err != nil {
+		if previous != nil {
+			_ = a.CloudManager.SetActiveProvider(previous.Name())
+		}
 		return nil, err
 	}
 
@@ -290,7 +422,39 @@ func (a *App) ListCloudInstancesTyped() ([]cloud.Instance, error) {
 
 	ctx, cancel := a.opCtx(cloudListOpTimeout)
 	defer cancel()
-	return provider.ListInstances(ctx)
+	// A renderer restart can lose its operation ID. Recover every unfinished
+	// durable create before listing so a tagged remote server and its journaled
+	// credentials become a normal node without any frontend cooperation.
+	a.reconcileAllPendingCloudOperations(ctx)
+	instances, err := provider.ListInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	refresher, ok := provider.(cloud.InstanceHealthRefresher)
+	if !ok {
+		return instances, nil
+	}
+	// Warning convergence must not turn one list refresh into N sequential
+	// multi-second probes. Recheck all warning-bearing nodes concurrently within
+	// one short shared budget and retain the original snapshot on probe failure.
+	healthCtx, healthCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer healthCancel()
+	var healthWG sync.WaitGroup
+	for index := range instances {
+		if strings.TrimSpace(instances[index].LastDeployWarning) == "" {
+			continue
+		}
+		healthWG.Add(1)
+		go func(index int) {
+			defer healthWG.Done()
+			refreshed, refreshErr := refresher.RefreshInstanceHealth(healthCtx, instances[index].ID)
+			if refreshErr == nil && refreshed != nil {
+				instances[index] = *refreshed
+			}
+		}(index)
+	}
+	healthWG.Wait()
+	return instances, nil
 }
 
 // ListCloudInstances returns all instances for the active provider
@@ -311,18 +475,343 @@ func (a *App) ListCloudInstances() FlagResult {
 	return FlagResult{Flag: true, Data: string(data)}
 }
 
-func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (instance *cloud.Instance, err error) {
 	log.Printf("[CloudBridge] CreateCloudInstanceTyped called (options redacted for security)")
 
 	provider, err := a.CloudManager.GetActiveProvider()
 	if err != nil {
 		return nil, err
 	}
+	return a.createCloudInstanceForProvider(provider, opts)
+}
 
+// createCloudInstanceForProvider keeps the provider selected at the start of
+// a user action fixed for its whole lifetime. In particular, queued items in a
+// batch must not jump to a different billable provider when the renderer
+// changes the active provider while earlier items are still running.
+func (a *App) createCloudInstanceForProvider(provider cloud.CloudProvider, opts cloud.CreateInstanceOptions) (instance *cloud.Instance, err error) {
+	if provider == nil {
+		return nil, errors.New("cloud provider is required")
+	}
+	operationID := strings.TrimSpace(opts.OperationID)
+	if operationID == "" {
+		if defaults.IsPublicProvider(provider.Name()) {
+			return nil, fmt.Errorf("operationId is required for billable %s creates", provider.DisplayName())
+		}
+		return a.performCloudCreate(provider, &opts)
+	}
+	opts.OperationID = operationID
+	operationKey := cloudCreateOperationKey(provider.Name(), operationID)
+
+	createCall, owner := a.claimCloudCreate(provider.Name(), operationID)
+	if owner {
+		// Run the billable provider operation independently of the renderer's
+		// wait. "Stop waiting" may detach the UI, but must never cancel an HTTP
+		// create after the provider accepted it and strand an unrecorded server.
+		operationOpts := opts
+		operationOpts.Extra = cloneCloudStringMap(opts.Extra)
+		go func() {
+			var created *cloud.Instance
+			var createErr error
+			defer func() {
+				if recover() != nil {
+					// The panic location cannot prove whether the provider crossed its
+					// POST boundary. Never persist or return the panic value: provider
+					// payloads and credentials can be embedded in it.
+					createErr = fmt.Errorf("%w: cloud create panicked", cloud.ErrCreateOutcomePending)
+				}
+				createErr = cloud.SanitizeCreateOperationError(createErr, &operationOpts)
+				if errors.Is(createErr, cloud.ErrCreateOutcomePending) {
+					a.scheduleCloudCreateReconciliation(provider.Name(), operationOpts.OperationID)
+				}
+				a.finishCloudCreate(operationKey, createCall, created, createErr)
+			}()
+			created, createErr = a.performDurableCloudCreate(provider, &operationOpts)
+		}()
+	}
+	return a.waitCloudCreate(createCall)
+}
+
+func (a *App) cloudCreateOperationPath(provider, operationID string) string {
+	return cloud.CreateOperationJournalPath(a.cloudOperationJournalBasePath(), provider, operationID)
+}
+
+func (a *App) cloudOperationJournalBasePath() string {
+	basePath := strings.TrimSpace(a.cloudOperationBasePath)
+	if basePath == "" {
+		basePath = strings.TrimSpace(os.Getenv(basePathEnv))
+	}
+	if basePath == "" {
+		basePath = strings.TrimSpace(Env.BasePath)
+	}
+	if basePath == "" {
+		basePath, _ = os.Getwd()
+	}
+	if absolute, err := filepath.Abs(basePath); err == nil {
+		basePath = absolute
+	}
+	return basePath
+}
+
+// performDurableCloudCreate is the cross-process idempotency boundary. The
+// operation lock is held from the encrypted pre-POST journal write through the
+// terminal result. If a journal already exists, this method may only reconcile
+// by the provider marker; it can never invoke CreateInstance again.
+func (a *App) performDurableCloudCreate(provider cloud.CloudProvider, opts *cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+	operationCtx, operationCancel := a.opCtx(cloudDeployOpTimeout)
+	defer operationCancel()
+	return a.performDurableCloudCreateWithContext(operationCtx, provider, opts)
+}
+
+func (a *App) performDurableCloudCreateWithContext(operationCtx context.Context, provider cloud.CloudProvider, opts *cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+	if opts == nil || strings.TrimSpace(opts.OperationID) == "" {
+		return nil, fmt.Errorf("cloud operation ID is required")
+	}
+
+	operationPath := a.cloudCreateOperationPath(provider.Name(), opts.OperationID)
+	operationLock, err := acquireCloudOperationFileLock(operationCtx, operationPath+".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer operationLock.Close()
+
+	record, created, err := cloud.PrepareCreateOperation(operationPath, provider.Name(), *opts)
+	if err != nil {
+		return nil, err
+	}
+	operationOpts := record.Options
+	operationOpts.OperationJournalPath = operationPath
+
+	if !created {
+		switch record.State {
+		case cloud.CreateOperationSucceeded:
+			if record.Instance == nil {
+				return nil, errors.New("completed cloud operation has no instance result")
+			}
+			return cloneCloudInstance(record.Instance), nil
+		case cloud.CreateOperationFailed:
+			if record.LastError == "" {
+				return nil, cloud.ErrCreateFailed
+			}
+			return nil, fmt.Errorf("previous cloud create failed: %s", record.LastError)
+		}
+
+		reconciler, ok := provider.(cloud.CreateOperationReconciler)
+		if !ok {
+			reconcileErr := fmt.Errorf("%w: provider %s cannot reconcile a journaled create", cloud.ErrCreateOutcomePending, provider.Name())
+			_ = cloud.MarkCreateOperationReconciling(operationPath, reconcileErr)
+			return nil, reconcileErr
+		}
+		instance, reconcileErr := reconciler.ReconcileCreateOperation(operationCtx, &operationOpts)
+		if reconcileErr != nil {
+			if errors.Is(reconcileErr, cloud.ErrCreateOutcomePending) {
+				_ = cloud.MarkCreateOperationReconciling(operationPath, reconcileErr)
+				return nil, reconcileErr
+			}
+			if journalErr := cloud.FailCreateOperation(operationPath, reconcileErr); journalErr != nil {
+				return nil, fmt.Errorf("%w: reconcile failed: %v; terminal state could not be persisted: %v", cloud.ErrCreateOutcomePending, reconcileErr, journalErr)
+			}
+			return nil, reconcileErr
+		}
+		if instance == nil {
+			nilResultErr := fmt.Errorf("%w: provider reconciliation returned no instance", cloud.ErrCreateOutcomePending)
+			_ = cloud.MarkCreateOperationReconciling(operationPath, nilResultErr)
+			return nil, nilResultErr
+		}
+		if finalizer, ok := provider.(cloud.ReconciledCreateFinalizer); ok {
+			finalized, finalizeErr := finalizer.FinalizeReconciledCreate(operationCtx, &operationOpts, instance)
+			if finalizeErr != nil {
+				pendingErr := fmt.Errorf("%w: tagged instance %s was recovered but finalization is incomplete: %v", cloud.ErrCreateOutcomePending, instance.ID, finalizeErr)
+				_ = cloud.MarkCreateOperationReconciling(operationPath, pendingErr)
+				return nil, pendingErr
+			}
+			if finalized != nil {
+				instance = finalized
+			}
+		}
+		if err := cloud.CompleteCreateOperation(operationPath, instance); err != nil {
+			return nil, fmt.Errorf("%w: recovered cloud instance but failed to persist completion: %v", cloud.ErrCreateOutcomePending, err)
+		}
+		return instance, nil
+	}
+
+	instance, createErr := a.performCloudCreate(provider, &operationOpts)
+	if createErr != nil {
+		if errors.Is(createErr, cloud.ErrCreateOutcomePending) {
+			_ = cloud.MarkCreateOperationReconciling(operationPath, createErr)
+			return nil, createErr
+		}
+		if journalErr := cloud.FailCreateOperation(operationPath, createErr); journalErr != nil {
+			return nil, fmt.Errorf("%w: cloud create failed: %v; terminal state could not be persisted: %v", cloud.ErrCreateOutcomePending, createErr, journalErr)
+		}
+		return nil, createErr
+	}
+	if instance == nil {
+		nilResultErr := fmt.Errorf("%w: provider create returned no instance", cloud.ErrCreateOutcomePending)
+		_ = cloud.MarkCreateOperationReconciling(operationPath, nilResultErr)
+		return nil, nilResultErr
+	}
+	if err := cloud.CompleteCreateOperation(operationPath, instance); err != nil {
+		return nil, fmt.Errorf("%w: cloud instance %s was created but completion could not be journaled: %v", cloud.ErrCreateOutcomePending, instance.ID, err)
+	}
+	return instance, nil
+}
+
+func (a *App) reconcilePendingCloudOperations(ctx context.Context, provider cloud.CloudProvider) {
+	if _, ok := provider.(cloud.CreateOperationReconciler); !ok {
+		return
+	}
+	records, err := cloud.ListCreateOperations(a.cloudOperationJournalBasePath(), provider.Name())
+	if err != nil {
+		log.Printf("[CloudBridge] durable create scan failed for %s: %v", provider.Name(), err)
+		return
+	}
+	reconcileCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3)
+	for index := range records {
+		record := records[index]
+		if record.State == cloud.CreateOperationSucceeded || record.State == cloud.CreateOperationFailed ||
+			a.cloudCreateIsRunning(provider.Name(), record.OperationID) || a.cloudReconcileIsRunning(provider.Name(), record.OperationID) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-reconcileCtx.Done():
+				return
+			}
+			_, reconcileErr := a.performDurableCloudCreateWithContext(reconcileCtx, provider, &record.Options)
+			reconcileErr = cloud.SanitizeCreateOperationError(reconcileErr, &record.Options)
+			if errors.Is(reconcileErr, cloud.ErrCreateOutcomePending) {
+				a.scheduleCloudCreateReconciliation(provider.Name(), record.OperationID)
+			} else if reconcileErr != nil {
+				log.Printf("[CloudBridge] durable create %s reconciliation failed: %v", record.OperationID, reconcileErr)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (a *App) reconcileAllPendingCloudOperations(ctx context.Context) {
+	providerNames := a.CloudManager.ListProviders()
+	var wg sync.WaitGroup
+	for _, providerName := range providerNames {
+		provider, err := a.CloudManager.GetProvider(providerName)
+		if err != nil {
+			continue
+		}
+		if _, ok := provider.(cloud.CreateOperationReconciler); !ok {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.reconcilePendingCloudOperations(ctx, provider)
+		}()
+	}
+	wg.Wait()
+}
+
+func (a *App) cloudCreateIsRunning(providerName, operationID string) bool {
+	a.cloudCreateMu.Lock()
+	defer a.cloudCreateMu.Unlock()
+	call := a.cloudCreateOps[cloudCreateOperationKey(providerName, operationID)]
+	return call != nil && call.completed.IsZero()
+}
+
+func (a *App) cloudReconcileIsRunning(providerName, operationID string) bool {
+	key := strings.TrimSpace(providerName) + "\x00" + strings.TrimSpace(operationID)
+	a.cloudReconcileMu.Lock()
+	defer a.cloudReconcileMu.Unlock()
+	_, running := a.cloudReconcileOps[key]
+	return running
+}
+
+// scheduleCloudCreateReconciliation keeps querying the exact provider marker
+// after an ambiguous response. It never enters a new-create path because the
+// durable journal already exists. One worker per provider/operation survives
+// renderer detaches; ListCloudInstances also restarts it after an app restart.
+func (a *App) scheduleCloudCreateReconciliation(providerName, operationID string) {
+	providerName = strings.TrimSpace(providerName)
+	operationID = strings.TrimSpace(operationID)
+	if providerName == "" || operationID == "" {
+		return
+	}
+	key := providerName + "\x00" + operationID
+	a.cloudReconcileMu.Lock()
+	if a.cloudReconcileOps == nil {
+		a.cloudReconcileOps = make(map[string]struct{})
+	}
+	if _, running := a.cloudReconcileOps[key]; running {
+		a.cloudReconcileMu.Unlock()
+		return
+	}
+	a.cloudReconcileOps[key] = struct{}{}
+	a.cloudReconcileMu.Unlock()
+
+	go func() {
+		defer func() {
+			a.cloudReconcileMu.Lock()
+			delete(a.cloudReconcileOps, key)
+			a.cloudReconcileMu.Unlock()
+		}()
+		provider, err := a.CloudManager.GetProvider(providerName)
+		if err != nil {
+			return
+		}
+		parent := a.Ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		workerCtx, workerCancel := context.WithTimeout(parent, cloudDeployOpTimeout)
+		defer workerCancel()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			operationPath := a.cloudCreateOperationPath(providerName, operationID)
+			record, readErr := cloud.ReadCreateOperation(operationPath)
+			if readErr != nil || record.State == cloud.CreateOperationSucceeded || record.State == cloud.CreateOperationFailed {
+				return
+			}
+			attemptCtx, attemptCancel := context.WithTimeout(workerCtx, 20*time.Second)
+			_, reconcileErr := a.performDurableCloudCreateWithContext(attemptCtx, provider, &record.Options)
+			attemptCancel()
+			if reconcileErr == nil || !errors.Is(reconcileErr, cloud.ErrCreateOutcomePending) {
+				return
+			}
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func cloneCloudStringMap(input map[string]string) map[string]string {
+	if input == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(input))
+	for key, value := range input {
+		clone[key] = value
+	}
+	return clone
+}
+
+func (a *App) performCloudCreate(provider cloud.CloudProvider, opts *cloud.CreateInstanceOptions) (*cloud.Instance, error) {
+	ctx, cancel := a.opCtx(cloudDeployOpTimeout)
+	defer cancel()
 	if reporter, ok := provider.(cloud.AccountStatusReporter); ok {
-		probeCtx, cancel := a.opCtx(10 * time.Second)
-		defer cancel()
-		if status, statusErr := reporter.GetAccountStatus(probeCtx); statusErr == nil && status != nil && !status.CanDeploy {
+		probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
+		status, statusErr := reporter.GetAccountStatus(probeCtx)
+		probeCancel()
+		if statusErr == nil && status != nil && !status.CanDeploy {
 			msg := status.Message
 			if msg == "" {
 				msg = fmt.Sprintf("provider account is in state %q and cannot deploy", status.State)
@@ -332,9 +821,309 @@ func (a *App) CreateCloudInstanceTyped(opts cloud.CreateInstanceOptions) (*cloud
 		}
 	}
 
-	ctx, cancel := a.opCtx(cloudDeployOpTimeout)
+	return provider.CreateInstance(ctx, opts)
+}
+
+func (a *App) waitCloudCreate(call *cloudCreateCall) (*cloud.Instance, error) {
+	// Prefer a completed result when both completion and an earlier detach are
+	// observable (for example, a later call reuses the same operation ID).
+	select {
+	case <-call.done:
+		return cloneCloudInstance(call.instance), call.err
+	default:
+	}
+
+	waitCtx, cancel := a.opCtx(cloudDeployOpTimeout)
 	defer cancel()
-	return provider.CreateInstance(ctx, &opts)
+	select {
+	case <-call.done:
+		return cloneCloudInstance(call.instance), call.err
+	case <-call.detached:
+		return nil, cloud.ErrOperationDetached
+	case <-waitCtx.Done():
+		return nil, waitCtx.Err()
+	}
+}
+
+func cloudCreateOperationKey(providerName, operationID string) string {
+	return strings.TrimSpace(providerName) + "\x00" + strings.TrimSpace(operationID)
+}
+
+func cloudOperationProviderConflictError(operationID string) error {
+	return fmt.Errorf("cloud operation ID %q belongs to multiple providers", strings.TrimSpace(operationID))
+}
+
+// findCloudCreateCallLocked resolves an externally visible operation ID. The
+// in-memory map is provider-qualified so two providers can safely own the same
+// client-generated ID, but an unqualified UI lookup must fail closed when that
+// ID is ambiguous.
+func (a *App) findCloudCreateCallLocked(operationID string) (*cloudCreateCall, error) {
+	operationID = strings.TrimSpace(operationID)
+	var match *cloudCreateCall
+	for _, call := range a.cloudCreateOps {
+		if call == nil || call.operationID != operationID {
+			continue
+		}
+		if match != nil && match.providerName != call.providerName {
+			return nil, cloudOperationProviderConflictError(operationID)
+		}
+		match = call
+	}
+	return match, nil
+}
+
+// CancelCloudOperation detaches the desktop from an in-flight create operation.
+// The provider operation continues in the background so a request accepted
+// remotely cannot become an unrecorded, invisible billable server.
+func (a *App) CancelCloudOperation(operationID string) error {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return fmt.Errorf("cloud operation ID is required")
+	}
+
+	// Resolve the durable owner as well as the in-memory owner. This catches an
+	// old record for provider A while provider B has just claimed the same ID.
+	record, journalErr := cloud.FindCreateOperation(a.cloudOperationJournalBasePath(), operationID)
+	if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return journalErr
+	}
+
+	a.cloudCreateMu.Lock()
+	call, callErr := a.findCloudCreateCallLocked(operationID)
+	if callErr != nil {
+		a.cloudCreateMu.Unlock()
+		return callErr
+	}
+	if call != nil && journalErr == nil && record.Provider != call.providerName {
+		a.cloudCreateMu.Unlock()
+		return cloudOperationProviderConflictError(operationID)
+	}
+	if call != nil && call.isDetached {
+		a.cloudCreateMu.Unlock()
+		return nil
+	}
+	if call != nil && call.completed.IsZero() {
+		call.isDetached = true
+		close(call.detached)
+		a.cloudCreateMu.Unlock()
+		return nil
+	}
+	a.cloudCreateMu.Unlock()
+
+	if journalErr == nil {
+		switch record.State {
+		case cloud.CreateOperationSucceeded, cloud.CreateOperationFailed:
+			return fmt.Errorf("cloud operation already completed")
+		default:
+			// A renderer restarted, so there is no waiter left to detach. Treat
+			// Stop waiting as an idempotent UI action and keep reconciliation alive.
+			provider, providerErr := a.CloudManager.GetProvider(record.Provider)
+			if providerErr == nil {
+				if _, ok := provider.(cloud.CreateOperationReconciler); ok {
+					a.scheduleCloudCreateReconciliation(record.Provider, operationID)
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("cloud operation not found or already completed")
+}
+
+// CloudOperationStatus is a non-blocking snapshot used by a detached renderer
+// to reconcile the original create without ever resubmitting it.
+type CloudOperationStatus struct {
+	State    string          `json:"state"`
+	Instance *cloud.Instance `json:"instance,omitempty"`
+	Error    string          `json:"error,omitempty"`
+}
+
+func safeCloudOperationStatusError(message string, opts *cloud.CreateInstanceOptions) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+	return cloud.SanitizeCreateOperationError(errors.New(message), opts).Error()
+}
+
+// CloudOperationSnapshot is the credential-free startup view of a durable
+// create. Never expose CreateOperationRecord directly: its options and
+// provider data can contain generated protocol credentials or API material.
+type CloudOperationSnapshot struct {
+	OperationID string `json:"operationId"`
+	Provider    string `json:"provider"`
+	State       string `json:"state"`
+	Label       string `json:"label"`
+	Region      string `json:"region"`
+	Plan        string `json:"plan"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+}
+
+// ListPendingCloudOperations lets a new renderer restore honest
+// placeholders for every durable non-terminal create, including operations
+// owned by a provider that is no longer active.
+func (a *App) ListPendingCloudOperations() ([]CloudOperationSnapshot, error) {
+	basePath := a.cloudOperationJournalBasePath()
+	records, err := cloud.ListPendingCreateOperations(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("list pending cloud operations: %w", err)
+	}
+	snapshots := make([]CloudOperationSnapshot, 0, len(records))
+	for _, record := range records {
+		resolved, resolveErr := cloud.FindCreateOperation(basePath, record.OperationID)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve pending cloud operation %q: %w", record.OperationID, resolveErr)
+		}
+		if resolved.Provider != record.Provider {
+			return nil, cloudOperationProviderConflictError(record.OperationID)
+		}
+		state := "running"
+		if record.State == cloud.CreateOperationSubmitted || record.State == cloud.CreateOperationReconciling {
+			state = "reconciling"
+		}
+		snapshot := CloudOperationSnapshot{
+			OperationID: record.OperationID,
+			Provider:    record.Provider,
+			State:       state,
+			Label:       record.Options.Label,
+			Region:      record.Options.Region,
+			Plan:        record.Options.Plan,
+		}
+		if !record.CreatedAt.IsZero() {
+			snapshot.CreatedAt = record.CreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !record.UpdatedAt.IsZero() {
+			snapshot.UpdatedAt = record.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	for _, record := range records {
+		// Reading the startup snapshot also resumes the exact provider-marker
+		// reconciliation. Providers without reconciliation support are left
+		// visible instead of launching a worker that can never converge.
+		provider, providerErr := a.CloudManager.GetProvider(record.Provider)
+		if providerErr == nil {
+			if _, ok := provider.(cloud.CreateOperationReconciler); ok {
+				a.scheduleCloudCreateReconciliation(record.Provider, record.OperationID)
+			}
+		}
+	}
+	return snapshots, nil
+}
+
+func (a *App) GetCloudOperationStatus(operationID string) (*CloudOperationStatus, error) {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return nil, fmt.Errorf("cloud operation ID is required")
+	}
+
+	record, journalErr := cloud.FindCreateOperation(a.cloudOperationJournalBasePath(), operationID)
+	if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return nil, journalErr
+	}
+
+	a.cloudCreateMu.Lock()
+	call, callErr := a.findCloudCreateCallLocked(operationID)
+	if callErr != nil {
+		a.cloudCreateMu.Unlock()
+		return nil, callErr
+	}
+	if call != nil && journalErr == nil && record.Provider != call.providerName {
+		a.cloudCreateMu.Unlock()
+		return nil, cloudOperationProviderConflictError(operationID)
+	}
+	var (
+		callRunning  bool
+		callInstance *cloud.Instance
+		createErr    error
+	)
+	if call != nil {
+		callRunning = call.completed.IsZero()
+		callInstance = cloneCloudInstance(call.instance)
+		createErr = call.err
+	}
+	a.cloudCreateMu.Unlock()
+
+	if call != nil {
+		if callRunning {
+			return &CloudOperationStatus{State: "running"}, nil
+		}
+		if createErr == nil {
+			return &CloudOperationStatus{State: "succeeded", Instance: callInstance}, nil
+		}
+		if !errors.Is(createErr, cloud.ErrCreateOutcomePending) {
+			safeErr := cloud.SanitizeCreateOperationError(createErr, nil)
+			return &CloudOperationStatus{State: "failed", Error: safeErr.Error()}, nil
+		}
+		if errors.Is(journalErr, os.ErrNotExist) {
+			safeErr := cloud.SanitizeCreateOperationError(createErr, nil)
+			return &CloudOperationStatus{State: "reconciling", Error: safeErr.Error()}, nil
+		}
+	}
+	if errors.Is(journalErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("cloud operation not found")
+	}
+	switch record.State {
+	case cloud.CreateOperationSucceeded:
+		return &CloudOperationStatus{State: "succeeded", Instance: cloneCloudInstance(record.Instance)}, nil
+	case cloud.CreateOperationFailed:
+		return &CloudOperationStatus{State: "failed", Error: safeCloudOperationStatusError(record.LastError, &record.Options)}, nil
+	case cloud.CreateOperationSubmitted, cloud.CreateOperationReconciling:
+		a.scheduleCloudCreateReconciliation(record.Provider, operationID)
+		return &CloudOperationStatus{State: "reconciling", Error: safeCloudOperationStatusError(record.LastError, &record.Options)}, nil
+	default:
+		return &CloudOperationStatus{State: "running", Error: safeCloudOperationStatusError(record.LastError, &record.Options)}, nil
+	}
+}
+
+// claimCloudCreate provides in-process idempotency for one provider-qualified
+// operation. Concurrent duplicates on that provider share one result; the same
+// client-generated ID on another provider remains an independent durable
+// operation and cannot receive the first provider's result.
+func (a *App) claimCloudCreate(providerName, operationID string) (*cloudCreateCall, bool) {
+	a.cloudCreateMu.Lock()
+	defer a.cloudCreateMu.Unlock()
+	key := cloudCreateOperationKey(providerName, operationID)
+	if a.cloudCreateOps == nil {
+		a.cloudCreateOps = make(map[string]*cloudCreateCall)
+	}
+	cutoff := time.Now().Add(-time.Hour)
+	for existingKey, call := range a.cloudCreateOps {
+		if !call.completed.IsZero() && (call.completed.Before(cutoff) || errors.Is(call.err, cloud.ErrCreateOutcomePending)) {
+			delete(a.cloudCreateOps, existingKey)
+		}
+	}
+	if call, ok := a.cloudCreateOps[key]; ok {
+		return call, false
+	}
+	call := &cloudCreateCall{
+		providerName: strings.TrimSpace(providerName),
+		operationID:  strings.TrimSpace(operationID),
+		done:         make(chan struct{}),
+		detached:     make(chan struct{}),
+	}
+	a.cloudCreateOps[key] = call
+	return call, true
+}
+
+func (a *App) finishCloudCreate(key string, call *cloudCreateCall, instance *cloud.Instance, err error) {
+	a.cloudCreateMu.Lock()
+	defer a.cloudCreateMu.Unlock()
+	current, ok := a.cloudCreateOps[key]
+	if !ok || current != call || !call.completed.IsZero() {
+		return
+	}
+	call.instance = cloneCloudInstance(instance)
+	call.err = err
+	call.completed = time.Now()
+	close(call.done)
+}
+
+func cloneCloudInstance(instance *cloud.Instance) *cloud.Instance {
+	if instance == nil {
+		return nil
+	}
+	clone := *instance
+	return &clone
 }
 
 // CloudAccountStatus is the wire envelope returned by GetCloudProviderAccountStatus.
@@ -467,40 +1256,13 @@ func (a *App) RepairCloudInstanceTyped(instanceID string) (*cloud.Instance, erro
 		return nil, err
 	}
 
-	type instanceRepairer interface {
-		RepairInstance(ctx context.Context, instanceID string) (*cloud.Instance, error)
-	}
-	if repairer, ok := provider.(instanceRepairer); ok {
+	if repairer, ok := provider.(cloud.InstanceRepairer); ok {
 		ctx, cancel := a.opCtx(cloudDeployOpTimeout)
 		defer cancel()
 		return repairer.RepairInstance(ctx, instanceID)
 	}
 
-	getCtx, cancelGet := a.opCtx(cloudListOpTimeout)
-	defer cancelGet()
-	instance, err := provider.GetInstance(getCtx, instanceID)
-	if err != nil {
-		return nil, err
-	}
-
-	label := instance.Label
-	if label == "" {
-		label = "node"
-	}
-	replacementLabel := fmt.Sprintf(
-		"%s-redeploy-%s",
-		label,
-		time.Now().UTC().Format("01021504"),
-	)
-
-	createCtx, cancelCreate := a.opCtx(cloudDeployOpTimeout)
-	defer cancelCreate()
-	return provider.CreateInstance(createCtx, &cloud.CreateInstanceOptions{
-		Label:  replacementLabel,
-		Region: instance.Region,
-		Plan:   instance.Plan,
-		OSID:   instance.OSID,
-	})
+	return nil, fmt.Errorf("%w: %s", cloud.ErrRepairUnsupported, provider.DisplayName())
 }
 
 // RepairCloudInstance repairs/redeploys an instance on the active provider.
@@ -821,9 +1583,11 @@ func (a *App) SetupSSHEventEmitter() {
 
 // MultiDeployResult holds the result of a batch deployment.
 type MultiDeployResult struct {
-	ID      string `json:"id"`
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
+	ID          string `json:"id"`
+	OperationID string `json:"operationId"`
+	State       string `json:"state"`
+	Success     bool   `json:"success"`
+	Error       string `json:"error,omitempty"`
 }
 
 // CreateMultipleCloudInstances deploys multiple instances in parallel (max 3 concurrent).
@@ -838,31 +1602,66 @@ func (a *App) CreateMultipleCloudInstancesTyped(optsList []cloud.CreateInstanceO
 	if err != nil {
 		return nil, err
 	}
+	if defaults.IsPublicProvider(provider.Name()) {
+		for index, opts := range optsList {
+			if strings.TrimSpace(opts.OperationID) == "" {
+				return nil, fmt.Errorf("operationId is required for billable %s batch item %d", provider.DisplayName(), index)
+			}
+		}
+	}
+	batchFingerprintInput := make([]cloud.CreateInstanceOptions, len(optsList))
+	copy(batchFingerprintInput, optsList)
+	for index := range batchFingerprintInput {
+		batchFingerprintInput[index].OperationJournalPath = ""
+	}
+	batchPayload, err := json.Marshal(struct {
+		Provider string                        `json:"provider"`
+		Items    []cloud.CreateInstanceOptions `json:"items"`
+	}{Provider: provider.Name(), Items: batchFingerprintInput})
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint multi-deploy request: %w", err)
+	}
+	batchDigest := sha256.Sum256(batchPayload)
 
 	results := make([]MultiDeployResult, len(optsList))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3) // max 3 concurrent deploys
 
 	for i, opts := range optsList {
+		if strings.TrimSpace(opts.OperationID) == "" {
+			itemDigest := sha256.Sum256(append(batchDigest[:], byte(i>>24), byte(i>>16), byte(i>>8), byte(i)))
+			opts.OperationID = fmt.Sprintf("batch-%x", itemDigest[:16])
+		}
 		wg.Add(1)
 		go func(idx int, o cloud.CreateInstanceOptions) {
 			defer wg.Done()
 			sem <- struct{}{}        // acquire
 			defer func() { <-sem }() // release
 
-			runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "deploying", o.Label)
+			if a.Ctx != nil {
+				runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "deploying", o.Label, o.OperationID)
+			}
 
-			ctx, cancel := a.opCtx(cloudDeployOpTimeout)
-			instance, err := provider.CreateInstance(ctx, &o)
-			cancel()
+			// Route every item through the same account gate, in-process sharing,
+			// encrypted durable journal and provider-marker reconciliation as a
+			// single deploy. A batch retry therefore cannot bypass idempotency.
+			instance, err := a.createCloudInstanceForProvider(provider, o)
 			if err != nil {
-				results[idx] = MultiDeployResult{Success: false, Error: err.Error()}
-				runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "failed", err.Error())
+				state := "failed"
+				if errors.Is(err, cloud.ErrCreateOutcomePending) {
+					state = "reconciling"
+				}
+				results[idx] = MultiDeployResult{OperationID: o.OperationID, State: state, Success: false, Error: err.Error()}
+				if a.Ctx != nil {
+					runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, state, err.Error(), o.OperationID)
+				}
 				return
 			}
 
-			results[idx] = MultiDeployResult{ID: instance.ID, Success: true}
-			runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "ready", instance.ID)
+			results[idx] = MultiDeployResult{ID: instance.ID, OperationID: o.OperationID, State: "succeeded", Success: true}
+			if a.Ctx != nil {
+				runtime.EventsEmit(a.Ctx, "cloud:multi:progress", idx, "ready", instance.ID, o.OperationID)
+			}
 		}(i, opts)
 	}
 

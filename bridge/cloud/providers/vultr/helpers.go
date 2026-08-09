@@ -3,7 +3,6 @@ package vultr
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ func ensureManagedTLSDefaults(record *cloud.InstanceRecord) bool {
 
 func (p *Provider) waitForTCPPorts(ctx context.Context, ip string, ports []int, timeout time.Duration) error {
 	if strings.TrimSpace(ip) == "" {
-		return nil
+		return fmt.Errorf("instance has no public IPv4 address yet")
 	}
 
 	required := make([]int, 0, len(ports))
@@ -45,24 +44,14 @@ func (p *Provider) waitForTCPPorts(ctx context.Context, ip string, ports []int, 
 	defer ticker.Stop()
 
 	for {
-		pending := make([]string, 0, len(required))
-		allReady := true
-
-		for _, port := range required {
-			if provutil.IsTCPPortReachable(ip, port, serviceReadyDialTimeout) {
-				continue
-			}
-			allReady = false
-			pending = append(pending, strconv.Itoa(port))
-		}
-
-		if allReady {
+		pending := provutil.PendingTCPPortsContext(waitCtx, ip, required, serviceReadyDialTimeout)
+		if len(pending) == 0 {
 			return nil
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("timeout waiting for service ports on %s, pending tcp ports: %s", ip, strings.Join(pending, ","))
+			return fmt.Errorf("timeout waiting for service ports on %s, pending tcp ports: %s", ip, provutil.PortsToCSV(pending))
 		case <-ticker.C:
 		}
 	}

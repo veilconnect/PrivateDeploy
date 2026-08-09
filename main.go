@@ -18,6 +18,7 @@ import (
 
 	"privatedeploy/bridge"
 
+	"github.com/shirou/gopsutil/process"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/logger"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -37,10 +38,28 @@ var icon []byte
 //go:embed frontend/dist/imgs/tray_normal_dark.png
 var linuxTrayIcon []byte
 
-const installerQuitArg = "--privatedeploy-installer-quit"
+const (
+	installerQuitArg         = "--privatedeploy-installer-quit"
+	restartParentWaitTimeout = 20 * time.Second
+	restartParentPollPeriod  = 100 * time.Millisecond
+)
 
 func main() {
 	configureOptionalFileLogging()
+
+	restartRequest, isRestart, err := parseRestartParentRequest(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid internal restart request: %v\n", err)
+		os.Exit(2)
+	}
+	if isRestart {
+		log.Printf("[Startup] waiting for restart parent pid=%d to release the single-instance lock", restartRequest.pid)
+		if err := waitForRestartParent(restartRequest, restartParentWaitTimeout, restartParentPollPeriod, processIdentity); err != nil {
+			fmt.Fprintf(os.Stderr, "restart handoff failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	cleanStaleWebView2Locks()
 
 	if err := validateLinuxDisplay(); err != nil {
@@ -191,19 +210,6 @@ func main() {
 			app.SetupSSHEventEmitter()
 		},
 		OnDomReady: func(ctx context.Context) {
-			if signalTitle := strings.TrimSpace(os.Getenv("PRIVATEDEPLOY_DEBUG_SIGNAL_TITLE")); signalTitle != "" {
-				go func() {
-					time.Sleep(1200 * time.Millisecond)
-					runtime.WindowSetTitle(ctx, signalTitle)
-					runtime.WindowExecJS(ctx, fmt.Sprintf(`(function () {
-  document.title = %q;
-  if (document.body) {
-    document.body.setAttribute('data-pd-smoke', 'dom-ready');
-  }
-})();`, signalTitle))
-				}()
-			}
-
 			if os.Getenv("PRIVATEDEPLOY_DEBUG_DUMP_DOM") == "1" {
 				go func() {
 					time.Sleep(1800 * time.Millisecond)
@@ -283,6 +289,108 @@ func isInstallerQuitRequest(args []string) bool {
 		}
 	}
 	return false
+}
+
+type restartParentRequest struct {
+	pid       int32
+	createdAt int64
+}
+
+type restartProcessProbe func(pid int32) (exists bool, createdAt int64, err error)
+
+// parseRestartParentRequest accepts one exact, fixed argument shape. In
+// particular, --flag=value and partial/mixed requests are rejected so an
+// environment- or shell-controlled string can never be re-tokenised into a
+// different process identity.
+func parseRestartParentRequest(args []string) (restartParentRequest, bool, error) {
+	hasInternalRestartArg := false
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--privatedeploy-internal-restart-parent") {
+			hasInternalRestartArg = true
+			break
+		}
+	}
+	if !hasInternalRestartArg {
+		return restartParentRequest{}, false, nil
+	}
+
+	if len(args) != 4 || args[0] != bridge.RestartParentPIDArg || args[2] != bridge.RestartParentCreatedAtArg {
+		return restartParentRequest{}, false, fmt.Errorf("expected %s <pid> %s <creation-ms>", bridge.RestartParentPIDArg, bridge.RestartParentCreatedAtArg)
+	}
+
+	pid, err := strconv.ParseInt(args[1], 10, 32)
+	if err != nil || pid <= 0 {
+		return restartParentRequest{}, false, fmt.Errorf("invalid parent pid %q", args[1])
+	}
+	createdAt, err := strconv.ParseInt(args[3], 10, 64)
+	if err != nil || createdAt <= 0 {
+		return restartParentRequest{}, false, fmt.Errorf("invalid parent creation time %q", args[3])
+	}
+
+	return restartParentRequest{pid: int32(pid), createdAt: createdAt}, true, nil
+}
+
+func processIdentity(pid int32) (bool, int64, error) {
+	exists, err := process.PidExists(pid)
+	if err != nil {
+		return false, 0, fmt.Errorf("check process %d: %w", pid, err)
+	}
+	if !exists {
+		return false, 0, nil
+	}
+
+	parent, err := process.NewProcess(pid)
+	if err != nil {
+		// The process can legitimately disappear between PidExists and
+		// NewProcess. Confirm that race before treating it as a hard error.
+		if stillExists, checkErr := process.PidExists(pid); checkErr == nil && !stillExists {
+			return false, 0, nil
+		}
+		return false, 0, fmt.Errorf("inspect process %d: %w", pid, err)
+	}
+	createdAt, err := parent.CreateTime()
+	if err != nil {
+		if stillExists, checkErr := process.PidExists(pid); checkErr == nil && !stillExists {
+			return false, 0, nil
+		}
+		return false, 0, fmt.Errorf("read process %d creation time: %w", pid, err)
+	}
+	return true, createdAt, nil
+}
+
+// waitForRestartParent delays Wails and its SingleInstanceLock until the exact
+// predecessor process has exited. A PID with a different creation timestamp
+// is a reused PID and must not keep the new application blocked.
+func waitForRestartParent(request restartParentRequest, timeout, pollPeriod time.Duration, probe restartProcessProbe) error {
+	if probe == nil {
+		return fmt.Errorf("restart process probe is nil")
+	}
+	if timeout < 0 {
+		timeout = 0
+	}
+	if pollPeriod <= 0 {
+		pollPeriod = restartParentPollPeriod
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		exists, createdAt, err := probe(request.pid)
+		if err != nil {
+			return err
+		}
+		if !exists || createdAt != request.createdAt {
+			return nil
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("parent process %d did not exit within %s", request.pid, timeout)
+		}
+		if pollPeriod > remaining {
+			pollPeriod = remaining
+		}
+		time.Sleep(pollPeriod)
+	}
 }
 
 // webView2LockNames are the Chromium/WebView2 lock files that can persist

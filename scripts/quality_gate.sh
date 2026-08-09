@@ -4,7 +4,35 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Corepack may try to download the packageManager-pinned pnpm even when this
+# checkout already has a complete node_modules tree. Prefer those verified
+# local tools for an offline gate; clean CI checkouts still use pnpm after the
+# workflow's install/setup step.
+FRONTEND_RUNNER=(pnpm run)
+if [[ -x "${ROOT_DIR}/frontend/node_modules/.bin/vite" &&
+      -x "${ROOT_DIR}/frontend/node_modules/.bin/vue-tsc" &&
+      -x "${ROOT_DIR}/frontend/node_modules/.bin/eslint" &&
+      -x "${ROOT_DIR}/frontend/node_modules/.bin/vitest" ]]; then
+  FRONTEND_RUNNER=(npm run)
+fi
+
 bash scripts/check_versions.sh
+bash scripts/tests/jammy_toolchain_test.sh
+bash scripts/tests/install_local_linux_test.sh
+
+# Jammy release builds intentionally use -skipbindings, so stale generated
+# Wails modules would compile but fail only when the renderer calls a new API.
+# Keep the recovery/ready handshake surface tied to the Go bridge at the gate.
+for symbol in CancelCloudOperation GetCloudOperationStatus ListPendingCloudOperations SignalFrontendReady; do
+  rg -q "^export function ${symbol}\\(" frontend/src/bridge/wailsjs/go/bridge/App.js || {
+    echo "missing generated Wails JS binding: ${symbol}" >&2
+    exit 1
+  }
+  rg -q "^export function ${symbol}\\(" frontend/src/bridge/wailsjs/go/bridge/App.d.ts || {
+    echo "missing generated Wails TypeScript binding: ${symbol}" >&2
+    exit 1
+  }
+done
 
 COVERAGE_DIR="$ROOT_DIR/output/coverage"
 mkdir -p "$COVERAGE_DIR"
@@ -13,7 +41,7 @@ mkdir -p "$COVERAGE_DIR"
 # Build the static assets first so a clean checkout can run the Go tests.
 (
   cd frontend
-  pnpm run build-only
+  "${FRONTEND_RUNNER[@]}" build-only
 )
 
 # ── Go tests with coverage (root) ─────────────────────────────────
@@ -33,9 +61,9 @@ go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1
 # ── Frontend checks ───────────────────────────────────────────────
 (
   cd frontend
-  pnpm run type-check
-  pnpm run lint:ci
-  pnpm run test:coverage
+  "${FRONTEND_RUNNER[@]}" type-check
+  "${FRONTEND_RUNNER[@]}" lint:ci
+  "${FRONTEND_RUNNER[@]}" test:coverage
 )
 
 # ── CDN front keep-alive smoke (M1 worker) ───────────────────────

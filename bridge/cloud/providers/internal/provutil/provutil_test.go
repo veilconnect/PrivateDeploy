@@ -1,6 +1,7 @@
 package provutil
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -24,6 +25,20 @@ func TestMergeExtraDropsBlankKeysAndOverrides(t *testing.T) {
 	}
 	if _, ok := got[""]; ok {
 		t.Error("empty key should be dropped")
+	}
+}
+
+func TestPendingTCPPortsContextHonorsCancellationAcrossAllPorts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	ports := []int{10001, 10002, 10003}
+	got := PendingTCPPortsContext(ctx, "192.0.2.1", ports, 10*time.Second)
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("canceled concurrent probes exceeded budget: %v", time.Since(started))
+	}
+	if len(got) != len(ports) {
+		t.Fatalf("pending ports = %v, want %v", got, ports)
 	}
 }
 

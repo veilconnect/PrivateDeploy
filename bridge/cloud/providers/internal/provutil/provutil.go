@@ -6,11 +6,13 @@
 package provutil
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -92,12 +94,29 @@ func UniquePositivePorts(ports []int) []int {
 // over TCP at ip within timeout. A blank ip or empty port list yields the input
 // unchanged.
 func PendingTCPPorts(ip string, ports []int, timeout time.Duration) []int {
+	return PendingTCPPortsContext(context.Background(), ip, ports, timeout)
+}
+
+// PendingTCPPortsContext probes ports concurrently and stops outstanding
+// dials when ctx expires. This keeps a short health-refresh budget real even
+// when several ports are all filtered or unreachable.
+func PendingTCPPortsContext(ctx context.Context, ip string, ports []int, timeout time.Duration) []int {
 	if strings.TrimSpace(ip) == "" || len(ports) == 0 {
 		return ports
 	}
+	reachable := make([]bool, len(ports))
+	var wg sync.WaitGroup
+	for index, port := range ports {
+		wg.Add(1)
+		go func(index, port int) {
+			defer wg.Done()
+			reachable[index] = IsTCPPortReachableContext(ctx, ip, port, timeout)
+		}(index, port)
+	}
+	wg.Wait()
 	pending := make([]int, 0, len(ports))
-	for _, port := range ports {
-		if !IsTCPPortReachable(ip, port, timeout) {
+	for index, port := range ports {
+		if !reachable[index] {
 			pending = append(pending, port)
 		}
 	}
@@ -107,8 +126,13 @@ func PendingTCPPorts(ip string, ports []int, timeout time.Duration) []int {
 // IsTCPPortReachable reports whether a TCP connection to ip:port succeeds within
 // timeout.
 func IsTCPPortReachable(ip string, port int, timeout time.Duration) bool {
+	return IsTCPPortReachableContext(context.Background(), ip, port, timeout)
+}
+
+func IsTCPPortReachableContext(ctx context.Context, ip string, port int, timeout time.Duration) bool {
 	address := net.JoinHostPort(ip, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return false
 	}

@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -34,7 +36,7 @@ const (
 // registered on the DO account under a fixed name. This is a deliberate,
 // DO-only trade-off — it adds a persistent root credential to the account in
 // exchange for recoverability.
-func (p *Provider) ensureManagedSSHKey(ctx context.Context) (int, string, error) {
+func (p *Provider) ensureManagedSSHKey(ctx context.Context) (id int, privatePEM, fingerprint string, err error) {
 	// Provisioning is a read-modify-write operation spanning both the local
 	// secret store and the DigitalOcean account. Keep the entire sequence
 	// serialized per provider so concurrent instance/recovery requests cannot
@@ -44,59 +46,89 @@ func (p *Provider) ensureManagedSSHKey(ctx context.Context) (int, string, error)
 	defer p.managedSSHKeyMu.Unlock()
 
 	if _, err := p.ensureConfig(); err != nil {
-		return 0, "", err
+		return 0, "", "", err
 	}
 
+	// Separate Provider values can exist in overlapping desktop processes
+	// during an upgrade. Serialize the complete local-secret/account-key
+	// transaction across processes, not merely goroutines in one Provider.
+	lockPath := filepath.Join(filepath.Dir(filepath.Dir(p.configPath)), ".locks", "digitalocean-managed-ssh.lock")
+	processLock, err := acquireManagedSSHKeyProcessLock(ctx, lockPath)
+	if err != nil {
+		return 0, "", "", err
+	}
+	defer processLock.Close()
+
 	if privPEM, err := cloud.LoadSecret(p.configPath, managedSSHKeyScope); err == nil && strings.TrimSpace(privPEM) != "" {
-		authorized, perr := publicKeyFromPEM(privPEM)
+		privatePEM = strings.TrimSpace(privPEM)
+		authorized, keyFingerprint, perr := publicKeyAndFingerprintFromPEM(privatePEM)
 		if perr != nil {
-			return 0, "", perr
+			return 0, "", "", perr
 		}
-		id, rerr := p.ensureKeyRegistered(ctx, authorized)
-		if rerr != nil {
-			return 0, "", rerr
+		id, registerErr := p.ensureKeyRegistered(ctx, authorized)
+		if registerErr != nil {
+			return 0, "", "", registerErr
 		}
-		return id, privPEM, nil
+		if id == 0 {
+			return 0, "", "", errors.New("DigitalOcean managed SSH key has an empty id")
+		}
+		return id, privatePEM, keyFingerprint, nil
 	} else if err != nil && !errors.Is(err, cloud.ErrSecretNotFound) {
-		return 0, "", err
+		return 0, "", "", err
 	}
 
 	// First use: generate a fresh ed25519 key.
 	pubKey, privKey, gerr := ed25519.GenerateKey(rand.Reader)
 	if gerr != nil {
-		return 0, "", gerr
+		return 0, "", "", gerr
 	}
 	pemBlock, merr := ssh.MarshalPrivateKey(privKey, managedSSHKeyName)
 	if merr != nil {
-		return 0, "", merr
+		return 0, "", "", merr
 	}
 	// The secret backend normalizes surrounding whitespace on load. Normalize
 	// the first-use return value as well so the provisioning caller and every
 	// subsequent caller receive byte-for-byte identical private-key material.
-	privPEM := strings.TrimSpace(string(pem.EncodeToMemory(pemBlock)))
+	privatePEM = strings.TrimSpace(string(pem.EncodeToMemory(pemBlock)))
 
 	sshPub, nerr := ssh.NewPublicKey(pubKey)
 	if nerr != nil {
-		return 0, "", nerr
+		return 0, "", "", nerr
 	}
 	authorized := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+	fingerprint = ssh.FingerprintSHA256(sshPub)
 
+	// Persist the private half before mutating the account. If the account API
+	// response is lost, the next attempt must reuse this exact public key and
+	// recover it by listing instead of generating/registering another key.
+	saveSecret := p.saveManagedSSHSecret
+	if saveSecret == nil {
+		saveSecret = cloud.SaveSecret
+	}
+	if serr := saveSecret(p.configPath, managedSSHKeyScope, privatePEM); serr != nil {
+		return 0, "", "", serr
+	}
 	id, rerr := p.ensureKeyRegistered(ctx, authorized)
 	if rerr != nil {
-		return 0, "", rerr
+		return 0, "", "", rerr
 	}
-	if serr := cloud.SaveSecret(p.configPath, managedSSHKeyScope, privPEM); serr != nil {
-		return 0, "", serr
+	if id == 0 {
+		return 0, "", "", errors.New("DigitalOcean managed SSH key has an empty id")
 	}
-	return id, privPEM, nil
+	return id, privatePEM, fingerprint, nil
 }
 
 func publicKeyFromPEM(privPEM string) (string, error) {
+	authorized, _, err := publicKeyAndFingerprintFromPEM(privPEM)
+	return authorized, err
+}
+
+func publicKeyAndFingerprintFromPEM(privPEM string) (string, string, error) {
 	signer, err := ssh.ParsePrivateKey([]byte(privPEM))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), ssh.FingerprintSHA256(signer.PublicKey()), nil
 }
 
 type doAccountKey struct {
@@ -118,7 +150,29 @@ func (p *Provider) ensureKeyRegistered(ctx context.Context, authorizedKey string
 			return k.ID, nil
 		}
 	}
-	return p.createAccountKey(ctx, managedSSHKeyName, authorizedKey)
+	id, createErr := p.createAccountKey(ctx, managedSSHAccountKeyName(authorizedKey), authorizedKey)
+	if createErr == nil && id != 0 {
+		return id, nil
+	}
+	// DigitalOcean may accept the POST even when the response is lost, and a
+	// separate account client can race outside this machine. Re-list the exact
+	// public key before reporting failure; never POST it a second time here.
+	if recovered, listErr := p.listAccountKeys(ctx); listErr == nil {
+		for _, key := range recovered {
+			if sameAuthorizedKey(key.PublicKey, authorizedKey) && key.ID != 0 {
+				return key.ID, nil
+			}
+		}
+	}
+	if createErr != nil {
+		return 0, createErr
+	}
+	return 0, errors.New("DigitalOcean managed SSH key API returned an empty id")
+}
+
+func managedSSHAccountKeyName(authorizedKey string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(authorizedKey)))
+	return fmt.Sprintf("%s-%x", managedSSHKeyName, sum[:6])
 }
 
 // sameAuthorizedKey compares the type+material of two authorized_keys lines,

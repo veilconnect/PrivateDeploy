@@ -32,6 +32,41 @@ type CloudProvider interface {
 	GetInstance(ctx context.Context, instanceID string) (*Instance, error)
 }
 
+// InstanceRepairer is an explicit optional capability for repairing an
+// existing instance in place. A provider must never implement this operation
+// by silently creating another billable instance. Providers that cannot
+// repair in place should omit the interface and callers will receive
+// ErrRepairUnsupported.
+type InstanceRepairer interface {
+	RepairInstance(ctx context.Context, instanceID string) (*Instance, error)
+}
+
+// InstanceHealthRefresher rechecks a previously recorded deployment warning
+// without performing a repair or creating resources. It allows list refreshes
+// to converge back to a healthy state after delayed cloud-init/service start.
+type InstanceHealthRefresher interface {
+	RefreshInstanceHealth(ctx context.Context, instanceID string) (*Instance, error)
+}
+
+// CreateOperationReconciler resolves a previously journaled create strictly
+// by its provider-side operation marker. Implementations must never submit a
+// new billable create request from this method. It is used after a process
+// restart or an ambiguous transport failure to recover the one resource that
+// may already exist.
+type CreateOperationReconciler interface {
+	ReconcileCreateOperation(ctx context.Context, opts *CreateInstanceOptions) (*Instance, error)
+}
+
+// ReconciledCreateFinalizer runs only after read-only marker reconciliation
+// found the original resource and restored its local credentials. It may make
+// idempotent, non-create mutations (for example attach the instance-owned
+// firewall or reboot that same VPS), but must never create another instance.
+// A returned instance may carry LastDeployWarning when bounded readiness could
+// not converge; callers persist success only after that warning is durable.
+type ReconciledCreateFinalizer interface {
+	FinalizeReconciledCreate(ctx context.Context, opts *CreateInstanceOptions, instance *Instance) (*Instance, error)
+}
+
 // LatencyTester is implemented by providers that can benchmark regions.
 type LatencyTester interface {
 	TestRegionLatency(ctx context.Context, regionCode string) (*RegionLatency, error)
@@ -159,13 +194,15 @@ type Instance struct {
 
 // CreateInstanceOptions contains options for creating a new instance
 type CreateInstanceOptions struct {
-	Label    string            `json:"label"`           // Instance label
-	Region   string            `json:"region"`          // Deployment region
-	Plan     string            `json:"plan"`            // Instance plan
-	OSID     int               `json:"osId"`            // Operating system ID (optional)
-	SSHKeyID string            `json:"sshKeyId"`        // SSH key ID (optional)
-	Host     string            `json:"host,omitempty"`  // Target host for SSH deployment
-	Extra    map[string]string `json:"extra,omitempty"` // Provider-specific options (SSH auth, etc.)
+	OperationID          string            `json:"operationId,omitempty"` // Stable client-generated idempotency key
+	Label                string            `json:"label"`                 // Instance label
+	Region               string            `json:"region"`                // Deployment region
+	Plan                 string            `json:"plan"`                  // Instance plan
+	OSID                 int               `json:"osId"`                  // Operating system ID (optional)
+	SSHKeyID             string            `json:"sshKeyId"`              // SSH key ID (optional)
+	Host                 string            `json:"host,omitempty"`        // Target host for SSH deployment
+	Extra                map[string]string `json:"extra,omitempty"`       // Provider-specific options (SSH auth, etc.)
+	OperationJournalPath string            `json:"-"`                     // Backend-only encrypted operation journal path
 }
 
 // InstanceRecord stores instance metadata for persistence

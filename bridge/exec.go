@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ func buildCmdEnv(customEnv map[string]string) []string {
 }
 
 func (a *App) Exec(path string, args []string, options ExecOptions) FlagResult {
-	log.Printf("Exec: %s %s %v", path, args, options)
+	log.Printf("Exec: command=%s args=%d envKeys=%s", filepath.Base(path), len(args), strings.Join(sortedEnvKeys(options.Env), ","))
 
 	exePath := GetPath(path)
 
@@ -58,7 +59,7 @@ func (a *App) Exec(path string, args []string, options ExecOptions) FlagResult {
 }
 
 func (a *App) ExecBackground(path string, args []string, outEvent string, endEvent string, options ExecOptions) FlagResult {
-	log.Printf("ExecBackground: %s %s %s %s %v", path, args, outEvent, endEvent, options)
+	log.Printf("ExecBackground: command=%s args=%d outputEvent=%t endEvent=%t envKeys=%s", filepath.Base(path), len(args), outEvent != "", endEvent != "", strings.Join(sortedEnvKeys(options.Env), ","))
 
 	exePath := GetPath(path)
 
@@ -111,6 +112,15 @@ func (a *App) ExecBackground(path string, args []string, outEvent string, endEve
 	pid := cmd.Process.Pid
 
 	return FlagResult{true, strconv.Itoa(pid)}
+}
+
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (a *App) ProcessInfo(pid int32) FlagResult {

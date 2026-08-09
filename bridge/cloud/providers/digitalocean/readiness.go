@@ -106,9 +106,7 @@ func (p *Provider) repairProtocolReadiness(
 	readyTimeout time.Duration,
 ) error {
 	// Re-attach firewall first in case of eventual-consistency/race in DO control-plane.
-	if fwID, err := p.ensurePrivateDeployFirewall(ctx, ports); err == nil {
-		_ = p.associateFirewallWithDroplet(ctx, fwID, dropletID)
-	}
+	_ = p.configureInstanceFirewall(ctx, instanceID, dropletID, ports)
 
 	if err := p.rebootDroplet(ctx, dropletID); err != nil {
 		return err

@@ -142,6 +142,7 @@ export LD_PRELOAD="${this_dir}/usr/lib/webkit_path_rewrite.so${LD_PRELOAD:+:${LD
 # (e.g., g_task_set_static_name) not in our jammy libglib.
 export GIO_MODULE_DIR=/nonexistent
 export GIO_USE_VFS=local
+export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
 # Move JSC's GC signal off SIGUSR1 (10) to avoid the Go runtime conflict that
 # crashes gtk_main on noble at addr=0x48. Belt-and-braces with JSC_useJIT=0.
 export JSC_SIGNAL_FOR_GC=48

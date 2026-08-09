@@ -192,7 +192,7 @@ export function createManualImport(deps: ManualImportDeps) {
     for (const input of inputs) {
       try {
         const node = createManualNode(input)
-        manualNodes.value.push(node)
+        manualNodes.value = [...manualNodes.value, node]
         added.push(node)
       } catch (error) {
         if (error instanceof ManualNodeError && error.code === 'duplicate') {
@@ -278,18 +278,21 @@ export function createManualImport(deps: ManualImportDeps) {
       createdAt: current.createdAt || new Date().toISOString(),
     }
     const updated = createManualNode(merged, instanceId)
-    manualNodes.value[index] = {
+    const nextNode: ManagedCloudNode = {
       ...updated,
       provider: 'manual',
       status: 'active',
       statusText: 'connected',
       createdAt: current.createdAt || updated.createdAt,
     }
+    manualNodes.value = manualNodes.value.map((node, nodeIndex) =>
+      nodeIndex === index ? nextNode : node,
+    )
     await saveManualNodes()
-    await ensureSubscriptionForNode(manualNodes.value[index])
+    await ensureSubscriptionForNode(nextNode)
     markNodeStatus(instanceId, 'connected')
     syncManualNodesIntoInstances()
-    return manualNodes.value[index]
+    return nextNode
   }
 
   return {

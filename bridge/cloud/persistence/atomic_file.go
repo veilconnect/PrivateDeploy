@@ -36,6 +36,49 @@ func WritePrivateFileAtomic(path string, data []byte) error {
 	return writePrivateFileAtomic(path, data, realAtomicWriteOps)
 }
 
+// CreatePrivateFileExclusive durably creates path with private permissions and
+// fails with os.ErrExist when another process already created it. It is used
+// for billable-operation journals where "first writer wins" must hold across
+// multiple desktop processes, not merely goroutines in one process.
+func CreatePrivateFileExclusive(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, privateFileMode)
+	if err != nil {
+		return err
+	}
+	pathCreated := true
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+		if pathCreated {
+			_ = os.Remove(path)
+		}
+	}()
+
+	if err := file.Chmod(privateFileMode); err != nil {
+		return fmt.Errorf("set private file permissions: %w", err)
+	}
+	if n, err := file.Write(data); err != nil {
+		return fmt.Errorf("write private file: %w", err)
+	} else if n != len(data) {
+		return fmt.Errorf("write private file: wrote %d of %d bytes: %w", n, len(data), io.ErrShortWrite)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync private file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close private file: %w", err)
+	}
+	closed = true
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync destination directory: %w", err)
+	}
+	pathCreated = false
+	return nil
+}
+
 func writePrivateFileAtomic(path string, data []byte, ops atomicWriteOps) error {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)

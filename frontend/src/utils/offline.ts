@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue'
 
 import { logInfo, logWarn } from './logger'
+import { sanitizeForBrowserStorage } from './sensitiveData'
 
 // Online/offline状态
 export const isOnline = ref(navigator.onLine)
@@ -44,7 +45,7 @@ export function saveToOfflineCache<T>(key: keyof typeof OFFLINE_CACHE_KEYS, data
   try {
     const cacheKey = OFFLINE_CACHE_KEYS[key]
     const cacheData = {
-      data,
+      data: sanitizeForBrowserStorage(data),
       timestamp: Date.now(),
     }
     localStorage.setItem(cacheKey, JSON.stringify(cacheData))
@@ -67,9 +68,16 @@ export function loadFromOfflineCache<T>(key: keyof typeof OFFLINE_CACHE_KEYS): T
     }
 
     const cacheData = JSON.parse(cached)
+    const safeData = sanitizeForBrowserStorage(cacheData.data)
+    // Rewrite legacy cache entries on read so credentials written by older
+    // releases do not remain in plaintext after the application is upgraded.
+    localStorage.setItem(cacheKey, JSON.stringify({
+      ...cacheData,
+      data: safeData,
+    }))
     logInfo(`[Offline] Loaded ${key} from cache (age: ${Date.now() - cacheData.timestamp}ms)`)
 
-    return cacheData.data as T
+    return safeData as T
   } catch (error) {
     logWarn(`[Offline] Failed to load ${key} from cache`, error)
     return null

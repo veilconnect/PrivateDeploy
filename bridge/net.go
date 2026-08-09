@@ -57,25 +57,172 @@ func validateOutboundURL(raw string) error {
 	if strings.EqualFold(host, "localhost") {
 		return errBlockedOutboundURL
 	}
+	normalizedHost := strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, suffix := range []string{".localhost", ".local", ".internal", ".localdomain", ".lan", ".home"} {
+		if strings.HasSuffix(normalizedHost, suffix) {
+			return errBlockedOutboundURL
+		}
+	}
 	return nil
 }
 
-// resolveProxy returns the proxy function for the transport and the set of
-// dial endpoints ("host:port") those proxies live at. An explicit, parseable
-// options.Proxy wins; otherwise the environment proxies are used. The returned
-// address set is what makeSSRFControl will permit (so a loopback sing-box proxy
-// can be dialed) on top of public addresses.
-func resolveProxy(optProxy string) (func(*http.Request) (*url.URL, error), map[string]struct{}) {
+// validateResolvedOutboundURL closes the hostname form of the metadata/LAN
+// bypass before a request is handed to an HTTP or SOCKS proxy. Direct dials
+// are additionally checked again by the socket Control hook. Requiring every
+// local DNS answer to be public fails closed for split-horizon names.
+func validateResolvedOutboundURL(ctx context.Context, raw string) error {
+	if err := validateOutboundURL(raw); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(strings.TrimSpace(raw))
+	host := parsed.Hostname()
+	if net.ParseIP(host) != nil {
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil || len(addresses) == 0 {
+		return fmt.Errorf("%w: hostname could not be resolved safely", errBlockedOutboundURL)
+	}
+	for _, address := range addresses {
+		if isBlockedDialIP(address.IP) {
+			return fmt.Errorf("%w: hostname resolved to a non-public address", errBlockedOutboundURL)
+		}
+	}
+	return nil
+}
+
+func resolvedPublicDialAddress(ctx context.Context, address string) (string, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", errBlockedOutboundURL
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if isBlockedDialIP(ip) {
+			return "", errBlockedOutboundURL
+		}
+		return net.JoinHostPort(ip.String(), port), nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil || len(addresses) == 0 {
+		return "", fmt.Errorf("%w: hostname could not be resolved safely", errBlockedOutboundURL)
+	}
+	var selected net.IP
+	for _, candidate := range addresses {
+		if isBlockedDialIP(candidate.IP) {
+			return "", fmt.Errorf("%w: hostname resolved to a non-public address", errBlockedOutboundURL)
+		}
+		if selected == nil || (selected.To4() == nil && candidate.IP.To4() != nil) {
+			selected = candidate.IP
+		}
+	}
+	return net.JoinHostPort(selected.String(), port), nil
+}
+
+type closeIdleBody struct {
+	io.ReadCloser
+	closeIdle func()
+}
+
+func (b *closeIdleBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.closeIdle()
+	return err
+}
+
+// proxyPinnedTransport prevents an HTTP/SOCKS proxy from resolving a checked
+// public hostname to a different private address. Direct requests retain the
+// base transport's dial-time IP guard. Proxied requests instead send the proxy
+// a locally resolved public IP while preserving the original Host header and
+// TLS SNI/certificate name.
+type proxyPinnedTransport struct {
+	base *http.Transport
+}
+
+func (t *proxyPinnedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t == nil || t.base == nil {
+		return nil, errors.New("network transport is not initialized")
+	}
+	if t.base.Proxy == nil {
+		return t.base.RoundTrip(req)
+	}
+	proxyURL, err := t.base.Proxy(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == nil {
+		return t.base.RoundTrip(req)
+	}
+	// net/http reuses TLSClientConfig for both the outer HTTPS-proxy TLS
+	// connection and the inner target TLS connection. Pinning ServerName to the
+	// target would therefore authenticate an HTTPS proxy against the wrong
+	// hostname. Fail closed instead of weakening either certificate check.
+	if strings.EqualFold(proxyURL.Scheme, "https") {
+		return nil, fmt.Errorf("secure proxy transport is not supported by the SSRF-safe request path")
+	}
+
+	host := req.URL.Hostname()
+	port := req.URL.Port()
+	if port == "" {
+		if strings.EqualFold(req.URL.Scheme, "https") {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	pinnedAddress, err := resolvedPublicDialAddress(req.Context(), net.JoinHostPort(host, port))
+	if err != nil {
+		return nil, err
+	}
+	pinnedReq := cloneRequestWithPinnedTarget(req, pinnedAddress)
+
+	transport := t.base.Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	} else {
+		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	}
+	transport.TLSClientConfig.ServerName = host
+
+	resp, err := transport.RoundTrip(pinnedReq)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	// Keep redirects, cookies and caller diagnostics bound to the original URL;
+	// the pinned IP is an internal transport detail only.
+	resp.Request = req
+	resp.Body = &closeIdleBody{ReadCloser: resp.Body, closeIdle: transport.CloseIdleConnections}
+	return resp, nil
+}
+
+func cloneRequestWithPinnedTarget(req *http.Request, pinnedAddress string) *http.Request {
+	cloned := req.Clone(req.Context())
+	clonedURL := *req.URL
+	clonedURL.Host = pinnedAddress
+	cloned.URL = &clonedURL
+	cloned.Host = req.URL.Host
+	return cloned
+}
+
+// resolveProxy returns the proxy function for the transport and the exact
+// loopback dial endpoints that are allowed on top of public addresses. Both a
+// renderer-supplied proxy and inherited proxy environment variables are
+// untrusted inputs: accepting an arbitrary private proxy endpoint would turn
+// the HTTP proxy handshake itself into an SSRF primitive.
+func resolveProxy(ctx context.Context, optProxy string) (func(*http.Request) (*url.URL, error), map[string]struct{}, error) {
 	allowed := map[string]struct{}{}
 
 	if trimmed := strings.TrimSpace(optProxy); trimmed != "" {
-		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
-			addProxyEndpoint(allowed, u)
-			return http.ProxyURL(u), allowed
+		u, err := parseAndAuthorizeProxyURL(ctx, trimmed, false, allowed)
+		if err != nil {
+			return nil, nil, err
 		}
-		// Non-empty but unparseable: treat as no explicit proxy (do NOT silently
-		// inherit env here in a way that desyncs the guard — fall through and let
-		// the environment proxy, if any, be resolved consistently below).
+		return http.ProxyURL(u), allowed, nil
 	}
 
 	for _, key := range []string{
@@ -87,22 +234,86 @@ func resolveProxy(optProxy string) (func(*http.Request) (*url.URL, error), map[s
 		if v == "" {
 			continue
 		}
-		if !strings.Contains(v, "://") {
-			v = "http://" + v
-		}
-		if u, err := url.Parse(v); err == nil && u.Host != "" {
-			addProxyEndpoint(allowed, u)
+		if _, err := parseAndAuthorizeProxyURL(ctx, v, true, allowed); err != nil {
+			return nil, nil, fmt.Errorf("unsafe %s proxy configuration: %w", key, err)
 		}
 	}
-	return http.ProxyFromEnvironment, allowed
+	return http.ProxyFromEnvironment, allowed, nil
 }
 
-func addProxyEndpoint(set map[string]struct{}, u *url.URL) {
+func parseAndAuthorizeProxyURL(ctx context.Context, raw string, allowBareHTTP bool, allowedLoopback map[string]struct{}) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if allowBareHTTP && !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Host == "" || u.Opaque != "" {
+		return nil, errors.New("invalid proxy URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks", "socks5", "socks5h":
+	default:
+		return nil, errors.New("unsupported proxy URL scheme")
+	}
+	if u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("proxy URL must not contain a path, query, or fragment")
+	}
+
 	host := u.Hostname()
 	if host == "" {
-		return
+		return nil, errors.New("invalid proxy host")
 	}
+	port, err := proxyURLPort(u)
+	if err != nil {
+		return nil, err
+	}
+
+	addresses := []net.IP{}
+	if literal := net.ParseIP(host); literal != nil {
+		addresses = append(addresses, literal)
+	} else {
+		lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		resolved, resolveErr := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+		if resolveErr != nil || len(resolved) == 0 {
+			return nil, errors.New("proxy hostname could not be resolved safely")
+		}
+		for _, address := range resolved {
+			addresses = append(addresses, address.IP)
+		}
+	}
+
+	for _, address := range addresses {
+		if address == nil {
+			return nil, errBlockedOutboundURL
+		}
+		if address.IsLoopback() {
+			allowedLoopback[net.JoinHostPort(address.String(), port)] = struct{}{}
+			continue
+		}
+		if isBlockedDialIP(address) {
+			return nil, errors.New("proxy endpoint resolves to a non-public address")
+		}
+	}
+	// localhost is a reserved loopback name. Permit both address families so a
+	// resolver preference change between validation and dial cannot break the
+	// managed local proxy, while the exact port remains part of the allow-list.
+	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
+		allowedLoopback[net.JoinHostPort("127.0.0.1", port)] = struct{}{}
+		allowedLoopback[net.JoinHostPort("::1", port)] = struct{}{}
+	}
+	return u, nil
+}
+
+func proxyURLPort(u *url.URL) (string, error) {
 	port := u.Port()
+	if port != "" {
+		parsed, err := strconv.Atoi(port)
+		if err != nil || parsed <= 0 || parsed > 65535 {
+			return "", errors.New("invalid proxy port")
+		}
+		return port, nil
+	}
 	if port == "" {
 		switch strings.ToLower(u.Scheme) {
 		case "https":
@@ -113,15 +324,7 @@ func addProxyEndpoint(set map[string]struct{}, u *url.URL) {
 			port = "80"
 		}
 	}
-	set[net.JoinHostPort(host, port)] = struct{}{}
-	// The dialer Control hook sees the resolved IP:port, not the hostname, so a
-	// proxy given as the "localhost" alias would otherwise be blocked as an SSRF
-	// loopback dial. Permit its loopback resolutions too. (Literal-IP proxies
-	// already match the resolved address directly.)
-	if strings.EqualFold(host, "localhost") {
-		set[net.JoinHostPort("127.0.0.1", port)] = struct{}{}
-		set[net.JoinHostPort("::1", port)] = struct{}{}
-	}
+	return port, nil
 }
 
 // makeSSRFControl returns a dialer Control hook that permits dialing the
@@ -146,30 +349,14 @@ func makeSSRFControl(allowedProxyAddrs map[string]struct{}) func(string, string,
 	}
 }
 
-// validateProxyURL rejects a renderer-supplied proxy whose host literal is an
-// internal address other than loopback (the legitimate local sing-box). It is a
-// best-effort up-front check; loopback proxies are allowed.
+// validateProxyURL applies the same proxy boundary used by Requests,
+// Download, and Upload. Loopback is allowed for the managed sing-box; every
+// other non-public resolution is rejected.
 func validateProxyURL(raw string) error {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return errBlockedOutboundURL
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return errBlockedOutboundURL
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Hostname proxy (resolved later); allow — the common case is localhost.
-		return nil
-	}
-	if ip.IsLoopback() {
-		return nil
-	}
-	if isBlockedDialIP(ip) {
-		return errBlockedOutboundURL
-	}
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := parseAndAuthorizeProxyURL(ctx, raw, false, make(map[string]struct{}))
+	return err
 }
 
 // isBlockedDialIP reports whether an IP must not be reachable from a
@@ -224,25 +411,6 @@ func ssrfSafeControl(network, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// ssrfSafeControlAllowLoopback is the proxy-dial variant: it blocks the same
-// internal ranges as ssrfSafeControl EXCEPT loopback, because the legitimate
-// egress proxy is the local sing-box bound to 127.0.0.1. It still blocks a
-// renderer-supplied proxy that points at LAN / metadata addresses.
-func ssrfSafeControlAllowLoopback(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		host = address
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip != nil && ip.IsLoopback() {
-		return nil
-	}
-	if isBlockedDialIP(ip) {
-		return fmt.Errorf("%w: %s", errBlockedOutboundURL, address)
-	}
-	return nil
-}
-
 var defaultSpeedTestURLs = []string{
 	"https://speed.cloudflare.com/__down?bytes=1000000",
 	"https://speed.hetzner.de/1MB.bin",
@@ -250,24 +418,27 @@ var defaultSpeedTestURLs = []string{
 }
 
 func (a *App) Requests(method string, url string, headers map[string]string, body string, options RequestOptions) HTTPResult {
-	log.Printf("Requests: %v %v %v %v %v", method, url, headers, body, options)
+	log.Printf("Requests: method=%s url=%s headers=%d bodyBytes=%d", method, redactedRequestURL(url), len(headers), len(body))
 
-	if err := validateOutboundURL(url); err != nil {
+	client, ctx, cancel, err := withRequestOptionsClient(options)
+	if err != nil {
+		return HTTPResult{false, 400, nil, redactedNetworkError(err, options.Proxy)}
+	}
+	defer cancel()
+	if err := validateResolvedOutboundURL(ctx, url); err != nil {
 		return HTTPResult{false, 400, nil, err.Error()}
 	}
 
-	client, ctx, cancel := withRequestOptionsClient(options)
-
 	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 
 	req.Header = GetHeader(headers)
 
 	if options.CancelId != "" {
 		runtime.EventsOn(a.Ctx, options.CancelId, func(data ...any) {
-			log.Printf("Requests Canceled: %v %v", method, url)
+			log.Printf("Requests Canceled: method=%s url=%s", method, redactedRequestURL(url))
 			cancel()
 		})
 		defer runtime.EventsOff(a.Ctx, options.CancelId)
@@ -275,7 +446,7 @@ func (a *App) Requests(method string, url string, headers map[string]string, bod
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 	defer resp.Body.Close()
 
@@ -288,24 +459,33 @@ func (a *App) Requests(method string, url string, headers map[string]string, bod
 }
 
 func (a *App) Download(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
-	log.Printf("Download: %s %s %s %v %s %v", method, url, path, headers, event, options)
-
-	if err := validateOutboundURL(url); err != nil {
+	log.Printf("Download: method=%s url=%s path=%s headers=%d", method, redactedRequestURL(url), filepath.Base(path), len(headers))
+	if a == nil || a.FileService == nil {
+		return HTTPResult{false, 500, nil, "file service not initialised"}
+	}
+	client, ctx, cancel, err := withRequestOptionsClient(options)
+	if err != nil {
+		return HTTPResult{false, 400, nil, redactedNetworkError(err, options.Proxy)}
+	}
+	defer cancel()
+	if err := a.FileService.ValidateWritePath(path); err != nil {
 		return HTTPResult{false, 400, nil, err.Error()}
 	}
 
-	client, ctx, cancel := withRequestOptionsClient(options)
+	if err := validateResolvedOutboundURL(ctx, url); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 
 	req.Header = GetHeader(headers)
 
 	if options.CancelId != "" {
 		runtime.EventsOn(a.Ctx, options.CancelId, func(data ...any) {
-			log.Printf("Download Canceled: %v %v", url, path)
+			log.Printf("Download Canceled: url=%s path=%s", redactedRequestURL(url), filepath.Base(path))
 			cancel()
 		})
 		defer runtime.EventsOff(a.Ctx, options.CancelId)
@@ -313,26 +493,15 @@ func (a *App) Download(method string, url string, path string, headers map[strin
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 	defer resp.Body.Close()
 
-	path = GetPath(path)
-
-	err = os.MkdirAll(filepath.Dir(path), 0o750)
-	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
-	}
-
-	file, err := os.Create(path)
-	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
-	}
-	defer file.Close()
-
 	reader := wrapWithProgress(resp.Body, resp.ContentLength, event, a)
-
-	_, err = io.Copy(file, reader)
+	err = a.FileService.WriteStreamAtomic(path, 0o600, func(file io.Writer) error {
+		_, copyErr := io.Copy(file, reader)
+		return copyErr
+	})
 	if err != nil {
 		return HTTPResult{false, 500, nil, err.Error()}
 	}
@@ -341,15 +510,23 @@ func (a *App) Download(method string, url string, path string, headers map[strin
 }
 
 func (a *App) Upload(method string, url string, path string, headers map[string]string, event string, options RequestOptions) HTTPResult {
-	log.Printf("Upload: %s %s %s %v %s %v", method, url, path, headers, event, options)
-
-	if err := validateOutboundURL(url); err != nil {
+	log.Printf("Upload: method=%s url=%s path=%s headers=%d", method, redactedRequestURL(url), filepath.Base(path), len(headers))
+	if a == nil || a.FileService == nil {
+		return HTTPResult{false, 500, nil, "file service not initialised"}
+	}
+	client, ctx, cancel, err := withRequestOptionsClient(options)
+	if err != nil {
+		return HTTPResult{false, 400, nil, redactedNetworkError(err, options.Proxy)}
+	}
+	defer cancel()
+	if err := a.FileService.ValidateReadPath(path); err != nil {
+		return HTTPResult{false, 400, nil, err.Error()}
+	}
+	if err := validateResolvedOutboundURL(ctx, url); err != nil {
 		return HTTPResult{false, 400, nil, err.Error()}
 	}
 
-	path = GetPath(path)
-
-	file, err := os.Open(path)
+	file, err := a.FileService.OpenRead(path)
 	if err != nil {
 		return HTTPResult{false, 500, nil, err.Error()}
 	}
@@ -360,47 +537,43 @@ func (a *App) Upload(method string, url string, path string, headers map[string]
 		return HTTPResult{false, 500, nil, err.Error()}
 	}
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-
-	part, err := writer.CreateFormFile(options.FileField, path)
-	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
-	}
-
-	reader := wrapWithProgress(file, fileStat.Size(), event, a)
-
-	_, err = io.Copy(part, reader)
-	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
-	}
-
-	err = writer.Close()
-	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
-	}
-
-	client, ctx, cancel := withRequestOptionsClient(options)
-
 	if options.CancelId != "" {
 		runtime.EventsOn(a.Ctx, options.CancelId, func(data ...any) {
-			log.Printf("Upload Canceled: %v %v", url, path)
+			log.Printf("Upload Canceled: url=%s path=%s", redactedRequestURL(url), filepath.Base(path))
 			cancel()
 		})
 		defer runtime.EventsOff(a.Ctx, options.CancelId)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	pipeReader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+	contentType := multipartWriter.FormDataContentType()
+	go func() {
+		part, writeErr := multipartWriter.CreateFormFile(options.FileField, filepath.Base(filepath.Clean(path)))
+		if writeErr == nil {
+			reader := wrapWithProgress(file, fileStat.Size(), event, a)
+			_, writeErr = io.Copy(part, reader)
+		}
+		if closeErr := multipartWriter.Close(); writeErr == nil {
+			writeErr = closeErr
+		}
+		_ = pipeWriter.CloseWithError(writeErr)
+	}()
+	defer pipeReader.Close()
+
+	req, err := http.NewRequestWithContext(ctx, method, url, pipeReader)
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		_ = pipeReader.CloseWithError(err)
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 
 	req.Header = GetHeader(headers)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return HTTPResult{false, 500, nil, err.Error()}
+		_ = pipeReader.CloseWithError(err)
+		return HTTPResult{false, 500, nil, redactedNetworkError(err, url, options.Proxy)}
 	}
 	defer resp.Body.Close()
 
@@ -410,6 +583,44 @@ func (a *App) Upload(method string, url string, path string, headers map[string]
 	}
 
 	return HTTPResult{true, resp.StatusCode, resp.Header, string(b)}
+}
+
+// redactedRequestURL keeps diagnostics useful without persisting bearer
+// tokens, subscription secrets or credentials embedded in URLs.
+func redactedRequestURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "<invalid-url>"
+	}
+	parsed.User = nil
+	// Subscription endpoints frequently place bearer material directly in the
+	// path, not only in the query string. Logs need the origin for diagnostics,
+	// but never the request path or parameters.
+	if parsed.Path != "" && parsed.Path != "/" {
+		parsed.Path = "/redacted"
+		parsed.RawPath = ""
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func redactedNetworkError(err error, rawURLs ...string) string {
+	if err == nil {
+		return ""
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr != nil {
+		return fmt.Sprintf("%s %s: %s", urlErr.Op, redactedRequestURL(urlErr.URL), redactedNetworkError(urlErr.Err, rawURLs...))
+	}
+	message := err.Error()
+	for _, raw := range rawURLs {
+		raw = strings.TrimSpace(raw)
+		if raw != "" {
+			message = strings.ReplaceAll(message, raw, redactedRequestURL(raw))
+		}
+	}
+	return message
 }
 
 // GetAvailablePort returns an available TCP port on localhost.
@@ -452,15 +663,19 @@ func wrapWithProgress(r io.Reader, size int64, event string, a *App) io.Reader {
 	})
 }
 
-func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc) {
+func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Context, context.CancelFunc, error) {
 	// Resolve the proxy ourselves and derive the exact set of proxy endpoints
 	// the transport may legitimately dial. The dial guard then allows ONLY
 	// those endpoints plus public addresses, and blocks every internal address
-	// (incl. loopback) otherwise. This is correct per-connection: a request
-	// that dials its proxy is allowed; a request that dials direct (no proxy,
-	// or excluded by NO_PROXY) is held to the strict block, so a rebinding host
-	// can never reach loopback/LAN/metadata.
-	proxyFn, allowedProxyAddrs := resolveProxy(options.Proxy)
+	// (incl. loopback) otherwise. Callers also resolve and validate each target
+	// hostname before the request and on every redirect because a proxy dial is
+	// a connection to the proxy itself, not to the final target.
+	ctx, cancel := context.WithCancel(context.Background())
+	proxyFn, allowedProxyAddrs, err := resolveProxy(ctx, options.Proxy)
+	if err != nil {
+		cancel()
+		return nil, nil, func() {}, err
+	}
 
 	transport := &http.Transport{
 		Proxy: proxyFn,
@@ -476,18 +691,16 @@ func withRequestOptionsClient(options RequestOptions) (*http.Client, context.Con
 	transport.DialContext = dialer.DialContext
 	client := &http.Client{
 		Timeout:   GetTimeout(options.Timeout),
-		Transport: transport,
+		Transport: &proxyPinnedTransport{base: transport},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !options.Redirect {
 				return http.ErrUseLastResponse
 			}
-			return nil
+			return validateResolvedOutboundURL(req.Context(), req.URL.String())
 		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	return client, ctx, cancel
+	return client, ctx, cancel, nil
 }
 
 // TestTCPPort tests if a TCP port is open on the given IP address
@@ -782,70 +995,80 @@ func (a *App) TestNodeSpeed(ip string, portsJSON string) FlagResult {
 // proxyURL: e.g. "socks5://127.0.0.1:20122" or "http://127.0.0.1:20121", empty for direct
 // Returns JSON with speedMbps, bytes downloaded, elapsed time
 func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int) FlagResult {
-	log.Printf("TestDownloadSpeed: proxy=%s url=%s timeout=%ds", proxyURL, testURL, timeoutSec)
-
 	if testURL == "" {
 		testURL = defaultSpeedTestURLs[0]
 	}
 	if timeoutSec <= 0 {
 		timeoutSec = 15
 	}
+	log.Printf("TestDownloadSpeed: proxy=%s url=%s timeout=%ds", redactedRequestURL(proxyURL), redactedRequestURL(testURL), timeoutSec)
 
 	// testURL is renderer-controllable; block internal/metadata targets up front.
-	if err := validateOutboundURL(testURL); err != nil {
+	validationCtx, validationCancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer validationCancel()
+	if err := validateResolvedOutboundURL(validationCtx, testURL); err != nil {
 		return speedError(err.Error())
 	}
 
 	// proxyURL is renderer-controllable; a proxy pointing at LAN/metadata (other
 	// than the legitimate loopback sing-box) is an SSRF vector.
+	allowedProxyAddrs := make(map[string]struct{})
+	var parsedProxyURL *url.URL
 	if proxyURL != "" {
-		if err := validateProxyURL(proxyURL); err != nil {
-			return speedError(err.Error())
+		var proxyErr error
+		parsedProxyURL, proxyErr = parseAndAuthorizeProxyURL(validationCtx, proxyURL, false, allowedProxyAddrs)
+		if proxyErr != nil {
+			return speedError(proxyErr.Error())
 		}
 	}
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
 	}
+	var roundTripper http.RoundTripper = transport
 
 	// Support SOCKS5 proxy via x/net/proxy (http.Transport.Proxy only handles HTTP)
 	if strings.HasPrefix(proxyURL, "socks5://") || strings.HasPrefix(proxyURL, "socks://") {
-		parsed, err := url.Parse(proxyURL)
-		if err != nil {
-			return speedError("invalid proxy url: " + err.Error())
-		}
 		// Guard the connection to the SOCKS5 proxy itself: the forward dialer
-		// is what actually dials the proxy address, so attaching the
-		// loopback-allowing control here blocks a proxy that resolves to
-		// LAN/metadata (incl. hostname proxies, checked at the resolved IP)
-		// while still permitting the local sing-box on loopback.
+		// is what actually dials the proxy address. Only loopback endpoints
+		// resolved and approved above are permitted; a public proxy hostname
+		// cannot rebind to an arbitrary local service between check and dial.
 		guardedForward := &net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
-			Control:   ssrfSafeControlAllowLoopback,
+			Control:   makeSSRFControl(allowedProxyAddrs),
 		}
-		dialer, dErr := xproxy.FromURL(parsed, guardedForward)
+		dialer, dErr := xproxy.FromURL(parsedProxyURL, guardedForward)
 		if dErr != nil {
 			// e.g. the unsupported "socks://" scheme. Do NOT fall through to an
 			// unguarded direct dial — that would let a bad proxy scheme bypass
 			// the SSRF guard via a rebinding testURL.
 			return speedError("unsupported or invalid proxy: " + dErr.Error())
 		}
-		// Pass the domain name directly to the SOCKS5 proxy so that DNS
-		// resolution happens on the remote server (via sing-box's outbound).
-		// Local DNS resolution can return altered or unreachable IPs in
-		// restricted network environments.
+		// Resolve and pin a locally validated public address before asking the
+		// SOCKS proxy to connect. Passing the hostname to a remote resolver would
+		// let a renderer-controlled name reach metadata/LAN addresses behind the
+		// proxy, outside the socket Control hook.
 		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
-				return ctxDialer.DialContext(ctx, network, addr)
+			publicAddr, resolveErr := resolvedPublicDialAddress(ctx, addr)
+			if resolveErr != nil {
+				return nil, resolveErr
 			}
-			return dialer.Dial(network, addr)
+			if ctxDialer, ok := dialer.(xproxy.ContextDialer); ok {
+				return ctxDialer.DialContext(ctx, network, publicAddr)
+			}
+			return dialer.Dial(network, publicAddr)
 		}
 	} else if proxyURL != "" {
 		transport.Proxy = GetProxy(proxyURL)
-		// Guard the dial to the HTTP proxy itself (loopback sing-box allowed).
-		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: ssrfSafeControlAllowLoopback}
+		// Guard the dial to the HTTP proxy itself with the same exact loopback
+		// allow-list used by the renderer request path.
+		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: makeSSRFControl(allowedProxyAddrs)}
 		transport.DialContext = d.DialContext
+		// An HTTP proxy otherwise resolves the renderer-controlled target name
+		// itself, bypassing the local public-IP validation above. Resolve and pin
+		// the target at request time while preserving Host/TLS identity.
+		roundTripper = &proxyPinnedTransport{base: transport}
 	} else {
 		// Direct download: guard the dial against internal targets (TOCTOU-safe,
 		// catches DNS rebinding and redirects to internal hosts).
@@ -855,14 +1078,18 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 
 	client := &http.Client{
 		Timeout:   time.Duration(timeoutSec) * time.Second,
-		Transport: transport,
+		Transport: roundTripper,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return validateResolvedOutboundURL(req.Context(), req.URL.String())
+		},
 	}
 
 	start := time.Now()
 	resp, err := client.Get(testURL)
 	if err != nil {
-		log.Printf("TestDownloadSpeed error: %v", err)
-		return speedError(err.Error())
+		safeError := redactedNetworkError(err, proxyURL, testURL)
+		log.Printf("TestDownloadSpeed error: %s", safeError)
+		return speedError(safeError)
 	}
 	defer resp.Body.Close()
 
@@ -870,12 +1097,13 @@ func (a *App) TestDownloadSpeed(proxyURL string, testURL string, timeoutSec int)
 	elapsed := time.Since(start)
 
 	if err != nil {
-		log.Printf("TestDownloadSpeed read error: %v", err)
-		if result, ok := buildPartialSpeedResult(testURL, n, elapsed, err); ok {
+		safeError := errors.New(redactedNetworkError(err, proxyURL, testURL))
+		log.Printf("TestDownloadSpeed read error: %s", safeError)
+		if result, ok := buildPartialSpeedResult(testURL, n, elapsed, safeError); ok {
 			log.Printf("TestDownloadSpeed partial result: %s", result)
 			return FlagResult{true, result}
 		}
-		return speedError(err.Error())
+		return speedError(safeError.Error())
 	}
 
 	elapsedSec := elapsed.Seconds()
@@ -1021,7 +1249,7 @@ func (a *App) testNodeDownloadBenchmark(proxyURL string, timeoutSec int) FlagRes
 			}
 			log.Printf(
 				"TestNodeDirectSpeed retrying benchmark url=%s attempt=%d error=%s",
-				testURL,
+				redactedRequestURL(testURL),
 				attempt+1,
 				payload.Error,
 			)

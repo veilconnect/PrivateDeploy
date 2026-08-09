@@ -58,7 +58,7 @@ vi.mock('@/utils', () => ({
   updateTrayMenus: vi.fn(),
 }))
 
-import { usePluginsStore } from '../plugins'
+import { STARTUP_PLUGIN_EXECUTION_TIMEOUT_MS, usePluginsStore } from '../plugins'
 import {
   PLUGIN_FULL_TRUST_ACCEPT_KEY,
   PLUGIN_FULL_TRUST_TITLE_KEY,
@@ -386,5 +386,49 @@ describe('usePluginsStore legacy plugins (installed before the consent mechanism
 
     expect(mocks.confirm).not.toHaveBeenCalled()
     expect((globalThis as any).__legacyRan).toBe(true)
+  })
+
+  it('times out one never-settling startup plugin and continues with the next plugin', async () => {
+    vi.useFakeTimers()
+    try {
+      const hanging = legacyRecord({
+        id: 'user-hanging-startup',
+        name: 'Hanging startup plugin',
+        path: 'data/plugins/hanging-startup.js',
+      })
+      const following = legacyRecord({
+        id: 'user-following-startup',
+        name: 'Following startup plugin',
+        path: 'data/plugins/following-startup.js',
+      })
+      ;(hanging as any).trustConsentVersion = PLUGIN_TRUST_CONSENT_VERSION
+      ;(following as any).trustConsentVersion = PLUGIN_TRUST_CONSENT_VERSION
+      mocks.readFile.mockImplementation(async (path: string) => {
+        if (path === PluginsFilePath) return stringify([hanging, following])
+        if (path === hanging.path) {
+          return 'async function onStartup() { await new Promise(() => undefined) }'
+        }
+        if (path === following.path) {
+          return 'async function onStartup() { globalThis.__followingRan = true }'
+        }
+        throw 'not found'
+      })
+      ;(globalThis as any).__followingRan = false
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      const store = usePluginsStore()
+      await store.setupPlugins()
+      const startup = store.onStartupTrigger()
+      await vi.advanceTimersByTimeAsync(STARTUP_PLUGIN_EXECUTION_TIMEOUT_MS)
+      await startup
+
+      expect((globalThis as any).__followingRan).toBe(true)
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Hanging startup plugin timed out'),
+      )
+      errorSpy.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

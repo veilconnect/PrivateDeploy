@@ -134,15 +134,12 @@ export const useCloudStore = defineStore('cloud', () => {
   }
 
   const markNodeStatus = (instanceId: string, status: CloudNodeStatus) => {
-    const node = instances.value.find((item) => item.instanceId === instanceId)
-    if (node) {
-      node.statusText = status
-      return
-    }
-    const manual = manualNodes.value.find((item) => item.instanceId === instanceId)
-    if (manual) {
-      manual.statusText = status
-    }
+    instances.value = instances.value.map((node) =>
+      node.instanceId === instanceId ? { ...node, statusText: status } : node,
+    )
+    manualNodes.value = manualNodes.value.map((node) =>
+      node.instanceId === instanceId ? { ...node, statusText: status } : node,
+    )
   }
 
   // Multi-deploy progress tracking
@@ -258,6 +255,7 @@ export const useCloudStore = defineStore('cloud', () => {
     isInstancesCacheValid,
     isLatencyCacheValid,
     createInstance,
+    cancelCreate,
     createSSHInstance,
     createMultipleInstances,
     destroyInstance,
@@ -390,6 +388,7 @@ export const useCloudStore = defineStore('cloud', () => {
     latencyTestResults,
     latencyUpdatedAt,
     createInstance,
+    cancelCreate,
     createSSHInstance,
     createMultipleInstances,
     multiDeployProgress,

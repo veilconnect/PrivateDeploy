@@ -1,5 +1,7 @@
 FROM ubuntu:22.04
 
+ARG GO_VERSION=1.25.11
+
 ENV DEBIAN_FRONTEND=noninteractive \
     GOROOT=/usr/local/go \
     GOPATH=/go \
@@ -14,16 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xz-utils file \
     && rm -rf /var/lib/apt/lists/*
 
-# Go 1.23.0 (jammy ships 1.18; need newer for our go.mod)
-RUN curl -fsSL https://go.dev/dl/go1.23.0.linux-amd64.tar.gz \
+# Jammy's packaged Go is too old. The host wrapper passes the version declared
+# by go.mod so the release container cannot silently drift behind the project.
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
       -o /tmp/go.tar.gz \
     && tar -C /usr/local -xzf /tmp/go.tar.gz \
     && rm /tmp/go.tar.gz
 
-# Node 20 + pnpm
+# Node 20 + the exact pnpm release declared by frontend/package.json and CI.
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9 \
+    && npm install -g pnpm@10.33.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # fpm for deb/rpm packaging

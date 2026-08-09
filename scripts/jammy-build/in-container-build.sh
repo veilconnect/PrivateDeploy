@@ -155,7 +155,13 @@ export GIO_MODULE_DIR=/nonexistent
 export GTK_PATH=/nonexistent
 export GDK_PIXBUF_MODULE_FILE=/nonexistent
 export GIO_USE_VFS=local
-exec "${PD_PREFIX}/privatedeploy.bin" "$@"
+export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
+# Move JavaScriptCore's GC signal away from SIGUSR1, which the Go runtime also
+# owns, and disable JIT for the same Ubuntu 24.04 compatibility policy used by
+# the AppImage and local-install launcher.
+export JSC_SIGNAL_FOR_GC="${JSC_SIGNAL_FOR_GC:-48}"
+export JSC_useJIT="${JSC_useJIT:-0}"
+exec -a PrivateDeploy "${PD_PREFIX}/privatedeploy.bin" "$@"
 WRAPPER
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}"
 ln -s "../lib/${APP_NAME}/${APP_NAME}" "${STAGING_DIR}/usr/bin/${APP_NAME}"
@@ -178,6 +184,7 @@ Type=Application
 Categories=Network;Utility;
 Terminal=false
 StartupNotify=true
+StartupWMClass=PrivateDeploy
 EOF
 
 OUT_DIR="build/bin/jammy"

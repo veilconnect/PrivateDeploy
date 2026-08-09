@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"privatedeploy/bridge/cloud"
+	"privatedeploy/bridge/cloud/deploy"
 	"privatedeploy/bridge/cloud/persistence"
 )
 
@@ -41,7 +42,20 @@ const (
 	serviceReadyDialTimeout    = 2 * time.Second
 )
 
-var digitaloceanNodesMu sync.Mutex
+var (
+	digitaloceanNodesMu          sync.Mutex
+	digitaloceanFirewallMu       sync.Mutex
+	digitaloceanInstanceCreateMu sync.Mutex
+	digitaloceanActiveCreates    = make(map[string]int)
+)
+
+type nodeRecord struct {
+	cloud.InstanceRecord
+	ManagedSSHKeyFingerprint string `json:"managedSshKeyFingerprint,omitempty"`
+	FirewallGroupID          string `json:"firewallGroupId,omitempty"`
+	FirewallOwnershipToken   string `json:"firewallOwnershipToken,omitempty"`
+	FirewallCleanupPending   bool   `json:"firewallCleanupPending,omitempty"`
+}
 
 // Provider implements cloud.CloudProvider for DigitalOcean.
 type Provider struct {
@@ -52,6 +66,39 @@ type Provider struct {
 	basePath        string
 	configPath      string
 	nodesPath       string
+	// saveManagedSSHSecret is replaceable in package tests so persistence
+	// failures can be proven to stop before any account or billable API POST.
+	saveManagedSSHSecret func(string, string, string) error
+	// generateRealityKeyPair is replaceable in package tests so a local
+	// cryptographic failure can be proven to stop before any cloud mutation.
+	generateRealityKeyPair func() (string, string, error)
+}
+
+func (p *Provider) instanceCreateKey(instanceID string) string {
+	return p.nodesPath + "\x00" + instanceID
+}
+
+func (p *Provider) beginInstanceCreate(instanceID string) {
+	digitaloceanInstanceCreateMu.Lock()
+	digitaloceanActiveCreates[p.instanceCreateKey(instanceID)]++
+	digitaloceanInstanceCreateMu.Unlock()
+}
+
+func (p *Provider) endInstanceCreate(instanceID string) {
+	digitaloceanInstanceCreateMu.Lock()
+	key := p.instanceCreateKey(instanceID)
+	if digitaloceanActiveCreates[key] <= 1 {
+		delete(digitaloceanActiveCreates, key)
+	} else {
+		digitaloceanActiveCreates[key]--
+	}
+	digitaloceanInstanceCreateMu.Unlock()
+}
+
+func (p *Provider) isInstanceCreateActive(instanceID string) bool {
+	digitaloceanInstanceCreateMu.Lock()
+	defer digitaloceanInstanceCreateMu.Unlock()
+	return digitaloceanActiveCreates[p.instanceCreateKey(instanceID)] > 0
 }
 
 // New creates a new DigitalOcean provider instance.
@@ -82,11 +129,13 @@ func New(config *cloud.ProviderConfig) *Provider {
 	}
 
 	return &Provider{
-		config:     cloneProviderConfig(config),
-		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
-		basePath:   basePath,
-		configPath: configPath,
-		nodesPath:  nodesPath,
+		config:                 cloneProviderConfig(config),
+		client:                 &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		basePath:               basePath,
+		configPath:             configPath,
+		nodesPath:              nodesPath,
+		saveManagedSSHSecret:   cloud.SaveSecret,
+		generateRealityKeyPair: deploy.GenerateRealityKeyPair,
 	}
 }
 

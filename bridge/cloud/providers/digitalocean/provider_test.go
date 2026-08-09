@@ -2,6 +2,7 @@ package digitalocean
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 
 func TestConcurrentConfigLoadSaveIsRaceFree(t *testing.T) {
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", t.TempDir())
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(t.TempDir(), "secrets"))
 	p := New(&cloud.ProviderConfig{Provider: "digitalocean", APIKey: "initial-key"})
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {

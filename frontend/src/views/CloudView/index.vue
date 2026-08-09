@@ -14,7 +14,7 @@ import LatencyChart from '@/components/LatencyChart.vue'
 import { useModal } from '@/components/Modal'
 
 import {
-  getDeploymentSteps as getNodeDeploymentSteps,
+  getDeploymentHint as getNodeDeploymentHint,
   getDeploymentSummary as getNodeDeploymentSummary,
   hasHysteria,
   hasShadowsocks,
@@ -246,6 +246,23 @@ const handleError = (error: unknown) => {
   message.error(messageText)
 }
 
+const cancellingOperationId = ref('')
+
+const handleCancelDeployment = async (node: ManagedCloudNode) => {
+  const operationId = node.deploymentOperationId?.trim()
+  if (!operationId) return
+
+  cancellingOperationId.value = operationId
+  try {
+    await cloudStore.cancelCreate(operationId)
+    message.success(t('cloud.progress.cancelled'))
+  } catch (error) {
+    handleError(error)
+  } finally {
+    cancellingOperationId.value = ''
+  }
+}
+
 const {
   ensurePlanForRegion,
   fetchMeta,
@@ -281,6 +298,7 @@ const { openEditManualNode, openImportModal, openManualNodeModal } = useCloudVie
 const {
   applyingNodeId,
   batchOperating,
+  canMutateNode,
   cdnStore,
   clearSelection,
   copyNodeConfig,
@@ -298,6 +316,7 @@ const {
   redeployingNodeId,
   rotatingNodeId,
   selectedNodeIds,
+  selectedMutationBlocked,
   speedTestAllLoading,
   tableContextMenu,
   toggleNodeSelection,
@@ -367,11 +386,18 @@ const handleDeploy = async () => {
       region: form.region,
       plan: form.plan,
     })
-    await cloudStore.createInstance({
+    const created = await cloudStore.createInstance({
       label: form.label.trim(),
       region: form.region,
       plan: form.plan,
     })
+    if (created.deploymentState === 'uncertain' || created.instanceId.startsWith('deploying-')) {
+      logInfo('[CloudView] handleDeploy detached; exact operation reconciliation continues', {
+        operationId: created.deploymentOperationId,
+      })
+      message.info(t('cloud.progress.delayedHint'))
+      return
+    }
     logInfo('[CloudView] handleDeploy createInstance completed')
     message.success('common.success')
     form.label = defaultCloudLabel(cloudStore.currentProvider)
@@ -381,9 +407,9 @@ const handleDeploy = async () => {
   }
 }
 
-const getDeploymentSteps = (node: CloudNode | Record<string, any>) => getNodeDeploymentSteps(node, t)
-
 const getDeploymentSummary = (node: CloudNode | Record<string, any>) => getNodeDeploymentSummary(node, t)
+
+const getDeploymentHint = (node: CloudNode | Record<string, any>) => getNodeDeploymentHint(node, t)
 
 const nodeHistoryRetentionDays = Math.round(NODE_HISTORY_RETENTION_MS / (24 * 60 * 60 * 1000))
 
@@ -798,6 +824,7 @@ onMounted(() => {
             type="normal"
             size="small"
             :loading="batchOperating"
+            :disabled="selectedMutationBlocked"
           >
             {{ t('cloud.batch.rotateIP') }}
           </Button>
@@ -806,6 +833,7 @@ onMounted(() => {
             type="normal"
             size="small"
             :loading="batchOperating"
+            :disabled="selectedMutationBlocked"
           >
             {{ t('cloud.batch.destroy') }}
           </Button>
@@ -826,6 +854,7 @@ onMounted(() => {
                 <input
                   type="checkbox"
                   :checked="selectedNodeIds.has(record.instanceId)"
+                  :disabled="Boolean(record.deploymentOperationId)"
                   @change="toggleNodeSelection(record.instanceId)"
                   class="cursor-pointer w-16 h-16"
                 />
@@ -860,19 +889,23 @@ onMounted(() => {
               </div>
               <div v-if="shouldShowDeploymentProgress(record)" class="deployment-progress">
                 <div class="deployment-progress__summary">
+                  <span class="deployment-progress__bullet deployment-progress__bullet--current" />
                   {{ getDeploymentSummary(record) }}
                 </div>
-                <div class="deployment-progress__steps">
-                  <div
-                    v-for="(step, index) in getDeploymentSteps(record)"
-                    :key="index"
-                    class="deployment-progress__step"
-                    :class="`deployment-progress__step--${step.state}`"
-                  >
-                    <span class="deployment-progress__bullet" />
-                    <span class="deployment-progress__label">{{ step.label }}</span>
-                  </div>
+                <div v-if="getDeploymentHint(record)" class="deployment-progress__hint">
+                  {{ getDeploymentHint(record) }}
                 </div>
+                <Button
+                  v-if="record.deploymentState === 'submitting' && record.deploymentOperationId"
+                  type="text"
+                  size="small"
+                  :loading="cancellingOperationId === record.deploymentOperationId"
+                  @click.stop="handleCancelDeployment(record as ManagedCloudNode)"
+                >
+                  {{ cancellingOperationId === record.deploymentOperationId
+                    ? t('cloud.progress.cancelling')
+                    : t('cloud.progress.cancel') }}
+                </Button>
               </div>
               </div>
             </template>
@@ -968,50 +1001,55 @@ onMounted(() => {
           <!-- createdAt merged into sort/filter, no longer a dedicated column -->
           <template #actions="{ record }">
             <div class="flex items-center gap-4">
-              <Button
-                @click="handleUseNode(record)"
-                type="primary"
-                size="small"
-                :loading="applyingNodeId === record.instanceId"
-              >
-                {{ t('cloud.nodes.apply') }}
-              </Button>
-              <Button
-                v-if="isManualNode(record)"
-                @click="openEditManualNode(record)"
-                type="text"
-                size="small"
-              >
-                {{ t('cloud.manual.edit') }}
-              </Button>
-              <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
-              <Button @click="handleViewCharts(record as ManagedCloudNode)" type="text" size="small" v-tips="'cloud.charts.view'">📊</Button>
-              <Button
-                v-if="!isManualNode(record)"
-                @click="handleRepairNode(record)"
-                type="text"
-                size="small"
-                :loading="redeployingNodeId === record.instanceId"
-              >
-                {{ redeployingNodeId === record.instanceId ? t('cloud.nodes.repairing') : t('cloud.nodes.repair') }}
-              </Button>
-              <Button
-                v-if="!isManualNode(record) && record.connectivityStatus === 'blocked'"
-                @click="handleRotateIP(record)"
-                type="text"
-                size="small"
-                :loading="rotatingNodeId === record.instanceId"
-              >
-                {{ rotatingNodeId === record.instanceId ? t('cloud.nodes.rotatingIP') : t('cloud.nodes.rotateIP') }}
-              </Button>
-              <Button
-                @click="handleDestroy(record)"
-                type="text"
-                size="small"
-                :loading="cloudStore.destroyingInstance === record.instanceId"
-              >
-                {{ t('cloud.nodes.destroy') }}
-              </Button>
+              <template v-if="!record.deploymentOperationId">
+                <Button
+                  @click="handleUseNode(record)"
+                  type="primary"
+                  size="small"
+                  :loading="applyingNodeId === record.instanceId"
+                >
+                  {{ t('cloud.nodes.apply') }}
+                </Button>
+                <Button
+                  v-if="isManualNode(record)"
+                  @click="openEditManualNode(record)"
+                  type="text"
+                  size="small"
+                >
+                  {{ t('cloud.manual.edit') }}
+                </Button>
+                <Button @click="copyNodeConfig(record)" type="text" size="small" v-tips="'cloud.nodes.copyLink'">📋</Button>
+                <Button @click="handleViewCharts(record as ManagedCloudNode)" type="text" size="small" v-tips="'cloud.charts.view'">📊</Button>
+                <Button
+                  v-if="!isManualNode(record)"
+                  @click="handleRepairNode(record)"
+                  type="text"
+                  size="small"
+                  :loading="redeployingNodeId === record.instanceId"
+                  :disabled="!canMutateNode(record)"
+                >
+                  {{ redeployingNodeId === record.instanceId ? t('cloud.nodes.repairing') : t('cloud.nodes.repair') }}
+                </Button>
+                <Button
+                  v-if="!isManualNode(record) && record.connectivityStatus === 'blocked'"
+                  @click="handleRotateIP(record)"
+                  type="text"
+                  size="small"
+                  :loading="rotatingNodeId === record.instanceId"
+                  :disabled="!canMutateNode(record)"
+                >
+                  {{ rotatingNodeId === record.instanceId ? t('cloud.nodes.rotatingIP') : t('cloud.nodes.rotateIP') }}
+                </Button>
+                <Button
+                  @click="handleDestroy(record)"
+                  type="text"
+                  size="small"
+                  :loading="cloudStore.destroyingInstance === record.instanceId"
+                  :disabled="!canMutateNode(record)"
+                >
+                  {{ t('cloud.nodes.destroy') }}
+                </Button>
+              </template>
             </div>
           </template>
         </Table>
@@ -1260,19 +1298,16 @@ onMounted(() => {
 }
 
 .deployment-progress__summary {
-  font-weight: 600;
-}
-
-.deployment-progress__steps {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.deployment-progress__step {
   display: flex;
   align-items: center;
   gap: 6px;
+  font-weight: 600;
+}
+
+.deployment-progress__hint {
+  margin-top: 2px;
+  max-width: 360px;
+  white-space: normal;
 }
 
 .deployment-progress__bullet {
@@ -1283,25 +1318,9 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.deployment-progress__step--done .deployment-progress__bullet {
-  background: var(--success-color);
-}
-
-.deployment-progress__step--current .deployment-progress__bullet {
+.deployment-progress__bullet--current {
   background: var(--primary-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 20%, transparent);
-}
-
-.deployment-progress__step--pending .deployment-progress__label {
-  opacity: 0.7;
-}
-
-.deployment-progress__label {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Charts Modal */

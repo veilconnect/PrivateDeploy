@@ -9,6 +9,10 @@ import type { CloudNode, CloudProvider, ConnectivityResult, ConnectivityStatus }
 
 export type ManagedCloudNode = CloudNode & {
   statusText?: CloudNodeStatus
+  /** Frontend-only lifecycle state for an in-flight, non-idempotent operation. */
+  deploymentState?: 'submitting' | 'provider-pending' | 'applying' | 'uncertain'
+  deploymentStartedAt?: number
+  deploymentOperationId?: string
   connectivityStatus?: ConnectivityStatus
   connectivityTesting?: boolean
   lastConnectivityResult?: ConnectivityResult

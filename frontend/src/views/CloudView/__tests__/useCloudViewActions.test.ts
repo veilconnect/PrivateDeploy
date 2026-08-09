@@ -53,7 +53,7 @@ vi.mock('@/utils/recommendation', () => ({
 import { useCloudViewActions } from '../useCloudViewActions'
 
 import type { ManagedCloudNode } from '@/stores/cloud'
-import type { CloudNode, RegionLatency } from '@/types/cloud'
+import type { CloudNode, CloudProvider, RegionLatency } from '@/types/cloud'
 
 const translate = (key: string, params?: Record<string, unknown>) => (
   params ? `${key}:${JSON.stringify(params)}` : key
@@ -76,9 +76,11 @@ const createHarness = (options: {
   latencyResults?: RegionLatency[]
   loadBalanceEnabled?: boolean
   kernelRunning?: boolean
+  currentProvider?: CloudProvider
 } = {}) => {
   const cloudStore = {
     instances: options.instances ?? [node()],
+    currentProvider: options.currentProvider ?? 'vultr' as CloudProvider,
     loadBalanceEnabled: options.loadBalanceEnabled ?? false,
     markNodeStatus: vi.fn(),
     applyNodeToProfile: vi.fn<(_: CloudNode) => Promise<unknown>>().mockResolvedValue(undefined),
@@ -269,6 +271,51 @@ describe('useCloudViewActions', () => {
     expect(utilityMocks.message.success).toHaveBeenCalledWith('common.success')
   })
 
+  it('disables and rejects destructive UI actions for another provider', async () => {
+    const foreignNode = node({ provider: 'digitalocean', connectivityStatus: 'blocked' })
+    const harness = createHarness({ instances: [foreignNode], currentProvider: 'vultr' })
+
+    expect(harness.actions.canMutateNode(foreignNode)).toBe(false)
+    await harness.actions.handleRotateIP(foreignNode)
+    await harness.actions.handleRepairNode(foreignNode)
+    await harness.actions.handleDestroy(foreignNode)
+
+    expect(harness.handleError).toHaveBeenCalledTimes(3)
+    expect(harness.cloudStore.rotateIP).not.toHaveBeenCalled()
+    expect(harness.cloudStore.redeployInstance).not.toHaveBeenCalled()
+    expect(harness.cloudStore.destroyInstance).not.toHaveBeenCalled()
+    expect(utilityMocks.confirm).not.toHaveBeenCalled()
+
+    const menu = harness.actions.tableContextMenu.value
+    expect(menu[3].hidden?.(foreignNode)).toBe(true)
+    expect(menu[4].hidden?.(foreignNode)).toBe(true)
+    expect(menu[7].hidden?.(foreignNode)).toBe(true)
+
+    harness.actions.toggleNodeSelection(foreignNode.instanceId)
+    expect(harness.actions.selectedMutationBlocked.value).toBe(true)
+    await harness.actions.handleBatchRotateIP()
+    await harness.actions.handleBatchDestroy()
+    expect(harness.cloudStore.rotateIP).not.toHaveBeenCalled()
+    expect(harness.cloudStore.destroyInstance).not.toHaveBeenCalled()
+  })
+
+  it('treats missing provider attribution as non-mutable in the UI', async () => {
+    const unattributedNode = node({ provider: undefined, connectivityStatus: 'blocked' })
+    const harness = createHarness({ instances: [unattributedNode] })
+
+    expect(harness.actions.canMutateNode(unattributedNode)).toBe(false)
+    const menu = harness.actions.tableContextMenu.value
+    expect(menu[3].hidden?.(unattributedNode)).toBe(true)
+    expect(menu[4].hidden?.(unattributedNode)).toBe(true)
+    expect(menu[7].hidden?.(unattributedNode)).toBe(true)
+
+    await harness.actions.handleDestroy(unattributedNode)
+    expect(harness.handleError).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('unknown provider'),
+    }))
+    expect(harness.cloudStore.destroyInstance).not.toHaveBeenCalled()
+  })
+
   it('supports recommendations, quick menu actions, and load balancing', async () => {
     const recommendedNode = node({ instanceId: 'best', label: 'Best node' })
     utilityMocks.getRecommendedNodes.mockReturnValueOnce([
@@ -319,7 +366,7 @@ describe('useCloudViewActions', () => {
 
     await menu[4].handler(node())
     expect(harness.cloudStore.redeployInstance).toHaveBeenCalledWith('node-1')
-    expect(utilityMocks.message.success).toHaveBeenCalledWith('cloud.nodes.redeploySuccess')
+    expect(utilityMocks.message.success).toHaveBeenCalledWith('cloud.nodes.repairSuccess')
 
     await harness.actions.handleTestAllSpeed()
     expect(harness.cloudStore.testAllNodesSpeed).toHaveBeenCalledTimes(1)

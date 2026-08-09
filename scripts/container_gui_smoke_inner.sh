@@ -132,7 +132,12 @@ run_scale() {
   export LOGNAME="${HOST_USER:-user}"
   export NO_AT_BRIDGE="1"
   export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-1}"
-  export PRIVATEDEPLOY_DEBUG_SIGNAL_TITLE="${SMOKE_SIGNAL_TITLE}"
+  local ready_nonce="container-smoke-${scale}-$$-${RANDOM}"
+  local ready_file="${scale_dir}/frontend-ready.state"
+  rm -f -- "${ready_file}"
+  export PRIVATEDEPLOY_FRONTEND_READY_FILE="${ready_file}"
+  export PRIVATEDEPLOY_FRONTEND_READY_NONCE="${ready_nonce}"
+  export PRIVATEDEPLOY_FRONTEND_READY_TITLE="${SMOKE_SIGNAL_TITLE}"
 
   mkdir -p "${HOME}" "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_RUNTIME_DIR}" "${PRIVATEDEPLOY_SECRET_STORE_DIR}"
   chmod 700 "${XDG_RUNTIME_DIR}"
@@ -175,16 +180,13 @@ run_scale() {
     cloud_loaded="1"
   fi
   local dom_ready="0"
-  if xdotool search --onlyvisible --name "^${SMOKE_SIGNAL_TITLE}$" >/dev/null 2>&1; then
+  if [[ -f "${ready_file}" ]] && \
+    grep -Fqx "nonce=${ready_nonce}" "${ready_file}" && \
+    xdotool search --onlyvisible --name "^${SMOKE_SIGNAL_TITLE}$" >/dev/null 2>&1; then
     dom_ready="1"
   fi
 
-  if [[ "${color_count}" =~ ^[0-9]+$ ]] && (( color_count > 16 )); then
-    echo "scale=${scale} status=PASS colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
-    return 0
-  fi
-
-  if [[ "${dom_ready}" == "1" ]]; then
+  if [[ "${dom_ready}" == "1" ]] && [[ "${color_count}" =~ ^[0-9]+$ ]] && (( color_count > 16 )); then
     echo "scale=${scale} status=PASS colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
     return 0
   fi

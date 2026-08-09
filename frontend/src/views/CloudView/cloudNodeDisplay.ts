@@ -1,11 +1,18 @@
 import type { CdnDeployment, CloudNode } from '@/types/cloud'
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
-type DisplayCloudNode = CloudNode & { statusText?: string; status?: string }
+type DisplayCloudNode = CloudNode & {
+  statusText?: string
+  status?: string
+  deploymentState?: 'submitting' | 'provider-pending' | 'applying' | 'uncertain'
+  deploymentStartedAt?: number
+}
 
 export type DeploymentStepState = 'done' | 'current' | 'pending'
 export type DeploymentStep = { label: string; state: DeploymentStepState }
 export type NodeProtocolLink = { label: string; url: string }
+
+export const DeploymentDelayThresholdMs = 10 * 60 * 1000
 
 const DefaultHysteriaServerName = 'www.bing.com'
 const DefaultVlessServerName = 'www.microsoft.com'
@@ -207,68 +214,76 @@ export const buildNodeProtocolLinks = (
 
 export const shouldShowDeploymentProgress = (node: CloudNode | Record<string, any>): boolean => {
   const target = ensureNode(node)
-  return target.statusText !== 'connected' && target.statusText !== 'error'
+  if (target.deploymentState) return true
+  if (target.statusText === 'deploying' || target.statusText === 'applying') return true
+
+  const providerStatus = (target.status || '').toString().toLowerCase()
+  return ['pending', 'installing', 'starting', 'booting', 'provisioning', 'creating']
+    .some((status) => providerStatus.includes(status))
 }
 
-const computeDeploymentSteps = (
+const getDeploymentStateLabel = (
   node: CloudNode | Record<string, any>,
   translate: TranslateFn,
-): DeploymentStep[] => {
+  now: number = Date.now(),
+): string => {
   const target = ensureNode(node)
-  const normalizedStatus = (target.status || '').toString().toLowerCase()
-  const instanceReady = ['active', 'running', 'ok', 'started', 'poweron', 'power on', 'power_on'].some((key) =>
-    normalizedStatus.includes(key),
-  )
-  const ipReady = Boolean(isPublicIPv4(target.ipv4) || target.ipv6)
-  const protocolsReady = hasShadowsocks(target) || hasHysteria(target) || hasVless(target) || hasTrojan(target)
-  const applied = target.statusText === 'connected'
+  if (target.deploymentState === 'uncertain') {
+    return translate('cloud.progress.uncertain')
+  }
 
-  const rawSteps = [
-    { label: translate('cloud.progress.submitted'), done: true },
-    { label: translate('cloud.progress.provisioning'), done: instanceReady },
-    { label: translate('cloud.progress.waitingIp'), done: ipReady },
-    { label: translate('cloud.progress.configuring'), done: protocolsReady },
-    { label: translate('cloud.progress.ready'), done: applied },
-  ]
+  const startedAt = Number(target.deploymentStartedAt || 0)
+  if (startedAt > 0 && now - startedAt >= DeploymentDelayThresholdMs) {
+    return translate('cloud.progress.delayed')
+  }
 
-  const firstIncomplete = rawSteps.findIndex((step) => !step.done)
+  if (target.deploymentState === 'applying' || target.statusText === 'applying') {
+    return translate('cloud.progress.applyingLocal')
+  }
+  if (target.deploymentState === 'provider-pending') {
+    return translate('cloud.progress.providerPending')
+  }
 
-  return rawSteps.map((step, index) => {
-    const state: DeploymentStepState =
-      step.done || firstIncomplete === -1
-        ? 'done'
-        : index === firstIncomplete
-          ? 'current'
-          : 'pending'
-    return {
-      label: step.label,
-      state,
-    }
-  })
+  const providerStatus = (target.status || '').toString().toLowerCase()
+  if (['pending', 'installing', 'starting', 'booting', 'provisioning', 'creating']
+    .some((status) => providerStatus.includes(status))) {
+    return translate('cloud.progress.providerPending')
+  }
+  return translate('cloud.progress.requesting')
 }
 
 export const getDeploymentSteps = (
   node: CloudNode | Record<string, any>,
   translate: TranslateFn,
-): DeploymentStep[] => computeDeploymentSteps(node, translate)
+  now: number = Date.now(),
+): DeploymentStep[] => [{
+  label: getDeploymentStateLabel(node, translate, now),
+  state: 'current',
+}]
 
 export const getDeploymentSummary = (
   node: CloudNode | Record<string, any>,
   translate: TranslateFn,
+  now: number = Date.now(),
 ): string => {
-  const steps = computeDeploymentSteps(node, translate)
-  const total = steps.length
-  const currentIndex = steps.findIndex((step) => step.state === 'current')
-  const effectiveIndex = currentIndex === -1 ? total - 1 : currentIndex
-  const label =
-    steps[effectiveIndex]?.label ??
-    steps[Math.min(steps.length - 1, Math.max(0, effectiveIndex))]?.label ??
-    ''
-  const stepNumber = currentIndex === -1 ? total : currentIndex + 1
+  return getDeploymentStateLabel(node, translate, now)
+}
 
-  return translate('cloud.progress.summary', {
-    current: stepNumber,
-    total,
-    label,
-  })
+export const getDeploymentHint = (
+  node: CloudNode | Record<string, any>,
+  translate: TranslateFn,
+  now: number = Date.now(),
+): string => {
+  const target = ensureNode(node)
+  if (target.deploymentState === 'uncertain') {
+    return translate('cloud.progress.uncertainHint')
+  }
+  const startedAt = Number(target.deploymentStartedAt || 0)
+  if (startedAt > 0 && now - startedAt >= DeploymentDelayThresholdMs) {
+    return translate('cloud.progress.delayedHint')
+  }
+  if (target.deploymentState === 'submitting') {
+    return translate('cloud.progress.cancelHint')
+  }
+  return ''
 }

@@ -15,6 +15,8 @@ IMAGE_TAG="${IMAGE_TAG:-privatedeploy-jammy-build:latest}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/scripts/jammy-build/Dockerfile"
+GO_VERSION="$(awk '/^go[[:space:]]+/ { print $2; exit }' "${REPO_ROOT}/go.mod")"
+[[ -n "${GO_VERSION}" ]] || { echo "ERROR: unable to read Go version from go.mod" >&2; exit 1; }
 
 if [[ ! -f "${DOCKERFILE}" ]]; then
     echo "ERROR: Dockerfile not found at ${DOCKERFILE}" >&2
@@ -22,7 +24,7 @@ if [[ ! -f "${DOCKERFILE}" ]]; then
 fi
 
 echo "==> Building Docker image ${IMAGE_TAG}"
-docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${REPO_ROOT}/scripts/jammy-build"
+docker build --build-arg "GO_VERSION=${GO_VERSION}" -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${REPO_ROOT}/scripts/jammy-build"
 
 # Mount go and pnpm caches so repeat builds are fast
 GO_CACHE_VOL=privatedeploy-jammy-gocache

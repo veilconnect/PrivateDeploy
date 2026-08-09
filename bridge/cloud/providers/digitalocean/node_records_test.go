@@ -30,11 +30,13 @@ func TestMutateNodeRecordsConcurrentUpsertsPersistAll(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("cloud-do-%d", i)
-			errs[i] = provider.mutateNodeRecords(func(records map[string]cloud.InstanceRecord) (bool, error) {
-				records[id] = cloud.InstanceRecord{
-					Plan:       "s-1vcpu-1gb",
-					SSPort:     23650 + i,
-					SSPassword: "pw-" + id,
+			errs[i] = provider.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
+				records[id] = nodeRecord{
+					InstanceRecord: cloud.InstanceRecord{
+						Plan:       "s-1vcpu-1gb",
+						SSPort:     23650 + i,
+						SSPassword: "pw-" + id,
+					},
 				}
 				return true, nil
 			})

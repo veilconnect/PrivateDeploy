@@ -142,10 +142,23 @@ mkdir -p "$STAGING_DIR"/{usr/bin,usr/lib/${APP_NAME},usr/share/applications,usr/
 
 # 5. 复制文件到临时目录
 echo "==> 第 4 步: 准备打包文件（排除敏感配置）"
-cp "build/bin/$APP_DISPLAY_NAME" "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
-chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
+cp "build/bin/$APP_DISPLAY_NAME" "$STAGING_DIR/usr/lib/$APP_NAME/${APP_NAME}.bin"
+chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/${APP_NAME}.bin"
 cp "build/bin/privatedeploy-tray" "$STAGING_DIR/usr/lib/$APP_NAME/privatedeploy-tray"
 chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/privatedeploy-tray"
+
+# Keep every Linux distribution surface behind the same JavaScriptCore
+# compatibility launcher as the local installer and Jammy packages.
+cat > "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+PD_PREFIX="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
+export JSC_SIGNAL_FOR_GC="${JSC_SIGNAL_FOR_GC:-48}"
+export JSC_useJIT="${JSC_useJIT:-0}"
+exec -a PrivateDeploy "${PD_PREFIX}/privatedeploy.bin" "$@"
+WRAPPER
+chmod +x "$STAGING_DIR/usr/lib/$APP_NAME/$APP_NAME"
 ln -s "../lib/$APP_NAME/$APP_NAME" "$STAGING_DIR/usr/bin/$APP_NAME"
 
 # 只复制必要的数据文件（不含敏感配置）
@@ -186,6 +199,7 @@ Type=Application
 Categories=Network;Utility;
 Terminal=false
 StartupNotify=true
+StartupWMClass=PrivateDeploy
 EOF
 
 # 7. 生成 DEB 包

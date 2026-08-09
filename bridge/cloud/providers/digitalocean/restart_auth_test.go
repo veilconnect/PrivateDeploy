@@ -46,6 +46,13 @@ func TestCreateInstanceAfterRestartLoadsAPIKeyFromDisk(t *testing.T) {
 	createAuth := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/account/keys":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ssh_keys":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/account/keys":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ssh_key":{"id":7319}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/droplets":
 			mu.Lock()
 			createAuth = r.Header.Get("Authorization")
@@ -57,8 +64,6 @@ func TestCreateInstanceAfterRestartLoadsAPIKeyFromDisk(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"droplet":{"id":555001,"name":"restart-node","status":"active","created_at":"2026-07-13T00:00:00Z","region":{"slug":"sgp1"},"size":{"slug":"s-1vcpu-1gb"},"networks":{"v4":[],"v6":[]}}}`))
 		default:
-			// ensureManagedSSHKey / firewall calls are best-effort; failing
-			// them keeps the test fast without masking the auth assertion.
 			http.NotFound(w, r)
 		}
 	}))

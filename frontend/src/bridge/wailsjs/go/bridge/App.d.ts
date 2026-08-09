@@ -7,6 +7,8 @@ import {ssh} from '../models';
 
 export function AbsolutePath(arg1:string):Promise<bridge.FlagResult>;
 
+export function CancelCloudOperation(arg1:string):Promise<void>;
+
 export function CleanInvalidCloudNodes():Promise<bridge.FlagResult>;
 
 export function ClearCdn():Promise<bridge.FlagResult>;
@@ -65,6 +67,8 @@ export function GetCloudConfig():Promise<bridge.FlagResult>;
 
 export function GetCloudConfigTyped():Promise<cloud.ProviderConfig>;
 
+export function GetCloudOperationStatus(arg1:string):Promise<bridge.CloudOperationStatus>;
+
 export function GetCloudProvider():Promise<bridge.FlagResult>;
 
 export function GetCloudProviderAccountStatus(arg1:string):Promise<bridge.FlagResult>;
@@ -115,6 +119,8 @@ export function ListCloudRegions():Promise<bridge.FlagResult>;
 
 export function ListCloudRegionsTyped():Promise<Array<cloud.Region>>;
 
+export function ListPendingCloudOperations():Promise<Array<bridge.CloudOperationSnapshot>>;
+
 export function ListServer():Promise<bridge.FlagResult>;
 
 export function MakeDir(arg1:string):Promise<bridge.FlagResult>;
@@ -160,6 +166,8 @@ export function SetCloudProviderTyped(arg1:string):Promise<bridge.CloudProviderI
 export function SetupSSHEventEmitter():Promise<void>;
 
 export function ShowMainWindow():Promise<void>;
+
+export function SignalFrontendReady():Promise<void>;
 
 export function StartHealthMonitor():Promise<bridge.FlagResult>;
 

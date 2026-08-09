@@ -234,16 +234,19 @@ export interface SSHDeployProgress {
 // Multi-Deploy Types
 export interface MultiDeployResult {
   id: string
+  operationId: string
+  state: 'succeeded' | 'failed' | 'reconciling'
   success: boolean
   error?: string
 }
 
-export type DeployProgressStatus = 'pending' | 'deploying' | 'ready' | 'failed'
+export type DeployProgressStatus = 'pending' | 'deploying' | 'reconciling' | 'ready' | 'failed'
 export interface DeployProgress {
   index: number
   status: DeployProgressStatus
   label: string
   message: string
+  operationId?: string
 }
 
 // Region Recommendation Types

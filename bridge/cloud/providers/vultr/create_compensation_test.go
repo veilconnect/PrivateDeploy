@@ -23,6 +23,13 @@ func newCompensationFakeServer(t *testing.T, deleteStatus int) *atomic.Int32 {
 	deleteCalls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/ssh-keys":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ssh_keys":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/ssh-keys":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ssh_key":{"id":"managed-key"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/plans":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"plans":[{"id":"vc2-1c-1gb","ram":512}]}`))
@@ -71,6 +78,7 @@ func newCompensationTestEnv(t *testing.T, deleteStatus int) (*Provider, *atomic.
 
 	basePath := t.TempDir()
 	t.Setenv("PRIVATEDEPLOY_BASE_PATH", basePath)
+	t.Setenv("PRIVATEDEPLOY_SECRET_STORE_DIR", filepath.Join(basePath, "secrets"))
 
 	provider := New(&cloud.ProviderConfig{
 		Provider: "vultr",

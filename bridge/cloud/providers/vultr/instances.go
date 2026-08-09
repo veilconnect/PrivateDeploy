@@ -3,6 +3,7 @@ package vultr
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,33 @@ type instanceCredentials struct {
 	realityPublicKey  string
 	realityShortID    string
 	ports             deploy.PortAssignment
+}
+
+// isCanonicalVultrInstanceID validates the hyphenated UUID form returned by
+// Vultr's v2 instance API. Hex case is immaterial; exact local-record matching
+// still prevents aliases, while the fixed shape rejects path/query syntax and
+// cross-provider IDs.
+func isCanonicalVultrInstanceID(instanceID string) bool {
+	if len(instanceID) != 36 || instanceID != strings.TrimSpace(instanceID) {
+		return false
+	}
+	allZero := true
+	for index, char := range instanceID {
+		switch index {
+		case 8, 13, 18, 23:
+			if char != '-' {
+				return false
+			}
+			continue
+		}
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+		if char != '0' {
+			allZero = false
+		}
+	}
+	return !allZero
 }
 
 // ListInstances returns all Vultr instances.
@@ -98,6 +126,50 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 	if recordsErr != nil {
 		return nil, recordsErr
 	}
+	recordsSnapshot := records
+
+	// Reconcile remote disappearance before pruning records. A record carrying
+	// a firewall ownership token is also the only durable cleanup credential;
+	// deleting it before the provider firewall is gone would leak quota
+	// permanently. Cleanup is deliberately outside mutateNodeRecords to avoid
+	// holding nodesMu across network I/O (configure takes the locks in the
+	// opposite order).
+	liveSnapshotIDs := make(map[string]struct{}, len(payload.Instances))
+	for _, inst := range payload.Instances {
+		liveSnapshotIDs[inst.ID] = struct{}{}
+	}
+	missingCleanupSucceeded := make(map[string]struct{})
+	missingCleanupFailed := make(map[string]struct{})
+	missingCleanupDeferred := make(map[string]struct{})
+	for id, record := range recordsSnapshot {
+		if _, live := liveSnapshotIDs[id]; live {
+			continue
+		}
+		if p.isInstanceCreateActive(id) {
+			missingCleanupDeferred[id] = struct{}{}
+			continue
+		}
+		// The collection endpoint can be briefly incomplete. Require an
+		// authoritative per-instance 404 before touching the firewall; a live,
+		// failed, or ambiguous lookup is preserved for a later refresh.
+		missing, confirmErr := p.instanceDefinitelyMissing(ctx, id)
+		if confirmErr != nil || !missing {
+			missingCleanupDeferred[id] = struct{}{}
+			continue
+		}
+		if strings.TrimSpace(record.FirewallOwnershipToken) == "" {
+			// Legacy records have no verifiable, instance-owned firewall group.
+			// There is nothing safe for automatic cleanup to delete.
+			missingCleanupSucceeded[id] = struct{}{}
+			continue
+		}
+		if err := p.cleanupInstanceFirewallGroups(ctx, id, record.FirewallOwnershipToken); err != nil {
+			missingCleanupFailed[id] = struct{}{}
+			fmt.Printf("[VultrProvider] preserving hidden record %s for firewall cleanup retry: %v\n", id, err)
+			continue
+		}
+		missingCleanupSucceeded[id] = struct{}{}
+	}
 
 	// Merge the live instance list into the local records as one atomic
 	// read-modify-write: the records mutex is held for the whole cycle
@@ -107,11 +179,22 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 	var instances []cloud.Instance
 	mutateErr := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 		dirty := false
-		liveIDs := make(map[string]struct{}, len(payload.Instances))
-		for _, inst := range payload.Instances {
-			liveIDs[inst.ID] = struct{}{}
-		}
+		liveIDs := liveSnapshotIDs
 		claimedReplacements := make(map[string]struct{})
+		// Records absent from the pre-request snapshot were created while the
+		// paginated API read was in flight. They must neither be pruned nor used
+		// as a replacement candidate based on a coincidental label/IP match.
+		for id := range records {
+			if _, existedBeforeRequest := recordsSnapshot[id]; !existedBeforeRequest {
+				claimedReplacements[id] = struct{}{}
+			}
+		}
+		for id := range missingCleanupFailed {
+			claimedReplacements[id] = struct{}{}
+		}
+		for id := range missingCleanupDeferred {
+			claimedReplacements[id] = struct{}{}
+		}
 		seen := make(map[string]struct{}, len(payload.Instances))
 		instances = make([]cloud.Instance, 0, len(payload.Instances))
 
@@ -139,6 +222,12 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 					}
 					dirty = true
 				}
+			}
+			if record.FirewallCleanupPending {
+				// The instance is present again (for example eventual consistency
+				// briefly omitted it), so it is not a cleanup tombstone.
+				record.FirewallCleanupPending = false
+				dirty = true
 			}
 
 			if replacementDetected && clearNodeRecordCredentials(&record) {
@@ -204,13 +293,39 @@ func (p *Provider) ListInstances(ctx context.Context) ([]cloud.Instance, error) 
 			instances = append(instances, instance)
 		}
 
-		if len(records) > len(seen) {
-			for id := range records {
-				if _, ok := seen[id]; !ok {
-					delete(records, id)
+		for id, current := range records {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			snapshot, existedBeforeRequest := recordsSnapshot[id]
+			if !existedBeforeRequest {
+				continue
+			}
+			if _, cleanupFailed := missingCleanupFailed[id]; cleanupFailed {
+				if current.FirewallGroupID == snapshot.FirewallGroupID &&
+					current.FirewallOwnershipToken == snapshot.FirewallOwnershipToken &&
+					!current.FirewallCleanupPending {
+					current.FirewallCleanupPending = true
+					records[id] = current
 					dirty = true
 				}
+				continue
 			}
+			if _, cleanupDeferred := missingCleanupDeferred[id]; cleanupDeferred {
+				continue
+			}
+			if _, cleanupSucceeded := missingCleanupSucceeded[id]; !cleanupSucceeded {
+				continue
+			}
+			// A concurrent repair may have assigned a new group after the early
+			// snapshot was loaded. Preserve that fresh ownership instead of
+			// deleting its only cleanup token based on stale evidence.
+			if current.FirewallGroupID != snapshot.FirewallGroupID ||
+				current.FirewallOwnershipToken != snapshot.FirewallOwnershipToken {
+				continue
+			}
+			delete(records, id)
+			dirty = true
 		}
 
 		return dirty, nil
@@ -315,26 +430,63 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 		return nil, fmt.Errorf("failed to determine vultr os ids: no compatible images found")
 	}
 
+	// Vultr cannot attach a key after a server has been created. Provision the
+	// account-level recovery key before crossing the billable POST boundary so
+	// every newly managed node can be repaired in place later. Failure is fatal
+	// here (and safe to retry) because no instance has been requested yet.
+	managedSSHKeyID, _, managedSSHKeyFingerprint, err := p.ensureManagedSSHKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("prepare Vultr managed SSH recovery key before create: %w", err)
+	}
+
 	creds, userData, err := p.generateDeploymentPayload(planRAM, tuning)
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(opts.OperationJournalPath) != "" {
+		prepared := vultrCreateOperationData{
+			Record:  p.buildNodeRecord("", opts, osIDs[0], planRAM, creds, tuning, managedSSHKeyFingerprint),
+			PlanRAM: planRAM,
+		}
+		if err := cloud.StoreCreateOperationProviderData(opts.OperationJournalPath, cloud.CreateOperationPrepared, prepared); err != nil {
+			return nil, fmt.Errorf("journal Vultr credentials before create: %w", err)
+		}
+		// Submitted is persisted immediately before entering the only code path
+		// allowed to POST. After this point every retry must query the exact tag.
+		if err := cloud.MarkCreateOperationSubmitted(opts.OperationJournalPath); err != nil {
+			return nil, fmt.Errorf("journal Vultr create submission: %w", err)
+		}
+	}
 
-	payload, selectedOSID, err := p.createVultrInstance(ctx, opts, osIDs, userData)
+	payload, selectedOSID, err := p.createVultrInstance(ctx, opts, osIDs, userData, managedSSHKeyID)
 	if err != nil {
 		return nil, err
 	}
 
 	instanceID := payload.Instance.ID
+	p.beginInstanceCreate(instanceID)
+	defer p.endInstanceCreate(instanceID)
 
-	record := p.buildNodeRecord(instanceID, opts, selectedOSID, planRAM, creds, tuning)
+	record := p.buildNodeRecord(instanceID, opts, selectedOSID, planRAM, creds, tuning, managedSSHKeyFingerprint)
+	if strings.TrimSpace(opts.OperationJournalPath) != "" {
+		if err := cloud.StoreCreateOperationProviderData(opts.OperationJournalPath, cloud.CreateOperationSubmitted, vultrCreateOperationData{
+			Record:  record,
+			PlanRAM: planRAM,
+		}); err != nil {
+			return nil, fmt.Errorf("%w: Vultr instance %s exists but its operation journal could not be updated: %v", cloud.ErrCreateOutcomePending, instanceID, err)
+		}
+		if err := cloud.MarkCreateOperationRemote(opts.OperationJournalPath, instanceID); err != nil {
+			return nil, fmt.Errorf("%w: Vultr instance %s exists but its remote id could not be journaled: %v", cloud.ErrCreateOutcomePending, instanceID, err)
+		}
+	}
 	if err := p.persistNodeRecord(instanceID, record); err != nil {
 		// The remote instance exists but its credentials could not be saved
 		// locally, so it would be unusable and keep billing. Best-effort
 		// compensation: delete it and let the caller retry cleanly.
 		if delErr := p.compensateUnrecordedInstance(instanceID); delErr != nil {
 			return nil, fmt.Errorf(
-				"failed to persist node record for vultr instance %s: %v; compensating delete also failed: %v — delete the instance manually in the Vultr console",
+				"%w: failed to persist node record for vultr instance %s: %v; compensating delete also failed: %v — delete the instance manually in the Vultr console",
+				cloud.ErrCreateOutcomePending,
 				instanceID, err, delErr,
 			)
 		}
@@ -381,9 +533,14 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	}
 	record.LastDeployWarning = strings.Join(warnings, "; ")
 	if record.LastDeployWarning != "" {
-		if persistErr := p.persistNodeRecord(instanceID, record); persistErr != nil {
+		persistedRecord, persistErr := p.persistDeploymentWarning(instanceID, record.LastDeployWarning)
+		if persistErr != nil {
 			return nil, fmt.Errorf("failed to persist deployment warning: %w", persistErr)
 		}
+		// Keep the response record in sync while preserving fields (notably
+		// firewall ownership) written by lifecycle steps after the local record
+		// variable was loaded.
+		record = persistedRecord
 	}
 
 	cloudInst := toCloudInstance(instance, record)
@@ -391,6 +548,21 @@ func (p *Provider) CreateInstance(ctx context.Context, opts *cloud.CreateInstanc
 	cloudInst.Status = payload.Instance.Status
 	cloudInst.LastDeployWarning = record.LastDeployWarning
 	return &cloudInst, nil
+}
+
+func (p *Provider) persistDeploymentWarning(instanceID, warning string) (nodeRecord, error) {
+	var persisted nodeRecord
+	err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
+		record, ok := records[instanceID]
+		if !ok {
+			return false, fmt.Errorf("node record %s disappeared while saving deployment warning", instanceID)
+		}
+		record.LastDeployWarning = warning
+		records[instanceID] = record
+		persisted = record
+		return true, nil
+	})
+	return persisted, err
 }
 
 // generateDeploymentPayload creates credentials and the user-data deployment script.
@@ -439,7 +611,7 @@ func (p *Provider) generateDeploymentPayload(planRAM int, tuning deploy.Deployme
 }
 
 // createVultrInstance calls the Vultr API with OS ID fallback.
-func (p *Provider) createVultrInstance(ctx context.Context, opts *cloud.CreateInstanceOptions, osIDs []int, userData string) (struct {
+func (p *Provider) createVultrInstance(ctx context.Context, opts *cloud.CreateInstanceOptions, osIDs []int, userData string, managedSSHKeyIDs ...string) (struct {
 	Instance vultrInstance `json:"instance"`
 }, int, error) {
 	requestBody := map[string]any{
@@ -449,47 +621,96 @@ func (p *Provider) createVultrInstance(ctx context.Context, opts *cloud.CreateIn
 		"enable_ipv6": true,
 		"user_data":   base64.StdEncoding.EncodeToString([]byte(userData)),
 	}
-	if sshKeyID := strings.TrimSpace(opts.SSHKeyID); sshKeyID != "" {
-		requestBody["sshkey_id"] = []string{sshKeyID}
+	if strings.TrimSpace(opts.OperationID) != "" {
+		requestBody["tags"] = []string{cloud.CreateOperationTag("vultr", opts.OperationID)}
+	}
+	sshKeyIDs := make([]string, 0, len(managedSSHKeyIDs)+1)
+	seenSSHKeyIDs := make(map[string]struct{}, len(managedSSHKeyIDs)+1)
+	appendSSHKeyID := func(candidate string) {
+		sshKeyID := strings.TrimSpace(candidate)
+		if sshKeyID == "" {
+			return
+		}
+		if _, exists := seenSSHKeyIDs[sshKeyID]; exists {
+			return
+		}
+		seenSSHKeyIDs[sshKeyID] = struct{}{}
+		sshKeyIDs = append(sshKeyIDs, sshKeyID)
+	}
+	for _, candidate := range managedSSHKeyIDs {
+		appendSSHKeyID(candidate)
+	}
+	appendSSHKeyID(opts.SSHKeyID)
+	if len(sshKeyIDs) > 0 {
+		requestBody["sshkey_id"] = sshKeyIDs
 	}
 
 	var payload struct {
 		Instance vultrInstance `json:"instance"`
 	}
 	var lastErr error
-	selectedOSID := 0
-
-	for _, osID := range osIDs {
+	for index, osID := range osIDs {
 		requestBody["os_id"] = osID
 		res, err := p.apiRequest(ctx, http.MethodPost, "/instances", requestBody)
 		if err != nil {
-			lastErr = err
-			continue
+			// A transport error does not prove the create was rejected: Vultr may
+			// have accepted it before the connection broke. Posting again with a
+			// fallback OS could create a second billable VM.
+			return payload, 0, fmt.Errorf("%w: Vultr transport failure; request was not retried: %v", cloud.ErrCreateOutcomePending, err)
+		}
+		body, readErr := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if readErr != nil {
+			return payload, 0, fmt.Errorf("%w: Vultr response could not be read; request was not retried: %v", cloud.ErrCreateOutcomePending, readErr)
+		}
+		if res.StatusCode >= 400 {
+			reason := decodeVultrError(body)
+			attemptErr := fmt.Errorf("vultr api error (%d %s): %s", res.StatusCode, http.StatusText(res.StatusCode), reason)
+			if res.StatusCode >= http.StatusInternalServerError {
+				return payload, 0, fmt.Errorf("%w: %v; request was not retried", cloud.ErrCreateOutcomePending, attemptErr)
+			}
+			if index < len(osIDs)-1 && isExplicitVultrOSIDRejection(res.StatusCode, reason) {
+				lastErr = attemptErr
+				continue
+			}
+			return payload, 0, attemptErr
 		}
 		var attempt struct {
 			Instance vultrInstance `json:"instance"`
 		}
-		if err := p.parseResponse(res, &attempt); err != nil {
-			msg := strings.ToLower(err.Error())
-			if strings.Contains(msg, "os_id") || strings.Contains(msg, "os id") {
-				lastErr = err
-				continue
-			}
-			return payload, 0, err
+		if err := json.Unmarshal(body, &attempt); err != nil {
+			return payload, 0, fmt.Errorf("%w: Vultr success response was invalid; request was not retried: %v", cloud.ErrCreateOutcomePending, err)
+		}
+		if strings.TrimSpace(attempt.Instance.ID) == "" {
+			return payload, 0, fmt.Errorf("%w: Vultr success response had no instance id; request was not retried", cloud.ErrCreateOutcomePending)
 		}
 		payload = attempt
-		selectedOSID = osID
-		lastErr = nil
-		break
+		return payload, osID, nil
 	}
 	if lastErr != nil {
 		return payload, 0, lastErr
 	}
-	return payload, selectedOSID, nil
+	return payload, 0, fmt.Errorf("failed to create Vultr instance: no OS candidate was attempted")
+}
+
+func isExplicitVultrOSIDRejection(status int, reason string) bool {
+	if status < http.StatusBadRequest || status >= http.StatusInternalServerError ||
+		status == http.StatusUnauthorized || status == http.StatusForbidden ||
+		status == http.StatusConflict || status == http.StatusTooManyRequests {
+		return false
+	}
+	lower := strings.ToLower(reason)
+	mentionsOSID := strings.Contains(lower, "os_id") || strings.Contains(lower, "os id")
+	explicitlyRejected := strings.Contains(lower, "invalid") ||
+		strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "not available") ||
+		strings.Contains(lower, "does not exist") ||
+		strings.Contains(lower, "must be")
+	return mentionsOSID && explicitlyRejected
 }
 
 // buildNodeRecord constructs the initial node record for persistence.
-func (p *Provider) buildNodeRecord(instanceID string, opts *cloud.CreateInstanceOptions, osID, planRAM int, creds instanceCredentials, tuning deploy.DeploymentTuning) nodeRecord {
+func (p *Provider) buildNodeRecord(instanceID string, opts *cloud.CreateInstanceOptions, osID, planRAM int, creds instanceCredentials, tuning deploy.DeploymentTuning, managedSSHKeyFingerprints ...string) nodeRecord {
 	record := nodeRecord{
 		InstanceID: instanceID,
 		Label:      opts.Label,
@@ -503,6 +724,9 @@ func (p *Provider) buildNodeRecord(instanceID string, opts *cloud.CreateInstance
 			SSPort:     creds.ports.SSPort,
 			SSPassword: creds.ssPassword,
 		},
+	}
+	if len(managedSSHKeyFingerprints) > 0 {
+		record.ManagedSSHKeyFingerprint = strings.TrimSpace(managedSSHKeyFingerprints[0])
 	}
 	if planRAM > 600 {
 		record.HysteriaPort = creds.ports.HysteriaPort
@@ -597,44 +821,85 @@ func (p *Provider) waitForServiceReady(ctx context.Context, ip string, ports dep
 // should no longer exist", so it is treated as success and the stale local
 // record is purged rather than left permanently un-deletable.
 func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error {
-	if strings.TrimSpace(instanceID) == "" {
+	if !isCanonicalVultrInstanceID(instanceID) {
 		return cloud.ErrInstanceNotFound
 	}
 
 	if _, err := p.ensureConfig(); err != nil {
 		return err
 	}
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return fmt.Errorf("failed to load firewall ownership before destroying %s: %w", instanceID, err)
+	}
+	record, owned := records[instanceID]
+	if !owned {
+		return cloud.ErrInstanceNotFound
+	}
+	ownershipToken := record.FirewallOwnershipToken
 
-	res, err := p.apiRequest(ctx, http.MethodDelete, "/instances/"+instanceID, nil)
+	// Require an authoritative per-instance GET after local ownership proof.
+	// Collection-list absence is never enough to authorize remote or local
+	// deletion because provider listings can be transiently incomplete.
+	missing, err := p.instanceDefinitelyMissing(ctx, instanceID)
 	if err != nil {
 		return err
 	}
-	if res.StatusCode == http.StatusNotFound {
-		_, _ = io.Copy(io.Discard, res.Body)
-		_ = res.Body.Close()
-	} else if err := p.parseResponse(res, nil); err != nil {
-		return err
+	if !missing {
+		res, err := p.apiRequest(ctx, http.MethodDelete, "/instances/"+instanceID, nil)
+		if err != nil {
+			return err
+		}
+		if res.StatusCode == http.StatusNotFound {
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
+		} else if err := p.parseResponse(res, nil); err != nil {
+			return err
+		}
 	}
 
-	_ = p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
+	// The instance no longer exists, so reclaim every firewall group whose
+	// deterministic description proves that it belongs to this instance. Keep
+	// the local record when cleanup fails: a second Destroy call will treat the
+	// instance 404 as success and retry the group deletion instead of silently
+	// leaking quota. Legacy shared groups are never removed by this path.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cleanupCancel()
+	if err := p.cleanupInstanceFirewallGroups(cleanupCtx, instanceID, ownershipToken); err != nil {
+		if markErr := p.markFirewallCleanupPending(instanceID); markErr != nil {
+			return fmt.Errorf("instance %s was deleted, but its managed Vultr firewall cleanup failed: %v; additionally failed to preserve the hidden cleanup record: %w", instanceID, err, markErr)
+		}
+		return fmt.Errorf("instance %s was deleted, but its managed Vultr firewall cleanup failed: %w", instanceID, err)
+	}
+
+	if err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
 		if _, ok := records[instanceID]; !ok {
 			return false, nil
 		}
 		delete(records, instanceID)
 		return true, nil
-	})
+	}); err != nil {
+		return fmt.Errorf("instance %s and its managed firewall were deleted, but the local node record could not be removed: %w", instanceID, err)
+	}
 
 	return nil
 }
 
 // GetInstance retrieves a specific Vultr instance.
 func (p *Provider) GetInstance(ctx context.Context, instanceID string) (*cloud.Instance, error) {
-	if instanceID == "" {
+	if !isCanonicalVultrInstanceID(instanceID) {
 		return nil, cloud.ErrInstanceNotFound
 	}
 
 	if _, err := p.ensureConfig(); err != nil {
 		return nil, err
+	}
+	records, err := p.loadNodeRecords()
+	if err != nil {
+		return nil, err
+	}
+	if _, owned := records[instanceID]; !owned {
+		return nil, cloud.ErrInstanceNotFound
 	}
 
 	res, err := p.apiRequest(ctx, http.MethodGet, "/instances/"+instanceID, nil)
@@ -710,25 +975,96 @@ func (p *Provider) getInstanceRaw(ctx context.Context, instanceID string) (vultr
 	return payload.Instance, nil
 }
 
+func (p *Provider) instanceDefinitelyMissing(ctx context.Context, instanceID string) (bool, error) {
+	res, err := p.apiRequest(ctx, http.MethodGet, "/instances/"+instanceID, nil)
+	if err != nil {
+		return false, err
+	}
+	if res.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+		return true, nil
+	}
+	if res.StatusCode >= 400 {
+		return false, p.parseResponse(res, nil)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
+	return false, nil
+}
+
 // CleanInvalidNodes removes node records that lack proxy configuration.
 // Returns the number of records removed.
 func (p *Provider) CleanInvalidNodes(ctx context.Context) (int, error) {
-	removed := 0
-	err := p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
-		for id, record := range records {
-			if validateNodeRecord(record) {
+	snapshot, err := p.loadNodeRecords()
+	if err != nil {
+		return 0, fmt.Errorf("failed to clean node records: %w", err)
+	}
+
+	eligible := make(map[string]nodeRecord)
+	cleanupFailed := make(map[string]nodeRecord)
+	var cleanupErrors []error
+	for id, record := range snapshot {
+		if validateNodeRecord(record) {
+			continue
+		}
+		// Never turn a still-billing VPS into an invisible local ghost merely
+		// because its proxy credentials are incomplete. An authoritative 404 is
+		// required before any invalid record can be removed.
+		missing, confirmErr := p.instanceDefinitelyMissing(ctx, id)
+		if confirmErr != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("confirm invalid node %s before cleanup: %w", id, confirmErr))
+			continue
+		}
+		if !missing {
+			continue
+		}
+		ownershipToken := strings.TrimSpace(record.FirewallOwnershipToken)
+		if ownershipToken == "" {
+			if record.FirewallCleanupPending {
+				// This tombstone says a prior cleanup did not finish, but it lacks
+				// proof that would make deletion safe. Preserve it for operator
+				// inspection instead of losing the only evidence of the leak.
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("invalid node %s has unresolved firewall cleanup without an ownership token", id))
 				continue
 			}
-			fmt.Printf("[CleanInvalidNodes] Removing invalid node: %s (label=%s, ssPort=%d)\n",
-				id, record.Label, record.SSPort)
+			eligible[id] = record
+			continue
+		}
+
+		if cleanupErr := p.cleanupInstanceFirewallGroups(ctx, id, ownershipToken); cleanupErr != nil {
+			cleanupFailed[id] = record
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("clean firewall for invalid node %s: %w", id, cleanupErr))
+			continue
+		}
+		eligible[id] = record
+	}
+
+	removed := 0
+	err = p.mutateNodeRecords(func(records map[string]nodeRecord) (bool, error) {
+		dirty := false
+		for id, snapshotRecord := range cleanupFailed {
+			current, ok := records[id]
+			if !ok || validateNodeRecord(current) || current.FirewallOwnershipToken != snapshotRecord.FirewallOwnershipToken || current.FirewallGroupID != snapshotRecord.FirewallGroupID {
+				continue
+			}
+			if !current.FirewallCleanupPending {
+				current.FirewallCleanupPending = true
+				records[id] = current
+				dirty = true
+			}
+		}
+		for id, snapshotRecord := range eligible {
+			current, ok := records[id]
+			if !ok || validateNodeRecord(current) || current.FirewallOwnershipToken != snapshotRecord.FirewallOwnershipToken || current.FirewallGroupID != snapshotRecord.FirewallGroupID {
+				continue
+			}
+			fmt.Printf("[CleanInvalidNodes] Removing invalid node: %s (label=%s, ssPort=%d)\n", id, current.Label, current.SSPort)
 			delete(records, id)
 			removed++
+			dirty = true
 		}
-		if removed == 0 {
-			return false, nil
-		}
-		fmt.Printf("[CleanInvalidNodes] Saving %d valid records (removed %d invalid)\n", len(records), removed)
-		return true, nil
+		return dirty, nil
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to clean node records: %w", err)
@@ -737,6 +1073,8 @@ func (p *Provider) CleanInvalidNodes(ctx context.Context) (int, error) {
 	if removed > 0 {
 		fmt.Printf("[CleanInvalidNodes] Successfully saved cleaned records to %s\n", p.nodesPath)
 	}
-
+	if len(cleanupErrors) > 0 {
+		return removed, errors.Join(cleanupErrors...)
+	}
 	return removed, nil
 }

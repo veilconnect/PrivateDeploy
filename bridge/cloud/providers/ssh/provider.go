@@ -520,6 +520,9 @@ func (p *Provider) mergedCreateExtra(opts *cloud.CreateInstanceOptions) (map[str
 // RepairInstance re-runs the deployment script on the same SSH host and keeps
 // the original PrivateDeploy node ID so saved profiles continue to target it.
 func (p *Provider) RepairInstance(ctx context.Context, instanceID string) (*cloud.Instance, error) {
+	if instanceID == "" || instanceID != strings.TrimSpace(instanceID) {
+		return nil, cloud.ErrInstanceNotFound
+	}
 	records, err := p.loadNodeRecords()
 	if err != nil {
 		return nil, err
@@ -593,6 +596,9 @@ func (p *Provider) RepairInstance(ctx context.Context, instanceID string) (*clou
 
 // DestroyInstance SSH-connects to stop services, then removes the local record.
 func (p *Provider) DestroyInstance(ctx context.Context, instanceID string) error {
+	if instanceID == "" || instanceID != strings.TrimSpace(instanceID) {
+		return cloud.ErrInstanceNotFound
+	}
 	records, err := p.loadNodeRecords()
 	if err != nil {
 		return err

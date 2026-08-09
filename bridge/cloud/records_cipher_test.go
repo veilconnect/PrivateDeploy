@@ -1,12 +1,17 @@
 package cloud
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestEncodeRecordsRoundTrip(t *testing.T) {
@@ -152,6 +157,123 @@ func TestConcurrentFirstEncodeRecordsSharePersistedKey(t *testing.T) {
 		}
 		if decoded.ID != i || decoded.Secret != fmt.Sprintf("secret-%d", i) {
 			t.Fatalf("record %d round trip mismatch: %+v", i, decoded)
+		}
+	}
+}
+
+func TestRecordsDataKeyProcessHelper(t *testing.T) {
+	helperID := os.Getenv("PRIVATEDEPLOY_RECORDS_DEK_HELPER_ID")
+	if helperID == "" {
+		return
+	}
+	exchangeDir := os.Getenv("PRIVATEDEPLOY_RECORDS_DEK_HELPER_DIR")
+	if exchangeDir == "" {
+		t.Fatal("missing helper exchange directory")
+	}
+	if err := os.WriteFile(filepath.Join(exchangeDir, "ready-"+helperID), []byte("ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	goPath := filepath.Join(exchangeDir, "go")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(goPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for parent process barrier")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	blob, err := EncodeRecords(map[string]string{"id": helperID, "secret": "secret-" + helperID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exchangeDir, "blob-"+helperID), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentProcessesFirstEncodeRecordsSharePersistedKey(t *testing.T) {
+	secretDir := t.TempDir()
+	exchangeDir := t.TempDir()
+
+	baseEnv := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, secretStoreDirEnv+"=") ||
+			strings.HasPrefix(entry, "PRIVATEDEPLOY_RECORDS_DEK_HELPER_ID=") ||
+			strings.HasPrefix(entry, "PRIVATEDEPLOY_RECORDS_DEK_HELPER_DIR=") {
+			continue
+		}
+		baseEnv = append(baseEnv, entry)
+	}
+	baseEnv = append(baseEnv,
+		secretStoreDirEnv+"="+secretDir,
+		"PRIVATEDEPLOY_RECORDS_DEK_HELPER_DIR="+exchangeDir,
+	)
+
+	const processCount = 6
+	type processResult struct {
+		output bytes.Buffer
+		err    error
+	}
+	results := make([]processResult, processCount)
+	var wg sync.WaitGroup
+	for i := 0; i < processCount; i++ {
+		i := i
+		cmd := exec.Command(os.Args[0], "-test.run=^TestRecordsDataKeyProcessHelper$", "-test.count=1")
+		cmd.Env = append(append([]string{}, baseEnv...), fmt.Sprintf("PRIVATEDEPLOY_RECORDS_DEK_HELPER_ID=%d", i))
+		cmd.Stdout = &results[i].output
+		cmd.Stderr = &results[i].output
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i].err = cmd.Run()
+		}()
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		entries, err := os.ReadDir(exchangeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready := 0
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "ready-") {
+				ready++
+			}
+		}
+		if ready == processCount {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d/%d helper processes reached the barrier", ready, processCount)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(exchangeDir, "go"), []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+
+	t.Setenv(secretStoreDirEnv, secretDir)
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("helper process %d: %v\n%s", i, result.err, result.output.String())
+		}
+		blob, err := os.ReadFile(filepath.Join(exchangeDir, fmt.Sprintf("blob-%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]string
+		if err := DecodeRecords(blob, &decoded); err != nil {
+			t.Fatalf("decrypt helper process %d blob: %v", i, err)
+		}
+		if decoded["id"] != fmt.Sprintf("%d", i) || decoded["secret"] != fmt.Sprintf("secret-%d", i) {
+			t.Fatalf("helper process %d decoded %#v", i, decoded)
 		}
 	}
 }
