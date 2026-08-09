@@ -19,6 +19,11 @@ docker_pnpm_version="$(sed -n 's/.*npm install -g pnpm@\([^[:space:]\\]*\).*/\1/
   exit 1
 }
 
+grep -q '^export CI=true$' "${ROOT_DIR}/scripts/jammy-build/in-container-build.sh" || {
+  echo 'Jammy container frontend build does not force non-interactive CI mode' >&2
+  exit 1
+}
+
 shell_scripts=(
   "${ROOT_DIR}/scripts/install-local-linux.sh"
   "${ROOT_DIR}/scripts/build-linux-packages.sh"

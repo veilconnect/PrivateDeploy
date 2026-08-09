@@ -20,6 +20,10 @@ echo "==> Building PrivateDeploy ${VERSION} (jammy / webkit2_40)"
 
 echo "==> Step 1: build frontend"
 cd frontend
+# The Jammy builder is deliberately non-interactive. pnpm 10 asks for a TTY
+# before replacing a modules directory created by another pnpm release unless
+# CI mode is explicit, which made otherwise valid release builds abort.
+export CI=true
 pnpm install --frozen-lockfile=false
 pnpm run build
 cd ..
