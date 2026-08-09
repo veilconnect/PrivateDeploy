@@ -184,10 +184,16 @@ run_scale() {
     cloud_loaded="1"
   fi
   local dom_ready="0"
+  local ready_pid=""
+  # The AppImage runtime and dbus-run-session may insert launcher processes,
+  # while window managers may rewrite the visible title. The nonce-protected
+  # state file plus its still-live writer PID is the authoritative signal.
   if [[ -f "${ready_file}" ]] && \
-    grep -Fqx "nonce=${ready_nonce}" "${ready_file}" && \
-    xdotool search --onlyvisible --name "^${SMOKE_SIGNAL_TITLE}$" >/dev/null 2>&1; then
-    dom_ready="1"
+    grep -Fqx "nonce=${ready_nonce}" "${ready_file}"; then
+    ready_pid="$(awk -F= '$1 == "pid" { print $2; exit }' "${ready_file}")"
+    if [[ "${ready_pid}" =~ ^[0-9]+$ ]] && kill -0 "${ready_pid}" 2>/dev/null; then
+      dom_ready="1"
+    fi
   fi
 
   if [[ "${dom_ready}" == "1" ]] && [[ "${color_count}" =~ ^[0-9]+$ ]] && (( color_count > 16 )); then
@@ -195,7 +201,11 @@ run_scale() {
     return 0
   fi
 
-  echo "scale=${scale} status=FAIL reason=blank-window colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
+  local failure_reason="blank-window"
+  if [[ "${dom_ready}" != "1" ]]; then
+    failure_reason="frontend-not-ready"
+  fi
+  echo "scale=${scale} status=FAIL reason=${failure_reason} colors=${color_count} domReady=${dom_ready} cloudLoaded=${cloud_loaded}" | tee -a "${SUMMARY_FILE}"
   return 1
 }
 

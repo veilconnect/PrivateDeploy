@@ -27,6 +27,7 @@ grep -q '^export CI=true$' "${ROOT_DIR}/scripts/jammy-build/in-container-build.s
 shell_scripts=(
   "${ROOT_DIR}/scripts/install-local-linux.sh"
   "${ROOT_DIR}/scripts/build-linux-packages.sh"
+  "${ROOT_DIR}/scripts/container_gui_smoke_inner.sh"
   "${ROOT_DIR}/scripts/jammy-build/build-appimage-jammy.sh"
   "${ROOT_DIR}/scripts/jammy-build/build-linux-packages-jammy.sh"
   "${ROOT_DIR}/scripts/jammy-build/in-container-appimage.sh"
