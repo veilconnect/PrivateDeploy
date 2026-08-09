@@ -100,12 +100,12 @@ echo "==> Step C: bundle WebKit subprocess executables + LD_PRELOAD path-rewrite
 mkdir -p "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle"
 cp /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/WebKitNetworkProcess \
    /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/WebKitWebProcess \
-   "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/" 2>/dev/null || true
+   "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/"
 [[ -f /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/WebKitGPUProcess ]] && \
     cp /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/WebKitGPUProcess \
        "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/" 2>/dev/null || true
-cp -r /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/. \
-   "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/" 2>/dev/null || true
+cp /usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/libwebkit2gtkinjectedbundle.so \
+   "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/"
 
 # WebKit subprocesses on jammy ship without RPATH and rely on the system
 # /lib/x86_64-linux-gnu being on the loader path. On noble those libs don't
@@ -117,9 +117,10 @@ for proc in WebKitNetworkProcess WebKitWebProcess WebKitGPUProcess; do
     [[ -f "${procbin}" ]] || continue
     patchelf --set-rpath '$ORIGIN/../..' "${procbin}"
 done
-# Same for the injected bundle .so so its dlopen finds bundled libs.
-patchelf --set-rpath '$ORIGIN/../..' \
-    "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/libwebkit2gtkinjectedbundle.so" 2>/dev/null || true
+# The injected bundle lives one directory deeper than the process binaries;
+# three parents resolve to AppDir/usr/lib, where linuxdeploy placed the closure.
+patchelf --set-rpath '$ORIGIN/../../..' \
+    "${APP_DIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/libwebkit2gtkinjectedbundle.so"
 
 # Compile the LD_PRELOAD shim that rewrites WebKit's hardcoded LIBEXECDIR
 # path lookups to point inside the AppDir.
@@ -151,6 +152,17 @@ export JSC_useJIT=0
 # host NVIDIA/Mesa EGL stack can leave a live DOM behind an all-white surface.
 export LIBGL_ALWAYS_SOFTWARE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
+unset WEBKIT_FORCE_COMPOSITING_MODE WEBKIT_FORCE_DMABUF_RENDERER
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+if [[ "${PRIVATEDEPLOY_ALLOW_NVIDIA_EGL:-0}" != "1" && \
+      -r /proc/driver/nvidia/version && \
+      -r /usr/share/glvnd/egl_vendor.d/50_mesa.json ]]; then
+    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+    export __GLX_VENDOR_LIBRARY_NAME=mesa
+    export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+    export GALLIUM_DRIVER=llvmpipe
+fi
 # Take over the exec from AppRun so argv[0] is "PrivateDeploy", not the path
 # "AppRun.wrapped". GTK derives WM_CLASS from basename(argv[0]); without this,
 # the X11 WM_CLASS would be "AppRun.wrapped" and wouldn't match the .desktop's

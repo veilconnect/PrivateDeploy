@@ -13,6 +13,10 @@ import router from './router'
 import { signalFrontendReadyAfterMount } from './utils/frontendReady'
 import { migrateSensitiveBrowserStorage } from './utils/sensitiveData'
 
+if (/Linux/i.test(navigator.userAgent)) {
+  document.documentElement.dataset.platform = 'linux'
+}
+
 try {
   migrateSensitiveBrowserStorage()
 } catch (error) {

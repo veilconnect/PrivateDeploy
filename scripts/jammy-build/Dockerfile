@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/usr/local/go/bin:/go/bin:/usr/local/bin:/usr/bin:/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git build-essential pkg-config \
+        ca-certificates curl wget git patch build-essential pkg-config \
         libgtk-3-dev libwebkit2gtk-4.0-dev libsoup2.4-dev \
         libayatana-appindicator3-dev \
         ruby ruby-dev rubygems rpm \

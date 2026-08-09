@@ -6,6 +6,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+run_root_go_test() {
+  if [[ "$(go env GOOS)" == "linux" ]]; then
+    bash scripts/with-patched-wails-linux.sh go test "$@"
+  else
+    go test "$@"
+  fi
+}
+
 COVERAGE_DIR="$ROOT_DIR/output/coverage"
 mkdir -p "$COVERAGE_DIR"
 
@@ -16,7 +24,7 @@ FRONTEND_MIN_COVERAGE="${FRONTEND_MIN_COVERAGE:-0}"
 # ── Go coverage (root module) ─────────────────────────────────────
 echo "=== Go coverage (root) ==="
 ROOT_PACKAGES="$(go list ./... | grep -v '^privatedeploy/tmp$')"
-go test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES
+run_root_go_test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES
 GO_ROOT_LINE="$(go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1)"
 GO_ROOT_PCT="$(echo "$GO_ROOT_LINE" | awk '{print $NF}' | tr -d '%')"
 echo "$GO_ROOT_LINE"

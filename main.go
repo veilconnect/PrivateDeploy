@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -42,9 +43,11 @@ const (
 	installerQuitArg         = "--privatedeploy-installer-quit"
 	restartParentWaitTimeout = 20 * time.Second
 	restartParentPollPeriod  = 100 * time.Millisecond
+	mesaEGLVendorFile        = "/usr/share/glvnd/egl_vendor.d/50_mesa.json"
 )
 
 func main() {
+	configureLinuxWebKitCompatibility()
 	configureOptionalFileLogging()
 
 	restartRequest, isRestart, err := parseRestartParentRequest(os.Args[1:])
@@ -201,6 +204,7 @@ func main() {
 		SingleInstanceLock: singleInstanceLock,
 		OnStartup: func(ctx context.Context) {
 			app.Ctx = ctx
+			installShutdownSignalHandler(app)
 			if linuxStaticShell || linuxBareShell {
 				return
 			}
@@ -280,6 +284,52 @@ func main() {
 		fmt.Fprintln(os.Stderr, formatStartupError(err))
 		os.Exit(1)
 	}
+}
+
+func configureLinuxWebKitCompatibility() {
+	if bridge.Env.OS != "linux" {
+		return
+	}
+
+	// WebKitGTK's DOM and animation callbacks can remain healthy while its
+	// accelerated surface is completely white. Disable that path before GTK or
+	// WebKit creates a context, and remove inherited force-enable overrides.
+	_ = os.Unsetenv("WEBKIT_FORCE_COMPOSITING_MODE")
+	_ = os.Unsetenv("WEBKIT_FORCE_DMABUF_RENDERER")
+	_ = os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+	_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	_ = os.Setenv("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")
+	_ = os.Setenv("LIBGL_ALWAYS_SOFTWARE", "1")
+
+	// NVIDIA's GLVND dispatcher may still load the proprietary EGL vendor when
+	// LIBGL_ALWAYS_SOFTWARE is set. On affected hosts, select Mesa explicitly
+	// and use llvmpipe so the WebKit surface never crosses the NVIDIA EGL path.
+	// Keep an explicit escape hatch for testing the NVIDIA EGL vendor while the
+	// other CPU-rendering safeguards remain enabled.
+	if os.Getenv("PRIVATEDEPLOY_ALLOW_NVIDIA_EGL") == "1" {
+		return
+	}
+	if _, err := os.Stat("/proc/driver/nvidia/version"); err != nil {
+		return
+	}
+	if _, err := os.Stat(mesaEGLVendorFile); err != nil {
+		return
+	}
+	_ = os.Setenv("__EGL_VENDOR_LIBRARY_FILENAMES", mesaEGLVendorFile)
+	_ = os.Setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+	_ = os.Setenv("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe")
+	_ = os.Setenv("GALLIUM_DRIVER", "llvmpipe")
+}
+
+func installShutdownSignalHandler(app *bridge.App) {
+	shutdownSignals := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignals, terminationSignals()...)
+	go func() {
+		received := <-shutdownSignals
+		signal.Stop(shutdownSignals)
+		log.Printf("[Startup] received %s; requesting graceful exit", received)
+		bridge.RequestGracefulExit(app)
+	}()
 }
 
 func isInstallerQuitRequest(args []string) bool {

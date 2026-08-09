@@ -31,10 +31,56 @@ shell_scripts=(
   "${ROOT_DIR}/scripts/jammy-build/build-linux-packages-jammy.sh"
   "${ROOT_DIR}/scripts/jammy-build/in-container-appimage.sh"
   "${ROOT_DIR}/scripts/jammy-build/in-container-build.sh"
+  "${ROOT_DIR}/scripts/with-patched-wails-linux.sh"
 )
 for script in "${shell_scripts[@]}"; do
   bash -n "${script}"
 done
+
+grep -q 'with-patched-wails-linux.sh' "${ROOT_DIR}/scripts/jammy-build/in-container-build.sh" || {
+  echo 'Jammy build bypasses the construct-time WebKit GPU policy patch' >&2
+  exit 1
+}
+grep -q 'webkit_settings_new' "${ROOT_DIR}/patches/wails-v2.12.0-webkit-construct-policy.patch" || {
+  echo 'Wails patch does not create settings before the WebView' >&2
+  exit 1
+}
+grep -q 'openBrowserWithCleanEnvironment' "${ROOT_DIR}/patches/wails-v2.12.0-webkit-construct-policy.patch" || {
+  echo 'Wails patch leaks AppImage/WebKit renderer variables to external browsers' >&2
+  exit 1
+}
+for blocked_external_environment in \
+  GTK_DATA_PREFIX \
+  GSETTINGS_SCHEMA_DIR \
+  GI_TYPELIB_PATH \
+  GTK_IM_MODULE_FILE \
+  WEBKIT_EXEC_PATH \
+  WEBKIT_INJECTED_BUNDLE_PATH; do
+  grep -q "\"${blocked_external_environment}\"" \
+    "${ROOT_DIR}/patches/wails-v2.12.0-webkit-construct-policy.patch" || {
+    echo "Wails patch leaks ${blocked_external_environment} to external browsers" >&2
+    exit 1
+  }
+done
+grep -Fq "patchelf --set-rpath '\$ORIGIN/../../..'" "${ROOT_DIR}/scripts/jammy-build/in-container-appimage.sh" || {
+  echo 'injected bundle RUNPATH does not resolve to AppDir/usr/lib' >&2
+  exit 1
+}
+if grep -A1 -F "patchelf --set-rpath '\$ORIGIN/../../..'" \
+  "${ROOT_DIR}/scripts/jammy-build/in-container-appimage.sh" | grep -Eq '\|\| true|2>/dev/null'; then
+  echo 'injected bundle RUNPATH patch is allowed to fail silently' >&2
+  exit 1
+fi
+grep -Eq 'with_clean_runtime_data\.sh bash scripts/with-patched-wails-linux\.sh .*wails build' \
+  "${ROOT_DIR}/.github/workflows/release.yml" || {
+  echo 'stable Linux release bypasses the patched Wails build' >&2
+  exit 1
+}
+grep -Eq 'xvfb-run -a bash scripts/with-patched-wails-linux\.sh wails build' \
+  "${ROOT_DIR}/.github/workflows/build.yml" || {
+  echo 'Linux CI build bypasses the patched Wails build' >&2
+  exit 1
+}
 
 for host_wrapper in \
   "${ROOT_DIR}/scripts/jammy-build/build-appimage-jammy.sh" \
@@ -64,6 +110,18 @@ for compatibility_surface in \
   }
   grep -q 'WEBKIT_DISABLE_DMABUF_RENDERER' "${compatibility_surface}" || {
     echo "missing DMA-BUF renderer compatibility: ${compatibility_surface}" >&2
+    exit 1
+  }
+  grep -q 'WEBKIT_DISABLE_COMPOSITING_MODE' "${compatibility_surface}" || {
+    echo "missing WebKit compositing compatibility: ${compatibility_surface}" >&2
+    exit 1
+  }
+  grep -q 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' "${compatibility_surface}" || {
+    echo "missing WebKit Skia CPU rendering compatibility: ${compatibility_surface}" >&2
+    exit 1
+  }
+  grep -q '__EGL_VENDOR_LIBRARY_FILENAMES' "${compatibility_surface}" || {
+    echo "missing NVIDIA GLVND isolation: ${compatibility_surface}" >&2
     exit 1
   }
 done

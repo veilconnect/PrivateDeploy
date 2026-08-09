@@ -10,6 +10,14 @@ body[debug-no-animation='true'] {
   }
 }
 
+// Backdrop filters promote elements into accelerated compositing layers. The
+// Linux desktop build deliberately uses WebKit's CPU path for compatibility
+// with NVIDIA/GLVND, so keep those overlays on the normal paint surface.
+html[data-platform='linux'] .backdrop-blur-sm {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 body {
   margin: 0;
   color: var(--color);

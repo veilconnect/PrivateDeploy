@@ -59,8 +59,8 @@ PrivateDeploy Runtime Data
 Linux sing-box binary bundled with the desktop app.
 EOF
 
-echo "==> Step 3: wails build (webkit2_40)"
-GOOS=linux GOARCH=amd64 wails build \
+echo "==> Step 3: wails build (webkit2_40, construct-time GPU policy)"
+GOOS=linux GOARCH=amd64 bash scripts/with-patched-wails-linux.sh wails build \
     -m -s -trimpath -skipbindings \
     -devtools -tags webkit2_40 \
     -ldflags "-X privatedeploy/bridge.AppVersion=v${VERSION}" \
@@ -165,8 +165,19 @@ export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
 # the AppImage and local-install launcher.
 export JSC_SIGNAL_FOR_GC="${JSC_SIGNAL_FOR_GC:-48}"
 export JSC_useJIT="${JSC_useJIT:-0}"
-export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
-export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+export LIBGL_ALWAYS_SOFTWARE=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+unset WEBKIT_FORCE_COMPOSITING_MODE WEBKIT_FORCE_DMABUF_RENDERER
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+if [[ "${PRIVATEDEPLOY_ALLOW_NVIDIA_EGL:-0}" != "1" && \
+      -r /proc/driver/nvidia/version && \
+      -r /usr/share/glvnd/egl_vendor.d/50_mesa.json ]]; then
+    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+    export __GLX_VENDOR_LIBRARY_NAME=mesa
+    export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+    export GALLIUM_DRIVER=llvmpipe
+fi
 exec -a PrivateDeploy "${PD_PREFIX}/privatedeploy.bin" "$@"
 WRAPPER
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}"

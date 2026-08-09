@@ -63,7 +63,7 @@ fi
 if [ "${1:-}" != "--no-build" ]; then
   command -v wails >/dev/null || { c '0;31' "wails not found in PATH"; exit 1; }
   c '1;33' "[1/5] wails build ..."
-  ( cd "$REPO_ROOT" && wails build -clean >/dev/null 2>&1 ) || { c '0;31' "build failed"; exit 1; }
+  ( cd "$REPO_ROOT" && bash scripts/with-patched-wails-linux.sh wails build -clean >/dev/null 2>&1 ) || { c '0;31' "build failed"; exit 1; }
 fi
 BIN_SRC="$REPO_ROOT/build/bin/PrivateDeploy"
 [ -x "$BIN_SRC" ] || { c '0;31' "binary not found: $BIN_SRC (run without --no-build)"; exit 1; }

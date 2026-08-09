@@ -1,0 +1,136 @@
+diff --git a/internal/frontend/desktop/linux/window.c b/internal/frontend/desktop/linux/window.c
+--- a/internal/frontend/desktop/linux/window.c
++++ b/internal/frontend/desktop/linux/window.c
+@@ -557,7 +557,30 @@ gboolean on_webview_drag_drop(GtkWidget *widget, GdkDragContext *context, gint x,
+ // WebView
+ GtkWidget *SetupWebview(void *contentManager, GtkWindow *window, int hideWindowOnClose, int gpuPolicy, int disableWebViewDragAndDrop, int enableDragAndDrop)
+ {
+-    GtkWidget *webview = webkit_web_view_new_with_user_content_manager((WebKitUserContentManager *)contentManager);
++    // hardware-acceleration-policy is a construct property. Setting it after
++    // webkit_web_view_new_with_user_content_manager() can leave the page's
++    // backing store on the default accelerated path even when policy=Never.
++    WebKitSettings *settings = webkit_settings_new();
++    webkit_settings_set_user_agent_with_application_details(settings, "wails.io", "");
++    switch (gpuPolicy)
++    {
++    case 0:
++        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
++        break;
++    case 1:
++        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
++        break;
++    case 2:
++        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
++        break;
++    default:
++        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
++    }
++    GtkWidget *webview = g_object_new(WEBKIT_TYPE_WEB_VIEW,
++        "user-content-manager", (WebKitUserContentManager *)contentManager,
++        "settings", settings,
++        NULL);
++    g_object_unref(settings);
+ 
+     // Store webview reference in the content manager
+     g_object_set_data(G_OBJECT((WebKitUserContentManager *)contentManager), "webview", webview);
+@@ -587,23 +610,6 @@ GtkWidget *SetupWebview(void *contentManager, GtkWindow *window, int hideWindowOn
+         g_signal_connect(GTK_WIDGET(window), "delete-event", G_CALLBACK(close_button_pressed), NULL);
+     }
+ 
+-    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(webview));
+-    webkit_settings_set_user_agent_with_application_details(settings, "wails.io", "");
+-
+-    switch (gpuPolicy)
+-    {
+-    case 0:
+-        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+-        break;
+-    case 1:
+-        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
+-        break;
+-    case 2:
+-        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
+-        break;
+-    default:
+-        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
+-    }
+     return webview;
+ }
+ 
+diff --git a/internal/frontend/desktop/linux/browser.go b/internal/frontend/desktop/linux/browser.go
+--- a/internal/frontend/desktop/linux/browser.go
++++ b/internal/frontend/desktop/linux/browser.go
+@@ -6,5 +6,7 @@ package linux
+ import (
+ 	"fmt"
+-	"github.com/pkg/browser"
++	"os"
++	"os/exec"
++	"strings"
+ 	"github.com/wailsapp/wails/v2/internal/frontend/utils"
+ )
+@@ -18,6 +20,63 @@ func (f *Frontend) BrowserOpenURL(rawURL string) {
+ 	}
+ 	// Specific method implementation
+-	if err := browser.OpenURL(url); err != nil {
++	if err := openBrowserWithCleanEnvironment(url); err != nil {
+ 		f.logger.Error("Unable to open default system browser")
+ 	}
+ }
++
++var externalProcessBlockedEnvironment = map[string]struct{}{
++	"APPDIR":                           {},
++	"APPIMAGE":                         {},
++	"LD_LIBRARY_PATH":                  {},
++	"LD_PRELOAD":                       {},
++	"GIO_MODULE_DIR":                   {},
++	"GIO_USE_VFS":                      {},
++	"GTK_DATA_PREFIX":                  {},
++	"GTK_THEME":                        {},
++	"GDK_BACKEND":                      {},
++	"XDG_DATA_DIRS":                    {},
++	"GSETTINGS_SCHEMA_DIR":             {},
++	"GI_TYPELIB_PATH":                  {},
++	"GTK_EXE_PREFIX":                   {},
++	"GTK_PATH":                         {},
++	"GTK_IM_MODULE_FILE":               {},
++	"GDK_PIXBUF_MODULE_FILE":           {},
++	"GDK_PIXBUF_MODULEDIR":             {},
++	"WEBKIT_EXEC_PATH":                 {},
++	"WEBKIT_INJECTED_BUNDLE_PATH":      {},
++	"JSC_SIGNAL_FOR_GC":                {},
++	"JSC_useJIT":                       {},
++	"LIBGL_ALWAYS_SOFTWARE":            {},
++	"WEBKIT_DISABLE_COMPOSITING_MODE":  {},
++	"WEBKIT_DISABLE_DMABUF_RENDERER":   {},
++	"WEBKIT_SKIA_ENABLE_CPU_RENDERING": {},
++	"__EGL_VENDOR_LIBRARY_FILENAMES":   {},
++	"__GLX_VENDOR_LIBRARY_NAME":        {},
++	"MESA_LOADER_DRIVER_OVERRIDE":      {},
++	"GALLIUM_DRIVER":                   {},
++}
++
++func cleanExternalProcessEnvironment() []string {
++	environment := make([]string, 0, len(os.Environ()))
++	for _, entry := range os.Environ() {
++		key, _, _ := strings.Cut(entry, "=")
++		if _, blocked := externalProcessBlockedEnvironment[key]; blocked {
++			continue
++		}
++		environment = append(environment, entry)
++	}
++	return environment
++}
++
++func openBrowserWithCleanEnvironment(url string) error {
++	providers := []string{"xdg-open", "x-www-browser", "www-browser"}
++	for _, provider := range providers {
++		if _, err := exec.LookPath(provider); err != nil {
++			continue
++		}
++		command := exec.Command(provider, url)
++		command.Env = cleanExternalProcessEnvironment()
++		return command.Run()
++	}
++	return &exec.Error{Name: strings.Join(providers, ","), Err: exec.ErrNotFound}
++}

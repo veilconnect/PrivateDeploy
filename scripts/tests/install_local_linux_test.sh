@@ -84,6 +84,11 @@ write_payload() {
   printf 'app=%s\n' "\${PRIVATEDEPLOY_APP_NAME:-}"
   printf 'signal=%s\n' "\${JSC_SIGNAL_FOR_GC:-}"
   printf 'jit=%s\n' "\${JSC_useJIT:-}"
+  printf 'software_gl=%s\n' "\${LIBGL_ALWAYS_SOFTWARE:-}"
+  printf 'dmabuf_disabled=%s\n' "\${WEBKIT_DISABLE_DMABUF_RENDERER:-}"
+  printf 'compositing=%s\n' "\${WEBKIT_DISABLE_COMPOSITING_MODE:-}"
+  printf 'skia_cpu=%s\n' "\${WEBKIT_SKIA_ENABLE_CPU_RENDERING:-}"
+  printf 'force_compositing=%s\n' "\${WEBKIT_FORCE_COMPOSITING_MODE:-}"
   printf 'args=%s\n' "\$*"
 } >"\${PD_TEST_OUTPUT:?PD_TEST_OUTPUT is required}"
 EOF
@@ -198,8 +203,13 @@ grep -q '^artifact_version_source=explicit$' "${INFO_FILE}" || fail "explicit ve
 grep -q '^artifact_commit_source=explicit$' "${INFO_FILE}" || fail "explicit commit source not recorded"
 grep -q 'JSC_SIGNAL_FOR_GC' "${BIN_DIR}/PrivateDeploy" || fail "JSC signal compatibility is missing"
 grep -q 'JSC_useJIT' "${BIN_DIR}/PrivateDeploy" || fail "JSC JIT compatibility is missing"
+grep -q 'WEBKIT_DISABLE_COMPOSITING_MODE' "${BIN_DIR}/PrivateDeploy" || fail "WebKit compositing compatibility is missing"
+grep -q 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' "${BIN_DIR}/PrivateDeploy" || fail "WebKit Skia CPU compatibility is missing"
+grep -q '__EGL_VENDOR_LIBRARY_FILENAMES' "${BIN_DIR}/PrivateDeploy" || fail "NVIDIA GLVND isolation is missing"
 
 PD_TEST_OUTPUT="${TMP_DIR}/launcher-v1.out" HOME="${TEST_HOME}" \
+  WEBKIT_FORCE_COMPOSITING_MODE=1 WEBKIT_FORCE_DMABUF_RENDERER=1 \
+  LIBGL_ALWAYS_SOFTWARE=0 WEBKIT_DISABLE_DMABUF_RENDERER=0 \
   "${BIN_DIR}/PrivateDeploy" first "two words"
 grep -q '^payload=v1$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not execute v1 payload"
 grep -q "^base=${CANONICAL_DATA_ROOT}$" "${TMP_DIR}/launcher-v1.out" || \
@@ -207,6 +217,11 @@ grep -q "^base=${CANONICAL_DATA_ROOT}$" "${TMP_DIR}/launcher-v1.out" || \
 grep -q '^app=PrivateDeploy$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not preserve app name"
 grep -q '^signal=48$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not set JSC GC signal"
 grep -q '^jit=0$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not disable JSC JIT"
+grep -q '^software_gl=1$' "${TMP_DIR}/launcher-v1.out" || fail "launcher accepted an inherited software GL override"
+grep -q '^dmabuf_disabled=1$' "${TMP_DIR}/launcher-v1.out" || fail "launcher accepted an inherited DMA-BUF override"
+grep -q '^compositing=1$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not disable WebKit compositing"
+grep -q '^skia_cpu=1$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not force WebKit Skia CPU rendering"
+grep -q '^force_compositing=$' "${TMP_DIR}/launcher-v1.out" || fail "launcher kept an inherited force-compositing override"
 grep -q '^args=first two words$' "${TMP_DIR}/launcher-v1.out" || fail "launcher did not forward arguments"
 
 # With no marker, an existing canonical package data root must win before the

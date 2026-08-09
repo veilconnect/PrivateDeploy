@@ -4,6 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+run_root_go_test() {
+  if [[ "$(go env GOOS)" == "linux" ]]; then
+    bash scripts/with-patched-wails-linux.sh go test "$@"
+  else
+    go test "$@"
+  fi
+}
+
 # Corepack may try to download the packageManager-pinned pnpm even when this
 # checkout already has a complete node_modules tree. Prefer those verified
 # local tools for an offline gate; clean CI checkouts still use pnpm after the
@@ -46,7 +54,7 @@ mkdir -p "$COVERAGE_DIR"
 
 # ── Go tests with coverage (root) ─────────────────────────────────
 ROOT_PACKAGES="$(go list ./... | grep -Ev '^privatedeploy/tmp($|/)')"
-go test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES
+run_root_go_test -coverprofile="$COVERAGE_DIR/go-root.out" -covermode=atomic $ROOT_PACKAGES
 echo "--- Go root coverage ---"
 go tool cover -func="$COVERAGE_DIR/go-root.out" | tail -1
 

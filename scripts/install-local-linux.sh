@@ -397,8 +397,19 @@ export JSC_useJIT="\${JSC_useJIT:-0}"
 # Never hand the Jammy WebKit bundle to the host NVIDIA/Mesa compositor. Old
 # user.yaml files may explicitly request GPU=Always; software GL plus the
 # backend's Never policy prevents the DOM-running-but-white surface failure.
-export LIBGL_ALWAYS_SOFTWARE="\${LIBGL_ALWAYS_SOFTWARE:-1}"
-export WEBKIT_DISABLE_DMABUF_RENDERER="\${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+export LIBGL_ALWAYS_SOFTWARE=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+unset WEBKIT_FORCE_COMPOSITING_MODE WEBKIT_FORCE_DMABUF_RENDERER
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+if [[ "\${PRIVATEDEPLOY_ALLOW_NVIDIA_EGL:-0}" != "1" && \
+      -r /proc/driver/nvidia/version && \
+      -r /usr/share/glvnd/egl_vendor.d/50_mesa.json ]]; then
+  export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+  export __GLX_VENDOR_LIBRARY_NAME=mesa
+  export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+  export GALLIUM_DRIVER=llvmpipe
+fi
 
 PD_STATE_DIR="\${PRIVATEDEPLOY_STATE_DIR:-\${XDG_STATE_HOME:-\${HOME}/.local/state}/PrivateDeploy}"
 mkdir -p "\${PD_STATE_DIR}" 2>/dev/null || true
@@ -554,6 +565,32 @@ frontend_ready_state_matches() {
   [[ "${state_pid}" == "${expected_pid}" && "${state_nonce}" == "${expected_nonce}" ]]
 }
 
+process_has_render_compatibility() {
+  local pid="$1" environment expected
+  environment="$(read_proc_nul_file "/proc/${pid}/environ")"
+  [[ -n "${environment}" ]] || return 1
+
+  for expected in \
+    WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+    WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 \
+    LIBGL_ALWAYS_SOFTWARE=1; do
+    grep -Fqx "${expected}" <<<"${environment}" || return 1
+  done
+  if grep -Eq '^WEBKIT_FORCE_(COMPOSITING_MODE|DMABUF_RENDERER)=' <<<"${environment}"; then
+    return 1
+  fi
+
+  if [[ "${PRIVATEDEPLOY_ALLOW_NVIDIA_EGL:-0}" != "1" && \
+        -r /proc/driver/nvidia/version && \
+        -r /usr/share/glvnd/egl_vendor.d/50_mesa.json ]]; then
+    grep -Fqx '__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json' <<<"${environment}" || return 1
+    grep -Fqx '__GLX_VENDOR_LIBRARY_NAME=mesa' <<<"${environment}" || return 1
+    grep -Fqx 'MESA_LOADER_DRIVER_OVERRIDE=llvmpipe' <<<"${environment}" || return 1
+    grep -Fqx 'GALLIUM_DRIVER=llvmpipe' <<<"${environment}" || return 1
+  fi
+}
+
 run_dom_health_check() {
   local nonce signal_title log_file stdout_file deadline
   nonce="$(generate_ready_nonce)"
@@ -604,7 +641,9 @@ run_dom_health_check() {
       die "检测到 WebKit/JSC 启动崩溃"
     fi
     if frontend_ready_state_matches "${HEALTH_READY_FILE}" "${HEALTH_PROCESS_PID}" "${nonce}"; then
-      log "✅ Vue 前端挂载与 WebKit 自检通过 (PID ${HEALTH_PROCESS_PID})"
+      process_has_render_compatibility "${HEALTH_PROCESS_PID}" || \
+        die "Vue 已挂载，但 WebKit 渲染兼容策略未进入实际进程"
+      log "✅ Vue 前端、WebKit 与渲染兼容策略自检通过 (PID ${HEALTH_PROCESS_PID})"
       return 0
     fi
     sleep 1
@@ -663,6 +702,8 @@ start_normal_instance() {
       die "新安装的 PrivateDeploy 出现 WebKit/JSC 崩溃"
     fi
     if frontend_ready_state_matches "${NEW_READY_FILE}" "${NEW_PROCESS_PID}" "${nonce}"; then
+      process_has_render_compatibility "${NEW_PROCESS_PID}" || \
+        die "PrivateDeploy 已启动，但渲染兼容策略未进入实际进程"
       rm -f -- "${NEW_READY_FILE}"
       NEW_READY_FILE=""
       log "✅ PrivateDeploy 已启动，Vue 前端挂载完成 (PID ${NEW_PROCESS_PID})"

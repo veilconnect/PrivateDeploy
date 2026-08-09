@@ -109,7 +109,7 @@ jobs:
         run: cd frontend && pnpm run build-only
 
       - name: Go tests (root)
-        run: go test ./...
+        run: bash scripts/with-patched-wails-linux.sh go test ./...
 
       - name: Go tests (api)
         run: cd api && go test ./...
@@ -510,7 +510,7 @@ jobs:
           path: frontend/dist
       - run: |
           sudo apt-get update
-          sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install patch libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Build & Pack Linux
         run: |
@@ -519,7 +519,7 @@ jobs:
             export GOOS=linux GOARCH=$arch
 
             echo "==> Building Linux $arch..."
-            bash scripts/with_clean_runtime_data.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -ldflags "-X privatedeploy/bridge.AppVersion=${GITHUB_REF_NAME}" -o $APP_NAME.exe
+            bash scripts/with_clean_runtime_data.sh bash scripts/with-patched-wails-linux.sh ~/go/bin/wails build -m -s -trimpath -skipbindings -tags webkit2_41 -ldflags "-X privatedeploy/bridge.AppVersion=${GITHUB_REF_NAME}" -o $APP_NAME.exe
 
             cd build/bin
             mv $APP_NAME.exe $APP_NAME
