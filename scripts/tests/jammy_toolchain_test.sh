@@ -41,6 +41,19 @@ grep -q 'with-patched-wails-linux.sh' "${ROOT_DIR}/scripts/jammy-build/in-contai
   echo 'Jammy build bypasses the construct-time WebKit GPU policy patch' >&2
   exit 1
 }
+grep -q 'go work init' "${ROOT_DIR}/scripts/with-patched-wails-linux.sh" || {
+  echo 'Wails patch wrapper does not use a subprocess-safe Go workspace' >&2
+  exit 1
+}
+grep -q 'export GOWORK=' "${ROOT_DIR}/scripts/with-patched-wails-linux.sh" || {
+  echo 'Wails patch wrapper does not expose its generated Go workspace' >&2
+  exit 1
+}
+if grep -Ev '^[[:space:]]*#' "${ROOT_DIR}/scripts/with-patched-wails-linux.sh" | \
+  grep -Eq 'GOFLAGS=.*modfile|export GOFLAGS=.*modfile'; then
+  echo 'Wails patch wrapper uses -modfile, which breaks Wails embed discovery' >&2
+  exit 1
+fi
 grep -q 'webkit_settings_new' "${ROOT_DIR}/patches/wails-v2.12.0-webkit-construct-policy.patch" || {
   echo 'Wails patch does not create settings before the WebView' >&2
   exit 1

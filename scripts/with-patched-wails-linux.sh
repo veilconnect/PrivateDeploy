@@ -22,9 +22,8 @@ declared_version="$(cd "${ROOT_DIR}" && go list -m -f '{{.Version}}' github.com/
 module_dir="$(cd "${ROOT_DIR}" && go list -m -f '{{.Dir}}' github.com/wailsapp/wails/v2)"
 [[ -d "${module_dir}" ]] || { echo "Wails module directory is unavailable" >&2; exit 1; }
 
-# GOFLAGS is whitespace-delimited and has no portable quoting for a -modfile
-# path containing spaces. Linux always provides /tmp, so keep this generated
-# path independent of a caller-controlled TMPDIR.
+# Keep the generated workspace under /tmp so it is independent of a
+# caller-controlled TMPDIR and cannot collide with the source checkout.
 patch_root="$(mktemp -d /tmp/privatedeploy-wails-patch.XXXXXX)"
 cleanup() {
   rm -rf -- "${patch_root}"
@@ -35,15 +34,17 @@ cp -a -- "${module_dir}" "${patch_root}/wails"
 chmod -R u+w "${patch_root}/wails"
 patch -s -d "${patch_root}/wails" -p1 <"${PATCH_FILE}"
 
-cp -- "${ROOT_DIR}/go.mod" "${patch_root}/privatedeploy.mod"
-cp -- "${ROOT_DIR}/go.sum" "${patch_root}/privatedeploy.sum"
-go mod edit -modfile="${patch_root}/privatedeploy.mod" \
-  -replace="github.com/wailsapp/wails/v2=${patch_root}/wails"
-
-if [[ -n "${GOFLAGS:-}" ]]; then
-  export GOFLAGS="${GOFLAGS} -modfile=${patch_root}/privatedeploy.mod"
-else
-  export GOFLAGS="-modfile=${patch_root}/privatedeploy.mod"
-fi
+# A global GOFLAGS=-modfile also reaches the go/packages helper used by Wails
+# for embed discovery; that helper may probe outside module mode and rejects
+# -modfile before the real build begins. An explicit Go workspace provides the
+# same deterministic replacement while remaining valid for every Go subprocess
+# that Wails launches.
+(
+  cd "${patch_root}"
+  GOWORK=off go work init "${ROOT_DIR}"
+  GOWORK="${patch_root}/go.work" go work edit \
+    -replace="github.com/wailsapp/wails/v2=${patch_root}/wails"
+)
+export GOWORK="${patch_root}/go.work"
 
 "$@"
