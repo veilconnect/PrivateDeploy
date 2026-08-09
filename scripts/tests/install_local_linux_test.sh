@@ -59,6 +59,9 @@ if process_matches_install_target "/tmp/.mount_pd/AppRun.wrapped" "${TARGET_APPI
   fail "AppImage argv prefix was treated as an exact target"
 fi
 
+missing_proc_output="$(read_proc_nul_file "${TMP_DIR}/missing-proc-file" 2>&1)"
+[[ -z "${missing_proc_output}" ]] || fail "unreadable proc files leak permission diagnostics"
+
 matcher_state="${TMP_DIR}/matcher-ready.state"
 matcher_nonce="0123456789abcdef0123456789abcdef"
 printf 'format=1\npid=4242\nnonce=%s\n' "${matcher_nonce}" >"${matcher_state}"

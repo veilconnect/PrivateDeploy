@@ -117,6 +117,14 @@ process_matches_install_target() {
   return 1
 }
 
+read_proc_nul_file() {
+  local path="$1"
+  # Apply the stderr redirect before opening the proc file. Some same-UID
+  # processes are non-dumpable, so /proc reports readable mode bits but denies
+  # the open; the installer should quietly skip those unrelated processes.
+  tr '\0' '\n' 2>/dev/null <"${path}" || true
+}
+
 current_user_processes() {
   local proc_dir pid proc_uid exe cmdline_args appimage_env entry
   local current_uid
@@ -131,7 +139,7 @@ current_user_processes() {
 
     exe="$(readlink "${proc_dir}/exe" 2>/dev/null || true)"
     exe="${exe% (deleted)}"
-    cmdline_args="$(tr '\0' '\n' <"${proc_dir}/cmdline" 2>/dev/null || true)"
+    cmdline_args="$(read_proc_nul_file "${proc_dir}/cmdline")"
     appimage_env=""
     while IFS= read -r entry; do
       case "${entry}" in
@@ -140,7 +148,7 @@ current_user_processes() {
           break
           ;;
       esac
-    done < <(tr '\0' '\n' <"${proc_dir}/environ" 2>/dev/null || true)
+    done < <(read_proc_nul_file "${proc_dir}/environ")
 
     if process_matches_install_target "${exe}" "${cmdline_args}" "${appimage_env}"; then
       printf '%s\n' "${pid}"
