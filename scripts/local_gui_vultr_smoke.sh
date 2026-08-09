@@ -372,7 +372,7 @@ chmod +x "${APP_BASE}/PrivateDeploy"
 cat > "${APP_BASE}/data/user.yaml" <<'YAML'
 width: 800
 height: 840
-webviewGpuPolicy: 1
+webviewGpuPolicy: 0
 autoSetSystemProxy: false
 systemProxyPolicyInitialized: true
 systemProxyManaged: false

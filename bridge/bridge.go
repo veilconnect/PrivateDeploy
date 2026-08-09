@@ -479,7 +479,8 @@ func buildPlatformCapabilities(osName string) PlatformCapabilities {
 		capabilities.AdminElevationSupported = true
 		capabilities.KernelGrantPermissionSupported = false
 	case "linux":
-		capabilities.ConfigurableWebviewGpuPolicy = true
+		// Linux is deliberately pinned to software rendering. Exposing a GPU
+		// selector would let the frontend persist a value the backend must reject.
 	case "darwin":
 		// macOS keeps the standard tray and kernel grant flows.
 	default:
@@ -825,19 +826,15 @@ func resolveWebviewGpuPolicy(osName string, rawConfig []byte, configuredPolicy i
 		return configuredPolicy
 	}
 
-	if !hasUserConfigKey(rawConfig, "webviewGpuPolicy") {
-		return webviewGpuPolicyNever
+	// A persisted Always/OnDemand value can make the Jammy WebKit AppImage load
+	// its bundled GTK stack together with the host's NVIDIA/Mesa EGL stack. The
+	// DOM still runs, but the composited WebView surface remains entirely white.
+	// Linux therefore has one supported policy: software rendering. This also
+	// migrates older user.yaml files that explicitly saved Always (zero).
+	if hasUserConfigKey(rawConfig, "webviewGpuPolicy") && configuredPolicy != webviewGpuPolicyNever {
+		log.Printf("Linux webviewGpuPolicy=%d detected; forcing Never to avoid blank WebKit windows", configuredPolicy)
 	}
-
-	switch configuredPolicy {
-	case webviewGpuPolicyAlways, webviewGpuPolicyNever:
-		return configuredPolicy
-	case webviewGpuPolicyOnDemand:
-		log.Printf("Linux webviewGpuPolicy=OnDemand detected; forcing Never to avoid blank WebKit windows")
-		return webviewGpuPolicyNever
-	default:
-		return webviewGpuPolicyNever
-	}
+	return webviewGpuPolicyNever
 }
 
 func hasUserConfigKey(rawConfig []byte, key string) bool {

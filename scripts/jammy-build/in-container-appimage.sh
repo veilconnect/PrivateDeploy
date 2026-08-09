@@ -147,6 +147,10 @@ export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
 # crashes gtk_main on noble at addr=0x48. Belt-and-braces with JSC_useJIT=0.
 export JSC_SIGNAL_FOR_GC=48
 export JSC_useJIT=0
+# The AppImage bundles Jammy GTK/WebKit, so mixing its renderer with a newer
+# host NVIDIA/Mesa EGL stack can leave a live DOM behind an all-white surface.
+export LIBGL_ALWAYS_SOFTWARE=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
 # Take over the exec from AppRun so argv[0] is "PrivateDeploy", not the path
 # "AppRun.wrapped". GTK derives WM_CLASS from basename(argv[0]); without this,
 # the X11 WM_CLASS would be "AppRun.wrapped" and wouldn't match the .desktop's

@@ -34,11 +34,11 @@ func TestResolveWebviewGpuPolicy(t *testing.T) {
 			want:       webviewGpuPolicyNever,
 		},
 		{
-			name:       "linux keeps always",
+			name:       "linux migrates always to never",
 			osName:     "linux",
 			rawConfig:  []byte("webviewGpuPolicy: 0\n"),
 			configured: webviewGpuPolicyAlways,
-			want:       webviewGpuPolicyAlways,
+			want:       webviewGpuPolicyNever,
 		},
 		{
 			name:       "linux keeps never",
@@ -100,12 +100,12 @@ func TestBuildPlatformCapabilities(t *testing.T) {
 			},
 		},
 		{
-			name:   "linux capabilities",
+			name:   "linux capabilities pin unsafe gpu policy",
 			osName: "linux",
 			assertions: func(t *testing.T, capabilities PlatformCapabilities) {
 				t.Helper()
-				if !capabilities.ConfigurableWebviewGpuPolicy {
-					t.Fatal("expected configurable webview gpu policy on linux")
+				if capabilities.ConfigurableWebviewGpuPolicy {
+					t.Fatal("expected configurable webview gpu policy disabled on linux")
 				}
 				if !capabilities.KernelGrantPermissionSupported {
 					t.Fatal("expected kernel grant permission support on linux")

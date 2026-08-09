@@ -58,6 +58,14 @@ for compatibility_surface in \
     echo "missing JSC JIT compatibility: ${compatibility_surface}" >&2
     exit 1
   }
+  grep -q 'LIBGL_ALWAYS_SOFTWARE' "${compatibility_surface}" || {
+    echo "missing software GL compatibility: ${compatibility_surface}" >&2
+    exit 1
+  }
+  grep -q 'WEBKIT_DISABLE_DMABUF_RENDERER' "${compatibility_surface}" || {
+    echo "missing DMA-BUF renderer compatibility: ${compatibility_surface}" >&2
+    exit 1
+  }
 done
 
 grep -q 'PRIVATEDEPLOY_BASE_PATH' "${ROOT_DIR}/scripts/install-local-linux.sh"

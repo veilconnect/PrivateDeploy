@@ -16,6 +16,21 @@ const waitForPaintFrame: PaintFrameWaiter = () =>
     window.setTimeout(resolve, 0)
   })
 
+const isVisiblyLaidOut = (element: HTMLElement | null | undefined): element is HTMLElement => {
+  if (!element?.isConnected || element.hidden) return false
+  const style = window.getComputedStyle(element)
+  if (
+    style.display === 'none' ||
+    style.visibility === 'hidden' ||
+    style.visibility === 'collapse' ||
+    Number.parseFloat(style.opacity || '1') <= 0
+  ) {
+    return false
+  }
+  const bounds = element.getBoundingClientRect()
+  return bounds.width > 0 && bounds.height > 0
+}
+
 export const markApplicationReady = (
   findRoot: () => HTMLElement | null = () => document.getElementById('app'),
 ): void => {
@@ -89,15 +104,18 @@ export const signalFrontendReadyAfterMount = async (
   root = findRoot()
   shell = root?.querySelector<HTMLElement>('[data-application-shell="true"]')
   const routeView = shell?.querySelector<HTMLElement>('[data-route-view-ready="true"]')
+  const routeContent = routeView?.firstElementChild as HTMLElement | null
   if (
     !root ||
     !root.isConnected ||
     root.dataset.applicationReady !== 'true' ||
-    !shell?.isConnected ||
+    !isVisiblyLaidOut(root) ||
+    !isVisiblyLaidOut(shell) ||
     !routeView?.isConnected ||
-    routeView.childElementCount === 0
+    routeView.childElementCount === 0 ||
+    !isVisiblyLaidOut(routeContent)
   ) {
-    throw new Error('Vue router did not render a ready route view')
+    throw new Error('Vue router did not render a visible ready route view')
   }
 
   await signal()

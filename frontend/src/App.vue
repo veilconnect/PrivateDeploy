@@ -146,6 +146,12 @@ const bootstrapApp = async () => {
     percent.value = 100
 
     await nextTick()
+    await revealMainWindow().catch((error) => {
+      console.error('[App] Failed to reveal main window:', error)
+    })
+
+    // Readiness must describe the visible workspace, not merely a Vue tree
+    // that was mounted while the native window was still hidden.
     markApplicationReadyAndRunBackgroundTask(
       async () => {
         if (!shouldRunPluginLifecycle) return
@@ -155,10 +161,6 @@ const bootstrapApp = async () => {
       },
       showStartupError,
     )
-
-    await revealMainWindow().catch((error) => {
-      console.error('[App] Failed to reveal main window:', error)
-    })
 
     await kernelApiStore.updateCoreState().catch((error) => {
       console.error('[App] Failed to update core state:', error)

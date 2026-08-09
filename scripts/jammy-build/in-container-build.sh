@@ -165,6 +165,8 @@ export PRIVATEDEPLOY_APP_NAME="${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
 # the AppImage and local-install launcher.
 export JSC_SIGNAL_FOR_GC="${JSC_SIGNAL_FOR_GC:-48}"
 export JSC_useJIT="${JSC_useJIT:-0}"
+export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 exec -a PrivateDeploy "${PD_PREFIX}/privatedeploy.bin" "$@"
 WRAPPER
 chmod +x "${STAGING_DIR}/usr/lib/${APP_NAME}/${APP_NAME}"

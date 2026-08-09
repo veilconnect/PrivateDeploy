@@ -202,7 +202,7 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
     if (app.value.webviewGpuPolicy === undefined) {
       app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
     }
-    if (isLinux && app.value.webviewGpuPolicy === WebviewGpuPolicy.OnDemand) {
+    if (isLinux && app.value.webviewGpuPolicy !== WebviewGpuPolicy.Never) {
       app.value.webviewGpuPolicy = WebviewGpuPolicy.Never
     }
     // @ts-expect-error(Deprecated)

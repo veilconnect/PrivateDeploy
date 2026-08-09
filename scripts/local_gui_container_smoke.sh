@@ -107,7 +107,7 @@ fi
 cat > "${APP_BASE}/data/user.yaml" <<'YAML'
 width: 1280
 height: 840
-webviewGpuPolicy: 1
+webviewGpuPolicy: 0
 autoSetSystemProxy: false
 systemProxyPolicyInitialized: true
 systemProxyManaged: false

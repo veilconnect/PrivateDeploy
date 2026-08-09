@@ -10,6 +10,23 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+const makeVisible = (...elements: HTMLElement[]) => {
+  for (const element of elements) {
+    element.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 640,
+        bottom: 480,
+        left: 0,
+        width: 640,
+        height: 480,
+        toJSON: () => ({}),
+      }) as DOMRect
+  }
+}
+
 describe('signalFrontendReadyAfterMount', () => {
   it('signals only after startup renders the real application shell', async () => {
     const root = document.createElement('div')
@@ -18,10 +35,12 @@ describe('signalFrontendReadyAfterMount', () => {
     shell.dataset.applicationShell = 'true'
     const route = document.createElement('section')
     route.dataset.routeViewReady = 'true'
-    route.append(document.createElement('div'))
+    const routeContent = document.createElement('div')
+    route.append(routeContent)
     shell.append(route)
     root.append(shell)
     document.body.append(root)
+    makeVisible(root, shell, routeContent)
     const signal = vi.fn(async () => undefined)
     const waitForRouter = vi.fn(async () => undefined)
     const waitForFrame = vi.fn(async () => undefined)
@@ -61,10 +80,12 @@ describe('signalFrontendReadyAfterMount', () => {
     shell.dataset.applicationShell = 'true'
     const route = document.createElement('section')
     route.dataset.routeViewReady = 'true'
-    route.append(document.createElement('div'))
+    const routeContent = document.createElement('div')
+    route.append(routeContent)
     shell.append(route)
     root.append(shell)
     document.body.append(root)
+    makeVisible(root, shell, routeContent)
 
     let resolveRouter!: () => void
     const waitForRouter = vi.fn(
@@ -98,6 +119,7 @@ describe('signalFrontendReadyAfterMount', () => {
     shell.append(route)
     root.append(shell)
     document.body.append(root)
+    makeVisible(root, shell)
     const signal = vi.fn(async () => undefined)
 
     await expect(
@@ -107,7 +129,34 @@ describe('signalFrontendReadyAfterMount', () => {
         async () => undefined,
         async () => undefined,
       ),
-    ).rejects.toThrow('Vue router did not render a ready route view')
+    ).rejects.toThrow('Vue router did not render a visible ready route view')
+    expect(signal).not.toHaveBeenCalled()
+  })
+
+  it('rejects a routed component that has no visible layout box', async () => {
+    const root = document.createElement('div')
+    root.id = 'app'
+    root.dataset.applicationReady = 'true'
+    const shell = document.createElement('main')
+    shell.dataset.applicationShell = 'true'
+    const route = document.createElement('section')
+    route.dataset.routeViewReady = 'true'
+    const routeContent = document.createElement('div')
+    route.append(routeContent)
+    shell.append(route)
+    root.append(shell)
+    document.body.append(root)
+    makeVisible(root, shell)
+    const signal = vi.fn(async () => undefined)
+
+    await expect(
+      signalFrontendReadyAfterMount(
+        signal,
+        undefined,
+        async () => undefined,
+        async () => undefined,
+      ),
+    ).rejects.toThrow('Vue router did not render a visible ready route view')
     expect(signal).not.toHaveBeenCalled()
   })
 

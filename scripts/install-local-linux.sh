@@ -394,6 +394,11 @@ export PRIVATEDEPLOY_APP_NAME="\${PRIVATEDEPLOY_APP_NAME:-PrivateDeploy}"
 # These are the same compatibility settings used by the Jammy AppImage.
 export JSC_SIGNAL_FOR_GC="\${JSC_SIGNAL_FOR_GC:-48}"
 export JSC_useJIT="\${JSC_useJIT:-0}"
+# Never hand the Jammy WebKit bundle to the host NVIDIA/Mesa compositor. Old
+# user.yaml files may explicitly request GPU=Always; software GL plus the
+# backend's Never policy prevents the DOM-running-but-white surface failure.
+export LIBGL_ALWAYS_SOFTWARE="\${LIBGL_ALWAYS_SOFTWARE:-1}"
+export WEBKIT_DISABLE_DMABUF_RENDERER="\${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 
 PD_STATE_DIR="\${PRIVATEDEPLOY_STATE_DIR:-\${XDG_STATE_HOME:-\${HOME}/.local/state}/PrivateDeploy}"
 mkdir -p "\${PD_STATE_DIR}" 2>/dev/null || true
