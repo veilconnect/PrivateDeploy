@@ -24,7 +24,7 @@ cd frontend
 # before replacing a modules directory created by another pnpm release unless
 # CI mode is explicit, which made otherwise valid release builds abort.
 export CI=true
-pnpm install --frozen-lockfile=false
+pnpm install --frozen-lockfile
 pnpm run build
 cd ..
 

@@ -43,6 +43,7 @@ docker run --rm \
     -e "SINGBOX_VERSION=${SINGBOX_VERSION}" \
     "${DOCKER_ENV_ARGS[@]}" \
     "${IMAGE_TAG}" \
+    bash /repo/scripts/jammy-build/run-with-ownership-restore.sh \
     bash -c '
         set -euo pipefail
         SKIP_DEB_PACKAGING=1 bash /repo/scripts/jammy-build/in-container-build.sh

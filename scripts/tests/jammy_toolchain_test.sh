@@ -23,6 +23,10 @@ grep -q '^export CI=true$' "${ROOT_DIR}/scripts/jammy-build/in-container-build.s
   echo 'Jammy container frontend build does not force non-interactive CI mode' >&2
   exit 1
 }
+grep -q '^pnpm install --frozen-lockfile$' "${ROOT_DIR}/scripts/jammy-build/in-container-build.sh" || {
+  echo 'Jammy container frontend build may rewrite the tracked lockfile' >&2
+  exit 1
+}
 
 shell_scripts=(
   "${ROOT_DIR}/scripts/install-local-linux.sh"
@@ -32,6 +36,7 @@ shell_scripts=(
   "${ROOT_DIR}/scripts/jammy-build/build-linux-packages-jammy.sh"
   "${ROOT_DIR}/scripts/jammy-build/in-container-appimage.sh"
   "${ROOT_DIR}/scripts/jammy-build/in-container-build.sh"
+  "${ROOT_DIR}/scripts/jammy-build/run-with-ownership-restore.sh"
   "${ROOT_DIR}/scripts/with-patched-wails-linux.sh"
 )
 for script in "${shell_scripts[@]}"; do
@@ -101,6 +106,23 @@ for host_wrapper in \
   "${ROOT_DIR}/scripts/jammy-build/build-linux-packages-jammy.sh"; do
   grep -q -- '--build-arg "GO_VERSION=${GO_VERSION}"' "${host_wrapper}" || {
     echo "Jammy host wrapper does not pass go.mod Go version: ${host_wrapper}" >&2
+    exit 1
+  }
+  grep -q 'run-with-ownership-restore.sh' "${host_wrapper}" || {
+    echo "Jammy host wrapper leaves root-owned build artifacts: ${host_wrapper}" >&2
+    exit 1
+  }
+done
+
+ownership_wrapper="${ROOT_DIR}/scripts/jammy-build/run-with-ownership-restore.sh"
+for required_guard in \
+  'REPO_OWNER_UID="$(stat -c %u /repo)"' \
+  '/repo/frontend/node_modules' \
+  'local failed=0' \
+  'status != 0' \
+  'chown -R -h -P --preserve-root --from=0:0'; do
+  grep -Fq -- "${required_guard}" "${ownership_wrapper}" || {
+    echo "Jammy ownership wrapper is missing guard: ${required_guard}" >&2
     exit 1
   }
 done
