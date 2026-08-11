@@ -13,6 +13,67 @@ The project has gone through two distinct product phases:
 
 - No unreleased notes yet.
 
+## [2.0.24] - 2026-08-11
+
+### Added
+- **Durable cloud-operation recovery**: cloud creates now use encrypted,
+  idempotent operation journals so interrupted Vultr and DigitalOcean deploys
+  can be reconciled or repaired without silently losing the node record.
+- **Managed node repair paths**: expanded restart and recovery support for
+  provider metadata, firewall ownership, SSH recovery material, and partially
+  completed deployments. Existing Vultr and DigitalOcean servers can be
+  repaired in place instead of being replaced.
+- **Asynchronous cloud API operations**: the standalone REST API now exposes
+  create-operation status and `Idempotency-Key` deduplication for cloud creates.
+
+### Fixed
+- **Cloud nodes stuck in deployment or showing stale legacy warnings**: made
+  instance status, deploy, delete, and record synchronization consistent across
+  the desktop, API, and mobile surfaces. Transient firewall create/attach and
+  service-readiness failures are retried; existing managed firewall groups are
+  reused; quota failures stop immediately instead of remaining at an
+  intermediate progress step.
+- **Linux blank window and unreliable startup**: hardened WebKitGTK rendering
+  policy at construction time, added software-rendering fallbacks, correlated
+  GUI readiness with the exact launched process, and made the local installer
+  transactional. The Ubuntu/Jammy AppImage was also verified on a real desktop.
+- **Silent Direct fallback after restart**: live sing-box configuration is
+  regenerated whenever usable cloud nodes exist instead of collapsing to a
+  Direct-only configuration.
+- **Mobile VPN reconnect loops and cellular DNS failures**: health checks no
+  longer tear down a live tunnel for transient probe failures, single-CDN
+  blocking, HTTP 403 responses, or Direct-route false negatives. DNS handling,
+  CDN-first probing, dead-node failover, VLESS SNI recovery, and cellular CDN
+  behavior were hardened.
+- **CDN relay reliability**: made edge discovery independent of poisoned custom
+  domain DNS and removed UFW rate limiting from the Cloudflare relay port that
+  could cause 522 responses.
+
+### Security
+- The standalone API now uses a persistent random token by default; remote
+  binding requires an explicit token, unauthenticated mode is loopback-only,
+  and CORS/WebSocket origin checks are stricter.
+- Remote plugins require explicit full-trust acknowledgement, HTTPS allowlisted
+  sources, redirect revalidation, and SHA-256 pinning. Offline caches and
+  automatic backups strip credentials and share material, including cleanup of
+  legacy entries on read.
+- Strengthened encrypted provider-record persistence, secure backend and
+  path/symlink boundaries, cloud-operation locking, renderer-driven request
+  validation against SSRF/rebinding, and error redaction.
+
+### Changed
+- Jammy release builds are non-interactive, use frozen frontend dependencies,
+  apply the Wails patch without contaminating the workspace, and restore build
+  output ownership after containerized builds while preserving the original
+  build exit status.
+- Expanded signed-release, provenance, checksum, SBOM, license-audit, and
+  read-only cloud-gate automation.
+
+### Tests
+- Added regression coverage for cloud-operation recovery, provider concurrency,
+  firewall lifecycle, startup readiness, Linux rendering policy, transactional
+  installation, and AppImage GUI process correlation.
+
 ## [2.0.14] - 2026-06-30
 
 ### Fixed
